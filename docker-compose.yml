@@ -1,0 +1,80 @@
+name: jrc
+services:
+  jrc-dev:
+    image: jrc-dev:local
+    container_name: jrc-dev
+    restart: unless-stopped
+    init: true
+    user: "${JRC_UID:-1000}:${JRC_GID:-1000}"
+    environment:
+      HOME: /tmp/jrc-home
+      PGHOST: jrc-postgres
+      PGPORT: 5432
+      PGUSER: ${PGUSER:-jrc}
+      PGDATABASE: ${PGDATABASE:-jrc}
+      PGPASSWORD: ${PGPASSWORD:?Spusťte make env}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?Spusťte make env}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?Spusťte make env}
+      S3_BUCKET: ${S3_BUCKET:-jrc-local}
+      S3_ENDPOINT_URL: http://jrc-s3:3900
+      AWS_DEFAULT_REGION: garage
+      AWS_EC2_METADATA_DISABLED: "true"
+    working_dir: /workspace
+    command: ["sh", "-c", "mkdir -p /tmp/jrc-home && exec sleep infinity"]
+    volumes:
+      - .:/workspace
+    ports:
+      - "127.0.0.1:${JRC_APP_PORT:-13000}:3000"
+    shm_size: 1gb
+    depends_on:
+      jrc-postgres:
+        condition: service_healthy
+      jrc-s3:
+        condition: service_healthy
+  jrc-postgres:
+    image: postgres:18.6-bookworm
+    container_name: jrc-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PGUSER:-jrc}
+      POSTGRES_DB: ${PGDATABASE:-jrc}
+      POSTGRES_PASSWORD: ${PGPASSWORD:?Spusťte make env}
+    ports:
+      - "127.0.0.1:${JRC_POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - jrc-postgres-data:/var/lib/postgresql
+    healthcheck:
+      # Dočasný server při inicializaci svazku přijímá jen unixový socket, nikoli TCP.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+  jrc-s3:
+    build:
+      context: docker
+      dockerfile: Dockerfile.s3
+    image: jrc-s3:local
+    container_name: jrc-s3
+    restart: unless-stopped
+    environment:
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:?Spusťte make env}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?Spusťte make env}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?Spusťte make env}
+      S3_BUCKET: ${S3_BUCKET:-jrc-local}
+    ports:
+      - "127.0.0.1:${JRC_S3_PORT:-13900}:3900"
+    volumes:
+      - jrc-s3-data:/var/lib/garage
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /var/lib/garage/meta/.jrc-initialized && garage status >/dev/null 2>&1"]
+      interval: 2s
+      timeout: 5s
+      retries: 40
+networks:
+  default:
+    name: jrc-network
+volumes:
+  jrc-postgres-data:
+    name: jrc-postgres-data
+  jrc-s3-data:
+    name: jrc-s3-data
