@@ -35,6 +35,10 @@ Platí pro Claude (PM, kodér, tester) i pro Codex (kodér, tester). Než začne
 
 ## Hranice (rozhodnutí Honzy)
 
+- **Sestavení, instalace balíčků, běh aplikace, testy i prohlížeč pro vizuální testy spouštěj jen
+  uvnitř vývojového prostředí v Dockeru** (popis v `KB/aplikace/provoz/vyvojove-prostredi.md`, příkazy
+  `make …`). Na systém Jarvise nic neinstaluj.
+- Aplikace je v MVP1 jen lokální. Porty navazuj jen na `127.0.0.1` a do Tailscale nesahej.
 - Nedestruktivní kroky dělej sám.
 - **Uvnitř Dockeru projektu JR Content** smí agent i mazat a resetovat data, pokud to blok potřebuje.
 - **Mimo Docker nic, co by ovlivnilo systém**, bez povolení Honzy. To zahrnuje cron a systemd,
