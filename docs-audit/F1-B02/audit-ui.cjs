@@ -32,7 +32,7 @@ const assert = require('node:assert/strict');
     await shot('03-projekt');
     await page.getByText('Reel pro Ellu – IG', { exact: true }).first().dblclick();
     await page.waitForURL(`**/assets/${state.asset_id}`, { timeout: 120000 });
-    await page.locator('video').waitFor();
+    await page.locator('video').first().waitFor();
     await page.waitForFunction(() => document.querySelector('video')?.readyState >= 2, { timeout: 60000 });
     await page.getByRole('button', { name: 'Play', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('video')?.currentTime > 1);
@@ -44,13 +44,26 @@ const assert = require('node:assert/strict');
     await page.getByText('Celé video v1: zkontrolováno v auditu.', { exact: true }).waitFor();
     assert.equal(await page.getByText('Celé video v2: zkontrolováno v auditu.', { exact: true }).count(), 0);
     await page.getByText('V čase 0:17 zkrátit – verze 1.', { exact: true }).click();
+    // Klik na komentář skočí v přehrávači na jeho čas; počkat na vykreslený snímek.
+    await page.waitForFunction(() => {
+      const v = document.querySelector('video');
+      return v && Math.abs(v.currentTime - 17) < 0.5 && !v.seeking && v.readyState >= 2;
+    }, { timeout: 60000 });
+    await page.waitForTimeout(1000);
     await shot('05-video-v1-komentare');
     await page.getByTitle('Compare versions', { exact: true }).click();
-    await page.waitForFunction(() => document.querySelectorAll('video').length >= 2);
+    await page.waitForURL(/compare=/);
+    await page.waitForFunction(() => {
+      // Jen viditelná videa; stránka má i skryté pomocné video pro snímky.
+      const videos = [...document.querySelectorAll('video')]
+        .filter(v => v.getBoundingClientRect().width > 0);
+      return videos.length >= 2 && videos.every(v => v.readyState >= 2);
+    }, { timeout: 60000 });
+    await page.waitForTimeout(1500);
     await shot('06-porovnani');
     await page.goto(`http://127.0.0.1:13020/projects/${state.project_id}/assets/${state.asset_id}`);
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.locator('video').waitFor();
+    await page.locator('video').first().waitFor();
     await page.waitForFunction(() => document.querySelector('video')?.readyState >= 2);
     await shot('07-telefon');
     fs.writeFileSync('/results/ui.json', JSON.stringify({ result: 'passed', pageErrors: errors,
