@@ -14,6 +14,9 @@ x-app: &app
     DJANGO_SETTINGS_MODULE: config.settings.development
   volumes:
     - media_data:/app/media
+  # Vnitřní síť bez přístupu do internetu: worker, migrace ani databáze nemohou nic posílat ven.
+  networks:
+    - vnitrni
 
 services:
   postgres:
@@ -26,6 +29,8 @@ services:
       POSTGRES_USER: postgres
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - vnitrni
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -47,6 +52,10 @@ services:
     command: python manage.py runserver 0.0.0.0:8000
     ports:
       - "127.0.0.1:18010:8000"
+    # Web potřebuje i běžnou síť, jinak Docker nezveřejní port na 127.0.0.1.
+    networks:
+      - vnitrni
+      - web
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -61,3 +70,8 @@ services:
 volumes:
   postgres_data:
   media_data:
+
+networks:
+  vnitrni:
+    internal: true
+  web: {}
