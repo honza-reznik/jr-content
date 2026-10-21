@@ -17,6 +17,12 @@ existing_volumes() {
     done
 }
 
+recovery_error() {
+    printf 'Chybí .env, ale existují datové svazky JR Content. Nová hesla nelze bezpečně vytvořit.\n' >&2
+    printf 'Zkopírujte původní .env do aktuální složky (chmod 600 .env), nebo spusťte make reset, který SMAŽE lokální data JR Content.\n' >&2
+    exit 1
+}
+
 case "${1:?Chybí operace}" in
     check)
         owner=$(dev_dir)
@@ -42,18 +48,20 @@ case "${1:?Chybí operace}" in
             for volume in $volumes; do
                 owner=$(docker run --rm --name jrc-state --pull never --network none \
                     --mount "type=volume,src=$volume,dst=/state,readonly" \
-                    jrc-dev:local sh -c 'if [ -f /state/.jrc-working-dir ]; then cat /state/.jrc-working-dir; fi')
+                    jrc-dev:local sh -c 'if [ -f /state/.jrc-working-dir ]; then cat /state/.jrc-working-dir; fi') || owner=
                 [ -z "$owner" ] || break
             done
         fi
         if [ -n "$owner" ] && [ "$owner" != "$current_dir" ] && [ -r "$owner/.env" ]; then
-            (umask 077; cp "$owner/.env" .env)
-            chmod 600 .env
+            # Neúspěšná kopie nesmí zanechat neúplný .env pro další make up.
+            env_copy=$(mktemp .jrc-env.XXXXXX.env.local) || recovery_error
+            trap 'rm -f "$env_copy"' 0
+            if ! (cp "$owner/.env" "$env_copy" && chmod 600 "$env_copy" && mv "$env_copy" .env); then
+                recovery_error
+            fi
             printf 'Převzat původní .env ze složky %s; hesla i data zůstávají zachovaná.\n' "$owner"
         else
-            printf 'Chybí .env, ale existují datové svazky JR Content. Nová hesla nelze bezpečně vytvořit.\n' >&2
-            printf 'Zkopírujte původní .env do aktuální složky (chmod 600 .env), nebo spusťte make reset, který SMAŽE lokální data JR Content.\n' >&2
-            exit 1
+            recovery_error
         fi
         ;;
     remember)
