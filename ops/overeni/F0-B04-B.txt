@@ -1,0 +1,5 @@
+OK FFmpeg: místně vytvořené video H.264, 320×240, 2 sekundy
+OK Playwright Chromium 156.0.8078.4: stránka a screenshot ops/screenshoty/F0-B03/chromium.png
+OK všechny smoke testy prostředí
+
+Model: Codex gpt-6-astra high
