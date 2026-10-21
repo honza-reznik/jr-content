@@ -1,0 +1,63 @@
+# Auditní stack Brightbean Studio (F1-B01).
+# Samostatný compose projekt: docker compose -p jrc-audit-brightbean -f docs-audit/F1-B01/docker-compose.audit.yml ...
+# Nepoužívá původní docker-compose.yml z repozitáře, protože ten vystavuje porty 8000 a 5432
+# na všech adresách. Tady je web jen na 127.0.0.1:18010 a databáze nemá port ven.
+# Cesty jsou relativní k tomuto souboru; klon je v ../../audit/brightbean-studio (mimo git).
+
+name: jrc-audit-brightbean
+
+x-app: &app
+  image: jrc-audit-brightbean:48801fd
+  env_file:
+    - ../../audit/jrc-audit-brightbean.env
+  environment:
+    DJANGO_SETTINGS_MODULE: config.settings.development
+  volumes:
+    - media_data:/app/media
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    # POSTGRES_PASSWORD je v env souboru (vytváří ho skripty/priprav-env.sh).
+    env_file:
+      - ../../audit/jrc-audit-brightbean.env
+    environment:
+      POSTGRES_DB: brightbean
+      POSTGRES_USER: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    <<: *app
+    build:
+      context: ../../audit/brightbean-studio
+    command: python manage.py migrate --noinput
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  app:
+    <<: *app
+    # Vývojový server Django (DEBUG), aby šly statické soubory bez proxy a bez HTTPS.
+    command: python manage.py runserver 0.0.0.0:8000
+    ports:
+      - "127.0.0.1:18010:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    <<: *app
+    command: python manage.py run_studio_worker
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:
+  media_data:
