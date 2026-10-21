@@ -1,0 +1,16 @@
+{
+  "result": "passed",
+  "private_project_status": 403,
+  "approval": {
+    "id": "599c338b-570a-48c5-9bbf-e6081d19e0aa",
+    "asset_id": "04a5bc48-004e-4479-8d71-1d01b9bb04a7",
+    "version_id": "9ba302d4-cecd-450f-a8fe-8532ca290c77",
+    "user_id": "9396cd6a-e828-4f52-921e-feadc13a2ad5",
+    "status": "approved",
+    "note": "Schv\u00e1lila Ella",
+    "created_at": "2026-10-21T21:06:58.470953Z"
+  },
+  "client_can_create_project": true,
+  "client_comment_id": "1cd9aeaa-ef04-4550-9cf0-fa5abf457b85",
+  "email_delivery": "disabled; invite taken from admin API"
+}

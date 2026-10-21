@@ -1,0 +1,24 @@
+[
+  {
+    "version": 1,
+    "upload_seconds": 1.7,
+    "processing_seconds": 88.6,
+    "total_seconds": 90.3,
+    "source_bytes": 101754387,
+    "statuses": [
+      "processing",
+      "ready"
+    ]
+  },
+  {
+    "version": 2,
+    "upload_seconds": 1.47,
+    "processing_seconds": 88.61,
+    "total_seconds": 90.08,
+    "source_bytes": 101754387,
+    "statuses": [
+      "processing",
+      "ready"
+    ]
+  }
+]
