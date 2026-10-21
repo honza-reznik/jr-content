@@ -26,7 +26,7 @@ if [ ! -f /var/lib/garage/meta/.jrc-initialized ]; then
     # Výstup importu obsahuje přístupový klíč; nesmí do logu.
     garage key import --yes -n jrc-local "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" >/dev/null 2>&1
     garage bucket create "$S3_BUCKET"
-    garage bucket allow --read --write --owner "$S3_BUCKET" --key "$AWS_ACCESS_KEY_ID"
+    garage bucket allow --read --write --owner "$S3_BUCKET" --key "$AWS_ACCESS_KEY_ID" >/dev/null 2>&1
     touch /var/lib/garage/meta/.jrc-initialized
 fi
 wait "$server_pid"

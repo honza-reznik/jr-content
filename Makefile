@@ -28,7 +28,11 @@ down:
 	$(COMPOSE) down
 
 shell:
-	$(COMPOSE) exec jrc-dev sh -lc "$$CMD"
+	@if [ -t 0 ]; then \
+		$(COMPOSE) exec jrc-dev sh -c "$$CMD"; \
+	else \
+		$(COMPOSE) exec -T jrc-dev sh -c "$$CMD"; \
+	fi
 
 test:
 	$(COMPOSE) exec -T jrc-dev bash scripts/smoke.sh
