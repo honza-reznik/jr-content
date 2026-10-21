@@ -370,7 +370,7 @@ run_pm() {
   echo "----- výstup PM: začátek -----" >>"$LOGFILE"
   out=$(mktemp "${TMPDIR:-/tmp}/tick-pm.XXXXXX")
   ( exec 9>&-; cd "$PROJECT_DIR" && exec timeout --kill-after=60 "$to" "${cmd[@]}" ) </dev/null 2>&1 \
-    | tee -a "$LOGFILE" >"$out"
+    | tee -a "$LOGFILE" >"$out" 9>&-
   rc=${PIPESTATUS[0]}
   echo "----- výstup PM: konec (kód $rc) -----" >>"$LOGFILE"
 
