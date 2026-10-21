@@ -1,0 +1,99 @@
+x-api: &api
+  image: jrc-audit-freeframe-api:local
+  build:
+    context: ../..
+    dockerfile: docs-audit/F1-B02/Dockerfile.api
+  env_file: ../../audit/.env
+  working_dir: /workspace
+  volumes:
+    - ../../audit/freeframe:/workspace:ro
+    - ../../audit/results:/results
+    - ./:/audit-tools:ro
+  environment: &environment
+    REDIS_URL: redis://redis:6379/0
+    S3_STORAGE: minio
+    S3_ENDPOINT: http://storage:9000
+    S3_PUBLIC_ENDPOINT: http://127.0.0.1:13920
+    S3_BUCKET: freeframe
+    S3_REGION: us-east-1
+    FRONTEND_URL: http://127.0.0.1:13020
+    MAIL_PROVIDER: smtp
+    SMTP_HOST: 127.0.0.1
+    SMTP_PORT: 9
+    SMTP_USE_TLS: 'false'
+    AWS_EC2_METADATA_DISABLED: 'true'
+    TRANSCODING_CONCURRENCY: '1'
+    TRANSCODER_CPU_LIMIT: '4'
+    STALE_UPLOAD_TIMEOUT_HOURS: '0'
+    SOFT_DELETE_RETENTION_DAYS: '0'
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    storage:
+      condition: service_healthy
+services:
+  postgres:
+    image: postgres:16
+    env_file: ../../audit/.env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U freeframe']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+  storage:
+    image: pgsty/silo:RELEASE.2026-09-16T00-00-00Z
+    command: server /data --console-address ':9001'
+    env_file: ../../audit/.env
+    ports:
+      - '127.0.0.1:13920:9000'
+    volumes:
+      - s3data:/data
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+  api:
+    <<: *api
+    ports:
+      - '127.0.0.1:18020:8000'
+    command: sh -c 'cd apps/api && alembic upgrade head && cd /workspace && uvicorn apps.api.main:app --host 0.0.0.0 --port 8000'
+  worker:
+    <<: *api
+    command: celery -A apps.api.tasks.celery_app worker -Q transcoding -c 1 --loglevel=info
+  web:
+    image: jrc-dev:local
+    working_dir: /app
+    environment:
+      NEXT_PUBLIC_API_URL: http://127.0.0.1:18020
+      API_INTERNAL_URL: http://api:8000
+      NEXT_TELEMETRY_DISABLED: '1'
+      NODE_ENV: development
+    ports:
+      - '127.0.0.1:13020:3000'
+    volumes:
+      - ../../audit/freeframe/apps/web:/app
+      - web_modules:/app/node_modules
+      - web_next:/app/.next
+    command: sh -c 'npm install --no-audit --no-fund && npx next dev --hostname 0.0.0.0'
+    depends_on:
+      - api
+volumes:
+  pgdata:
+  redisdata:
+  s3data:
+  web_modules:
+  web_next:

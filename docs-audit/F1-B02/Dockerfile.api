@@ -1,0 +1,8 @@
+# Sdílený místní obraz šetří stahování; běžící jrc-dev se nemění.
+FROM jrc-dev:local
+USER root
+RUN python3 -m venv /opt/freeframe
+COPY audit/freeframe/apps/api/requirements*.txt /tmp/freeframe/
+RUN /opt/freeframe/bin/pip install --no-cache-dir -r /tmp/freeframe/requirements-dev.txt
+ENV PATH=/opt/freeframe/bin:$PATH
+WORKDIR /workspace
