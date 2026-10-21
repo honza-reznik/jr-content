@@ -2,6 +2,9 @@ SHELL := /bin/sh
 .DEFAULT_GOAL := up
 # Pevný projekt a soubor zabrání zásahu do jiných Compose projektů.
 override COMPOSE := docker compose --project-name jrc --file docker-compose.yml --env-file .env
+# Správa existujících kontejnerů nepotřebuje hesla ani místní .env.
+# Zástupné hodnoty se používají pouze pro načtení konfigurace, nikdy pro up.
+override ADMIN_COMPOSE := PGPASSWORD=unused GARAGE_RPC_SECRET=unused AWS_ACCESS_KEY_ID=unused AWS_SECRET_ACCESS_KEY=unused docker compose --project-name jrc --file docker-compose.yml --env-file /dev/null
 export JRC_UID := $(shell id -u)
 export JRC_GID := $(shell id -g)
 # Buildx zapisuje provozní údaje pouze do worktree, i v omezené relaci agenta.
@@ -14,6 +17,7 @@ build:
 	docker build --tag jrc-dev:local --file docker/Dockerfile docker
 
 env:
+	@sh scripts/workspace.sh env
 	@if [ ! -f .env ]; then \
 		$(MAKE) build && \
 		docker run --rm --name jrc-env --user "$(JRC_UID):$(JRC_GID)" \
@@ -23,11 +27,14 @@ env:
 up: env
 	$(MAKE) build
 	$(COMPOSE) up --detach --build --wait --wait-timeout 120
+	@sh scripts/workspace.sh remember
 
 down:
-	$(COMPOSE) down
+	@sh scripts/workspace.sh remember
+	$(ADMIN_COMPOSE) down
 
 shell:
+	@sh scripts/workspace.sh check
 	@if [ -t 0 ]; then \
 		$(COMPOSE) exec jrc-dev sh -c "$$CMD"; \
 	else \
@@ -35,14 +42,15 @@ shell:
 	fi
 
 test:
+	@sh scripts/workspace.sh check
 	$(COMPOSE) exec -T jrc-dev bash scripts/smoke.sh
 
-reset: env
-	$(COMPOSE) down --volumes
+reset:
+	$(ADMIN_COMPOSE) down --volumes
 	$(MAKE) up
 
 logs:
-	$(COMPOSE) logs --tail 100
+	$(ADMIN_COMPOSE) logs --tail 100
 
 ps:
-	$(COMPOSE) ps
+	$(ADMIN_COMPOSE) ps
