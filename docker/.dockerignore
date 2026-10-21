@@ -1,0 +1,5 @@
+*
+!Dockerfile
+!Dockerfile.s3
+!garage.toml
+!garage-entrypoint.sh
