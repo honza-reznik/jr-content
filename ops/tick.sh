@@ -11,6 +11,7 @@
 # Proměnné prostředí (hlavně pro testy):
 #   TICK_CONF  cesta ke konfiguraci (výchozí ops/tick.conf vedle skriptu)
 #   TICK_NOW   podvržený „teď“ ve tvaru AAAA-MM-DDTHH:MM (místní čas)
+#   TICK_NOW_AFTER_PM  podvržený „teď“ po doběhnutí PM (jen testy; jinak se čas znovu načte z hodin)
 
 set -uo pipefail
 
@@ -49,11 +50,14 @@ CLAUDE_LIMIT_EXIT_CODES=${CLAUDE_LIMIT_EXIT_CODES:-}
 
 # --- Čas ---------------------------------------------------------------------
 
-if [[ -n ${TICK_NOW:-} ]]; then
-  NOW=$(date -d "$TICK_NOW" +%s) || { echo "tick: neplatné TICK_NOW: $TICK_NOW" >&2; exit 2; }
-else
-  NOW=$(date +%s)
-fi
+now_epoch() {   # $1 = podvržený čas (AAAA-MM-DDTHH:MM) nebo prázdné = skutečné hodiny
+  if [[ -n $1 ]]; then
+    date -d "$1" +%s || { echo "tick: neplatný podvržený čas: $1" >&2; return 1; }
+  else
+    date +%s
+  fi
+}
+NOW=$(now_epoch "${TICK_NOW:-}") || exit 2
 LOGFILE=$LOG_DIR/tick-$(date -d "@$NOW" +%F).log
 
 fmt() { date -d "@$1" '+%-d.%-m. %H:%M'; }
@@ -378,15 +382,16 @@ run_pm() {
   for code in $CLAUDE_LIMIT_EXIT_CODES; do
     [[ $rc == "$code" ]] && limit=1
   done
-  if (( rc == 124 || rc == 137 )); then
+  # Kód 0 je vždy úspěch; vzory a kódy limitu se vyhodnocují jen při nenulovém kódu.
+  if (( rc == 0 )); then
+    PM_RESULT=ok
+    log "PM skončil v pořádku."
+  elif (( rc == 124 || rc == 137 )); then
     PM_RESULT=timeout
     log "PM ukončen po vypršení času (kód $rc). Záložní Codex se nespouští."
   elif (( limit )) || tail -n "$LIMIT_TAIL_LINES" "$out" | grep -Eqi -- "$CLAUDE_LIMIT_PATTERNS"; then
     PM_RESULT=limit
     log "PM skončil kvůli LIMITU (kód $rc). Přecházím na záložní Codex."
-  elif (( rc == 0 )); then
-    PM_RESULT=ok
-    log "PM skončil v pořádku."
   else
     PM_RESULT=chyba
     log "PM skončil chybou (kód $rc), limit nerozpoznán. Záložní Codex se nespouští."
@@ -508,6 +513,8 @@ main() {
     if (( DRY_RUN )); then
       run_codex_fallback hypoteticky
     elif [[ $PM_RESULT == limit ]]; then
+      # PM mohl běžet hodiny: čas okna, brána Codexu i timeout se počítají znovu od aktuálního času.
+      NOW=$(now_epoch "${TICK_NOW_AFTER_PM:-${TICK_NOW:-}}") || exit 2
       run_codex_fallback "PM narazil na limit"
     fi
   else

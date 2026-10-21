@@ -291,6 +291,43 @@ check "Codex běží ve worktree se stdin /dev/null" has "$(calls)" "codex-cwd=$
 check "výstup Codexu v logu bloku" has "$(cat "$T/proj/ops/logs/F0-B03-B.log")" "falešný codex pracuje"
 end
 
+begin "limit PM po 6:30 (start 6:00, PM skončí 6:45): Codex se nespustí"
+claude_usage "Oct 22, 7:00am (Europe/Prague)" 70
+codex_usage "$(epoch '2026-10-22 07:00')"
+pm_output "Claude AI usage limit reached" 1
+TICK_NOW_AFTER_PM=2026-10-22T06:45 tick 2026-10-22T06:00
+check "PM spuštěn" eq "$(count_pm)" 1
+check "limit v logu" has "$(logfile)" "PM skončil kvůli LIMITU (kód 1)"
+check "Codex nespuštěn" eq "$(count_codex)" 0
+check "log s aktuálním časem" has "$(logfile)" "2026-10-22 06:45 záložní Codex nespuštěn: mimo noční okno"
+end
+
+begin "limit PM ve 4:00 (start 2:00), Codex okno neběží: nové by bylo do 9:00, nepustí"
+claude_usage "Oct 22, 2:09am (Europe/Prague)" 70
+rm -rf "$T/codex"
+pm_output "Claude AI usage limit reached" 1
+TICK_NOW_AFTER_PM=2026-10-22T04:00 tick 2026-10-22T02:00
+check "PM spuštěn" eq "$(count_pm)" 1
+check "Codex nespuštěn" eq "$(count_codex)" 0
+check "brána Codex s časem po PM" has "$(logfile)" "BRÁNA Codex: NEPUSTÍ · 5h okno neběží a nové by se obnovilo 22.10. 09:00, tedy po 07:30"
+end
+
+begin "limit PM: timeout Codexu se počítá od času po PM (5:00 → 7200 s do 7:00)"
+codex_usage "$(epoch '2026-10-22 06:00')"
+pm_output "Claude AI usage limit reached" 1
+TICK_NOW_AFTER_PM=2026-10-22T05:00 tick 2026-10-22T01:00
+check "Codex spuštěn" eq "$(count_codex)" 1
+check "timeout od aktuálního času" has "$(logfile)" "timeout 7200 s"
+end
+
+begin "PM skončí kódem 0 a jen zmíní usage limit: v pořádku, Codex ne"
+pm_output $'Noc hotová.\nPozn.: Codex brzy narazí na usage limit reached.' 0
+tick 2026-10-21T23:00
+check "PM v pořádku" has "$(logfile)" "PM skončil v pořádku."
+check "žádný limit" eq "$(grep -c LIMITU <<<"$(logfile)")" 0
+check "Codex nespuštěn" eq "$(count_codex)" 0
+end
+
 begin "limit PM rozpoznaný podle návratového kódu z konfigurace"
 conf 'CLAUDE_LIMIT_EXIT_CODES="42"'
 pm_output "něco se pokazilo" 42
