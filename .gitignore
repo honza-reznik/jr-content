@@ -1,0 +1,9 @@
+.env
+*.env.local
+ops/povoleni-den
+ops/logs/
+ops/*.lock
+node_modules/
+__pycache__/
+.venv/
+data/
