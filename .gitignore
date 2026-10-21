@@ -11,3 +11,4 @@ ops/screenshoty/
 # Lokální výstupy smoke testu prostředí
 ops/test-output/
 .cache/docker-buildx/
+audit/
