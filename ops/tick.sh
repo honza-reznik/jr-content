@@ -59,8 +59,9 @@ LOGFILE=$LOG_DIR/tick-$(date -d "@$NOW" +%F).log
 fmt() { date -d "@$1" '+%-d.%-m. %H:%M'; }
 
 log() {
-  local line
-  line="$(date -d "@$NOW" '+%F %H:%M') $*"
+  local line t=$NOW
+  [[ -z ${TICK_NOW:-} ]] && t=$(date +%s)   # skutečný čas zápisu; v testech podvržený
+  line="$(date -d "@$t" '+%F %H:%M') $*"
   if (( DRY_RUN )); then
     echo "[nanečisto] $line"
   else
