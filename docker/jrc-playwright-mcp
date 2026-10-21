@@ -1,0 +1,10 @@
+#!/bin/sh
+# Playwright MCP server pro vizuální testery (F0-B04). Spouští se z hostitele přes
+# `docker exec -i jrc-dev jrc-playwright-mcp`; komunikuje přes stdin/stdout.
+# Použije Chromium z image (Playwright 1.64), bez vlastního stahování prohlížeče.
+set -eu
+CHROME=$(ls -d /opt/playwright-browsers/chromium-*/chrome-linux64/chrome | head -n 1)
+mkdir -p /workspace/ops/screenshoty/mcp
+exec node /opt/jrc-mcp/node_modules/@playwright/mcp/cli.js \
+  --headless --browser chromium --executable-path "$CHROME" --isolated \
+  --no-sandbox --output-dir /workspace/ops/screenshoty/mcp "$@"
