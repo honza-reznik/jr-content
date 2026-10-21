@@ -77,7 +77,9 @@ do něj `pw.js` a krok a spustí Chromium. Krok je modul `module.exports = async
 `h.go('/cesta/')`, `h.shot('jmeno')`. Přihlášení se drží v `/tmp/bb-state*.json` uvnitř `jrc-dev`
 (proměnná `BB_STATE`, pro klienta jiný soubor). Prohlížeč smí ven jen na `cdn.jsdelivr.net`
 (aplikace odtud načítá knihovny JavaScriptu), ostatní požadavky mimo stack blokuje.
-Chromium u jména `app` vynucuje HTTPS, proto skript používá IP adresu kontejneru.
+Chromium u jména `app` vynucuje HTTPS, proto skript používá IP adresu kontejneru. Po `down`/`up`
+dostane kontejner jinou adresu, a uložené přihlášení prohlížeče proto přestane platit: krok musí
+nejdřív projít `/accounts/login/`.
 
 ## 4. Automatické testy Brightbean
 
