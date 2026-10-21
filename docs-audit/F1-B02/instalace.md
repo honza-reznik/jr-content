@@ -58,7 +58,9 @@ docker compose -p jrc-audit-freeframe -f docs-audit/F1-B02/compose.yml down
 docker compose -p jrc-audit-freeframe -f docs-audit/F1-B02/compose.yml up -d
 ```
 
-Ověření instalace, testy a konkrétní scénáře budou doplněny po běhu.
+Ověřeno 21. 10. 2026 (kodér A): po `down` a `up -d` je web i API připravené za ~27 s
+(`curl http://127.0.0.1:13020/login` → 200, `curl http://127.0.0.1:18020/setup/status` →
+`needs_setup: false`), data i videa zůstala a `audit-ui.cjs` znovu prošel.
 
 ## Živé zkoušky a měření
 
@@ -98,6 +100,18 @@ docker run --rm --network host --env-file audit/.env \
   jrc-dev:local node /tools/audit-ui.cjs
 ```
 
+```sh
+# Vlastní pole místo stavů, kanálů, data publikace a popisku (po audit-api.py):
+docker run --rm --network host --env-file audit/.env \
+  --user "$(id -u):$(id -g)" -v "$PWD/audit/results:/results" \
+  -v "$PWD/docs-audit/F1-B02:/tools:ro" \
+  jrc-dev:local python3 /tools/audit-fields.py
+```
+
+Měření převodu: před spuštěním zkontrolovat `docker stats --no-stream` a `uptime`, aby souběžně
+neběželo nic náročného. `measure.sh` zapisuje i `audit/results/host.tsv` (load celého počítače
+a nejvytíženější cizí kontejner), takže je vidět, co běželo souběžně.
+
 API scénář nastaví první účet `honza.audit@example.com`; heslo je `AUDIT_PASSWORD` v `audit/.env`.
 Účet je výhradně testovací. Klientský scénář získá pozvánku z oprávněné odpovědi správce
 přes API a přijme ji, aniž by posílal e-mail. Ověří přihlášení Elly, komentář, schválení,
@@ -108,6 +122,12 @@ Při neúspěchu HTTP scénáře zastavit měřič Ctrl+C. `measure.sh` sleduje 
 projekt; 100 % CPU znamená jedno vytížené logické jádro, ne celý počítač.
 
 ## Automatické testy původního projektu
+
+Pytest spouštět s výchozím nastavením úklidu (`-e STALE_UPLOAD_TIMEOUT_HOURS=24
+-e SOFT_DELETE_RETENTION_DAYS=30`). Náš compose má úklid vypnutý (`0`), a s ním 8 testů
+úklidu selže. Výsledky 21. 10. 2026: pytest 1521 prošlo / 1 náhodné selhání / 3 přeskočeny,
+Vitest 1011 prošlo, `tsc` bez chyb, lint 0 chyb a 18 varování. Upstream používá pnpm se zámkem
+verzí; náš dev postup instaluje web přes `npm install` (verze nejsou bitově zamčené).
 
 ```sh
 docker compose -p jrc-audit-freeframe -f docs-audit/F1-B02/compose.yml \
