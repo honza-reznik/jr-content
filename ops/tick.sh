@@ -440,17 +440,16 @@ run_codex_fallback() {   # $1 = proč Claude nejde
     log "${pre}záložní Codex nespuštěn: worktree $wt neexistuje"
     return
   fi
-  local pid
-  if pid=$(codex_running_for "$wt"); then
-    log "${pre}záložní Codex nespuštěn: na $id už běží codex exec (PID $pid)"
-    return
-  fi
-
   local ok=0
   codex_gate && ok=1
   log "BRÁNA Codex: $( ((ok)) && echo PUSTÍ || echo NEPUSTÍ ) · $GATE_TEXT"
   if (( ! ok )); then
     log "${pre}záložní Codex nespuštěn: brána Codex nepustila"
+    return
+  fi
+  local pid
+  if pid=$(codex_running_for "$wt"); then
+    log "${pre}záložní Codex nespuštěn: na $id už běží codex exec (PID $pid)"
     return
   fi
 

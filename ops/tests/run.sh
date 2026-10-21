@@ -368,6 +368,7 @@ end
 
 begin "na bloku už běží codex exec: druhý nespustí"
 claude_usage "Oct 22, 9:00am (Europe/Prague)" 70
+codex_usage "$(epoch '2026-10-22 06:00')"
 bash -c 'sleep 20; true' codex exec -C "$T/wt/F0-B03" &
 busy=$!
 tick 2026-10-22T04:00
