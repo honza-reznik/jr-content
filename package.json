@@ -1,0 +1,17 @@
+{
+  "name": "freeframe",
+  "private": true,
+  "packageManager": "pnpm@10.15.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint"
+  },
+  "devDependencies": {
+    "turbo": "latest"
+  }
+}

@@ -1,0 +1,13 @@
+{% extends "email/base.html" %}
+
+{% block content %}
+<h2>{{ asset_name }} has been {{ status }}</h2>
+<p><strong>{{ reviewer_name }}</strong> has <strong>{{ status }}</strong> your asset.</p>
+{% if note %}
+<p><strong>Note:</strong></p>
+<div class="quote">{{ note }}</div>
+{% endif %}
+<p>
+    <a href="{{ asset_link }}" class="button">View Asset</a>
+</p>
+{% endblock %}

@@ -1,0 +1,51 @@
+name: Bug Report
+description: Report a bug in FreeFrame
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      placeholder: A clear description of what the bug is.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. See error
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: What you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      placeholder: If applicable, add screenshots.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Frontend (Next.js)
+        - Backend (FastAPI)
+        - Share Links
+        - Media Processing
+        - Authentication
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / Commit
+      placeholder: e.g. latest main, commit abc123
