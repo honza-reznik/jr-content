@@ -2,9 +2,14 @@
 # Ovládání Dockeru na hostiteli; nástroje a práce s datovými svazky běží v Dockeru.
 set -eu
 current_dir=$(pwd -P)
+project=${JRC_PROJECT:-jrc}
+case "$project" in jrc|jrc-*) ;; *) printf 'Neplatný projekt JR Content.\n' >&2; exit 1 ;; esac
+dev_container=$project-dev
+postgres_volume=$project-postgres-data
+s3_volume=$project-s3-data
 
 dev_dir() {
-    docker inspect jrc-dev --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' 2>/dev/null || true
+    docker inspect "$dev_container" --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' 2>/dev/null || true
 }
 
 existing_volumes() {
@@ -12,7 +17,7 @@ existing_volumes() {
     all_volumes=$(docker volume ls --format '{{.Name}}') || return 1
     for volume in $all_volumes; do
         case "$volume" in
-            jrc-postgres-data|jrc-s3-data) printf '%s\n' "$volume" ;;
+            "$postgres_volume"|"$s3_volume") printf '%s\n' "$volume" ;;
         esac
     done
 }
@@ -26,10 +31,10 @@ recovery_error() {
 case "${1:?Chybí operace}" in
     check)
         owner=$(dev_dir)
-        running=$(docker inspect jrc-dev --format '{{.State.Running}}' 2>/dev/null || true)
+        running=$(docker inspect "$dev_container" --format '{{.State.Running}}' 2>/dev/null || true)
         if [ "$owner" != "$current_dir" ] || [ "$running" != true ]; then
             printf 'Vývojové prostředí neběží pro aktuální složku %s.\n' "$current_dir" >&2
-            printf 'Složka posledního jrc-dev: %s\n' "${owner:-nezjištěna}" >&2
+            printf 'Složka posledního vývojového kontejneru: %s\n' "${owner:-nezjištěna}" >&2
             printf 'Stačí spustit make up v aktuální složce; prostředí se na ni přepne.\n' >&2
             exit 1
         fi
@@ -46,7 +51,7 @@ case "${1:?Chybí operace}" in
         # Po make down již kontejner neexistuje. Cesta (bez hesel) zůstává ve svazcích.
         if [ -z "$owner" ]; then
             for volume in $volumes; do
-                owner=$(docker run --rm --name jrc-state --pull never --network none \
+                owner=$(docker run --rm --name "$project-state" --pull never --network none \
                     --mount "type=volume,src=$volume,dst=/state,readonly" \
                     jrc-dev:local sh -c 'if [ -f /state/.jrc-working-dir ]; then cat /state/.jrc-working-dir; fi') || owner=
                 [ -z "$owner" ] || break
@@ -69,7 +74,7 @@ case "${1:?Chybí operace}" in
         [ -n "$owner" ] || exit 0
         volumes=$(existing_volumes)
         for volume in $volumes; do
-            docker run --rm --name jrc-state --pull never --network none \
+            docker run --rm --name "$project-state" --pull never --network none \
                 --mount "type=volume,src=$volume,dst=/state" \
                 jrc-dev:local sh -c 'printf "%s\n" "$1" > /state/.jrc-working-dir' sh "$owner"
         done
