@@ -56,6 +56,9 @@ docker compose -p jrc-audit-freeframe -f docs-audit/F1-B02/compose.yml ps
 docker compose -p jrc-audit-freeframe -f docs-audit/F1-B02/compose.yml down
 # Opětovné spuštění ze stejných dat:
 docker compose -p jrc-audit-freeframe -f docs-audit/F1-B02/compose.yml up -d
+# Počkat, až API přijímá spojení (kontejnery hlásí „healthy“ dřív):
+until curl -sf http://127.0.0.1:18020/setup/status >/dev/null; do sleep 2; done
+# Pozn.: web se instaluje `npm install` bez zámku verzí, nové sestavení může dostat jiné závislosti.
 ```
 
 Ověřeno 21. 10. 2026 (kodér A): po `down` a `up -d` je web i API připravené za ~27 s
