@@ -75,6 +75,7 @@ CONTINUOUS_UNTIL=
 CLAUDE_FREE_BY=
 CODEX_FREE_BY=
 WEEK_RULE_FROM=
+PM_HEARTBEAT_FILE=$T/proj/ops/pm-interaktivni
 EOF
   # Výchozí usage: Claude okno běží s obnovou 2:09, týden 70 %; Codex obnova 22.10. 0:30.
   claude_usage "Oct 22, 2:09am (Europe/Prague)" 70
@@ -753,6 +754,20 @@ end
 
 begin "systemd timer: každých 30 minut celý den, rozhoduje tick.sh"
 check "kalendář timeru" has "$(cat "$REPO/ops/systemd/jrc-tick.timer")" 'OnCalendar=*-*-* *:00,30'
+end
+
+begin "P-018: čerstvá značka interaktivního PM, tick nic nespustí"
+mkdir -p "$T/proj/ops"; touch -d "2026-10-21 22:50" "$T/proj/ops/pm-interaktivni"
+tick 2026-10-21T23:00
+check "PM nespuštěn" eq "$(count_pm)" 0
+check "log o interaktivním PM" has "$(logfile)" "interaktivní PM běží"
+end
+
+begin "P-018: stará značka (přes 45 min), tick převezme a spustí PM"
+mkdir -p "$T/proj/ops"; touch -d "2026-10-21 22:00" "$T/proj/ops/pm-interaktivni"
+tick 2026-10-21T23:00
+check "PM spuštěn" eq "$(count_pm)" 1
+check "log o převzetí" has "$(logfile)" "přebírám"
 end
 
 echo

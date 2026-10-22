@@ -565,6 +565,16 @@ main() {
   fi
   log "čas: $TIME_TEXT"
 
+  # Interaktivní PM (session Claude Code) zapisuje značku; dokud je čerstvá, tick nic nespouští.
+  if [[ -n ${PM_HEARTBEAT_FILE:-} && -f $PM_HEARTBEAT_FILE ]]; then
+    local hb_age=$(( NOW - $(stat -c %Y "$PM_HEARTBEAT_FILE") ))
+    if (( hb_age < ${PM_HEARTBEAT_MAX_AGE:-2700} )); then
+      log "interaktivní PM běží (značka $PM_HEARTBEAT_FILE stará ${hb_age} s), nic nespouštím"
+      exit 0
+    fi
+    log "značka interaktivního PM je stará ${hb_age} s, přebírám (tick spouští PM)"
+  fi
+
   local ok=0
   claude_gate && ok=1
   log "BRÁNA Claude: $( ((ok)) && echo PUSTÍ || echo NEPUSTÍ ) · $GATE_TEXT"
