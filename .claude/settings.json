@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(make:*)",
+      "Bash(docker compose --project-name jrc:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker exec jrc-dev:*)",
+      "Bash(docker exec -i jrc-dev:*)",
+      "Bash(docker top jrc-dev)",
+      "Bash(git -C /home/honza/jr-content:*)",
+      "Bash(git -C /home/honza/jr-content-wt/:*)",
+      "Bash(git -C /home/honza/jarvis add knowledge/projects/jr-content)",
+      "Bash(git -C /home/honza/jarvis commit:*)",
+      "Bash(git -C /home/honza/jarvis push origin main)",
+      "Bash(claude -p \"/usage\")",
+      "Bash(codex exec:*)",
+      "Bash(pgrep -af:*)",
+      "Bash(date:*)"
+    ],
+    "deny": [
+      "Bash(git -C /home/honza/jarvis add -A:*)",
+      "Bash(git -C /home/honza/jarvis add .:*)",
+      "Bash(git push --force:*)",
+      "Bash(git -C /home/honza/jarvis push --force:*)",
+      "Bash(sudo:*)",
+      "Bash(tailscale:*)",
+      "Bash(systemctl --system:*)",
+      "Bash(docker system prune:*)",
+      "Bash(docker volume prune:*)"
+    ]
+  }
+}

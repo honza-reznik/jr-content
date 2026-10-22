@@ -3,3 +3,4 @@
 !Dockerfile.s3
 !garage.toml
 !garage-entrypoint.sh
+!jrc-playwright-mcp

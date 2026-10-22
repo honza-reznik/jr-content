@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "jrc-playwright": {
+      "command": "docker",
+      "args": ["exec", "-i", "jrc-dev", "jrc-playwright-mcp"]
+    }
+  }
+}

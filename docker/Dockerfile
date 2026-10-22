@@ -13,5 +13,9 @@ RUN npm install --prefix /opt/jrc-tools --no-audit --no-fund playwright@1.64.0 \
 RUN /opt/jrc-tools/node_modules/.bin/playwright install --with-deps chromium \
     && chmod -R a+rX /opt/playwright-browsers \
     && rm -rf /var/lib/apt/lists/* /root/.npm
+# Playwright MCP pro vizuální testery (F0-B04): prohlížeč běží jen tady v kontejneru.
+RUN npm install --prefix /opt/jrc-mcp --no-audit --no-fund @playwright/mcp@0.0.83 \
+    && rm -rf /root/.npm
+COPY jrc-playwright-mcp /usr/local/bin/jrc-playwright-mcp
 WORKDIR /workspace
 CMD ["sleep", "infinity"]

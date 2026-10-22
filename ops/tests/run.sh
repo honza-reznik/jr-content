@@ -70,6 +70,7 @@ LOG_DIR=$T/proj/ops/logs
 CODEX_SESSIONS_DIR=$T/codex
 CLAUDE_BIN=$T/bin/claude
 CODEX_BIN=$T/bin/codex
+CLAUDE_EXTRA_ARGS=()
 EOF
   # Výchozí usage: Claude okno běží s obnovou 2:09, týden 70 %; Codex obnova 22.10. 0:30.
   claude_usage "Oct 22, 2:09am (Europe/Prague)" 70
@@ -451,7 +452,8 @@ begin "skutečná ops/tick.conf: výchozí hodnoty a žádné tajné údaje"
   [[ $MIN_CLAUDE_WEEK_LEFT == 20 && $WINDOW_START == 21:00 && $WINDOW_END == 07:00 \
      && $LAST_START == 06:30 && $RESET_DEADLINE == 07:30 && $PM_MODEL == claude-opus-5-5 \
      && $PROJECT_DIR == /home/honza/jr-content && $CODEX_MODEL == gpt-6-astra \
-     && " ${CODEX_EXTRA_ARGS[*]} " == *" sandbox_workspace_write.network_access=true "* ]]
+     && " ${CODEX_EXTRA_ARGS[*]} " == *" sandbox_workspace_write.network_access=true "* \
+     && " ${CLAUDE_EXTRA_ARGS[*]} " == *" --permission-mode auto "* ]]
 ) >"$T/out" 2>&1
 check "výchozí hodnoty" eq "$?" 0
 check "žádné klíče ani hesla" eq "$(grep -Eci '(api_key|token|password|heslo|secret)[[:space:]]*=' "$REPO/ops/tick.conf")" 0

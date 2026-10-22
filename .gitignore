@@ -17,3 +17,4 @@ proto/F1-B04/test-results/
 proto/F1-B04/playwright-report/
 # F1 audity: klony auditovaných nástrojů
 audit/
+.claude/scheduled_tasks.lock
