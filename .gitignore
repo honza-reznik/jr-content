@@ -15,3 +15,5 @@ ops/test-output/
 proto/F1-B04/media/
 proto/F1-B04/test-results/
 proto/F1-B04/playwright-report/
+# F1 audity: klony auditovaných nástrojů
+audit/
