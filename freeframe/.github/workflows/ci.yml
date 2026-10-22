@@ -1,0 +1,275 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "*.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/PULL_REQUEST_TEMPLATE.md"
+      - ".github/FUNDING.yml"
+      - ".github/dependabot.yml"
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - "*.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/PULL_REQUEST_TEMPLATE.md"
+      - ".github/FUNDING.yml"
+      - ".github/dependabot.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─── Backend ──────────────────────────────────────────────────────────────────
+  backend-test:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+
+    env:
+      DATABASE_URL: postgresql://user:pass@localhost:5432/freeframe_test
+      REDIS_URL: redis://localhost:6379/0
+      S3_BUCKET: freeframe-test
+      S3_ENDPOINT: http://localhost:9000
+      S3_ACCESS_KEY: testkey
+      S3_SECRET_KEY: testsecret
+      S3_REGION: us-east-1
+      JWT_SECRET: ci-test-secret-key-not-for-production
+      FRONTEND_URL: http://localhost:3000
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: user
+          POSTGRES_PASSWORD: pass
+          POSTGRES_DB: freeframe_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/api/requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r apps/api/requirements-dev.txt
+
+      - name: Verify test files exist
+        run: |
+          TEST_COUNT=$(find apps/api/tests -name 'test_*.py' | wc -l)
+          echo "Found $TEST_COUNT test files"
+          if [ "$TEST_COUNT" -lt 5 ]; then
+            echo "::error::Expected at least 5 test files but found $TEST_COUNT — test files may have been deleted"
+            exit 1
+          fi
+
+      - name: Run database migrations
+        working-directory: apps/api
+        run: alembic upgrade head
+
+      - name: Run tests
+        run: |
+          set -o pipefail
+          python -m pytest apps/api/tests/ -v --tb=short 2>&1 | tee test-output.txt
+          # pipefail above makes this step fail on ANY test failure (zero-failure gate).
+          # The floor below additionally guards against tests being deleted or gutted.
+          PASSED=$(grep -oP '\d+ passed' test-output.txt | grep -oP '\d+')
+          echo "Tests passed: $PASSED"
+          if [ -z "$PASSED" ] || [ "$PASSED" -lt 40 ]; then
+            echo "::error::Expected at least 40 tests to pass but got ${PASSED:-0} — tests may have been deleted or gutted"
+            exit 1
+          fi
+
+      - name: Verify critical files exist
+        run: |
+          # Ensure core backend files haven't been deleted
+          for f in \
+            apps/api/main.py \
+            apps/api/middleware/global_rate_limit.py \
+            apps/api/middleware/rate_limit.py \
+            apps/api/middleware/auth.py \
+            apps/api/routers/auth.py \
+            apps/api/routers/share.py \
+            apps/api/routers/upload.py \
+            apps/api/services/permissions.py \
+            apps/api/services/redis_service.py \
+          ; do
+            if [ ! -f "$f" ]; then
+              echo "::error::Critical file missing: $f"
+              exit 1
+            fi
+          done
+          echo "All critical backend files present"
+
+      - name: Check imports resolve
+        run: |
+          python -c "
+          from apps.api.main import app
+          # Count API paths from the OpenAPI schema instead of len(app.routes): recent
+          # FastAPI versions store lazy included-router wrappers, so app.routes no longer
+          # reflects the real endpoint count (it drops sharply) while the schema still does.
+          paths = len(app.openapi()['paths'])
+          print(f'FastAPI app loaded: {paths} API paths')
+          assert paths >= 30, f'Expected 30+ API paths but got {paths} — routers may have been removed'
+          "
+
+  # ─── Frontend ─────────────────────────────────────────────────────────────────
+  frontend-build:
+    name: Frontend Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Verify critical frontend files exist
+        run: |
+          for f in \
+            package.json \
+            app/layout.tsx \
+            app/share/\[token\]/page.tsx \
+            components/layout/sidebar.tsx \
+            components/review/review-provider.tsx \
+            components/review/comment-panel.tsx \
+            components/share/folder-share-viewer.tsx \
+          ; do
+            if [ ! -f "$f" ]; then
+              echo "::error::Critical file missing: apps/web/$f"
+              exit 1
+            fi
+          done
+          echo "All critical frontend files present"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        run: pnpm exec tsc --noEmit
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+
+      - name: Verify build output
+        run: |
+          if [ ! -d ".next" ]; then
+            echo "::error::Build output directory .next does not exist"
+            exit 1
+          fi
+          # Check key pages were built
+          PAGE_COUNT=$(find .next -name '*.html' -o -name '*.js' | wc -l)
+          echo "Build produced $PAGE_COUNT output files"
+          if [ "$PAGE_COUNT" -lt 20 ]; then
+            echo "::error::Build produced too few files ($PAGE_COUNT) — pages may have been removed"
+            exit 1
+          fi
+
+  # ─── Lint ─────────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/api/requirements.txt
+
+      - name: Install Python deps
+        run: pip install -r apps/api/requirements.txt
+
+      - name: Check Python syntax
+        run: python -m py_compile apps/api/main.py
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+        working-directory: apps/web
+
+      - name: Lint frontend
+        run: pnpm lint
+        working-directory: apps/web
+
+  # ─── Docker Build ─────────────────────────────────────────────────────────────
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build API image (dev)
+        run: docker build -t freeframe-api:test -f apps/api/Dockerfile .
+
+      - name: Build API image (prod)
+        run: docker build -t freeframe-api:prod -f apps/api/Dockerfile.prod .
+
+      - name: Test tooling is in the dev image and not the prod one
+        run: |
+          # The dev image is what every documented way of running the suite goes
+          # through, and the prod image is where pytest must never ship. Both
+          # directions are asserted, because a change that fixes one by breaking
+          # the other looks green otherwise.
+          docker run --rm freeframe-api:test python -m pytest --version
+          if docker run --rm freeframe-api:prod python -m pytest --version 2>/dev/null; then
+            echo "::error::pytest is installed in the production image"
+            exit 1
+          fi
+          echo "dev has pytest, prod does not"
+
+      - name: Build Web image (dev)
+        run: docker build -t freeframe-web:test -f apps/web/Dockerfile apps/web/
+
+      - name: Build Web image (prod)
+        run: docker build -t freeframe-web:prod -f apps/web/Dockerfile.prod apps/web/
+
+      - name: Verify docker-compose syntax
+        run: |
+          # Validate compose file syntax (skip env file resolution)
+          python3 -c "import yaml; yaml.safe_load(open('docker-compose.dev.yml'))" && echo "Dev compose YAML is valid"
+          python3 -c "import yaml; yaml.safe_load(open('docker-compose.prod.yml'))" && echo "Prod compose YAML is valid"

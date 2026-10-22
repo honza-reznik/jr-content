@@ -1,0 +1,184 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root,
+[data-theme="dark"] {
+  /* Background — dark theme */
+  --bg-primary: #0d0d10;
+  --bg-secondary: #16161a;
+  --bg-tertiary: #1e1e24;
+  --bg-elevated: #24242c;
+  --bg-hover: #2a2a34;
+
+  /* Borders */
+  --border-primary: #2e2e3a;
+  --border-secondary: #222230;
+  --border-focus: #5b8def;
+
+  /* Text */
+  --text-primary: #eaeaed;
+  --text-secondary: #94949e;
+  --text-tertiary: #5e5e6e;
+  --text-inverse: #0d0d10;
+
+  /* Accent — blue */
+  --accent: #5b8def;
+  --accent-hover: #7aa3f5;
+  --accent-muted: #253556;
+
+  /* Status */
+  --status-success: #34d399;
+  --status-warning: #fbbf24;
+  --status-error: #f87171;
+  --status-info: #60a5fa;
+
+  /* Fonts */
+  --font-sans: var(--font-geist), system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+
+  /* Spacing rhythm */
+  --space-unit: 4px;
+
+  /* Radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+}
+
+[data-theme="light"] {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8f8fa;
+  --bg-tertiary: #f0f0f4;
+  --bg-elevated: #ffffff;
+  --bg-hover: #eaeaef;
+
+  --border-primary: #e0e0e6;
+  --border-secondary: #d0d0d8;
+  --border-focus: #4a7de8;
+
+  --text-primary: #1a1a2e;
+  --text-secondary: #5a5a6e;
+  --text-tertiary: #8a8a9e;
+  --text-inverse: #ffffff;
+
+  --accent: #4a7de8;
+  --accent-hover: #3a6dd8;
+  --accent-muted: #e8eef8;
+
+  --status-success: #16a34a;
+  --status-warning: #ca8a04;
+  --status-error: #dc2626;
+  --status-info: #2563eb;
+}
+
+@layer base {
+  * {
+    border-color: var(--border-primary);
+  }
+
+  body {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+-webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-primary);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-tertiary);
+  }
+
+  /* Selection */
+  ::selection {
+    background-color: var(--accent-muted);
+    color: var(--text-primary);
+  }
+}
+
+/*
+ * The logo owns its filter. Tailwind v3 flattens the @tailwind directives at build
+ * time and emits no @layer at-rules, so nothing here gains layer priority. What keeps
+ * these ahead of a utility is specificity — two selectors against a utility's one —
+ * plus sitting after the utilities @tailwind emits. That covers bare utilities only:
+ * a variant-prefixed one (hover:, group-hover:, peer-*) is emitted later at equal or
+ * higher specificity and would still win, which is why callers pass sizing and layout
+ * classes only.
+ *
+ * Dark is the unscoped default so it matches :root at the top of this file: a document
+ * that never received a data-theme is painted with the dark palette, and the mark has
+ * to be legible against it.
+ */
+[data-theme="light"] .themed-default-logo { filter: none; }
+:root:not([data-theme="light"]) .themed-default-logo { filter: brightness(0) invert(1); }
+
+@layer components {
+
+  /* Smooth focus ring for interactive elements */
+  .focus-ring {
+    @apply outline-none ring-0 transition-shadow duration-150;
+  }
+  .focus-ring:focus-visible {
+    @apply ring-2 ring-[var(--accent)] ring-offset-1 ring-offset-[var(--bg-primary)];
+  }
+
+  /* Glass card effect */
+  .glass-card {
+    @apply rounded-xl border border-[var(--border-primary)] bg-[var(--bg-secondary)] backdrop-blur-md shadow-lg;
+  }
+
+  /* Skeleton shimmer gradient */
+  .skeleton-shimmer {
+    background: linear-gradient(
+      90deg,
+      var(--bg-secondary) 0%,
+      var(--bg-tertiary) 50%,
+      var(--bg-secondary) 100%
+    );
+    background-size: 200% 100%;
+  }
+}
+
+@layer utilities {
+
+  /* Safe-area helpers.
+   *
+   * These are only non-zero once the viewport is `viewport-fit=cover`, which
+   * the root layout sets. Without it iOS resolves every env(safe-area-inset-*)
+   * to 0, so padding written against them looks present in the source and does
+   * nothing at runtime. That trap is why `cover` and these landed together.
+   *
+   * max() rather than the raw env(): most of these surfaces already want some
+   * padding of their own, and on a device with no inset the env() is 0, which
+   * would otherwise remove it. */
+  .pb-safe { padding-bottom: max(var(--ff-pb, 0px), env(safe-area-inset-bottom)); }
+  .pt-safe { padding-top: max(var(--ff-pt, 0px), env(safe-area-inset-top)); }
+  .pl-safe { padding-left: max(var(--ff-pl, 0px), env(safe-area-inset-left)); }
+  .pr-safe { padding-right: max(var(--ff-pr, 0px), env(safe-area-inset-right)); }
+
+  /* For an element positioned against an edge rather than padded away from it. */
+  .bottom-safe { bottom: calc(var(--ff-bottom, 0px) + env(safe-area-inset-bottom)); }
+  .right-safe { right: calc(var(--ff-right, 0px) + env(safe-area-inset-right)); }
+  .left-safe { left: calc(var(--ff-left, 0px) + env(safe-area-inset-left)); }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+}

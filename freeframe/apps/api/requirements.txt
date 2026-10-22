@@ -1,0 +1,39 @@
+fastapi==0.141.1
+# Pinned transitive: fastapi declares `starlette>=0.46.0` with no upper bound,
+# so an unpinned build drifts across starlette MAJOR versions on rebuild alone.
+# Starlette is the ASGI layer under the SSE endpoint and the BaseHTTPMiddleware
+# stack, so that drift is invisible until it is not. Pinned to the version
+# already resolving today; bump it deliberately alongside fastapi.
+starlette==1.7.0
+uvicorn[standard]==0.53.0
+sqlalchemy==2.0.54
+alembic==1.20.0
+psycopg2-binary==2.9.13
+pydantic==2.13.5
+pydantic-settings==2.15.0
+# Signs and checks every token (access, refresh, HLS). Already installed as a
+# dependency of redis; pinned here because the code now imports it directly.
+PyJWT==2.15.1
+# Used directly by services/crypto_service.py (Fernet, for share-link
+# passwords). It used to arrive only through python-jose[cryptography], so it
+# is declared here now that PyJWT, which needs it only for RSA/EC, replaced
+# python-jose. Pinned to the version a fresh build resolved before the swap.
+cryptography==50.0.2
+bcrypt==4.3.0
+python-multipart==0.0.32
+boto3==1.43.103
+# Pinned transitive: boto3 allows any botocore in >=1.43.56,<1.44.0, and botocore
+# is where S3 request signing lives. Silent botocore moves have broken S3
+# compatibility here before (SigV4 presigning against non-AWS backends), so this
+# is pinned to make those changes arrive as a reviewable PR.
+botocore==1.43.103
+celery[redis]==5.6.3
+redis==5.3.1
+httpx==0.28.1
+email-validator==2.3.0
+jinja2==3.1.6
+kombu==5.6.2
+# Used by test_celery_queue_topology.py to parse the compose files. It was
+# already present transitively, but nothing declared it, so a clean rebuild
+# could have dropped it and silently skipped the queue-topology guard.
+pyyaml==6.0.3
