@@ -1,0 +1,140 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f6f6f4;
+  --fg: #1b1b1b;
+  --muted: #5d5d5d;
+  --card: #fff;
+  --border: #d4d4d0;
+  --accent: #1559c0;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161616;
+    --fg: #ececec;
+    --muted: #a8a8a8;
+    --card: #222;
+    --border: #3a3a3a;
+    --accent: #7fb0ff;
+  }
+}
+
+* { box-sizing: border-box; }
+html.no-scroll, html.no-scroll body { overflow: hidden; }
+body { margin: 0; background: var(--bg); color: var(--fg); }
+.page { max-width: 960px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 1.35rem; margin: 0 0 12px; }
+h2 { font-size: 1.1rem; margin: 20px 0 8px; }
+
+/* ---------- Player ---------- */
+.player {
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+  container-type: inline-size; /* overlay font scales with the player width (cqw) */
+}
+.stage { position: relative; aspect-ratio: 16 / 9; background: #000; cursor: pointer; }
+.stage video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
+
+.timecode {
+  position: absolute;
+  top: 3%;
+  left: 2.5%;
+  padding: 0.12em 0.45em;
+  border-radius: 0.25em;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  font: 600 clamp(15px, 3.6cqw, 56px) / 1.25 ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums; /* digits of equal width: the box does not jump */
+  pointer-events: none;
+  user-select: none;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 8px 10px;
+  background: #111;
+  color: #eee;
+}
+.controls #seek { flex: 1 1 160px; min-width: 120px; accent-color: #6aa5ff; height: 32px; }
+.clock { font-variant-numeric: tabular-nums; font-size: 0.9rem; white-space: nowrap; }
+.toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 0.9rem; min-height: 40px; }
+
+.btn {
+  min-height: 40px;
+  min-width: 40px;
+  padding: 6px 12px;
+  border: 1px solid #555;
+  border-radius: 6px;
+  background: #2a2a2a;
+  color: #fff;
+  font: inherit;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+.btn:hover { background: #3a3a3a; }
+
+/* Fullscreen: real (Fullscreen API) or pseudo (CSS fallback, e.g. iPhone) */
+.player:fullscreen,
+.player.pseudo-fs {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+}
+.player.pseudo-fs { position: fixed; inset: 0; z-index: 1000; height: 100dvh; }
+.player:fullscreen .stage,
+.player.pseudo-fs .stage { flex: 1 1 auto; aspect-ratio: auto; min-height: 0; }
+
+/* Phone: controls in two rows, seek bar on its own row */
+@media (max-width: 520px) {
+  .page { padding: 12px; }
+  .controls #seek { order: -1; flex-basis: 100%; }
+}
+
+/* ---------- Comments ---------- */
+.comment-form textarea {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--fg);
+  font: inherit;
+  font-size: 16px; /* below 16px iPhone zooms the page on focus */
+  resize: vertical;
+}
+.comment-form .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.comment-form .btn { background: var(--card); color: var(--fg); border-color: var(--border); }
+.comment-form .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+@media (prefers-color-scheme: dark) {
+  .comment-form .btn.primary { color: #000; }
+}
+
+.comment-list { padding-left: 1.4em; margin: 16px 0 8px; }
+.comment {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+.ts {
+  padding: 0 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--accent);
+  font: 600 1em ui-monospace, Menlo, Consolas, monospace;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.ts:hover { background: rgba(21, 89, 192, 0.12); }
+.hint { color: var(--muted); font-size: 0.85rem; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
