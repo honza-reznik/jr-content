@@ -14,7 +14,7 @@ fi
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 TICK=$REPO/ops/tick.sh
 export TZ=Europe/Prague
-unset ANTHROPIC_API_KEY OPENAI_API_KEY TICK_NOW TICK_CONF
+unset ANTHROPIC_API_KEY OPENAI_API_KEY TICK_NOW TICK_CONF TICK_NOW_AFTER_USAGE TICK_NOW_AFTER_PM
 
 PASS=0
 FAIL=0
@@ -71,6 +71,10 @@ CODEX_SESSIONS_DIR=$T/codex
 CLAUDE_BIN=$T/bin/claude
 CODEX_BIN=$T/bin/codex
 CLAUDE_EXTRA_ARGS=()
+CONTINUOUS_UNTIL=
+CLAUDE_FREE_BY=
+CODEX_FREE_BY=
+WEEK_RULE_FROM=
 EOF
   # Výchozí usage: Claude okno běží s obnovou 2:09, týden 70 %; Codex obnova 22.10. 0:30.
   claude_usage "Oct 22, 2:09am (Europe/Prague)" 70
@@ -138,6 +142,14 @@ end() {
 
 has() { grep -qF -- "$2" <<<"$1"; }
 eq() { [[ $1 == "$2" ]]; }
+
+# Dočasná pravidla se zapínají pouze v testech, které je ověřují.
+continuous_conf() {
+  conf 'CONTINUOUS_UNTIL=2026-10-26T09:00
+CLAUDE_FREE_BY=2026-10-26T09:00
+CODEX_FREE_BY=
+WEEK_RULE_FROM=2026-10-23T17:00'
+}
 
 # --- Testy --------------------------------------------------------------------
 
@@ -286,7 +298,7 @@ check "limit v logu" has "$(logfile)" "PM skončil kvůli LIMITU (kód 1)"
 check "brána Codex v logu" has "$(logfile)" "BRÁNA Codex: PUSTÍ · 5h okno běží (využito 24 %), obnova 22.10. 00:30 nejpozději v 07:30 · týden využito 8 % (pravidlo neplatí)"
 check "Codex spuštěn jednou" eq "$(count_codex)" 1
 check "argumenty Codexu" has "$(calls)" \
-  "codex [exec] [-m] [gpt-6-astra] [-c] [model_reasoning_effort=\"high\"] [-s] [workspace-write] [--skip-git-repo-check] [-C] [$T/wt/F0-B03] [--add-dir] [$T/kb] [-c] [sandbox_workspace_write.network_access=true] [-c] [sandbox_workspace_write.writable_roots=[\"/home/honza/jr-content/.git\"]] [-o] [$T/proj/ops/logs/F0-B03-B-posledni.txt] [Pracuješ na bloku F0-B03 projektu JR Content ve worktree $T/wt/F0-B03."
+  "codex [exec] [-m] [gpt-6.1-sol] [-c] [model_reasoning_effort=\"high\"] [-s] [workspace-write] [--skip-git-repo-check] [-C] [$T/wt/F0-B03] [--add-dir] [$T/kb] [-c] [sandbox_workspace_write.network_access=true] [-c] [sandbox_workspace_write.writable_roots=[\"/home/honza/jr-content/.git\"]] [-o] [$T/proj/ops/logs/F0-B03-B-posledni.txt] [Pracuješ na bloku F0-B03 projektu JR Content ve worktree $T/wt/F0-B03."
 check "zadání: jen dokončovat, nemergovat" has "$(calls)" "Smíš jen dokončovat tento aktivní blok. Nesmíš plánovat, zadávat nové bloky, mergovat ani měnit plán"
 check "Codex běží ve worktree se stdin /dev/null" has "$(calls)" "codex-cwd=$T/wt/F0-B03 stdin=/dev/null"
 check "výstup Codexu v logu bloku" has "$(cat "$T/proj/ops/logs/F0-B03-B.log")" "falešný codex pracuje"
@@ -446,17 +458,301 @@ check "nic nevolá" eq "$(calls)" ""
 check "vypíše důvod" has "$(cat "$T/out")" "nic nespuštěno: mimo noční okno"
 end
 
+begin "nepřetržitý provoz přes den bez povoleni-den: nové okno, timeout podle konfigurace"
+continuous_conf
+claude_usage - 95
+tick 2026-10-23T14:00
+check "PM spuštěn" eq "$(count_pm)" 1
+check "časové pravidlo v logu" has "$(logfile)" "nepřetržitý provoz do 26.10. 09:00 (CONTINUOUS_UNTIL)"
+check "nové okno přes den" has "$(logfile)" "nové se obnoví 23.10. 19:00"
+check "timeout 4 hodiny" has "$(logfile)" "timeout 14400 s"
+end
+
+begin "nepřetržitý provoz: po 6:30 pustí, 7:00 neomezuje běh, obnova po 7:30 povolena"
+continuous_conf
+claude_usage "Oct 24, 11:00am (Europe/Prague)" 70
+tick 2026-10-24T06:45
+check "PM spuštěn" eq "$(count_pm)" 1
+check "obnova 11:00 povolena" has "$(logfile)" "obnova 24.10. 11:00 nejpozději v CLAUDE_FREE_BY 26.10. 09:00"
+check "7:30 vypnuto v logu" has "$(logfile)" "nepřetržitý provoz, RESET_DEADLINE neplatí"
+check "timeout bez omezení do 7:00" has "$(logfile)" "timeout 14400 s"
+end
+
+for reset in 08:00 09:00 09:30; do
+  begin "CLAUDE_FREE_BY: běžící okno s obnovou 26.10. $reset"
+  continuous_conf
+  claude_usage "Oct 26, $reset (Europe/Prague)" 70
+  tick 2026-10-26T03:00
+  expected=1; [[ $reset == 09:30 ]] && expected=0
+  check "rozhodnutí PM" eq "$(count_pm)" "$expected"
+  check "absolutní hranice v logu" has "$(logfile)" "CLAUDE_FREE_BY 26.10. 09:00"
+  end
+done
+
+for now in 03:59 04:00 04:01; do
+  begin "CLAUDE_FREE_BY: nové okno 26.10. $now"
+  continuous_conf
+  claude_usage - 70
+  tick "2026-10-26T$now"
+  expected=1; [[ $now == 04:01 ]] && expected=0
+  check "rozhodnutí PM" eq "$(count_pm)" "$expected"
+  check "absolutní hranice v logu" has "$(logfile)" "CLAUDE_FREE_BY 26.10. 09:00"
+  end
+done
+
+begin "FREE_BY platí i samostatně; přísnější pravidlo 7:30 zůstává"
+conf 'CLAUDE_FREE_BY=2026-10-22T03:00'
+claude_usage "Oct 22, 4:00am (Europe/Prague)" 70
+tick 2026-10-22T01:00
+check "dřívější FREE_BY nepustí" eq "$(count_pm)" 0
+check "důvod FREE_BY" has "$(logfile)" "je po CLAUDE_FREE_BY 22.10. 03:00"
+conf 'CLAUDE_FREE_BY=2026-10-22T09:00'
+claude_usage "Oct 22, 8:00am (Europe/Prague)" 70
+tick 2026-10-22T03:00
+check "pozdější FREE_BY nevypíná 7:30" eq "$(count_pm)" 0
+check "důvod 7:30" has "$(logfile)" "obnova 22.10. 08:00 je po 07:30"
+end
+
+begin "prošlé FREE_BY se ignoruje i přesně na hranici"
+continuous_conf
+conf 'CLAUDE_FREE_BY=2026-10-24T03:00'
+claude_usage - 70
+tick 2026-10-24T03:00
+check "PM na hranici spuštěn" eq "$(count_pm)" 1
+tick 2026-10-24T03:01
+check "PM po hranici spuštěn" eq "$(count_pm)" 2
+end
+
+begin "Codex bez FREE_BY: přes den pustí i nové okno těsně před koncem, timeout do 9:00"
+continuous_conf
+claude_usage - 95
+rm -rf "$T/codex"
+tick 2026-10-26T08:59
+check "PM kvůli týdnu nespuštěn" eq "$(count_pm)" 0
+check "Codex spuštěn" eq "$(count_codex)" 1
+check "Codex nové okno po konci období povoleno" has "$(logfile)" "nové se obnoví 26.10. 13:59 · nepřetržitý provoz"
+check "timeout do konce období" has "$(logfile)" "timeout 60 s"
+end
+
+for reset in 08:00 09:00 09:30; do
+  begin "CODEX_FREE_BY: běžící okno s obnovou 26.10. $reset"
+  continuous_conf
+  conf 'CODEX_FREE_BY=2026-10-26T09:00'
+  claude_usage - 95
+  codex_usage "$(epoch "2026-10-26 $reset")"
+  tick 2026-10-26T03:00
+  expected=1; [[ $reset == 09:30 ]] && expected=0
+  check "rozhodnutí Codex" eq "$(count_codex)" "$expected"
+  check "hranice Codex v logu" has "$(logfile)" "CODEX_FREE_BY 26.10. 09:00"
+  end
+done
+
+for now in 04:00 04:01; do
+  begin "CODEX_FREE_BY: nové okno 26.10. $now"
+  continuous_conf
+  conf 'CODEX_FREE_BY=2026-10-26T09:00'
+  claude_usage - 95
+  rm -rf "$T/codex"
+  tick "2026-10-26T$now"
+  expected=1; [[ $now == 04:01 ]] && expected=0
+  check "rozhodnutí Codex" eq "$(count_codex)" "$expected"
+  check "hranice Codex v logu" has "$(logfile)" "CODEX_FREE_BY 26.10. 09:00"
+  end
+done
+
+for now in 16:59 17:00 17:01; do
+  begin "WEEK_RULE_FROM: týden využitý na 95 % 23.10. $now"
+  continuous_conf
+  claude_usage - 95
+  tick "2026-10-23T$now"
+  expected=0; [[ $now == 16:59 ]] && expected=1
+  check "rozhodnutí PM" eq "$(count_pm)" "$expected"
+  if [[ $now == 16:59 ]]; then
+    check "výjimka v logu" has "$(logfile)" "před WEEK_RULE_FROM 23.10. 17:00 platí minimum 0 %"
+  else
+    check "týdenní limit v logu" has "$(logfile)" "týden zbývá 5 % (min. 20 %): málo"
+  fi
+  end
+done
+
+begin "WEEK_RULE_FROM bez nepřetržitého režimu; chybějící usage zůstává překážkou"
+conf 'WEEK_RULE_FROM=2026-10-23T17:00'
+claude_usage - 95
+tick 2026-10-22T01:00
+check "výjimka funguje samostatně" eq "$(count_pm)" 1
+rm -f "$T/fake/usage.txt"
+tick 2026-10-22T01:00
+check "bez údaje o týdnu další PM nespuštěn" eq "$(count_pm)" 1
+check "důvod v logu" has "$(logfile)" "chybí data usage (řádek Current week)"
+end
+
+begin "WEEK_RULE_FROM po hranici: zbývá přesně 20 %, pustí"
+continuous_conf
+claude_usage - 80
+tick 2026-10-23T17:00
+check "PM spuštěn" eq "$(count_pm)" 1
+end
+
+begin "CONTINUOUS_UNTIL bez FREE_BY: běh PM zkrácen přesně do konce období"
+continuous_conf
+conf 'CLAUDE_FREE_BY='
+claude_usage - 70
+tick 2026-10-26T08:30
+check "PM spuštěn" eq "$(count_pm)" 1
+check "timeout do 9:00" has "$(logfile)" "timeout 1800 s"
+end
+
+begin "AK8: běžící okno končí v 8:50, PM od 8:30 smí běžet jen 1200 s"
+continuous_conf
+claude_usage "Oct 26, 8:50am (Europe/Prague)" 70
+tick 2026-10-26T08:30
+check "PM spuštěn" eq "$(count_pm)" 1
+check "timeout do obnovy, před FREE_BY i koncem režimu" has "$(logfile)" "timeout 1080 s"
+end
+
+begin "AK8: nové okno od 3:00 končí v 8:00, i při PM_TIMEOUT=6 h běží nejvýše 5 h"
+continuous_conf
+conf 'PM_TIMEOUT=21600'
+claude_usage - 70
+tick 2026-10-26T03:00
+check "PM spuštěn" eq "$(count_pm)" 1
+check "timeout do obnovy nového okna" has "$(logfile)" "timeout 17880 s"
+end
+
+begin "AK8: FREE_BY platí samostatně, těsně před obnovou okna se PM nespustí (rezerva 120 s)"
+conf 'CLAUDE_FREE_BY=2026-10-22T09:00'
+claude_usage "Oct 22, 6:30am (Europe/Prague)" 70
+tick 2026-10-22T06:29:45
+check "PM nespuštěn" eq "$(count_pm)" 0
+check "PM se nespustí těsně před obnovou" has "$(logfile)" "PM nespuštěn: do obnovy okna"
+end
+
+begin "AK8: po usage se timeout i zpráva PM počítají z nového času"
+continuous_conf
+claude_usage "Oct 26, 8:50am (Europe/Prague)" 70
+TICK_NOW_AFTER_USAGE=2026-10-26T08:30 tick 2026-10-26T08:29
+check "PM spuštěn" eq "$(count_pm)" 1
+check "timeout od 8:30" has "$(logfile)" "timeout 1080 s"
+check "PM dostane aktuální čas" has "$(calls)" "[NOČNÍ BĚH 2026-10-26 08:30]"
+end
+
+begin "AK8: usage překročí poslední možný start nového okna před FREE_BY"
+continuous_conf
+claude_usage - 70
+TICK_NOW_AFTER_USAGE=2026-10-26T04:01 tick 2026-10-26T03:59
+check "PM nespuštěn" eq "$(count_pm)" 0
+check "brána počítá nové okno od 4:01" has "$(logfile)" "nové by se obnovilo 26.10. 09:01, tedy po CLAUDE_FREE_BY 26.10. 09:00"
+end
+
+begin "AK8: usage překročí obnovu běžícího okna, nové okno už FREE_BY nepustí"
+continuous_conf
+claude_usage "Oct 26, 8:50am (Europe/Prague)" 70
+TICK_NOW_AFTER_USAGE=2026-10-26T08:50 tick 2026-10-26T08:49
+check "PM nespuštěn" eq "$(count_pm)" 0
+check "prošlé okno brána nahradí novým" has "$(logfile)" "nové by se obnovilo 26.10. 13:50"
+end
+
+begin "AK8: usage překročí WEEK_RULE_FROM, týden se vyhodnotí podle nového času"
+continuous_conf
+claude_usage - 95
+TICK_NOW_AFTER_USAGE=2026-10-23T17:00 tick 2026-10-23T16:59
+check "PM nespuštěn" eq "$(count_pm)" 0
+check "platí týdenní minimum 20 %" has "$(logfile)" "týden zbývá 5 % (min. 20 %): málo"
+end
+
+begin "AK8: usage překročí CONTINUOUS_UNTIL, bez povolení už PM ani Codex nesmí začít"
+continuous_conf
+claude_usage "Oct 26, 9:00am (Europe/Prague)" 70
+TICK_NOW_AFTER_USAGE=2026-10-26T09:00 tick 2026-10-26T08:59
+check "usage přečtena" eq "$(count_usage)" 1
+check "PM nespuštěn" eq "$(count_pm)" 0
+check "Codex nespuštěn" eq "$(count_codex)" 0
+check "nová časová brána" has "$(logfile)" "2026-10-26 09:00 nic nespuštěno po usage: mimo noční okno"
+end
+
+begin "AK8: během usage vyprší denní povolení"
+echo 'do=2026-10-21T15:00' >"$T/proj/ops/povoleni-den"
+claude_usage - 70
+TICK_NOW_AFTER_USAGE=2026-10-21T15:00 tick 2026-10-21T14:59
+check "PM nespuštěn" eq "$(count_pm)" 0
+check "Codex nespuštěn" eq "$(count_codex)" 0
+check "povolení se vyhodnotí znovu" has "$(logfile)" "povolení-den prošlo 21.10. 15:00"
+end
+
+begin "po CONTINUOUS_UNTIL: přesně v 9:00 ani později bez povolení nic nespustí"
+continuous_conf
+tick 2026-10-26T09:00
+tick 2026-10-26T14:00
+check "žádné volání" eq "$(calls)" ""
+check "původní časové pravidlo" has "$(logfile)" "nic nespuštěno: mimo noční okno"
+end
+
+begin "po CONTINUOUS_UNTIL: denní povolení stále funguje, platí pravidlo 7:30 a týden 20 %"
+continuous_conf
+echo 'do=2026-10-26T15:00' >"$T/proj/ops/povoleni-den"
+claude_usage - 70
+tick 2026-10-26T14:00
+check "denní povolení pustí PM" eq "$(count_pm)" 1
+check "timeout do povolení" has "$(logfile)" "timeout 3600 s"
+claude_usage "Oct 27, 8:00am (Europe/Prague)" 70
+tick 2026-10-27T03:00
+check "7:30 opět nepustí" eq "$(count_pm)" 1
+check "důvod 7:30" has "$(logfile)" "obnova 27.10. 08:00 je po 07:30"
+claude_usage - 95
+tick 2026-10-26T23:00
+check "týden opět nepustí" eq "$(count_pm)" 1
+check "důvod týden" has "$(logfile)" "týden zbývá 5 % (min. 20 %): málo"
+end
+
+begin "PM narazí na limit po vypršení nepřetržitého provozu: Codex se nespustí"
+continuous_conf
+conf 'CLAUDE_FREE_BY='
+claude_usage - 70
+pm_output "Claude AI usage limit reached" 1
+TICK_NOW_AFTER_PM=2026-10-26T09:00 tick 2026-10-26T08:00
+check "PM spuštěn" eq "$(count_pm)" 1
+check "Codex nespuštěn" eq "$(count_codex)" 0
+check "čas po PM" has "$(logfile)" "2026-10-26 09:00 záložní Codex nespuštěn: mimo noční okno"
+end
+
+begin "přechod na zimní čas: nové okno má skutečných 5 hodin"
+continuous_conf
+claude_usage - 70
+tick 2026-10-24T23:30
+check "PM spuštěn" eq "$(count_pm)" 1
+check "obnova podle uplynulého času" has "$(logfile)" "nové se obnoví 25.10. 03:30"
+end
+
+for var in CONTINUOUS_UNTIL CLAUDE_FREE_BY CODEX_FREE_BY WEEK_RULE_FROM; do
+  begin "$var: neplatný čas odmítne před čtením usage"
+  conf "$var=2026-10-32T09:00"
+  tick 2026-10-22T23:00
+  check "kód 2" eq "$RC" 2
+  check "žádné volání" eq "$(calls)" ""
+  check "název proměnné v chybě" has "$(cat "$T/out")" "neplatný $var="
+  conf "$var=zítra"
+  tick 2026-10-22T23:00
+  check "špatný formát kód 2" eq "$RC" 2
+  end
+done
+
 begin "skutečná ops/tick.conf: výchozí hodnoty a žádné tajné údaje"
 (
   source "$REPO/ops/tick.conf"
   [[ $MIN_CLAUDE_WEEK_LEFT == 20 && $WINDOW_START == 21:00 && $WINDOW_END == 07:00 \
      && $LAST_START == 06:30 && $RESET_DEADLINE == 07:30 && $PM_MODEL == claude-opus-5-5 \
-     && $PROJECT_DIR == /home/honza/jr-content && $CODEX_MODEL == gpt-6-astra \
+     && $PROJECT_DIR == /home/honza/jr-content && $CODEX_MODEL == gpt-6.1-sol \
+     && $CONTINUOUS_UNTIL == 2026-10-26T09:00 && $CLAUDE_FREE_BY == 2026-10-26T09:00 \
+     && -z $CODEX_FREE_BY && $WEEK_RULE_FROM == 2026-10-23T17:00 \
      && " ${CODEX_EXTRA_ARGS[*]} " == *" sandbox_workspace_write.network_access=true "* \
      && " ${CLAUDE_EXTRA_ARGS[*]} " == *" --permission-mode auto "* ]]
 ) >"$T/out" 2>&1
 check "výchozí hodnoty" eq "$?" 0
 check "žádné klíče ani hesla" eq "$(grep -Eci '(api_key|token|password|heslo|secret)[[:space:]]*=' "$REPO/ops/tick.conf")" 0
+end
+
+begin "systemd timer: každých 30 minut celý den, rozhoduje tick.sh"
+check "kalendář timeru" has "$(cat "$REPO/ops/systemd/jrc-tick.timer")" 'OnCalendar=*-*-* *:00,30'
 end
 
 echo
