@@ -1,0 +1,26 @@
+{
+  "name": "jrc-proto-f1-b03",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Prototyp verzovaných textů (F1-B03)",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild client/main.js --bundle --format=esm --minify --sourcemap --outfile=public/app.js",
+    "start": "node server/index.js",
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "@tiptap/core": "^3.32.0",
+    "@tiptap/extension-list": "^3.32.0",
+    "@tiptap/markdown": "^3.32.0",
+    "@tiptap/pm": "^3.32.0",
+    "@tiptap/starter-kit": "^3.32.0",
+    "diff": "^9.0.0",
+    "express": "^5.3.0",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.0",
+    "esbuild": "^0.28.2"
+  }
+}

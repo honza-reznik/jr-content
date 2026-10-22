@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Verzované texty (prototyp F1-B03)</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <strong>JR Content</strong> · prototyp verzovaných textů
+    <select id="doc-select" aria-label="Dokument"></select>
+  </header>
+  <div class="layout">
+    <aside>
+      <h2>Verze</h2>
+      <ol id="versions" class="versions"></ol>
+    </aside>
+    <main>
+      <section class="panel">
+        <div class="panel-head">
+          <h2 id="viewer-title">Načítám…</h2>
+          <div class="actions">
+            <button id="btn-edit" type="button">Upravit text</button>
+            <button id="btn-save" type="button" class="primary" hidden>Uložit</button>
+            <button id="btn-discard" type="button" hidden>Zahodit změny</button>
+          </div>
+        </div>
+        <p id="viewer-info" class="info"></p>
+        <div id="toolbar" class="toolbar" hidden>
+          <button type="button" data-cmd="paragraph">Odstavec</button>
+          <button type="button" data-cmd="h1">Nadpis 1</button>
+          <button type="button" data-cmd="h2">Nadpis 2</button>
+          <button type="button" data-cmd="h3">Nadpis 3</button>
+          <span class="sep"></span>
+          <button type="button" data-cmd="bold"><b>Tučně</b></button>
+          <button type="button" data-cmd="italic"><i>Kurzíva</i></button>
+          <span class="sep"></span>
+          <button type="button" data-cmd="bulletList">• Odrážky</button>
+          <button type="button" data-cmd="orderedList">1. Číslování</button>
+          <button type="button" data-cmd="taskList">☑ Checklist</button>
+          <span class="sep"></span>
+          <button type="button" data-cmd="undo">Zpět</button>
+          <button type="button" data-cmd="redo">Znovu</button>
+        </div>
+        <div id="editor" class="editor"></div>
+        <p id="message" class="message" role="status"></p>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Porovnání verzí</h2>
+          <div class="actions">
+            <label>Starší <select id="cmp-from"></select></label>
+            <label>Novější <select id="cmp-to"></select></label>
+            <button id="btn-compare" type="button">Porovnat</button>
+          </div>
+        </div>
+        <p class="legend"><ins>přidáno</ins> <del>smazáno</del> <span class="d-changed-sample">změněný blok</span></p>
+        <div id="diff" class="diff"></div>
+      </section>
+    </main>
+  </div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

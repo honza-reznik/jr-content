@@ -1,0 +1,60 @@
+[hidden] { display: none !important; }
+:root {
+  --bg: #f6f6f4; --panel: #fff; --text: #1d1d1b; --muted: #6b6b66; --line: #ddddd8;
+  --accent: #2557a7; --ins-bg: #d8f5dd; --ins-text: #0b5d1e; --del-bg: #fde0e0; --del-text: #9b1c1c;
+  --changed: #fff6d6;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--text); }
+header { padding: 10px 20px; background: #24324a; color: #fff; display: flex; gap: 12px; align-items: center; }
+header select { margin-left: auto; }
+.layout { display: grid; grid-template-columns: 240px 1fr; gap: 20px; padding: 20px; max-width: 1300px; }
+aside h2, .panel h2 { font-size: 1.1rem; margin: 0; }
+.versions { list-style: none; padding: 0; margin: 10px 0 0; }
+.versions button {
+  width: 100%; text-align: left; padding: 8px 10px; margin-bottom: 6px; border: 1px solid var(--line);
+  background: var(--panel); border-radius: 6px; cursor: pointer; font: inherit;
+}
+.versions button[aria-current="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
+.versions .meta { display: block; font-size: .8rem; color: var(--muted); }
+.versions .draft { color: #8a5a00; font-weight: 600; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px 20px; margin-bottom: 20px; }
+.panel-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+button { font: inherit; padding: 6px 12px; border: 1px solid #b9b9b3; border-radius: 6px; background: #fafaf8; cursor: pointer; }
+button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+button:disabled { opacity: .5; cursor: default; }
+.info { color: var(--muted); font-size: .9rem; margin: 4px 0 10px; }
+.message { min-height: 1.5em; color: var(--accent); font-size: .9rem; margin: 8px 0 0; }
+.message.error { color: var(--del-text); }
+.toolbar { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px; border: 1px solid var(--line); border-bottom: 0; border-radius: 6px 6px 0 0; background: #f0f0ec; }
+.toolbar button { padding: 3px 8px; font-size: .9rem; }
+.toolbar button[aria-pressed="true"] { background: #dbe6f7; border-color: var(--accent); }
+.toolbar .sep { width: 1px; background: var(--line); margin: 0 4px; }
+.editor .ProseMirror { min-height: 200px; padding: 8px 14px; border: 1px solid var(--line); border-radius: 6px; outline: none; }
+.editor.editing .ProseMirror { border-radius: 0 0 6px 6px; border-color: var(--accent); background: #fff; }
+.editor:not(.editing) .ProseMirror { background: #fbfbfa; }
+.ProseMirror ul[data-type="taskList"] { list-style: none; padding-left: 4px; }
+.ProseMirror ul[data-type="taskList"] li { display: flex; gap: 8px; align-items: flex-start; }
+.ProseMirror ul[data-type="taskList"] li > label { margin-top: 2px; }
+.ProseMirror ul[data-type="taskList"] li > div { flex: 1; }
+.ProseMirror ul[data-type="taskList"] li > div > p { margin: 0; }
+.ProseMirror h1 { font-size: 1.6rem; margin: .6em 0 .3em; }
+.ProseMirror h2 { font-size: 1.3rem; margin: .6em 0 .3em; }
+.ProseMirror h3 { font-size: 1.1rem; margin: .6em 0 .3em; }
+.legend { font-size: .85rem; color: var(--muted); display: flex; gap: 10px; }
+ins { background: var(--ins-bg); color: var(--ins-text); text-decoration: none; border-radius: 2px; }
+del + ins { margin-left: 3px; }
+del { background: var(--del-bg); color: var(--del-text); text-decoration: line-through; border-radius: 2px; }
+.d-changed-sample { background: var(--changed); padding: 0 4px; }
+.diff { border: 1px solid var(--line); border-radius: 6px; padding: 8px 14px; min-height: 60px; }
+.d-block { display: flex; gap: 8px; align-items: baseline; padding: 1px 6px; border-left: 4px solid transparent; }
+.d-block .d-text { margin: 4px 0; flex: 0 1 auto; }
+.d-block h1.d-text { font-size: 1.6rem; } .d-block h2.d-text { font-size: 1.3rem; } .d-block h3.d-text { font-size: 1.1rem; }
+.d-marker { min-width: 1.2em; color: var(--muted); }
+.d-added { background: #f0fbf2; border-left-color: #3aa655; }
+.d-removed { background: #fdf1f1; border-left-color: #d64545; }
+.d-changed { background: var(--changed); border-left-color: #d9a400; }
+.d-note { font-size: .8rem; color: var(--muted); }
+.d-quote { border-left-style: double; }
+@media (max-width: 760px) { .layout { grid-template-columns: 1fr; padding: 12px; } }
