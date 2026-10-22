@@ -18,9 +18,12 @@ for (const line of template.split('\n')) {
   const match = /^(\w+)=(.*)$/.exec(line);
   if (!match) continue;
   const [, key, fallback] = match;
-  const existing = new RegExp(`^${key}=(.*)$`, 'm');
+  // Tolerantní hledání: `KEY=…`, `export KEY=…`, mezery kolem `=` (review F2-B01: nepřepsat existující heslo).
+  const tolerant = new RegExp(`^[ \\t]*(?:export[ \\t]+)?${key}[ \\t]*=[ \\t]*(.*)$`, 'm');
+  const anyFound = tolerant.exec(content);
+  if (anyFound && anyFound[1].trim() !== '') continue;
+  const existing = new RegExp(`^[ \\t]*(?:export[ \\t]+)?${key}[ \\t]*=(.*)$`, 'm');
   const found = existing.exec(content);
-  if (found && found[1].trim() !== '') continue;
   const value = fallback || values[key];
   if (value === undefined) throw new Error(`Chybí generátor hodnoty ${key}`);
   if (found) content = content.replace(existing, `${key}=${value}`);

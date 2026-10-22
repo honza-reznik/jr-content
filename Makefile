@@ -2,10 +2,9 @@ SHELL := /bin/sh
 .DEFAULT_GOAL := up
 # Povolen je jen JR Content; oddělený jrc-* projekt slouží k ověření worktree.
 export JRC_PROJECT ?= jrc
-ifneq ($(JRC_PROJECT),jrc)
-ifeq ($(filter jrc-%,$(JRC_PROJECT)),)
-$(error JRC_PROJECT musí být jrc nebo začínat jrc-)
-endif
+# Jen písmena, číslice a pomlčky (review F2-B01: žádné shellové znaky v příkazech).
+ifneq ($(shell printf '%s' '$(subst ','',$(JRC_PROJECT))' | grep -Ex 'jrc(-[a-z0-9-]+)?'),$(JRC_PROJECT))
+$(error JRC_PROJECT musí být jrc nebo jrc-<malá písmena, číslice, pomlčky>)
 endif
 override COMPOSE := docker compose --project-name $(JRC_PROJECT) --file docker-compose.yml --env-file .env
 # Správa existujících kontejnerů nepotřebuje hesla ani místní .env.
