@@ -6,7 +6,7 @@ Všechno běží v Dockeru (obraz `jrc-dev:local`), nic se neinstaluje do systé
 
 | Skript | Co ověřuje | Výsledek 2026-10-22 |
 |---|---|---|
-| `overeni-subtree.sh` | ADR-004: `git subtree add --squash` převezme kód Brightbean do podsložky, naše úprava a pozdější oprava z upstreamu se spojí bez konfliktu, v historii je zapsaná verze upstreamu | prošlo (OK 1–3) |
+| `overeni-subtree.sh` | ADR-004: `git subtree add --squash` převezme kód Brightbean do podsložky, naše úprava a pozdější oprava z upstreamu se spojí bez konfliktu, v historii je zapsaná verze upstreamu | prošlo (OK 1–5: import, pull s naší úpravou, záznam verze, jedna oprava přes `format-patch`, worktree) |
 | `overeni-iframe.cjs` | ADR-003: přehrávač FreeFrame jde vložit do cizí stránky (`<iframe>`), token podepsaný sdíleným tajemstvím FreeFrame přijme, klientku jde přidat do projektu přes API a ve vloženém přehrávači je přihlášená bez formuláře; desktop i telefon 390×844 | prošlo (`screenshoty/vysledek-iframe.json`) |
 
 ## Spuštění

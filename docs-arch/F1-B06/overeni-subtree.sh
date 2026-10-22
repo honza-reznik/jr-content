@@ -45,4 +45,24 @@ echo "OK 2: subtree pull spojil naši úpravu s opravou z upstreamu bez konflikt
 git log --format='%s%n%b' | grep -q "git-subtree-split: $B"
 echo "OK 3: v historii je zapsáno, ze které verze upstreamu kód je (git-subtree-split)"
 git log --oneline --graph | head -8
+
+# Převzetí jedné opravy (ne celé nové verze): format-patch z upstreamu + am do podsložky
+cd "$W/up"
+echo "# upstream C: jen jedna oprava" >> apps/approvals/models.py
+git commit -qam "upstream C: oprava approvals"
+C=$(git rev-parse HEAD)
+echo "# upstream D: nechceme" >> apps/calendar/views.py
+git commit -qam "upstream D"
+cd "$W/jrc"
+git fetch -q "$W/up" main
+git format-patch -1 "$C" --stdout | git am -q -3 --directory=brightbean
+tail -1 brightbean/apps/approvals/models.py | grep -q "upstream C"
+if grep -q "upstream D" brightbean/apps/calendar/views.py; then echo "CHYBA: převzala se i nechtěná změna D"; exit 1; fi
+echo "OK 4: jednotlivá oprava převzata (format-patch | am --directory=brightbean), zbytek ne"
+
+# Totéž ve worktree bloku (tak pracují kodéři): git -C <worktree> subtree add
+git worktree add -q -b blok/F2-B01 "$W/wt-F2-B01" HEAD~2
+git -C "$W/wt-F2-B01" subtree add --prefix=freeframe-test "$W/up" "$A" --squash -m "F2-B01: import" >/dev/null 2>&1
+test -f "$W/wt-F2-B01/freeframe-test/manage.py"
+echo "OK 5: subtree add funguje i ve worktree bloku (git -C <worktree>)"
 rm -rf "$W"
