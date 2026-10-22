@@ -25,16 +25,17 @@ async function sample(page, mode = 'next') {
   return page.evaluate(async (mode) => {
     const video = document.getElementById('video');
     const overlay = document.getElementById('timecode');
+    const W = video.videoWidth;
     const canvas = document.createElement('canvas');
-    canvas.width = 1920;
+    canvas.width = W;
     canvas.height = 1;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const read = () => {
-      // one pixel row through the middle of the square (y = 60..180 in the 1080p frame)
-      ctx.drawImage(video, 0, 120, 1920, 1, 0, 0, 1920, 1);
-      const px = ctx.getImageData(0, 0, 1920, 1).data;
+      // one pixel row through the middle of the square (y = 60..180 in the full-size frame)
+      ctx.drawImage(video, 0, 120, W, 1, 0, 0, W, 1);
+      const px = ctx.getImageData(0, 0, W, 1).data;
       let x = -1;
-      for (let i = 0; i < 1920; i++) {
+      for (let i = 0; i < W; i++) {
         const [r, g, b] = [px[i * 4], px[i * 4 + 1], px[i * 4 + 2]];
         if (r < 40 && g < 40 && b < 40) {
           x = i;
@@ -42,7 +43,8 @@ async function sample(page, mode = 'next') {
         }
       }
       return {
-        frameTime: x < 0 ? null : Math.round(x / 2) / 30,
+        // x = (W - 120) * t / 30  =>  t = 30 * x / (W - 120), rounded to a whole frame
+        frameTime: x < 0 ? null : Math.round((30 * 30 * x) / (W - 120)) / 30,
         overlayText: overlay.textContent,
         overlaySeconds: Number(overlay.dataset.seconds),
         currentTime: video.currentTime,
@@ -62,10 +64,28 @@ function expectInSync(s, withTenths = false) {
   expect(allowed).toContain(s.overlayText);
 }
 
-async function open(page) {
-  await page.goto('/');
+async function open(page, path = '/') {
+  await page.goto(path);
   await page.waitForFunction(() => document.getElementById('video').readyState >= 2);
   await page.getByTestId('mute').click();
+}
+
+/** Overlay lies on the picture itself (not on black bars) and the picture keeps its aspect ratio. */
+async function expectOverlayOnPicture(page) {
+  const r = await page.evaluate(() => {
+    const box = (id) => document.getElementById(id).getBoundingClientRect().toJSON();
+    const v = document.getElementById('video');
+    return { frame: box('frame'), overlay: box('timecode'), ar: v.videoWidth / v.videoHeight, vw: innerWidth, vh: innerHeight };
+  });
+  const { frame, overlay } = r;
+  expect(frame.width / frame.height).toBeCloseTo(r.ar, 1);
+  expect(overlay.left).toBeGreaterThanOrEqual(frame.left);
+  expect(overlay.top).toBeGreaterThanOrEqual(frame.top);
+  expect(overlay.right).toBeLessThanOrEqual(frame.right);
+  expect(overlay.bottom).toBeLessThanOrEqual(frame.bottom);
+  expect(frame.left).toBeGreaterThanOrEqual(-0.5);
+  expect(frame.right).toBeLessThanOrEqual(r.vw + 0.5);
+  return r;
 }
 
 async function seekProgrammatically(page, t) {
@@ -185,6 +205,7 @@ test('celá obrazovka: překryv zůstává vidět a synchronní', async ({ page 
   expect(ob.y).toBeGreaterThanOrEqual(0);
   expect(ob.x + ob.width).toBeLessThanOrEqual(vp.width);
   expect(ob.y + ob.height).toBeLessThanOrEqual(vp.height);
+  await expectOverlayOnPicture(page);
 
   // overlay is on top of the video (not hidden behind it)
   // (overlay has pointer-events: none, which elementFromPoint skips, so switch it on briefly)
@@ -300,6 +321,33 @@ test('rozložení: bez vodorovného posouvání, ovládání v šířce okna', a
   // overlay readable: at least 15 px font
   const fontPx = await page.getByTestId('timecode').evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
   expect(fontPx).toBeGreaterThanOrEqual(15);
+  await expectOverlayOnPicture(page);
   await seekProgrammatically(page, 12);
   await shot(page, '06-rozlozeni', { fullPage: true });
+});
+
+test('video na výšku (Reel 9:16): překryv na obraze, synchronní, i na celé obrazovce', async ({ page }) => {
+  await open(page, '/?video=reel');
+  expect(await page.evaluate(() => document.getElementById('video').videoHeight)).toBe(1920);
+  const r = await expectOverlayOnPicture(page);
+  // a vertical video must leave room for the controls: picture + controls fit in the window together
+  expect(r.frame.height).toBeLessThanOrEqual(r.vh * 0.75 + 1);
+  const playerBox = await page.getByTestId('player').boundingBox();
+  expect(playerBox.height).toBeLessThanOrEqual(r.vh);
+
+  await page.getByTestId('play').click();
+  await page.waitForFunction(() => document.getElementById('video').currentTime > 1);
+  for (let i = 0; i < 4; i++) expectInSync(await sample(page));
+  await page.getByTestId('play').click();
+  await seekProgrammatically(page, 21);
+  await page.waitForTimeout(200);
+  expectInSync(await sample(page, 'now'));
+  await shot(page, '07-reel');
+
+  await page.getByTestId('fullscreen').click();
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement?.id)).toBe('player');
+  await page.waitForTimeout(200);
+  await expectOverlayOnPicture(page);
+  await shot(page, '08-reel-cela-obrazovka');
+  await page.getByTestId('fullscreen').click();
 });

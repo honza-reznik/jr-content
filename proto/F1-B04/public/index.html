@@ -9,11 +9,16 @@
 <body>
   <main class="page">
     <h1>Prototyp přehrávače s časovým kódem</h1>
+    <nav class="pick" aria-label="Testovací video">
+      Testovací video: <a href="?" data-testid="pick-wide">16:9 na šířku</a> · <a href="?video=reel" data-testid="pick-reel">9:16 na výšku (Reel)</a>
+    </nav>
 
     <section class="player" id="player" data-testid="player" aria-label="Přehrávač videa">
       <div class="stage" id="stage">
-        <video id="video" src="/media/test-1080p.mp4" preload="metadata" playsinline disablepictureinpicture></video>
-        <div class="timecode" id="timecode" data-testid="timecode" aria-hidden="true">0:00</div>
+        <div class="frame" id="frame">
+          <video id="video" preload="metadata" playsinline disablepictureinpicture></video>
+          <div class="timecode" id="timecode" data-testid="timecode" aria-hidden="true">0:00</div>
+        </div>
       </div>
       <div class="controls">
         <button type="button" id="play" class="btn" data-testid="play" aria-label="Přehrát">▶</button>

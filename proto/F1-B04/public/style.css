@@ -25,16 +25,38 @@ body { margin: 0; background: var(--bg); color: var(--fg); }
 .page { max-width: 960px; margin: 0 auto; padding: 16px; }
 h1 { font-size: 1.35rem; margin: 0 0 12px; }
 h2 { font-size: 1.1rem; margin: 20px 0 8px; }
+.pick { margin: 0 0 10px; font-size: 0.9rem; color: var(--muted); }
+.pick a { color: var(--accent); }
+.pick a[aria-current] { font-weight: 600; color: var(--fg); text-decoration: none; }
 
 /* ---------- Player ---------- */
+/* --ar = video aspect ratio (width / height), set from the video metadata in player.js */
 .player {
+  --ar: 1.7778;
   background: #000;
   border-radius: 8px;
   overflow: hidden;
-  container-type: inline-size; /* overlay font scales with the player width (cqw) */
+  container-type: inline-size;
 }
-.stage { position: relative; aspect-ratio: 16 / 9; background: #000; cursor: pointer; }
-.stage video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
+/* Stage: as wide as the player, but never taller than 75 % of the window (vertical videos). */
+.stage {
+  position: relative;
+  height: min(calc(100cqw / var(--ar)), 75vh);
+  background: #000;
+  cursor: pointer;
+  container-type: size;
+}
+/* Frame: the largest box with the video's aspect ratio that fits the stage = the picture itself. */
+.frame {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(100cqw, calc(100cqh * var(--ar)));
+  aspect-ratio: var(--ar);
+  transform: translate(-50%, -50%);
+  container-type: size; /* overlay font scales with the picture (cqmax = its longer side) */
+}
+.frame video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
 
 .timecode {
   position: absolute;
@@ -44,7 +66,7 @@ h2 { font-size: 1.1rem; margin: 20px 0 8px; }
   border-radius: 0.25em;
   background: rgba(0, 0, 0, 0.7);
   color: #fff;
-  font: 600 clamp(15px, 3.6cqw, 56px) / 1.25 ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  font: 600 clamp(15px, 3.6cqmax, 56px) / 1.25 ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
   font-variant-numeric: tabular-nums; /* digits of equal width: the box does not jump */
   pointer-events: none;
   user-select: none;
@@ -88,11 +110,13 @@ h2 { font-size: 1.1rem; margin: 20px 0 8px; }
 }
 .player.pseudo-fs { position: fixed; inset: 0; z-index: 1000; height: 100dvh; }
 .player:fullscreen .stage,
-.player.pseudo-fs .stage { flex: 1 1 auto; aspect-ratio: auto; min-height: 0; }
+.player.pseudo-fs .stage { flex: 1 1 auto; height: auto; min-height: 0; }
 
 /* Phone: controls in two rows, seek bar on its own row */
 @media (max-width: 520px) {
   .page { padding: 12px; }
+  /* vertical video on a phone: leave room for the controls below the picture */
+  .stage { height: min(calc(100cqw / var(--ar)), 62svh); }
   .controls #seek { order: -1; flex-basis: 100%; }
 }
 

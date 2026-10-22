@@ -21,6 +21,12 @@ const list = $('comment-list');
 let withTenths = tenthsBox.checked;
 let seekDragging = false;
 
+// Prototype only: choose the test video by URL (?video=reel). In MVP1 it comes from the database.
+const VIDEOS = { wide: '/media/test-1080p.mp4', reel: '/media/test-reel-1080x1920.mp4' };
+const choice = new URLSearchParams(location.search).get('video') === 'reel' ? 'reel' : 'wide';
+video.src = VIDEOS[choice];
+document.querySelector(`[data-testid="pick-${choice}"]`)?.setAttribute('aria-current', 'page');
+
 // ---------- Overlay ----------
 
 /** Shows time t (seconds) in the overlay, the clock and the seek bar. */
@@ -73,6 +79,9 @@ function seekTo(t) {
 
 video.addEventListener('loadedmetadata', () => {
   seek.max = String(video.duration);
+  // The frame (picture + overlay) takes the video's aspect ratio, so the overlay always sits
+  // on the picture itself, also for vertical Reels and in fullscreen (no black bars under it).
+  player.style.setProperty('--ar', String(video.videoWidth / video.videoHeight));
 });
 video.addEventListener('play', () => {
   playBtn.textContent = '❚❚';
@@ -120,6 +129,10 @@ async function toggleFullscreen() {
     else document.webkitExitFullscreen?.();
   } else if (player.requestFullscreen) {
     await player.requestFullscreen({ navigationUI: 'hide' });
+    // Android: turn a landscape video sideways on a phone held upright (not supported everywhere).
+    if (video.videoWidth > video.videoHeight && screen.orientation?.lock) {
+      screen.orientation.lock('landscape').catch(() => {});
+    }
   } else if (player.webkitRequestFullscreen) {
     player.webkitRequestFullscreen();
   } else {
