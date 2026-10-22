@@ -1,0 +1,14 @@
+{
+  "checks": {
+    "sync_add_member_via_api": true,
+    "minted_token_accepted": true,
+    "ella_sees_project": true,
+    "iframe_desktop_video_loaded": true,
+    "iframe_desktop_comments_visible": true,
+    "iframe_desktop_url": "http://127.0.0.1:13020/projects/<id>/assets/<id>",
+    "iframe_mobil-390_video_loaded": true,
+    "iframe_mobil-390_comments_visible": true,
+    "iframe_mobil-390_url": "http://127.0.0.1:13020/projects/<id>/assets/<id>"
+  },
+  "result": "passed"
+}
