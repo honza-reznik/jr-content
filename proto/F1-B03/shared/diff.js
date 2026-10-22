@@ -52,13 +52,16 @@ export function flatten(doc) {
             marker = ctx.holder.marker
             ctx.holder.marker = null // značku dostane jen první blok položky, další jsou pokračování
           }
+          const tokens = inlineTokens(node, node.type === 'codeBlock')
+          // Prázdné odstavce (vč. prázdného řádku, který editor drží na konci dokumentu) se nepočítají.
+          if (!marker && node.type === 'paragraph' && !tokens.some((t) => t.t.trim())) return
           blocks.push({
             type: node.type === 'codeBlock' ? 'code' : node.type,
             level: node.type === 'heading' ? node.attrs?.level ?? 1 : null,
             depth: ctx.depth,
             quote: Boolean(ctx.quote),
             marker,
-            tokens: inlineTokens(node, node.type === 'codeBlock'),
+            tokens,
           })
         } else {
           for (const child of node.content || []) walk(child, ctx)
@@ -171,6 +174,38 @@ function pairBlocks(removed, added) {
 }
 
 function wordRuns(oldTokens, newTokens) {
+  return groupRuns(rawWordRuns(oldTokens, newTokens))
+}
+
+/** Spojí změny oddělené jen mezerou: místo "~~u~~na ~~okna~~balkoně" vznikne "~~u okna~~ na balkoně". */
+function groupRuns(runs) {
+  const out = []
+  let del = []
+  let ins = []
+  const flush = () => {
+    if (del.length) out.push({ kind: 'del', tokens: del })
+    if (ins.length) out.push({ kind: 'ins', tokens: ins })
+    del = []
+    ins = []
+  }
+  runs.forEach((run, i) => {
+    const inChange = del.length || ins.length
+    const between = i + 1 < runs.length && runs[i + 1].kind !== 'same'
+    if (run.kind === 'same' && inChange && between && run.tokens.every((t) => !t.t.trim())) {
+      del.push(...run.tokens)
+      ins.push(...run.tokens)
+    } else if (run.kind === 'del') del.push(...run.tokens)
+    else if (run.kind === 'ins') ins.push(...run.tokens)
+    else {
+      flush()
+      out.push(run)
+    }
+  })
+  flush()
+  return out
+}
+
+function rawWordRuns(oldTokens, newTokens) {
   const parts = diffArrays(oldTokens.map(tokenKey), newTokens.map(tokenKey))
   const runs = []
   let oi = 0

@@ -1,3 +1,4 @@
+[hidden] { display: none !important; }
 :root {
   --bg: #f6f6f4; --panel: #fff; --text: #1d1d1b; --muted: #6b6b66; --line: #ddddd8;
   --accent: #2557a7; --ins-bg: #d8f5dd; --ins-text: #0b5d1e; --del-bg: #fde0e0; --del-text: #9b1c1c;
@@ -43,6 +44,7 @@ button:disabled { opacity: .5; cursor: default; }
 .ProseMirror h3 { font-size: 1.1rem; margin: .6em 0 .3em; }
 .legend { font-size: .85rem; color: var(--muted); display: flex; gap: 10px; }
 ins { background: var(--ins-bg); color: var(--ins-text); text-decoration: none; border-radius: 2px; }
+del + ins { margin-left: 3px; }
 del { background: var(--del-bg); color: var(--del-text); text-decoration: line-through; border-radius: 2px; }
 .d-changed-sample { background: var(--changed); padding: 0 4px; }
 .diff { border: 1px solid var(--line); border-radius: 6px; padding: 8px 14px; min-height: 60px; }

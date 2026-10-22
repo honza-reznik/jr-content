@@ -53,7 +53,9 @@ const ACTIVE = {
 $('toolbar').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-cmd]')
   if (!btn || !state.editing) return
-  COMMANDS[btn.dataset.cmd](editor.chain().focus()).run()
+  // focus() v Tiptapu vrací kurzor se zpožděním (requestAnimationFrame); když editor fokus má, nevolá se.
+  const chain = editor.view.hasFocus() ? editor.chain() : editor.chain().focus()
+  COMMANDS[btn.dataset.cmd](chain).run()
 })
 // Tlačítka panelu nesmí brát editoru kurzor.
 $('toolbar').addEventListener('mousedown', (e) => e.preventDefault())
