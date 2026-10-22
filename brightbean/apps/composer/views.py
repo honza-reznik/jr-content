@@ -1,3 +1,4 @@
+# JR Content: upraveno 2026-10-23 (blok F2-B10), AGPL-3.0.
 """Views for the Post Composer (F-2.1)."""
 
 import base64
@@ -3971,7 +3972,9 @@ def _safe_fetch_feed(url, headers, *, timeout=8.0, max_redirects=5):
     any reject path (initial-URL failed SSRF check, intermediate hop failed
     SSRF check, broken redirect, transport error).
     """
-    if not is_safe_url(url):
+    from apps.jrc_ui.features import enabled
+
+    if not enabled("rss") or not is_safe_url(url):
         return None, None
     current_url = url
     try:

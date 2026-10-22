@@ -1,0 +1,5 @@
+<!-- JR Content: přidáno 2026-10-23 (blok F2-B10), AGPL-3.0. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="JR Content">
+  <rect width="64" height="64" rx="16" fill="#93a240"/>
+  <path d="M17 21h11v20c0 7-5 10-11 10v-6c3 0 5-1 5-5V27h-5zm19 0h8c8 0 12 4 12 10 0 5-2 8-6 10l7 10h-8l-8-12v12h-6V21zm5 6v7h3c4 0 6-1 6-4 0-2-2-3-6-3h-3z" fill="#fff" transform="translate(-3 -4)"/>
+</svg>

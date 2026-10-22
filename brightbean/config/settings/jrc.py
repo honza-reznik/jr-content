@@ -27,3 +27,20 @@ STORAGES["staticfiles"] = {  # noqa: F405
     "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
 }
 JRC_SOCIAL_PROVIDERS_ENABLED = False
+
+# JR Content: upraveno 2026-10-23 (blok F2-B10), AGPL-3.0.
+from apps.jrc_ui.features import configure_ui  # noqa: E402
+
+configure_ui(globals())
+from apps.jrc_ui.features import MVP_FEATURES  # noqa: E402
+
+JRC_FEATURES = MVP_FEATURES.copy()
+
+# Stránky smějí načítat obsah jen z místní aplikace (včetně obrázků a médií).
+CSP_REPORT_ONLY = False
+CSP_SCRIPT_SRC = ("'self'", "'unsafe-eval'")
+CSP_STYLE_SRC = ("'self'", "'unsafe-inline'")
+CSP_IMG_SRC = ("'self'", "data:", "blob:")
+CSP_MEDIA_SRC = ("'self'", "blob:")
+CSP_CONNECT_SRC = ("'self'",)
+CSP_FORM_ACTION = ("'self'",)
