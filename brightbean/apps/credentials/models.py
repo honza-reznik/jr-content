@@ -1,3 +1,4 @@
+# JR Content: upraveno 2026-10-23 (blok F2-B07).
 import uuid
 
 from django.db import models
@@ -41,6 +42,7 @@ def derive_is_configured(platform, credentials):
 
 class PlatformCredential(models.Model):
     class Platform(models.TextChoices):
+        CUSTOM = "custom", "Custom channel"
         FACEBOOK = "facebook", "Facebook"
         INSTAGRAM = "instagram", "Instagram"
         INSTAGRAM_LOGIN = "instagram_login", "Instagram (Direct)"

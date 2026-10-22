@@ -1,3 +1,4 @@
+# JR Content: upraveno 2026-10-23 (blok F2-B07).
 """YouTube retention and grant lifecycle, independent of analytics cadence."""
 
 import logging
@@ -10,6 +11,7 @@ from django.db.models import Max, OuterRef, Q, Subquery
 from django.utils import timezone
 
 from apps.common import quota
+from providers import ProvidersDisabledError
 from providers.exceptions import APIError, QuotaExceededError, TokenExpiredError
 
 from .models import SocialAccount, YouTubeRevocation
@@ -364,6 +366,10 @@ def check_connection(account, *, provider=None, now=None, enforce=True):
                                 "parent_id": snippet.get("parentId", ""),
                             },
                         )
+    except ProvidersDisabledError:
+        # JR Content: local channels have no OAuth grant or retained API data.
+        # Do not let a disabled provider age into account/content deletion.
+        return
     except Exception as exc:
         if permanent_grant_rejection(exc):
             purge_connection(account, check_generation=True)

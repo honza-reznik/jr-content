@@ -1,3 +1,4 @@
+# JR Content: upraveno 2026-10-23 (blok F2-B07).
 """Social platform provider registry.
 
 Maps PlatformCredential.Platform enum values to provider classes.
@@ -104,6 +105,10 @@ def requires_media(platform: str) -> bool:
     return PostType.TEXT not in provider_cls().supported_post_types
 
 
+class ProvidersDisabledError(ValueError):
+    """JR Content has disabled all social network providers."""
+
+
 def get_provider(platform: str, credentials: dict | None = None) -> SocialProvider:
     """Instantiate and return a provider for the given platform.
 
@@ -117,12 +122,15 @@ def get_provider(platform: str, credentials: dict | None = None) -> SocialProvid
     Raises:
         ValueError: If no provider is registered for the given platform.
     """
+    # JR Content F2-B07: fail before constructing any network client.
+    from django.conf import settings
+
+    if not getattr(settings, "JRC_SOCIAL_PROVIDERS_ENABLED", True):
+        raise ProvidersDisabledError("Social network providers are unavailable")
     provider_cls = PROVIDER_REGISTRY.get(platform)
     if provider_cls is None:
         raise ValueError(f"No provider registered for platform: {platform}")
     if credentials is None:
-        from django.conf import settings
-
         env_creds = getattr(settings, "PLATFORM_CREDENTIALS_FROM_ENV", {})
         credentials = env_creds.get(platform, {})
     return provider_cls(credentials=credentials)

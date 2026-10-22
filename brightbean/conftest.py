@@ -1,3 +1,4 @@
+# JR Content: upraveno 2026-10-23 (blok F2-B07).
 import pytest
 from django.utils import timezone
 
@@ -5,6 +6,19 @@ from apps.accounts.models import User
 from apps.media_library.storage import reset_cached_client
 from apps.members.models import OrgMembership
 from apps.organizations.models import Organization
+
+
+@pytest.fixture(autouse=True)
+def _social_provider_test_mode():
+    """Upstream tests exercise provider implementations with mocked transports.
+
+    JR Content integration tests override this fixture in their own conftest
+    and keep the production switch disabled. No runtime setting is changed.
+    """
+    from django.test import override_settings
+
+    with override_settings(JRC_SOCIAL_PROVIDERS_ENABLED=True):
+        yield
 
 
 @pytest.fixture
