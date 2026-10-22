@@ -1,8 +1,86 @@
-name: jrc
+name: ${JRC_PROJECT:-jrc}
+x-bb: &bb
+  build:
+    context: ./brightbean
+  image: jrc-bb:local
+  restart: unless-stopped
+  init: true
+  user: "${JRC_UID:-1000}:${JRC_GID:-1000}"
+  environment:
+    DJANGO_SETTINGS_MODULE: config.settings.jrc
+    SECRET_KEY: ${JRC_BB_SECRET_KEY:?Spusťte make env}
+    ENCRYPTION_KEY_SALT: ${JRC_BB_ENCRYPTION_KEY_SALT:?Spusťte make env}
+    DB_HOST: jrc-postgres
+    DB_PORT: 5432
+    DB_USER: ${PGUSER:-jrc}
+    DB_PASSWORD: ${PGPASSWORD:?Spusťte make env}
+    EMAIL_BACKEND_TYPE: console
+    MEDIA_ROOT: /app/media
+    APP_URL: http://127.0.0.1:${JRC_BB_PORT:-18011}
+  volumes:
+    - ./brightbean:/app
+    - jrc-bb-media:/app/media
+  networks:
+    - internal
+  depends_on:
+    jrc-bb-migrate:
+      condition: service_completed_successfully
+
 services:
+  jrc-bb-db:
+    image: postgres:18.6-bookworm
+    restart: "no"
+    environment:
+      PGHOST: jrc-postgres
+      PGUSER: ${PGUSER:-jrc}
+      PGDATABASE: ${PGDATABASE:-jrc}
+      PGPASSWORD: ${PGPASSWORD:?Spusťte make env}
+    command: ["sh", "/scripts/init-brightbean-db.sh"]
+    volumes:
+      - ./scripts/init-brightbean-db.sh:/scripts/init-brightbean-db.sh:ro
+    networks:
+      - internal
+    depends_on:
+      jrc-postgres:
+        condition: service_healthy
+  jrc-bb-migrate:
+    <<: *bb
+    restart: "no"
+    # Nový svazek médií je nejprve nutné předat běžnému uživateli aplikace.
+    user: "0:0"
+    command: ["sh", "-c", "chown $${JRC_UID}:$${JRC_GID} /app/media && exec setpriv --reuid=$${JRC_UID} --regid=$${JRC_GID} --clear-groups python manage.py migrate --noinput"]
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.jrc
+      SECRET_KEY: ${JRC_BB_SECRET_KEY:?Spusťte make env}
+      ENCRYPTION_KEY_SALT: ${JRC_BB_ENCRYPTION_KEY_SALT:?Spusťte make env}
+      DB_HOST: jrc-postgres
+      DB_PORT: 5432
+      DB_USER: ${PGUSER:-jrc}
+      DB_PASSWORD: ${PGPASSWORD:?Spusťte make env}
+      JRC_UID: ${JRC_UID:-1000}
+      JRC_GID: ${JRC_GID:-1000}
+    depends_on:
+      jrc-bb-db:
+        condition: service_completed_successfully
+  jrc-bb-web:
+    <<: *bb
+    command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+    ports:
+      - "127.0.0.1:${JRC_BB_PORT:-18011}:8000"
+    networks:
+      - default
+      - internal
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json, urllib.request; assert json.load(urllib.request.urlopen('http://127.0.0.1:8000/health/', timeout=5)) == {'status': 'ok'}"]
+      interval: 3s
+      timeout: 6s
+      retries: 30
+  jrc-bb-worker:
+    <<: *bb
+    command: ["python", "manage.py", "run_studio_worker"]
   jrc-dev:
     image: jrc-dev:local
-    container_name: jrc-dev
+    container_name: ${JRC_PROJECT:-jrc}-dev
     restart: unless-stopped
     init: true
     user: "${JRC_UID:-1000}:${JRC_GID:-1000}"
@@ -32,8 +110,11 @@ services:
       jrc-s3:
         condition: service_healthy
   jrc-postgres:
+    networks:
+      - default
+      - internal
     image: postgres:18.6-bookworm
-    container_name: jrc-postgres
+    container_name: ${JRC_PROJECT:-jrc}-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${PGUSER:-jrc}
@@ -54,7 +135,7 @@ services:
       context: docker
       dockerfile: Dockerfile.s3
     image: jrc-s3:local
-    container_name: jrc-s3
+    container_name: ${JRC_PROJECT:-jrc}-s3
     restart: unless-stopped
     environment:
       GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:?Spusťte make env}
@@ -71,10 +152,14 @@ services:
       timeout: 5s
       retries: 40
 networks:
+  internal:
+    internal: true
   default:
-    name: jrc-network
+    name: ${JRC_PROJECT:-jrc}-network
 volumes:
   jrc-postgres-data:
-    name: jrc-postgres-data
+    name: ${JRC_PROJECT:-jrc}-postgres-data
   jrc-s3-data:
-    name: jrc-s3-data
+    name: ${JRC_PROJECT:-jrc}-s3-data
+  jrc-bb-media:
+    name: ${JRC_PROJECT:-jrc}-bb-media

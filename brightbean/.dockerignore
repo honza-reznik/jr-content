@@ -1,0 +1,15 @@
+# JR Content: přidáno 2026-10-22 (blok F2-B01).
+.env
+*.env
+*.env.local
+.git
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+node_modules
+theme/static_src/node_modules
+theme/static/css/dist
+staticfiles
+media
+test_media
