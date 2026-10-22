@@ -60,6 +60,20 @@ now_epoch() {   # $1 = podvržený čas (AAAA-MM-DDTHH:MM) nebo prázdné = skut
 NOW=$(now_epoch "${TICK_NOW:-}") || exit 2
 LOGFILE=$LOG_DIR/tick-$(date -d "@$NOW" +%F).log
 
+# Volitelné absolutní hranice; chybějící hodnoty zachovávají staré konfigurace.
+for var in CONTINUOUS_UNTIL CLAUDE_FREE_BY CODEX_FREE_BY WEEK_RULE_FROM; do
+  val=${!var:-}
+  epoch=0
+  if [[ -n $val ]]; then
+    if [[ ! $val =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}$ ]] \
+       || ! epoch=$(date -d "$val" +%s 2>/dev/null); then
+      echo "tick: neplatný $var=$val (čekám AAAA-MM-DDTHH:MM)" >&2
+      exit 2
+    fi
+  fi
+  printf -v "${var}_EPOCH" '%s' "$epoch"
+done
+
 fmt() { date -d "@$1" '+%-d.%-m. %H:%M'; }
 
 log() {
@@ -144,21 +158,31 @@ def parse_reset(s, now):
 def num(x):
     return f"{x:g}"
 
-def window_verdict(name, now, used, reset, deadline_hm, new_hours):
+def window_verdict(name, now, used, reset, deadline_hm, new_hours, continuous_until, free_by):
     """Pravidlo 5h okna. Vrací (ok, text)."""
-    deadline = next_at(now, deadline_hm)
+    continuous = now < continuous_until
+    deadline = None if continuous else next_at(now, deadline_hm)
+    deadline_txt = deadline_hm
+    if now < free_by and (deadline is None or free_by <= deadline):
+        deadline = free_by
+        deadline_txt = f"{name.upper()}_FREE_BY {fmt(free_by)}"
+    extra = " · nepřetržitý provoz, RESET_DEADLINE neplatí" if continuous else ""
     used_txt = f" (využito {num(used)} %)" if used is not None else ""
     if reset is not None and reset > now:
+        if deadline is None:
+            return True, f"5h okno běží{used_txt}, obnova {fmt(reset)}{extra}"
         if reset <= deadline:
-            return True, f"5h okno běží{used_txt}, obnova {fmt(reset)} nejpozději v {deadline_hm}"
-        return False, f"5h okno běží{used_txt}, obnova {fmt(reset)} je po {deadline_hm}"
+            return True, f"5h okno běží{used_txt}, obnova {fmt(reset)} nejpozději v {deadline_txt}{extra}"
+        return False, f"5h okno běží{used_txt}, obnova {fmt(reset)} je po {deadline_txt}{extra}"
     new_reset = now + int(float(new_hours) * 3600)
+    if deadline is None:
+        return True, f"5h okno neběží, nové se obnoví {fmt(new_reset)}{extra}"
     if new_reset <= deadline:
-        return True, f"5h okno neběží, nové se obnoví {fmt(new_reset)} nejpozději v {deadline_hm}"
-    return False, (f"5h okno neběží a nové by se obnovilo {fmt(new_reset)}, tedy po {deadline_hm}"
-                   f" (nové okno jen do {fmt(deadline - int(float(new_hours) * 3600))})")
+        return True, f"5h okno neběží, nové se obnoví {fmt(new_reset)} nejpozději v {deadline_txt}{extra}"
+    return False, (f"5h okno neběží a nové by se obnovilo {fmt(new_reset)}, tedy po {deadline_txt}"
+                   f" (nové okno jen do {fmt(deadline - int(float(new_hours) * 3600))}){extra}")
 
-def gate_claude(now, deadline_hm, new_hours, min_left, rc):
+def gate_claude(now, deadline_hm, new_hours, min_left, rc, continuous_until, free_by, week_rule_from):
     text = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", sys.stdin.read())
     used = reset = week = None
     m = re.search(r"Current session:\s*([\d.]+)\s*%\s*used([^\n]*)", text)
@@ -175,12 +199,16 @@ def gate_claude(now, deadline_hm, new_hours, min_left, rc):
         if rc != "0":
             why += f", claude /usage skončil kódem {rc}"
         return False, why
-    ok, txt = window_verdict("Claude", now, used, reset, deadline_hm, new_hours)
+    ok, txt = window_verdict("Claude", now, used, reset, deadline_hm, new_hours, continuous_until, free_by)
+    week_note = ""
+    if now < week_rule_from:
+        min_left = 0
+        week_note = f" · před WEEK_RULE_FROM {fmt(week_rule_from)} platí minimum 0 %"
     left = 100 - week
     wtxt = f"týden zbývá {num(left)} % (min. {num(min_left)} %)"
     if left < min_left:
-        return False, f"{txt} · {wtxt}: málo"
-    return ok, f"{txt} · {wtxt}"
+        return False, f"{txt} · {wtxt}: málo{week_note}"
+    return ok, f"{txt} · {wtxt}{week_note}"
 
 def find_key(o, key):
     if isinstance(o, dict):
@@ -227,7 +255,7 @@ def codex_limits(sessions_dir):
             return last, p
     return None, None
 
-def gate_codex(now, deadline_hm, new_hours, sessions_dir):
+def gate_codex(now, deadline_hm, new_hours, sessions_dir, continuous_until, free_by):
     rl, path = codex_limits(sessions_dir)
     used = reset = None
     extra = ""
@@ -246,17 +274,19 @@ def gate_codex(now, deadline_hm, new_hours, sessions_dir):
             extra = f" · týden využito {num(float(sec['used_percent']))} % (pravidlo neplatí)"
     else:
         extra = " · data usage Codexu nenalezena, beru jako okno neběží"
-    ok, txt = window_verdict("Codex", now, used, reset, deadline_hm, new_hours)
+    ok, txt = window_verdict("Codex", now, used, reset, deadline_hm, new_hours, continuous_until, free_by)
     return ok, txt + extra
 
 cmd = sys.argv[1]
 if cmd == "next_at":
     print(next_at(int(sys.argv[2]), sys.argv[3]))
 elif cmd == "gate_claude":
-    ok, txt = gate_claude(int(sys.argv[2]), sys.argv[3], sys.argv[4], float(sys.argv[5]), sys.argv[6])
+    ok, txt = gate_claude(int(sys.argv[2]), sys.argv[3], sys.argv[4], float(sys.argv[5]), sys.argv[6],
+                          int(sys.argv[7]), int(sys.argv[8]), int(sys.argv[9]))
     print("OK" if ok else "NE"); print(txt)
 elif cmd == "gate_codex":
-    ok, txt = gate_codex(int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5])
+    ok, txt = gate_codex(int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5],
+                         int(sys.argv[6]), int(sys.argv[7]))
     print("OK" if ok else "NE"); print(txt)
 else:
     raise SystemExit(f"neznámý příkaz {cmd}")
@@ -273,6 +303,12 @@ IN_NIGHT=0        # 1 = teď je noční okno pro start (WINDOW_START až LAST_ST
 TIME_TEXT=""
 
 check_time() {
+  if (( NOW < CONTINUOUS_UNTIL_EPOCH )); then
+    IN_NIGHT=0
+    PERMIT_UNTIL=""
+    TIME_TEXT="nepřetržitý provoz do $(fmt "$CONTINUOUS_UNTIL_EPOCH") (CONTINUOUS_UNTIL)"
+    return 0
+  fi
   local cur start last
   cur=$(hm_to_min "$(date -d "@$NOW" +%H:%M)")
   start=$(hm_to_min "$WINDOW_START")
@@ -312,9 +348,15 @@ check_time() {
   return 1
 }
 
-# Timeout běhu: z konfigurace, ale nejdéle do konce nočního okna, resp. do konce povolení.
+# Timeout běhu: z konfigurace, nejdéle do konce nepřetržitého režimu, jinak noci/povolení.
 effective_timeout() {
   local conf_to=$1 end=0 e
+  if (( NOW < CONTINUOUS_UNTIL_EPOCH )); then
+    e=$(( CONTINUOUS_UNTIL_EPOCH - NOW ))
+    (( e < conf_to )) && conf_to=$e
+    echo "$conf_to"
+    return
+  fi
   if (( IN_NIGHT )); then
     end=$(py next_at "$NOW" "$WINDOW_END")
   fi
@@ -344,14 +386,16 @@ claude_gate() {
     echo "[nanečisto] surová usage Claude (kód $rc):"
     echo "${raw:-    (žádné řádky Current session/week)}"
   fi
-  res=$(printf '%s' "$out" | py gate_claude "$NOW" "$RESET_DEADLINE" "$NEW_WINDOW_HOURS" "$MIN_CLAUDE_WEEK_LEFT" "$rc")
+  res=$(printf '%s' "$out" | py gate_claude "$NOW" "$RESET_DEADLINE" "$NEW_WINDOW_HOURS" "$MIN_CLAUDE_WEEK_LEFT" "$rc" \
+    "$CONTINUOUS_UNTIL_EPOCH" "$CLAUDE_FREE_BY_EPOCH" "$WEEK_RULE_FROM_EPOCH")
   GATE_TEXT=$(sed -n 2p <<<"$res")
   [[ $(head -n1 <<<"$res") == OK ]]
 }
 
 codex_gate() {
   local res
-  res=$(py gate_codex "$NOW" "$RESET_DEADLINE" "$NEW_WINDOW_HOURS" "$CODEX_SESSIONS_DIR")
+  res=$(py gate_codex "$NOW" "$RESET_DEADLINE" "$NEW_WINDOW_HOURS" "$CODEX_SESSIONS_DIR" \
+    "$CONTINUOUS_UNTIL_EPOCH" "$CODEX_FREE_BY_EPOCH")
   GATE_TEXT=$(sed -n 2p <<<"$res")
   [[ $(head -n1 <<<"$res") == OK ]]
 }
