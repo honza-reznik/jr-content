@@ -1,0 +1,10 @@
+# JR Content: spouští ops/tick.sh každých 30 minut 21:00–6:30 (P-002). Mimo okno tick.sh jen zapíše do logu.
+[Unit]
+Description=JR Content: noční spouštěč každých 30 min 21:00–6:30
+
+[Timer]
+OnCalendar=*-*-* 21,22,23,00,01,02,03,04,05,06:00,30
+Persistent=false
+
+[Install]
+WantedBy=timers.target
