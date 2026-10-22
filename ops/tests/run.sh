@@ -14,7 +14,7 @@ fi
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 TICK=$REPO/ops/tick.sh
 export TZ=Europe/Prague
-unset ANTHROPIC_API_KEY OPENAI_API_KEY TICK_NOW TICK_CONF
+unset ANTHROPIC_API_KEY OPENAI_API_KEY TICK_NOW TICK_CONF TICK_NOW_AFTER_USAGE TICK_NOW_AFTER_PM
 
 PASS=0
 FAIL=0
@@ -600,6 +600,83 @@ claude_usage - 70
 tick 2026-10-26T08:30
 check "PM spuštěn" eq "$(count_pm)" 1
 check "timeout do 9:00" has "$(logfile)" "timeout 1800 s"
+end
+
+begin "AK8: běžící okno končí v 8:50, PM od 8:30 smí běžet jen 1200 s"
+continuous_conf
+claude_usage "Oct 26, 8:50am (Europe/Prague)" 70
+tick 2026-10-26T08:30
+check "PM spuštěn" eq "$(count_pm)" 1
+check "timeout do obnovy, před FREE_BY i koncem režimu" has "$(logfile)" "timeout 1200 s"
+end
+
+begin "AK8: nové okno od 3:00 končí v 8:00, i při PM_TIMEOUT=6 h běží nejvýše 5 h"
+continuous_conf
+conf 'PM_TIMEOUT=21600'
+claude_usage - 70
+tick 2026-10-26T03:00
+check "PM spuštěn" eq "$(count_pm)" 1
+check "timeout do obnovy nového okna" has "$(logfile)" "timeout 18000 s"
+end
+
+begin "AK8: FREE_BY platí samostatně, timeout do obnovy může být kratší než minutu"
+conf 'CLAUDE_FREE_BY=2026-10-22T09:00'
+claude_usage "Oct 22, 6:30am (Europe/Prague)" 70
+tick 2026-10-22T06:29:45
+check "PM spuštěn" eq "$(count_pm)" 1
+check "timeout neprodlouží běh přes obnovu" has "$(logfile)" "timeout 15 s"
+end
+
+begin "AK8: po usage se timeout i zpráva PM počítají z nového času"
+continuous_conf
+claude_usage "Oct 26, 8:50am (Europe/Prague)" 70
+TICK_NOW_AFTER_USAGE=2026-10-26T08:30 tick 2026-10-26T08:29
+check "PM spuštěn" eq "$(count_pm)" 1
+check "timeout od 8:30" has "$(logfile)" "timeout 1200 s"
+check "PM dostane aktuální čas" has "$(calls)" "[NOČNÍ BĚH 2026-10-26 08:30]"
+end
+
+begin "AK8: usage překročí poslední možný start nového okna před FREE_BY"
+continuous_conf
+claude_usage - 70
+TICK_NOW_AFTER_USAGE=2026-10-26T04:01 tick 2026-10-26T03:59
+check "PM nespuštěn" eq "$(count_pm)" 0
+check "brána počítá nové okno od 4:01" has "$(logfile)" "nové by se obnovilo 26.10. 09:01, tedy po CLAUDE_FREE_BY 26.10. 09:00"
+end
+
+begin "AK8: usage překročí obnovu běžícího okna, nové okno už FREE_BY nepustí"
+continuous_conf
+claude_usage "Oct 26, 8:50am (Europe/Prague)" 70
+TICK_NOW_AFTER_USAGE=2026-10-26T08:50 tick 2026-10-26T08:49
+check "PM nespuštěn" eq "$(count_pm)" 0
+check "prošlé okno brána nahradí novým" has "$(logfile)" "nové by se obnovilo 26.10. 13:50"
+end
+
+begin "AK8: usage překročí WEEK_RULE_FROM, týden se vyhodnotí podle nového času"
+continuous_conf
+claude_usage - 95
+TICK_NOW_AFTER_USAGE=2026-10-23T17:00 tick 2026-10-23T16:59
+check "PM nespuštěn" eq "$(count_pm)" 0
+check "platí týdenní minimum 20 %" has "$(logfile)" "týden zbývá 5 % (min. 20 %): málo"
+end
+
+begin "AK8: usage překročí CONTINUOUS_UNTIL, bez povolení už PM ani Codex nesmí začít"
+continuous_conf
+claude_usage "Oct 26, 9:00am (Europe/Prague)" 70
+TICK_NOW_AFTER_USAGE=2026-10-26T09:00 tick 2026-10-26T08:59
+check "usage přečtena" eq "$(count_usage)" 1
+check "PM nespuštěn" eq "$(count_pm)" 0
+check "Codex nespuštěn" eq "$(count_codex)" 0
+check "nová časová brána" has "$(logfile)" "2026-10-26 09:00 nic nespuštěno po usage: mimo noční okno"
+end
+
+begin "AK8: během usage vyprší denní povolení"
+echo 'do=2026-10-21T15:00' >"$T/proj/ops/povoleni-den"
+claude_usage - 70
+TICK_NOW_AFTER_USAGE=2026-10-21T15:00 tick 2026-10-21T14:59
+check "PM nespuštěn" eq "$(count_pm)" 0
+check "Codex nespuštěn" eq "$(count_codex)" 0
+check "povolení se vyhodnotí znovu" has "$(logfile)" "povolení-den prošlo 21.10. 15:00"
 end
 
 begin "po CONTINUOUS_UNTIL: přesně v 9:00 ani později bez povolení nic nespustí"

@@ -11,6 +11,7 @@
 # Proměnné prostředí (hlavně pro testy):
 #   TICK_CONF  cesta ke konfiguraci (výchozí ops/tick.conf vedle skriptu)
 #   TICK_NOW   podvržený „teď“ ve tvaru AAAA-MM-DDTHH:MM (místní čas)
+#   TICK_NOW_AFTER_USAGE  podvržený „teď“ po dotazu na usage Claude (jinak TICK_NOW nebo hodiny)
 #   TICK_NOW_AFTER_PM  podvržený „teď“ po doběhnutí PM (jen testy; jinak se čas znovu načte z hodin)
 
 set -uo pipefail
@@ -89,7 +90,7 @@ log() {
 }
 
 # --- Pomocník v Pythonu: usage a výpočty s časem --------------------------------
-# Jen standardní knihovna. Výstup brány: první řádek OK/NE, druhý řádek čitelné zdůvodnění.
+# Jen standardní knihovna. Výstup brány: OK/NE, čitelné zdůvodnění; u Claude navíc čas obnovy okna.
 
 read -r -d '' PY_HELPER <<'PY'
 import datetime as dt, json, os, re, sys, time
@@ -159,7 +160,7 @@ def num(x):
     return f"{x:g}"
 
 def window_verdict(name, now, used, reset, deadline_hm, new_hours, continuous_until, free_by):
-    """Pravidlo 5h okna. Vrací (ok, text)."""
+    """Pravidlo 5h okna. Vrací (ok, text, čas obnovy běžícího nebo nového okna)."""
     continuous = now < continuous_until
     deadline = None if continuous else next_at(now, deadline_hm)
     deadline_txt = deadline_hm
@@ -170,17 +171,17 @@ def window_verdict(name, now, used, reset, deadline_hm, new_hours, continuous_un
     used_txt = f" (využito {num(used)} %)" if used is not None else ""
     if reset is not None and reset > now:
         if deadline is None:
-            return True, f"5h okno běží{used_txt}, obnova {fmt(reset)}{extra}"
+            return True, f"5h okno běží{used_txt}, obnova {fmt(reset)}{extra}", reset
         if reset <= deadline:
-            return True, f"5h okno běží{used_txt}, obnova {fmt(reset)} nejpozději v {deadline_txt}{extra}"
-        return False, f"5h okno běží{used_txt}, obnova {fmt(reset)} je po {deadline_txt}{extra}"
+            return True, f"5h okno běží{used_txt}, obnova {fmt(reset)} nejpozději v {deadline_txt}{extra}", reset
+        return False, f"5h okno běží{used_txt}, obnova {fmt(reset)} je po {deadline_txt}{extra}", reset
     new_reset = now + int(float(new_hours) * 3600)
     if deadline is None:
-        return True, f"5h okno neběží, nové se obnoví {fmt(new_reset)}{extra}"
+        return True, f"5h okno neběží, nové se obnoví {fmt(new_reset)}{extra}", new_reset
     if new_reset <= deadline:
-        return True, f"5h okno neběží, nové se obnoví {fmt(new_reset)} nejpozději v {deadline_txt}{extra}"
+        return True, f"5h okno neběží, nové se obnoví {fmt(new_reset)} nejpozději v {deadline_txt}{extra}", new_reset
     return False, (f"5h okno neběží a nové by se obnovilo {fmt(new_reset)}, tedy po {deadline_txt}"
-                   f" (nové okno jen do {fmt(deadline - int(float(new_hours) * 3600))}){extra}")
+                   f" (nové okno jen do {fmt(deadline - int(float(new_hours) * 3600))}){extra}"), new_reset
 
 def gate_claude(now, deadline_hm, new_hours, min_left, rc, continuous_until, free_by, week_rule_from):
     text = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", sys.stdin.read())
@@ -198,8 +199,8 @@ def gate_claude(now, deadline_hm, new_hours, min_left, rc, continuous_until, fre
         why = "chybí data usage (řádek Current week)"
         if rc != "0":
             why += f", claude /usage skončil kódem {rc}"
-        return False, why
-    ok, txt = window_verdict("Claude", now, used, reset, deadline_hm, new_hours, continuous_until, free_by)
+        return False, why, 0
+    ok, txt, window_reset = window_verdict("Claude", now, used, reset, deadline_hm, new_hours, continuous_until, free_by)
     week_note = ""
     if now < week_rule_from:
         min_left = 0
@@ -207,8 +208,8 @@ def gate_claude(now, deadline_hm, new_hours, min_left, rc, continuous_until, fre
     left = 100 - week
     wtxt = f"týden zbývá {num(left)} % (min. {num(min_left)} %)"
     if left < min_left:
-        return False, f"{txt} · {wtxt}: málo{week_note}"
-    return ok, f"{txt} · {wtxt}{week_note}"
+        return False, f"{txt} · {wtxt}: málo{week_note}", window_reset
+    return ok, f"{txt} · {wtxt}{week_note}", window_reset
 
 def find_key(o, key):
     if isinstance(o, dict):
@@ -274,16 +275,16 @@ def gate_codex(now, deadline_hm, new_hours, sessions_dir, continuous_until, free
             extra = f" · týden využito {num(float(sec['used_percent']))} % (pravidlo neplatí)"
     else:
         extra = " · data usage Codexu nenalezena, beru jako okno neběží"
-    ok, txt = window_verdict("Codex", now, used, reset, deadline_hm, new_hours, continuous_until, free_by)
+    ok, txt, _ = window_verdict("Codex", now, used, reset, deadline_hm, new_hours, continuous_until, free_by)
     return ok, txt + extra
 
 cmd = sys.argv[1]
 if cmd == "next_at":
     print(next_at(int(sys.argv[2]), sys.argv[3]))
 elif cmd == "gate_claude":
-    ok, txt = gate_claude(int(sys.argv[2]), sys.argv[3], sys.argv[4], float(sys.argv[5]), sys.argv[6],
+    ok, txt, window_reset = gate_claude(int(sys.argv[2]), sys.argv[3], sys.argv[4], float(sys.argv[5]), sys.argv[6],
                           int(sys.argv[7]), int(sys.argv[8]), int(sys.argv[9]))
-    print("OK" if ok else "NE"); print(txt)
+    print("OK" if ok else "NE"); print(txt); print(window_reset)
 elif cmd == "gate_codex":
     ok, txt = gate_codex(int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5],
                          int(sys.argv[6]), int(sys.argv[7]))
@@ -375,11 +376,13 @@ effective_timeout() {
 # --- Limitní brány ---------------------------------------------------------------
 
 GATE_TEXT=""
+CLAUDE_WINDOW_RESET=0
 
 claude_gate() {
   local out rc res
   out=$(cd "$PROJECT_DIR" 2>/dev/null; timeout "$USAGE_TIMEOUT" "$CLAUDE_BIN" -p "/usage" </dev/null 2>&1 9>&-)
   rc=$?
+  NOW=$(now_epoch "${TICK_NOW_AFTER_USAGE:-${TICK_NOW:-}}") || exit 2
   if (( DRY_RUN )); then
     local raw
     raw=$(printf '%s\n' "$out" | grep -E 'Current (session|week)' | sed 's/^[[:space:]]*/    /')
@@ -389,6 +392,7 @@ claude_gate() {
   res=$(printf '%s' "$out" | py gate_claude "$NOW" "$RESET_DEADLINE" "$NEW_WINDOW_HOURS" "$MIN_CLAUDE_WEEK_LEFT" "$rc" \
     "$CONTINUOUS_UNTIL_EPOCH" "$CLAUDE_FREE_BY_EPOCH" "$WEEK_RULE_FROM_EPOCH")
   GATE_TEXT=$(sed -n 2p <<<"$res")
+  CLAUDE_WINDOW_RESET=$(sed -n 3p <<<"$res")
   [[ $(head -n1 <<<"$res") == OK ]]
 }
 
@@ -410,6 +414,13 @@ run_pm() {
   local cmd=("$CLAUDE_BIN" -p --model "$PM_MODEL" --append-system-prompt-file "$PM_PROMPT_FILE"
              "${CLAUDE_EXTRA_ARGS[@]}" "$msg")
   to=$(effective_timeout "$PM_TIMEOUT")
+  # Před FREE_BY nesmí PM po obnově otevřít další okno přes tuto hranici.
+  if (( NOW < CLAUDE_FREE_BY_EPOCH )); then
+    local remaining=$(( CLAUDE_FREE_BY_EPOCH - NOW ))
+    (( remaining < to )) && to=$remaining
+    remaining=$(( CLAUDE_WINDOW_RESET - NOW ))
+    (( remaining < to )) && to=$remaining
+  fi
   if (( DRY_RUN )); then
     log "SPUSTIL BYCH PM (v $PROJECT_DIR, timeout ${to} s): $(printf '%q ' "${cmd[@]}")"
     return
@@ -552,13 +563,19 @@ main() {
   claude_gate && ok=1
   log "BRÁNA Claude: $( ((ok)) && echo PUSTÍ || echo NEPUSTÍ ) · $GATE_TEXT"
 
+  # Dotaz na usage mohl překročit konec časového okna nebo denního povolení.
+  if ! check_time; then
+    log "nic nespuštěno po usage: $TIME_TEXT"
+    exit 0
+  fi
+
   if (( ok )); then
     run_pm
     if (( DRY_RUN )); then
       run_codex_fallback hypoteticky
     elif [[ $PM_RESULT == limit ]]; then
       # PM mohl běžet hodiny: čas okna, brána Codexu i timeout se počítají znovu od aktuálního času.
-      NOW=$(now_epoch "${TICK_NOW_AFTER_PM:-${TICK_NOW:-}}") || exit 2
+      NOW=$(now_epoch "${TICK_NOW_AFTER_PM:-${TICK_NOW_AFTER_USAGE:-${TICK_NOW:-}}}") || exit 2
       run_codex_fallback "PM narazil na limit"
     fi
   else
