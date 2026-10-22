@@ -607,7 +607,7 @@ continuous_conf
 claude_usage "Oct 26, 8:50am (Europe/Prague)" 70
 tick 2026-10-26T08:30
 check "PM spuštěn" eq "$(count_pm)" 1
-check "timeout do obnovy, před FREE_BY i koncem režimu" has "$(logfile)" "timeout 1200 s"
+check "timeout do obnovy, před FREE_BY i koncem režimu" has "$(logfile)" "timeout 1080 s"
 end
 
 begin "AK8: nové okno od 3:00 končí v 8:00, i při PM_TIMEOUT=6 h běží nejvýše 5 h"
@@ -616,15 +616,15 @@ conf 'PM_TIMEOUT=21600'
 claude_usage - 70
 tick 2026-10-26T03:00
 check "PM spuštěn" eq "$(count_pm)" 1
-check "timeout do obnovy nového okna" has "$(logfile)" "timeout 18000 s"
+check "timeout do obnovy nového okna" has "$(logfile)" "timeout 17880 s"
 end
 
-begin "AK8: FREE_BY platí samostatně, timeout do obnovy může být kratší než minutu"
+begin "AK8: FREE_BY platí samostatně, těsně před obnovou okna se PM nespustí (rezerva 120 s)"
 conf 'CLAUDE_FREE_BY=2026-10-22T09:00'
 claude_usage "Oct 22, 6:30am (Europe/Prague)" 70
 tick 2026-10-22T06:29:45
-check "PM spuštěn" eq "$(count_pm)" 1
-check "timeout neprodlouží běh přes obnovu" has "$(logfile)" "timeout 15 s"
+check "PM nespuštěn" eq "$(count_pm)" 0
+check "PM se nespustí těsně před obnovou" has "$(logfile)" "PM nespuštěn: do obnovy okna"
 end
 
 begin "AK8: po usage se timeout i zpráva PM počítají z nového času"
@@ -632,7 +632,7 @@ continuous_conf
 claude_usage "Oct 26, 8:50am (Europe/Prague)" 70
 TICK_NOW_AFTER_USAGE=2026-10-26T08:30 tick 2026-10-26T08:29
 check "PM spuštěn" eq "$(count_pm)" 1
-check "timeout od 8:30" has "$(logfile)" "timeout 1200 s"
+check "timeout od 8:30" has "$(logfile)" "timeout 1080 s"
 check "PM dostane aktuální čas" has "$(calls)" "[NOČNÍ BĚH 2026-10-26 08:30]"
 end
 

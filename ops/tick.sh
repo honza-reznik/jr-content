@@ -415,11 +415,17 @@ run_pm() {
              "${CLAUDE_EXTRA_ARGS[@]}" "$msg")
   to=$(effective_timeout "$PM_TIMEOUT")
   # Před FREE_BY nesmí PM po obnově otevřít další okno přes tuto hranici.
+  # Rezerva 120 s: timeout po signálu čeká až 60 s (--kill-after), PM musí skončit před obnovou okna.
   if (( NOW < CLAUDE_FREE_BY_EPOCH )); then
-    local remaining=$(( CLAUDE_FREE_BY_EPOCH - NOW ))
+    local remaining=$(( CLAUDE_FREE_BY_EPOCH - NOW - 120 ))
     (( remaining < to )) && to=$remaining
-    remaining=$(( CLAUDE_WINDOW_RESET - NOW ))
+    remaining=$(( CLAUDE_WINDOW_RESET - NOW - 120 ))
     (( remaining < to )) && to=$remaining
+    if (( to < 60 )); then
+      PM_RESULT=chyba
+      log "PM nespuštěn: do obnovy okna Claude nebo CLAUDE_FREE_BY zbývá méně než 3 minuty"
+      return
+    fi
   fi
   if (( DRY_RUN )); then
     log "SPUSTIL BYCH PM (v $PROJECT_DIR, timeout ${to} s): $(printf '%q ' "${cmd[@]}")"
