@@ -1,0 +1,10 @@
+# JR Content: noční spouštěč (F0-B06). Instalace: ops/systemd/README.md
+[Unit]
+Description=JR Content: noční spouštěč (ops/tick.sh)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/honza/jr-content
+ExecStart=/home/honza/jr-content/ops/tick.sh
+Environment=PATH=/home/honza/.local/bin:/usr/local/bin:/usr/bin:/bin
+TimeoutStartSec=10h
