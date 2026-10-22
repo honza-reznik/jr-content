@@ -7,6 +7,10 @@ const values = {
   GARAGE_RPC_SECRET: crypto.randomBytes(32).toString('hex'),
   JRC_BB_SECRET_KEY: crypto.randomBytes(48).toString('hex'),
   JRC_BB_ENCRYPTION_KEY_SALT: crypto.randomBytes(32).toString('hex'),
+  JRC_FF_JWT_SECRET: crypto.randomBytes(48).toString('hex'),
+  JRC_FF_SYNC_PASSWORD: crypto.randomBytes(32).toString('hex'),
+  JRC_FF_S3_ACCESS_KEY: 'GK' + crypto.randomBytes(12).toString('hex'),
+  JRC_FF_S3_SECRET_KEY: crypto.randomBytes(32).toString('hex'),
   JRC_UID: process.getuid(),
   JRC_GID: process.getgid(),
 };

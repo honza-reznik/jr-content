@@ -29,4 +29,22 @@ if [ ! -f /var/lib/garage/meta/.jrc-initialized ]; then
     garage bucket allow --read --write --owner "$S3_BUCKET" --key "$AWS_ACCESS_KEY_ID" >/dev/null 2>&1
     touch /var/lib/garage/meta/.jrc-initialized
 fi
+# Samostatný video klíč doplníme i na svazku vytvořeném před F2-B02.
+if [ -n "${JRC_FF_S3_ACCESS_KEY:-}" ] && [ ! -f /var/lib/garage/meta/.jrc-video-initialized ]; then
+    : "${JRC_FF_S3_SECRET_KEY:?Chybí JRC_FF_S3_SECRET_KEY}"
+    attempts=0
+    until garage status >/dev/null 2>&1; do
+        attempts=$((attempts + 1))
+        if [ "$attempts" -ge 60 ] || ! kill -0 "$server_pid" 2>/dev/null; then
+            echo 'Garage není připravené pro inicializaci videí.' >&2
+            kill "$server_pid" 2>/dev/null || true
+            exit 1
+        fi
+        sleep 1
+    done
+    garage key import --yes -n jrc-video "$JRC_FF_S3_ACCESS_KEY" "$JRC_FF_S3_SECRET_KEY" >/dev/null 2>&1
+    garage bucket info jrc-video >/dev/null 2>&1 || garage bucket create jrc-video
+    garage bucket allow --read --write --owner jrc-video --key "$JRC_FF_S3_ACCESS_KEY" >/dev/null 2>&1
+    touch /var/lib/garage/meta/.jrc-video-initialized
+fi
 wait "$server_pid"

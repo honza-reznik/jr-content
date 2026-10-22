@@ -9,7 +9,7 @@ endif
 override COMPOSE := docker compose --project-name $(JRC_PROJECT) --file docker-compose.yml --env-file .env
 # Správa existujících kontejnerů nepotřebuje hesla ani místní .env.
 # Zástupné hodnoty se používají pouze pro načtení konfigurace, nikdy pro up.
-override ADMIN_COMPOSE := PGPASSWORD=unused GARAGE_RPC_SECRET=unused AWS_ACCESS_KEY_ID=unused AWS_SECRET_ACCESS_KEY=unused JRC_BB_SECRET_KEY=unused JRC_BB_ENCRYPTION_KEY_SALT=unused docker compose --project-name $(JRC_PROJECT) --file docker-compose.yml --env-file /dev/null
+override ADMIN_COMPOSE := PGPASSWORD=unused GARAGE_RPC_SECRET=unused AWS_ACCESS_KEY_ID=unused AWS_SECRET_ACCESS_KEY=unused JRC_BB_SECRET_KEY=unused JRC_BB_ENCRYPTION_KEY_SALT=unused JRC_FF_JWT_SECRET=unused JRC_FF_SYNC_PASSWORD=unused JRC_FF_S3_ACCESS_KEY=unused JRC_FF_S3_SECRET_KEY=unused docker compose --project-name $(JRC_PROJECT) --file docker-compose.yml --env-file /dev/null
 export JRC_UID := $(shell id -u)
 export JRC_GID := $(shell id -g)
 # Buildx zapisuje provozní údaje pouze do worktree, i v omezené relaci agenta.
@@ -17,7 +17,7 @@ export BUILDX_CONFIG := $(CURDIR)/.cache/docker-buildx
 CMD ?= bash
 export CMD
 
-.PHONY: build build-bb env up down shell test test-smoke test-bb reset logs ps
+.PHONY: build build-bb env up down shell test test-smoke test-bb test-ff test-ff-smoke ff-account build-ff reset logs ps
 build:
 	docker build --tag jrc-dev:local --file docker/Dockerfile docker
 
@@ -35,9 +35,14 @@ build-bb:
 	  --volume "$(CURDIR)/brightbean:/source" jrc-bb:local sh -c \
 	  'mkdir -p /source/theme/static/css/dist && cp /app/theme/static/css/dist/styles.css /source/theme/static/css/dist/styles.css'
 
+build-ff:
+	docker build --tag jrc-ff-api:local --file docker/Dockerfile.ff-api .
+	docker build --tag jrc-ff-web:local --file docker/Dockerfile.ff-web .
+
 up: env
 	$(MAKE) build
 	$(MAKE) build-bb
+	$(MAKE) build-ff
 	$(COMPOSE) up --detach --build --wait --wait-timeout 120
 	@sh scripts/workspace.sh remember
 
@@ -53,7 +58,7 @@ shell:
 		$(COMPOSE) exec -T jrc-dev sh -c "$$CMD"; \
 	fi
 
-test: test-smoke test-bb
+test: test-smoke test-bb test-ff
 
 test-smoke:
 	@sh scripts/workspace.sh check
@@ -66,6 +71,28 @@ test-bb:
 	@sh scripts/workspace.sh check
 	$(COMPOSE) exec -T jrc-bb-web sh -c 'ruff check . && ruff format --check .'
 	$(COMPOSE) exec -T jrc-bb-web pytest -p no:cacheprovider -o addopts="" -q --tb=short --ds=config.settings.jrc_test
+
+test-ff:
+	@sh scripts/workspace.sh check
+	@for service in jrc-ff-worker jrc-ff-maintenance jrc-ff-beat; do \
+	  $(COMPOSE) exec -T $$service python - < scripts/smoke-ff-internal.py || exit $$?; \
+	done
+	$(COMPOSE) exec -T -e STALE_UPLOAD_TIMEOUT_HOURS=24 -e SOFT_DELETE_RETENTION_DAYS=30 jrc-ff-api python -m pytest apps/api/tests -q -p no:cacheprovider
+	# Upstream jednotkové testy předpokládají kořenovou URL; /video ověřuje živý test a build.
+	$(COMPOSE) exec -T -e NEXT_PUBLIC_BASE_PATH= jrc-ff-web pnpm test --maxWorkers=2
+	$(COMPOSE) exec -T jrc-ff-web pnpm exec tsc --noEmit
+	$(COMPOSE) exec -T jrc-ff-web pnpm lint
+
+# Podepsané adresy S3 obsahují 127.0.0.1, proto ověření běží v Dockeru se sítí hostitele.
+test-ff-smoke:
+	@sh scripts/workspace.sh check
+	docker run --rm --network host --pull never --user "$(JRC_UID):$(JRC_GID)" \
+	  --env-file .env --volume "$(CURDIR):/jrc" --workdir /jrc \
+	  jrc-ff-api:local python scripts/smoke-ff.py
+
+ff-account:
+	@sh scripts/workspace.sh check
+	$(COMPOSE) exec -T -e PYTHONPATH=/workspace jrc-ff-api python /jrc-scripts/init-freeframe-account.py
 
 reset:
 	$(ADMIN_COMPOSE) down --volumes

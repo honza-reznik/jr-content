@@ -15,6 +15,10 @@ try {
   const fresh = read();
   assert.match(fresh, /^JRC_BB_SECRET_KEY=[a-f0-9]{96}$/m);
   assert.match(fresh, /^JRC_BB_ENCRYPTION_KEY_SALT=[a-f0-9]{64}$/m);
+  assert.match(fresh, /^JRC_FF_JWT_SECRET=[a-f0-9]{96}$/m);
+  assert.match(fresh, /^JRC_FF_SYNC_PASSWORD=[a-f0-9]{64}$/m);
+  assert.match(fresh, /^JRC_FF_S3_ACCESS_KEY=GK[a-f0-9]{24}$/m);
+  assert.match(fresh, /^JRC_FF_S3_SECRET_KEY=[a-f0-9]{64}$/m);
   assert.equal(fs.statSync(path.join(temporary, '.env')).mode & 0o777, 0o600);
   run();
   assert.equal(read(), fresh);
