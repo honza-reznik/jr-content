@@ -1,0 +1,15 @@
+{
+  "name": "jrc-proto-f1-b04-player",
+  "private": true,
+  "description": "F1-B04: prototyp přehrávače s překryvem časového kódu",
+  "type": "module",
+  "license": "UNLICENSED",
+  "scripts": {
+    "video": "sh scripts/make-video.sh",
+    "start": "node server.mjs",
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.0"
+  }
+}

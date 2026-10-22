@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prototyp přehrávače F1-B04</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="page">
+    <h1>Prototyp přehrávače s časovým kódem</h1>
+    <nav class="pick" aria-label="Testovací video">
+      Testovací video: <a href="?" data-testid="pick-wide">16:9 na šířku</a> · <a href="?video=reel" data-testid="pick-reel">9:16 na výšku (Reel)</a>
+    </nav>
+
+    <section class="player" id="player" data-testid="player" aria-label="Přehrávač videa">
+      <div class="stage" id="stage">
+        <div class="frame" id="frame">
+          <video id="video" preload="metadata" playsinline disablepictureinpicture></video>
+          <div class="timecode" id="timecode" data-testid="timecode" aria-hidden="true">0:00</div>
+        </div>
+      </div>
+      <div class="controls">
+        <button type="button" id="play" class="btn" data-testid="play" aria-label="Přehrát">▶</button>
+        <input type="range" id="seek" data-testid="seek" min="0" max="0" step="any" value="0" aria-label="Pozice ve videu">
+        <span class="clock" id="clock" data-testid="clock">0:00 / 0:00</span>
+        <button type="button" id="mute" class="btn" data-testid="mute" aria-pressed="false">Ztlumit</button>
+        <label class="toggle"><input type="checkbox" id="tenths" data-testid="tenths"> desetiny</label>
+        <button type="button" id="fullscreen" class="btn" data-testid="fullscreen">Celá obrazovka</button>
+      </div>
+    </section>
+
+    <section class="comments" aria-labelledby="comments-title">
+      <h2 id="comments-title">Komentáře</h2>
+      <form id="comment-form" class="comment-form">
+        <label for="comment-text" class="sr-only">Text komentáře</label>
+        <textarea id="comment-text" data-testid="comment-text" rows="3" placeholder="Např. 0:17 zkrátit"></textarea>
+        <div class="row">
+          <button type="button" id="insert-time" class="btn" data-testid="insert-time">Vložit čas</button>
+          <button type="submit" class="btn primary" data-testid="add-comment">Přidat komentář</button>
+        </div>
+      </form>
+      <ol class="comment-list" id="comment-list" data-testid="comment-list"></ol>
+      <p class="hint">Čas v komentáři (např. 0:17 nebo 0:12.5) je odkaz: kliknutím přehrávač skočí na dané místo.
+        Klávesy mimo pole komentáře: mezerník = přehrát/pauza, šipky = ±1 s, F = celá obrazovka.</p>
+    </section>
+  </main>
+  <script type="module" src="player.js"></script>
+</body>
+</html>
