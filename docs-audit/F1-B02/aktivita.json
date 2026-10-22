@@ -1,0 +1,142 @@
+{
+  "contributors": [
+    {
+      "login": "ravirajsinh45",
+      "type": "User",
+      "contributions": 432
+    },
+    {
+      "login": "dependabot[bot]",
+      "type": "Bot",
+      "contributions": 53
+    },
+    {
+      "login": "Lennart-Pingpong",
+      "type": "User",
+      "contributions": 17
+    },
+    {
+      "login": "jdanna",
+      "type": "User",
+      "contributions": 16
+    },
+    {
+      "login": "rubenxyz",
+      "type": "User",
+      "contributions": 10
+    },
+    {
+      "login": "CamReport",
+      "type": "User",
+      "contributions": 9
+    },
+    {
+      "login": "sb123sb123",
+      "type": "User",
+      "contributions": 9
+    },
+    {
+      "login": "Kashisk2",
+      "type": "User",
+      "contributions": 4
+    },
+    {
+      "login": "Vrindakr3300",
+      "type": "User",
+      "contributions": 3
+    },
+    {
+      "login": "GChaucer",
+      "type": "User",
+      "contributions": 2
+    },
+    {
+      "login": "vandit-bera",
+      "type": "User",
+      "contributions": 2
+    },
+    {
+      "login": "An-Array",
+      "type": "User",
+      "contributions": 1
+    },
+    {
+      "login": "Thedude7054",
+      "type": "User",
+      "contributions": 1
+    },
+    {
+      "login": "jeremy-pixelated",
+      "type": "User",
+      "contributions": 1
+    },
+    {
+      "login": "solankimeet518",
+      "type": "User",
+      "contributions": 1
+    },
+    {
+      "login": "nickgnat",
+      "type": "User",
+      "contributions": 1
+    },
+    {
+      "login": "shaurya703",
+      "type": "User",
+      "contributions": 1
+    },
+    {
+      "login": "siddharthgoyal00",
+      "type": "User",
+      "contributions": 1
+    },
+    {
+      "login": "bingqiling007",
+      "type": "User",
+      "contributions": 1
+    },
+    {
+      "login": "deezid",
+      "type": "User",
+      "contributions": 1
+    },
+    {
+      "login": "luozejian",
+      "type": "User",
+      "contributions": 1
+    },
+    {
+      "login": "oliverstreetcreative",
+      "type": "User",
+      "contributions": 1
+    }
+  ],
+  "contributors_pagination": null,
+  "commits": [
+    {
+      "sha": "38298891c65f01cb96c3c01f18fd27ee775b61e5",
+      "date": "2026-10-19T14:39:45Z",
+      "subject": "docs(architecture): access requires a live project (#511)"
+    },
+    {
+      "sha": "6a440f1f1f3cfce6a266bab07c4cff886bac1bb2",
+      "date": "2026-10-19T14:10:07Z",
+      "subject": "chore(release): v1.19.0 (#508)"
+    },
+    {
+      "sha": "af67fc296390750f76b223b2064d0620d4ed41ae",
+      "date": "2026-10-19T13:34:12Z",
+      "subject": "fix(security): treat a deleted project as gone for share links and members (#507)"
+    },
+    {
+      "sha": "6b511a3030615883325d79d11e1bacdb128bbe0e",
+      "date": "2026-10-19T10:45:25Z",
+      "subject": "feat(menus): right-click menus on projects, assets, folders and share links (#502)"
+    },
+    {
+      "sha": "ed003c0669299bd04d449df7a9f5e363245ab154",
+      "date": "2026-10-17T09:06:59Z",
+      "subject": "feat(project): show comment counts on project thumbnails (#504)"
+    }
+  ]
+}

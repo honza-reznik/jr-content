@@ -1,0 +1,14 @@
+{
+  "result": "passed",
+  "pageErrors": [],
+  "checks": [
+    "přihlášení heslem",
+    "projekty",
+    "otevření videa",
+    "přehrávání HLS",
+    "v2 → v1",
+    "oddělené komentáře",
+    "porovnání dvou verzí",
+    "telefon 390×844"
+  ]
+}
