@@ -122,3 +122,31 @@ Provozní postup je v `docs-arch/F2-B02/freeframe-provoz.md` (doplněk pro PM do
   stabilní identita, konflikt e-mailu, ochrana privilegovaných a smazaných záznamů,
   neveřejný projekt a servisní vlastník. Živý test v kořeni JR Content ověřuje i skutečné role
   klienta, zákaz nahrávání, oddělení klientů a odvolání přístupu při platném přístupovém tokenu.
+
+## 2026-10-23 · F5-B02
+
+- `apps/api/services/jrc_ticket.py`, `apps/api/routers/jrc_auth.py`, registrace v `main.py`:
+  `POST /auth/jrc-exchange {"ticket": …}` vymění vstupenku Brightbean za běžné tokeny FreeFrame.
+  Vstupenka `v1.<data>.<podpis>`: HMAC-SHA256 klíčem `JRC_FF_SSO_SECRET` (jen v `.env`, generuje
+  `make env`, dostává ho jen `jrc-ff-api`). Podpis se ověří v konstantním čase dřív, než se data
+  přečtou. Platnost nejvýš 60 s (kontroluje FreeFrame, ne jen Brightbean), čas vydání nejvýš 5 s
+  v budoucnosti, přesné složení údajů (`v`, `iss`, `aud`, `acct`, `sub`, `iat`, `exp`, `nonce`,
+  volitelně `next`).
+- Jednorázovost: otisk `nonce` se zapíše do Redis `SET NX EX 120` hned po ověření podpisu a času,
+  ještě před dotazem do DB; vstupenka je spotřebovaná i při odmítnutí účtu. Souběžné pokusy uspějí
+  nejvýš jednou. Nedostupný Redis = 503 (bez tokenů), nikdy nepouští.
+- Vazba na účet: `sub` musí být UUIDv5 odvozené z `acct` (stejný jmenný prostor jako `/jrc-sync`),
+  takže vstupenka nikdy necílí na účet založený mimo JR Content. Účet musí existovat, nebýt smazaný,
+  mít stav `active` a nesmí být superadmin ani servisní účet.
+- Vazba na cíl: `aud=web` (přihlašovací stránka, F5-B03) vrátí přístupový i obnovovací token
+  a ověřené `next` (jen cesta uvnitř FreeFrame, žádný jiný web). `aud=api` (server Brightbean
+  jménem uživatele) vrátí jen přístupový token a jde použít jen na vnitřní adrese
+  `jrc-ff-api:8000`; přes společný vstup (Caddy nastavuje `X-Real-IP`) se odmítne.
+- Všechna odmítnutí jsou stejná odpověď 401 `Invalid or expired ticket`; důvod jde jen do logu
+  (bez vstupenky a tokenů). Odpověď má `Cache-Control: no-store`. Chybějící nebo krátký klíč = 503.
+- `tests/test_jrc_exchange.py` (79 testů): platné web/api, dvojí použití, souběh 8 požadavků,
+  prošlá, příliš dlouhá, z budoucnosti, špatný podpis (cizí klíč, `JWT_SECRET`, změněný obsah,
+  useknutí, nekanonické base64, token FreeFrame místo vstupenky), cizí, neřízený, neexistující,
+  vypnutý, čekající, smazaný účet, superadmin a servisní účet, cíl `api` přes veřejný vstup,
+  nebezpečné `next`, výpadek Redis, chybějící klíč, skutečný Redis `SET NX` a společný testovací
+  vektor s Brightbean.

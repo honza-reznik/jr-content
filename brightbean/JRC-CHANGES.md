@@ -274,3 +274,25 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
   (synchronizace je pak vypnutá). Hodnoty se nevypisují.
 - Provozní poznámka: plná synchronizace (`jrc_sync_freeframe` i každá změna prostoru)
   odebere z projektu FreeFrame i členy přidané ručně mimo JR Content.
+
+## 2026-10-23 · F5-B02
+
+- `apps/jrc_video/tickets.py`: `issue_ticket(user, audience="web"|"api", next_path=None)` vystaví
+  vstupenku pro FreeFrame (formát a pravidla v `freeframe/JRC-CHANGES.md`, F5-B02). Vstupenku dostane
+  jen aktivní uživatel (ověřeno znovu v DB, ne podle starého objektu) se synchronizovaným
+  `VideoAccount`; `next` jen pro `web` a jen jako cesta uvnitř FreeFrame. Klíč `JRC_FF_SSO_SECRET`
+  čte `config/settings/jrc.py` z prostředí; dostává ho jen `jrc-bb-web` (worker ne). Bez klíče
+  (kratšího než 32 znaků) se vstupenka nevydá.
+- `apps/jrc_video/client.py`: `FreeFrameUserClient(user).request(method, path, payload)` volá API
+  FreeFrame jménem uživatele (podklad F5-B05). Vymění vstupenku `api` přímo na `jrc-ff-api:8000`,
+  přístupový token drží jen v paměti procesu do minuty před vypršením, po 401 jednou zkusí novou
+  vstupenku. Před každým voláním ověří, že uživatel není zablokovaný (i když FreeFrame ještě
+  synchronizaci nedostal). Odmítne odpověď s obnovovacím tokenem a cestu, která nezačíná `/`
+  (ochrana proti přesměrování na jiný server; platí i pro servisního klienta).
+- `tests/test_tickets.py`: obsah a podpis, nové `nonce`, cíle a `next`, zablokovaný, smazaný
+  a nesynchronizovaný uživatel, chybějící klíč, společný testovací vektor s FreeFrame, přímé volání
+  bez hlavičky a přesměrování, opakované použití tokenu, oddělení uživatelů, obnova po 401,
+  vadné odpovědi, vstupenka ani token v chybách a logu.
+- Kořen JR Content: `JRC_FF_SSO_SECRET` v `.env.example`, `scripts/init-env.cjs` (96 hex znaků,
+  zachová existující hodnotu), `docker-compose.yml` (jen `jrc-bb-web` a `jrc-ff-api`), `Makefile`
+  (`ADMIN_COMPOSE`). Živý test `scripts/F5-B02/check-ticket.sh` (jen `jrc-f5b02`).
