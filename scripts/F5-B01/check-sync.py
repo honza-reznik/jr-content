@@ -69,14 +69,17 @@ if stage == "initial":
     assert not VideoSyncRequest.objects.exists()
     membership.workspace_role = "client"
     membership.save(update_fields=["workspace_role"])
-    # A conflicting email must not take over the service account.
+    # A conflicting email (other letter case) must not take over the service account,
+    # and the failing account must not block the synchronization of the other members.
     from django.conf import settings
     with override_settings(JRC_FF_SYNC_ENABLED=False):
-        conflict = User.objects.create_user(email=settings.JRC_FF_SYNC_EMAIL, name="Conflict")
+        conflict = User.objects.create_user(email=settings.JRC_FF_SYNC_EMAIL.upper(), name="Conflict")
         Workspace.objects.filter(memberships__user=conflict).delete()
     bad_member = WorkspaceMembership.objects.create(workspace=workspace, user=conflict, workspace_role="owner")
     assert "HTTP 409" in VideoSyncRequest.objects.get(workspace=workspace).last_error
     assert not VideoAccount.objects.filter(user=conflict).exists()
+    remote_ids = {m["user_id"] for m in api.request("GET", f"/projects/{project_id}/members")}
+    assert {str(a.ff_user_id) for a in VideoAccount.objects.filter(user_id__in=USERS[:3])} <= remote_ids
     bad_member.delete()
     conflict.delete()
     assert not VideoSyncRequest.objects.exists()

@@ -238,3 +238,16 @@ Upstream role, schvalovací služby a stavový automat zůstávají beze změny.
   je `scripts/F5-B01/check-sync.sh` v kořeni JR Content (jen projekt `jrc-f5b01`).
 - `apps/jrc_channels/tests/test_network_inventory.py`: eviduje nový interní HTTP vstup
   `FreeFrameClient._send`, směrovaný pevně na službu `jrc-ff-api:8000` bez přesměrování.
+- Oprava review (F5-B01): chyba jednoho účtu nebo člena nezastaví synchronizaci ostatních.
+  Odebírání členů běží první a každý krok samostatně; chyby se posbírají, `VideoSyncRequest`
+  zůstane k opakování a na konci se vrátí jedna souhrnná chyba (`last_error` max. 255 znaků).
+  Účet s neúspěšným PUT, ale známou vazbou, se dál odebírá/omezuje podle Brightbean, nic navíc
+  nedostane. `VideoAccount` se ukládá v krátké samostatné transakci hned po úspěšném PUT.
+- `VideoAccountSyncRequest` (migrace 0002): záznam k opakování pro účet bez členství
+  (blokace); `--pending` ho opraví. Smazání uživatele volá `POST /jrc-sync/accounts/{id}/deactivate`
+  i bez místní vazby (podle odvozeného UUID, nikdy podle e-mailu). Bez vazby selhání smazání
+  nezastaví (zapíše se varování), s vazbou ano.
+- Při startu varování v logu, když chybí `JRC_FF_SYNC_EMAIL` nebo `JRC_FF_SYNC_PASSWORD`
+  (synchronizace je pak vypnutá). Hodnoty se nevypisují.
+- Provozní poznámka: plná synchronizace (`jrc_sync_freeframe` i každá změna prostoru)
+  odebere z projektu FreeFrame i členy přidané ručně mimo JR Content.

@@ -87,10 +87,72 @@ def test_account_accepts_local_demo_domains(client, sync_auth, mock_db, email):
     assert mock_db.add.call_args.args[0].email == email
 
 
-@pytest.mark.parametrize("email", ["no-at-sign", "@example.com", "person@", "pers on@example.com", "a\n@b.cz"])
+@pytest.mark.parametrize("email", [
+    "no-at-sign", "@example.com", "person@", "pers on@example.com", "a\n@b.cz", "a\t@b.cz",
+    "a@b@c.cz", "a,b@c.cz", "a;b@c.cz", "<a@b.cz>", '"a"@b.cz',
+])
 def test_account_rejects_malformed_email(client, sync_auth, mock_db, email):
     response = client.put(f"/jrc-sync/accounts/{uuid.uuid4()}", json={
         "email": email, "name": "Person", "is_active": True,
     }, headers=sync_auth)
     assert response.status_code == 422
+    mock_db.commit.assert_not_called()
+
+
+def test_account_email_is_lowercased(client, sync_auth, mock_db):
+    response = client.put(f"/jrc-sync/accounts/{uuid.uuid4()}", json={
+        "email": "Ella@Example.INVALID", "name": "Ella", "is_active": True,
+    }, headers=sync_auth)
+    assert response.status_code == 200
+    assert mock_db.add.call_args.args[0].email == "ella@example.invalid"
+
+
+def test_email_conflict_is_case_insensitive(client, sync_auth, mock_db):
+    # First lookup: managed identity does not exist; second: another account owns the e-mail.
+    mock_db.first.side_effect = [None, MagicMock()]
+    response = client.put(f"/jrc-sync/accounts/{uuid.uuid4()}", json={
+        "email": "PERSON@example.com", "name": "Person", "is_active": True,
+    }, headers=sync_auth)
+    assert response.status_code == 409
+    mock_db.add.assert_not_called()
+    mock_db.commit.assert_not_called()
+
+
+def test_service_account_email_match_ignores_case(client, auth_headers, test_user, mock_db, monkeypatch):
+    test_user.is_superadmin = True
+    monkeypatch.setenv("JRC_FF_SYNC_EMAIL", test_user.email.upper())
+    response = client.put(f"/jrc-sync/projects/{uuid.uuid4()}", json={"name": "Project"}, headers=auth_headers)
+    assert response.status_code == 200
+
+
+def test_deactivate_missing_account_does_not_create_it(client, sync_auth, mock_db):
+    source_id = uuid.uuid4()
+    response = client.post(f"/jrc-sync/accounts/{source_id}/deactivate", headers=sync_auth)
+    assert response.status_code == 200
+    assert response.json() == {"id": str(remote_id("account", source_id)), "found": False}
+    mock_db.add.assert_not_called()
+    mock_db.commit.assert_not_called()
+
+
+def test_deactivate_existing_account(client, sync_auth, mock_db):
+    from apps.api.models.user import UserStatus
+
+    managed = MagicMock(deleted_at=None, is_superadmin=False, status=UserStatus.active)
+    mock_db.first.return_value = managed
+    response = client.post(f"/jrc-sync/accounts/{uuid.uuid4()}/deactivate", headers=sync_auth)
+    assert response.status_code == 200 and response.json()["found"] is True
+    assert managed.status == UserStatus.deactivated
+    mock_db.commit.assert_called_once()
+
+
+def test_deactivate_refuses_privileged_account(client, sync_auth, mock_db):
+    mock_db.first.return_value = MagicMock(deleted_at=None, is_superadmin=True)
+    response = client.post(f"/jrc-sync/accounts/{uuid.uuid4()}/deactivate", headers=sync_auth)
+    assert response.status_code == 409
+    mock_db.commit.assert_not_called()
+
+
+def test_deactivate_rejects_regular_user(client, auth_headers, mock_db):
+    response = client.post(f"/jrc-sync/accounts/{uuid.uuid4()}/deactivate", headers=auth_headers)
+    assert response.status_code == 403
     mock_db.commit.assert_not_called()

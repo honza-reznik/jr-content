@@ -1,6 +1,7 @@
+import logging
+
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.db import transaction
 from django.db.models.signals import post_delete, post_save, pre_delete, pre_save
 from django.dispatch import receiver
 
@@ -8,9 +9,11 @@ from apps.members.models import WorkspaceMembership
 from apps.organizations.models import Organization
 from apps.workspaces.models import Workspace
 
-from .client import FreeFrameClient
+from .client import FreeFrameClient, FreeFrameError
 from .models import VideoAccount, VideoProject
-from .services import queue_workspace, try_sync_account
+from .services import queue_account, queue_workspace
+
+logger = logging.getLogger(__name__)
 
 
 @receiver(pre_save, sender=WorkspaceMembership)
@@ -59,9 +62,10 @@ def user_changed(sender, instance, using, raw=False, update_fields=None, **kwarg
     for workspace_id in instance.workspace_memberships.values_list("workspace_id", flat=True):
         queue_workspace(workspace_id, using=using)
     # Accounts without memberships must still be disabled when blocked.
-    if VideoAccount.objects.filter(user=instance).exists() and not instance.workspace_memberships.exists():
-        # Runs after the commit, so an API failure must not turn into an error page.
-        transaction.on_commit(lambda: try_sync_account(instance.pk), using=using)
+    if VideoAccount.objects.using(using).filter(user=instance).exists() and not instance.workspace_memberships.exists():
+        # Durable retry marker first; the API call runs after the commit and a failure
+        # must not turn into an error page.
+        queue_account(instance.pk, using=using)
 
 
 @receiver(pre_delete, sender=get_user_model())
@@ -71,13 +75,18 @@ def user_deleted(sender, instance, using, **kwargs):
     # The collector invokes pre_delete inside a transaction. Wait for any
     # in-flight sync before revoking, so it cannot reactivate a deleted user.
     sender.objects.using(using).select_for_update(no_key=True).get(pk=instance.pk)
-    if VideoAccount.objects.using(using).filter(user=instance).exists():
-        # Revoke before losing the local identity. Failure aborts the deletion.
-        FreeFrameClient().request(
-            "PUT",
-            f"/jrc-sync/accounts/{instance.pk}",
-            {"email": instance.email, "name": instance.display_name, "is_active": False},
-        )
+    mapped = VideoAccount.objects.using(using).filter(user=instance).exists()
+    try:
+        # Deactivates the remote account found by its derived identity, even when the
+        # local mapping was lost. Never creates an account.
+        FreeFrameClient().request("POST", f"/jrc-sync/accounts/{instance.pk}/deactivate")
+    except FreeFrameError:
+        if mapped:
+            # Revoke before losing the local identity. Failure aborts the deletion.
+            raise
+        # Without a mapping the remote account most likely does not exist; project
+        # memberships are revoked by the queued workspace retry after the cascade.
+        logger.warning("FreeFrame deactivation of deleted user %s without mapping failed.", instance.pk)
 
 
 @receiver(pre_delete, sender=Workspace)

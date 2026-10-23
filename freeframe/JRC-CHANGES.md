@@ -70,12 +70,16 @@ Provozní postup je v `docs-arch/F2-B02/freeframe-provoz.md` (doplněk pro PM do
   Přístup má jen aktivní superadmin se shodným `JRC_FF_SYNC_EMAIL` (servisní účet).
   Účty vznikají bez hesla a pozvánky; nevytváří se e-mailová úloha.
   E-mail se kontroluje jen na základní tvar (ne `EmailStr`), aby prošly vyhrazené
-  testovací domény místních dat jako `example.invalid` (ukázkový klient). Profil a blokace
+  testovací domény místních dat jako `example.invalid` (ukázkový klient): přesně jeden `@`,
+  bez bílých a řídicích znaků a `,;<>"`. Ukládá se malými písmeny a konflikt s cizím účtem
+  se hledá bez ohledu na velikost písmen (409). Profil a blokace
   se aktualizují při každém volání. Projekt je týmový a neveřejný, vlastníkem je servisní účet.
 - Identifikátory se odvozují pomocí UUIDv5 ze stabilního jmenného prostoru a UUID Brightbean.
   Ztracená místní vazba se tak může obnovit bez nového účtu/projektu. Transakční zámek
   PostgreSQL chrání souběžné založení. Konfliktní e-mail se odmítá (409), nepřebírá se
   cizí účet podle e-mailu; privilegovaný nebo smazaný účet/projekt se nepřepisuje.
+- `POST /jrc-sync/accounts/{source_uuid}/deactivate`: deaktivuje řízený účet podle odvozeného
+  UUID (při smazání uživatele v Brightbean), účet nikdy nezakládá; chybějící vrací `found: false`.
 - Role a odebrání členství používají stávající projektové API. Nové uživatelské
   rozhraní nevzniká; přihlášení jednou vstupenkou a omezení běžného FreeFrame jsou další bloky F5.
 - `tests/test_jrc_sync.py`: přístup běžného uživatele/cizího správce, bezpečné založení,
