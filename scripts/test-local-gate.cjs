@@ -27,8 +27,16 @@ const url = (name, fallback) => `http://127.0.0.1:${port(name, fallback)}`;
     assert.equal(headers.get('referrer-policy'), 'same-origin', route);
     if (frame) assert.equal(headers.get('x-frame-options'), frame, route);
   }
-  assert.equal((await fetch(`${web}/video/login`)).headers.get('content-security-policy'),
-    "frame-ancestors 'self'");
+  // F2-B05: vynucená CSP /video; úložiště jen přesný původ místní brány S3.
+  const csp = (await fetch(`${web}/video/login`)).headers;
+  assert.equal(csp.get('content-security-policy-report-only'), null);
+  const directives = Object.fromEntries(csp.get('content-security-policy').split(';')
+    .map(item => item.trim().split(/\s+/)).map(([name, ...values]) => [name, values]));
+  assert.deepEqual(directives['frame-ancestors'], ["'self'"]);
+  assert.deepEqual(directives['default-src'], ["'self'"]);
+  assert.deepEqual(directives['img-src'], ["'self'", 'data:', 'blob:', s3]);
+  assert.deepEqual(directives['media-src'], ["'self'", 'blob:', s3]);
+  assert.deepEqual(directives['connect-src'], ["'self'", s3]);
   const browser = await chromium.launch({ headless: true });
   try {
     const context = await browser.newContext({ serviceWorkers: 'block' });
