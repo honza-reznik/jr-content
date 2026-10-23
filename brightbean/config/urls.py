@@ -79,7 +79,10 @@ urlpatterns = [
 ]
 
 if getattr(settings, "JRC_UI_ENABLED", False):
-    urlpatterns += [path("about/", include("apps.jrc_ui.urls"))]
+    urlpatterns += [
+        path("about/", include("apps.jrc_ui.urls")),
+        path("", include("apps.jrc_production.urls")),
+    ]
 
 # ---------------------------------------------------------------------------
 # Intelligence integration — mounted only when env vars are set.

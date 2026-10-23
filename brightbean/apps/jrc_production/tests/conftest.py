@@ -3,6 +3,7 @@ import socket
 import pytest
 from django.test import override_settings
 
+from apps.members.models import WorkspaceMembership
 from apps.workspaces.models import Workspace
 
 
@@ -25,5 +26,7 @@ def _no_network(db, monkeypatch):
 
 
 @pytest.fixture
-def workspace(organization):
-    return Workspace.objects.create(organization=organization, name="Production test")
+def workspace(organization, user):
+    workspace = Workspace.objects.create(organization=organization, name="Production test")
+    WorkspaceMembership.objects.create(workspace=workspace, user=user, workspace_role="owner")
+    return workspace

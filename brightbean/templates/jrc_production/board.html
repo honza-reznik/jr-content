@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% load tz %}
+{% block title %}Content board · JR Content{% endblock %}
+{% block extra_head %}
+<style>
+  .content-board-page { color: #292524; font-size: 14px; }
+  .board-heading { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:22px; }
+  .board-heading h1 { font-size:28px; font-weight:700; letter-spacing:-.7px; margin:0 0 5px; }
+  .board-heading p, .board-muted { color:#78716c; }
+  .board-count { white-space:nowrap; background:#f5f5f4; border-radius:20px; padding:7px 12px; font-size:12px; }
+  .board-toolbar { display:flex; align-items:end; flex-wrap:wrap; gap:12px; padding:16px; background:#fafaf9; border:1px solid #e7e5e4; border-radius:12px; margin-bottom:14px; }
+  .content-board-page label { display:block; font-size:12px; font-weight:600; margin-bottom:6px; }
+  .content-board-page input, .content-board-page select { background:white; border:1px solid #d6d3d1; border-radius:7px; padding:9px 10px; min-height:42px; max-width:100%; font-size:13px; color:#292524; }
+  .content-board-page button, .board-reset { min-height:42px; display:inline-flex; align-items:center; justify-content:center; padding:8px 14px; border-radius:7px; font-weight:600; font-size:13px; cursor:pointer; }
+  .board-primary { background:#30584b; color:white; border:1px solid #30584b; }
+  .board-secondary { background:white; border:1px solid #d6d3d1; }
+  .board-reset { color:#57534e; text-decoration:underline; }
+  .board-new { border:1px solid #e7e5e4; border-radius:10px; padding:12px 16px; margin-bottom:20px; }
+  .board-new summary { cursor:pointer; font-weight:600; color:#30584b; }
+  .board-new form { display:flex; flex-wrap:wrap; gap:12px; align-items:end; padding-top:16px; }
+  .board-title-field { flex:1; min-width:200px; }
+  .board-title-field input { width:100%; }
+  .board-grid { display:grid; grid-template-columns:repeat(8,minmax(0,1fr)); gap:8px; align-items:start; padding-bottom:20px; }
+  .board-column { min-width:0; background:#f5f5f4; border-radius:9px; padding:8px; min-height:330px; border-top:3px solid #d6d3d1; }
+  .board-column[data-stage="review"] { border-top-color:#d6a04e; }
+  .board-column[data-stage="approved"] { border-top-color:#76a796; }
+  .board-column[data-stage="ready"] { border-top-color:#809dbc; }
+  .board-column[data-stage="published"] { border-top-color:#30584b; }
+  .board-column h2 { display:flex; gap:5px; align-items:center; justify-content:space-between; font-size:12px; font-weight:700; padding:3px 1px 12px; line-height:1.4; }
+  .stage-count { color:#78716c; font-weight:400; }
+  .board-card { background:white; border:1px solid #e7e5e4; border-radius:7px; padding:10px; margin-bottom:9px; box-shadow:0 1px 2px #00000005; overflow-wrap:anywhere; }
+  .board-card h3 { font-size:13px; line-height:1.5; font-weight:600; margin:8px 0 10px; }
+  .board-client { font-size:10px; color:#78716c; }
+  .board-channel { display:inline-block; border-radius:4px; background:#f5f5f4; padding:3px 5px; margin:0 2px 4px 0; font-size:10px; color:#57534e; }
+  .board-card time, .board-status { display:block; font-size:10px; color:#78716c; margin:6px 0; }
+  .board-card summary { cursor:pointer; padding-top:8px; border-top:1px solid #f5f5f4; font-size:11px; color:#30584b; }
+  .board-card form { padding-top:12px; }
+  .board-card select, .board-card input, .board-card button { width:100%; margin-bottom:9px; }
+  .board-empty { font-size:11px; color:#a8a29e; text-align:center; margin:20px 0; }
+  .board-help { color:#78716c; font-size:12px; margin-bottom:14px; line-height:1.6; }
+  .board-error { border:1px solid #fecaca; background:#fef2f2; color:#991b1b; padding:12px; border-radius:8px; margin-bottom:12px; }
+  .mobile-stage { display:none; }
+  @media(min-width:768px) and (max-width:1199px) { .board-grid { grid-template-columns:repeat(4,minmax(0,1fr)); } }
+  @media(max-width:767px) {
+    .board-heading { margin-bottom:16px; } .board-heading h1 { font-size:24px; }
+    .board-count { padding:6px 9px; }
+    .board-toolbar { gap:10px; padding:12px; } .board-filter { flex:1; min-width:125px; } .board-filter select { width:100%; }
+    .board-new form > div { width:100%; } .board-new select { width:100%; }
+    .board-grid { display:block; } .board-column { min-height:180px; margin-bottom:14px; padding:12px; }
+    .board-column h2 { font-size:14px; } .board-card { padding:14px; } .board-card h3 { font-size:16px; }
+    .board-client, .board-channel, .board-card time, .board-status { font-size:12px; }
+    .board-card summary { font-size:13px; padding:10px 0; min-height:44px; }
+    .mobile-stage { display:block; margin-bottom:14px; } .mobile-stage select { width:100%; }
+    .board-grid[data-mobile-stage] .board-column { display:none; }
+    .board-grid[data-mobile-stage="idea"] [data-stage="idea"], .board-grid[data-mobile-stage="script"] [data-stage="script"],
+    .board-grid[data-mobile-stage="shooting"] [data-stage="shooting"], .board-grid[data-mobile-stage="editing"] [data-stage="editing"],
+    .board-grid[data-mobile-stage="review"] [data-stage="review"], .board-grid[data-mobile-stage="approved"] [data-stage="approved"],
+    .board-grid[data-mobile-stage="ready"] [data-stage="ready"], .board-grid[data-mobile-stage="published"] [data-stage="published"] { display:block; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+<div class="content-board-page">
+  <header class="board-heading"><div><h1>Content board</h1><p>From the first idea to the published post.</p></div><span class="board-count">{{ total }} item{{ total|pluralize }}</span></header>
+  <form method="get" class="board-toolbar" aria-label="Filter content">
+    <div class="board-filter"><label for="filter-client">Client</label><select id="filter-client" name="client"><option value="">All clients</option>{% for client in clients %}<option value="{{ client.id }}" {% if selected_client == client.id|stringformat:"s" %}selected{% endif %}>{{ client.name }}</option>{% endfor %}</select></div>
+    <div class="board-filter"><label for="filter-channel">Channel</label><select id="filter-channel" name="channel"><option value="">All channels</option>{% for channel in channels %}<option value="{{ channel.id }}" {% if selected_channel == channel.id|stringformat:"s" %}selected{% endif %}>{{ channel.workspace.name }} · {{ channel.jrc_channel.display_name|default:channel.account_name }}</option>{% endfor %}</select></div>
+    <button class="board-secondary" type="submit">Apply filters</button><a class="board-reset" href="{% url 'jrc_production:board' %}">Clear</a>
+  </form>
+  {% if error %}<div class="board-error" role="alert">{{ error }}</div>{% endif %}
+  {% if creatable_clients %}
+  <details class="board-new" {% if error %}open{% endif %}><summary>+ New content</summary>
+    <form method="post" action="{% url 'jrc_production:create' %}">{% csrf_token %}
+      <div><label for="new-client">Client</label><select id="new-client" name="workspace" required>{% for client in creatable_clients %}<option value="{{ client.id }}" {% if selected_client == client.id|stringformat:"s" %}selected{% endif %}>{{ client.name }}</option>{% endfor %}</select></div>
+      <div class="board-title-field"><label for="new-title">Content title</label><input id="new-title" name="title" placeholder="e.g. A morning in Ella’s studio" value="{{ new_title }}" maxlength="255" required></div>
+      <button class="board-primary" type="submit">Add to Idea</button>
+    </form>
+  </details>
+  {% endif %}
+  <p class="board-help">Use “Move” on a card to change its stage. Approval and planning follow your permissions. Dates use each client’s time zone.</p>
+  <div class="mobile-stage"><label for="mobile-stage">Show stage</label><select id="mobile-stage"><option value="">All stages</option>{% for column in columns %}<option value="{{ column.value }}">{{ column.label }} ({{ column.cards|length }})</option>{% endfor %}</select></div>
+  <div class="board-grid">
+  {% for column in columns %}
+    <section class="board-column" data-stage="{{ column.value }}" aria-label="{{ column.label }}"><h2>{{ column.label }} <span class="stage-count">{{ column.cards|length }}</span></h2>
+      {% for card in column.cards %}
+      <article class="board-card" data-post="{{ card.post.id }}">
+        <span class="board-client">{{ card.post.workspace.name }}</span><h3>{{ card.post.title|default:"Untitled content" }}</h3>
+        <div>{% for variant in card.post.platform_posts.all %}<span class="board-channel">{{ variant.social_account.jrc_channel.display_name|default:variant.social_account.account_name }}</span>{% endfor %}</div>
+        {% if card.client_review %}<span class="board-status">Awaiting client sign-off</span>{% endif %}
+        {% if card.post.scheduled_at %}{% timezone card.post.workspace.effective_timezone %}<time datetime="{{ card.post.scheduled_at|date:'c' }}">Planned: {{ card.post.scheduled_at|date:"M j, Y H:i T" }}</time>{% endtimezone %}{% endif %}
+        {% if card.moves %}
+        <details><summary>Move…</summary><form method="post" action="{% url 'jrc_production:move' workspace_id=card.post.workspace_id post_id=card.post.id %}">{% csrf_token %}
+          <input type="hidden" name="expected_stage" value="{{ card.stage }}"><input type="hidden" name="client" value="{{ selected_client }}"><input type="hidden" name="channel" value="{{ selected_channel }}">
+          <label for="move-{{ card.post.id }}">Move to</label><select id="move-{{ card.post.id }}" name="stage" required>{% for value,label in card.moves %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
+          {% if card.stage == "approved" %}<label for="date-{{ card.post.id }}">Publication date &amp; time<br>({{ card.post.workspace.effective_timezone }})</label><input id="date-{{ card.post.id }}" name="scheduled_at" type="datetime-local">{% endif %}
+          <button class="board-primary" type="submit">Confirm move</button>
+        </form></details>
+        {% endif %}
+      </article>
+      {% empty %}<p class="board-empty">No content yet</p>{% endfor %}
+    </section>
+  {% endfor %}
+  </div>
+  {% if not clients %}<p class="board-help">You do not have access to any clients yet. Ask your administrator to add you.</p>{% endif %}
+</div>
+{% endblock %}
+{% block extra_js %}
+<script nonce="{{ request.csp_nonce }}">
+  const stageSelect = document.getElementById('mobile-stage');
+  stageSelect.addEventListener('change', () => {
+    const grid = document.querySelector('.board-grid');
+    if (stageSelect.value) grid.dataset.mobileStage = stageSelect.value;
+    else delete grid.dataset.mobileStage;
+  });
+  document.getElementById('filter-client').addEventListener('change', () => {
+    document.getElementById('filter-channel').value = '';
+  });
+</script>
+{% endblock %}
