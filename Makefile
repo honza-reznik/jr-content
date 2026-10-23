@@ -17,7 +17,7 @@ endif
 override COMPOSE := docker compose --project-name $(JRC_PROJECT) --file docker-compose.yml --env-file .env
 # Správa existujících kontejnerů nepotřebuje hesla ani místní .env.
 # Zástupné hodnoty se používají pouze pro načtení konfigurace, nikdy pro up.
-override ADMIN_COMPOSE := PGPASSWORD=unused GARAGE_RPC_SECRET=unused AWS_ACCESS_KEY_ID=unused AWS_SECRET_ACCESS_KEY=unused JRC_BB_SECRET_KEY=unused JRC_BB_ENCRYPTION_KEY_SALT=unused JRC_FF_JWT_SECRET=unused JRC_FF_SYNC_PASSWORD=unused JRC_FF_S3_ACCESS_KEY=unused JRC_FF_S3_SECRET_KEY=unused docker compose --project-name $(JRC_PROJECT) --file docker-compose.yml --env-file /dev/null
+override ADMIN_COMPOSE := PGPASSWORD=unused GARAGE_RPC_SECRET=unused AWS_ACCESS_KEY_ID=unused AWS_SECRET_ACCESS_KEY=unused JRC_BB_SECRET_KEY=unused JRC_BB_ENCRYPTION_KEY_SALT=unused JRC_FF_JWT_SECRET=unused JRC_FF_SYNC_PASSWORD=unused JRC_FF_SSO_SECRET=unused JRC_FF_S3_ACCESS_KEY=unused JRC_FF_S3_SECRET_KEY=unused docker compose --project-name $(JRC_PROJECT) --file docker-compose.yml --env-file /dev/null
 export JRC_UID := $(shell id -u)
 export JRC_GID := $(shell id -g)
 # Změna bind mountu sama službu nerestartuje; otisk v labelu vynutí novou konfiguraci.
@@ -126,6 +126,10 @@ test-isolation:
 	sh scripts/test-service-isolation.sh $(COMPOSE)
 	# PostgreSQL už brána nevystavuje; dostupnost ověřujeme uvnitř vnitřní sítě.
 	$(COMPOSE) exec -T jrc-dev psql -X -Atc 'SELECT 1' | grep -qx 1
+	# F5-B02: jednorázovost vstupenek po pádu stroje vyžaduje trvalý zápis každého SET NX.
+	$(COMPOSE) exec -T jrc-redis redis-cli CONFIG GET appendonly | grep -qx yes
+	$(COMPOSE) exec -T jrc-redis redis-cli CONFIG GET appendfsync | grep -qx always
+	@echo 'OK jrc-redis: appendonly yes, appendfsync always'
 	docker run --rm --pull never --network host --user "$(JRC_UID):$(JRC_GID)" \
 	  --env-file .env \
 	  --volume "$(CURDIR)/scripts:/jrc-scripts:ro" \
