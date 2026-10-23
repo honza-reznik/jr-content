@@ -183,3 +183,17 @@ Upstream role, schvalovací služby a stavový automat zůstávají beze změny.
 - `apps/jrc_channels/tests/test_profile.py`, `test_seed_demo.py`: oprávnění, oddělení klientů,
   validace odkazů, vratné vypnutí bez ztráty obsahu a opakované demo se zákazem sítě.
   Vizuální a funkční scénář pro 1440 a 390 px je `scripts/F2-B08/check-profile.cjs` v kořeni projektu.
+## 2026-10-23 · F2-B03 (oprava po bezpečnostním review)
+
+- `config/urls.py`: místní knihovna médií už není veřejná. Originály, náhledy
+  a historické verze předává chráněnému Django view. Veřejné avatary a ikony
+  kontrolují i normalizovanou cestu, aby přes `../` nešlo obejít ochranu knihovny.
+- `apps/media_library/file_views.py`: přihlášení a kontrola skutečného vlastníka
+  souboru v databázi; členství ve workspace, u společné knihovny členství v její
+  organizaci. Neznámé soubory a cizí workspace vracejí 404. Odpovědi zakazují
+  ukládání do cache, oprávnění se ověřuje při každém požadavku včetně HEAD.
+  Proxy pouze předává požadavek aplikaci a nemá přístup k disku s médii.
+- `tests/test_media_routing.py`: anonymní přístup, cizí workspace téže organizace,
+  oprávněný člen, originály i všechny náhledy/verze, společná knihovna jiné
+  organizace, odvolání členství, odhlášení, osiřelé soubory a obcházení přes
+  veřejné cesty. Stávající kontroly routování a ochrany před únikem `.env` zachovány.

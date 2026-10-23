@@ -8,7 +8,7 @@ const url = (name, fallback) => `http://127.0.0.1:${port(name, fallback)}`;
 (async () => {
   const api = url('JRC_FF_API_PORT', 18022);
   const web = url('JRC_FF_WEB_PORT', 13022);
-  const bb = url('JRC_BB_PORT', 18011);
+  const bb = url('JRC_APP_PORT', 13000);
   const s3 = url('JRC_S3_PORT', 13900);
   assert.equal((await fetch(`${api}/health`)).status, 200);
   assert.equal((await fetch(`${bb}/health/`)).status, 200);
@@ -34,8 +34,13 @@ const url = (name, fallback) => `http://127.0.0.1:${port(name, fallback)}`;
     });
     const page = await context.newPage();
     page.on('response', response => responses.push([response.url(), response.status()]));
+    // Formulář je viditelný už ze serverového HTML; API se zavolá až po spuštění
+    // JavaScriptu. Při zatíženém stroji samotné networkidle tento krok nepokrývá.
+    const apiReady = page.waitForResponse(response => response.url().startsWith(`${api}/`)
+      && response.status() === 200, { timeout: 60000 });
     await page.goto(`${web}/video/login`, { waitUntil: 'networkidle' });
     await page.locator('input[type="email"]').waitFor({ state: 'visible' });
+    await apiReady;
     await page.evaluate(() => document.fonts.ready);
     assert(fonts.length > 0 && fonts.every(font => font.startsWith(`${web}/video/_next/`)));
     assert(responses.some(([address, status]) => address.startsWith(api) && status === 200), 'Prohlížeč nedosáhne na API');

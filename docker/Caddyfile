@@ -1,0 +1,11 @@
+{
+	admin off
+	auto_https off
+	persist_config off
+}
+
+:8080 {
+	# /video a /video-api doplní F2-B04. Host včetně portu zůstává původní,
+	# aby Django kontrolovalo CSRF a sestavovalo odkazy pro společnou adresu.
+	reverse_proxy jrc-bb-web:8000
+}

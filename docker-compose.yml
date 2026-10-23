@@ -16,7 +16,7 @@ x-bb: &bb
     DB_PASSWORD: ${PGPASSWORD:?Spusťte make env}
     EMAIL_BACKEND_TYPE: console
     MEDIA_ROOT: /app/media
-    APP_URL: http://127.0.0.1:${JRC_BB_PORT:-18011}
+    APP_URL: http://127.0.0.1:${JRC_APP_PORT:-13000}
   volumes:
     - ./brightbean:/app
     - jrc-bb-media:/app/media
@@ -73,7 +73,36 @@ x-ff: &ff
       condition: service_healthy
 
 services:
-  # Jediný vstup z místních portů; pevné TCP cíle, žádný obecný proxy server.
+  # Společný webový vstup. Aplikace samotné zůstávají bez cesty na internet.
+  jrc-proxy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    init: true
+    user: "${JRC_UID:-1000}:${JRC_GID:-1000}"
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    read_only: true
+    cap_drop: [ALL]
+    # Oficiální binárka má tuto file capability; musí být v povolené sadě pro exec.
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+    tmpfs:
+      - /data:uid=${JRC_UID:-1000},gid=${JRC_GID:-1000},mode=0700
+      - /config:uid=${JRC_UID:-1000},gid=${JRC_GID:-1000},mode=0700
+    networks: [default, internal]
+    ports:
+      - "127.0.0.1:${JRC_APP_PORT:-13000}:8080"
+    depends_on:
+      jrc-bb-web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health/"]
+      interval: 3s
+      timeout: 6s
+      retries: 30
+  # Místní porty úložiště/databáze a dočasné porty FreeFrame do F2-B04.
+  # Pevné TCP cíle; klient nemůže zadat obecný proxy server.
   jrc-ff-gate:
     image: jrc-dev:local
     restart: unless-stopped
@@ -89,7 +118,6 @@ services:
     ports:
       - "127.0.0.1:${JRC_FF_API_PORT:-18022}:18022"
       - "127.0.0.1:${JRC_FF_WEB_PORT:-13022}:13022"
-      - "127.0.0.1:${JRC_BB_PORT:-18011}:18011"
       - "127.0.0.1:${JRC_POSTGRES_PORT:-15432}:15432"
       - "127.0.0.1:${JRC_S3_PORT:-13900}:13900"
   jrc-ff-db:
@@ -245,8 +273,6 @@ services:
     command: ["sh", "-c", "mkdir -p /tmp/jrc-home && exec sleep infinity"]
     volumes:
       - .:/workspace
-    ports:
-      - "127.0.0.1:${JRC_APP_PORT:-13000}:3000"
     networks: [default, internal]
     shm_size: 1gb
     depends_on:
