@@ -1,3 +1,4 @@
+# JR Content: upraveno 2026-10-23 (blok F2-B10), AGPL-3.0.
 """MCP tool registry.
 
 Each ``Tool`` bundles the protocol metadata a client needs to discover
@@ -17,6 +18,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+
+from apps.jrc_ui.features import mcp_tool_enabled
 
 
 @dataclass(frozen=True)
@@ -50,11 +53,12 @@ def register_tool(tool: Tool) -> None:
 
 def all_tools() -> list[Tool]:
     """Sorted catalog — sort is stable so ``tools/list`` is deterministic."""
-    return sorted(_REGISTRY.values(), key=lambda t: t.name)
+    return sorted((t for t in _REGISTRY.values() if mcp_tool_enabled(t.name)), key=lambda t: t.name)
 
 
 def get_tool(name: str) -> Tool | None:
-    return _REGISTRY.get(name)
+    # Stejný filtr pro tools/list i tools/call, včetně dávek a notifikací.
+    return _REGISTRY.get(name) if mcp_tool_enabled(name) else None
 
 
 def is_read_only_tool(name: str) -> bool:

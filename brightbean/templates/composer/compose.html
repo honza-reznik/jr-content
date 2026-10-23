@@ -1,8 +1,9 @@
 {% extends "base.html" %}
+{% comment %}JR Content: upraveno 2026-10-23 (blok F2-B10), AGPL-3.0.{% endcomment %}
 {% load static %}
 {% load common_extras %}
 
-{% block title %}{% if is_edit %}Edit Post{% else %}New Post{% endif %} - {{ workspace.name }} - Brightbean{% endblock %}
+{% block title %}{% if is_edit %}Edit Post{% else %}New Post{% endif %} - {{ workspace.name }} - JR Content{% endblock %}
 
 {% comment %}Header is rendered inside the content block to avoid overlap with the -m-6 layout{% endcomment %}
 
@@ -285,7 +286,7 @@
 
     <!-- Page header -->
     <div class="flex items-center gap-3 px-4 sm:px-6 py-3 border-b border-stone-100 flex-shrink-0">
-        <button @click="if (document.referrer && document.referrer.startsWith(location.origin)) { history.back(); } else { location.href='{% url 'composer:create_landing' workspace_id=workspace.id %}'; }"
+        <button @click="if (document.referrer && document.referrer.startsWith(location.origin)) { history.back(); } else { location.href='{% if jrc_features.ideas %}{% url 'composer:create_landing' workspace_id=workspace.id %}{% else %}{% url 'calendar:calendar' workspace_id=workspace.id %}{% endif %}'; }"
                 class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-stone-200 text-stone-400 hover:text-stone-700 hover:border-stone-300 hover:bg-stone-50 transition-all duration-150 cursor-pointer">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
         </button>
@@ -533,10 +534,10 @@
                                 <span class="text-[11px] text-stone-400 leading-tight">Drag & drop or <span class="text-orange-500 font-medium">select files</span></span>
                             </div>
                             {% if unsplash_enabled %}
-                            <button type="button" class="media-unsplash-btn" title="Search Unsplash"
+                            {% if jrc_features.unsplash %}<button type="button" class="media-unsplash-btn" title="Search Unsplash"
                                     @click="openUnsplashModal()">
                                 <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7.5 6.75V0h9v6.75h-9zm9 3.75H24V24H0V10.5h7.5v6.75h9V10.5z"/></svg>
-                            </button>
+                            </button>{% endif %}
                             {% endif %}
                             <!-- display:contents keeps appended thumbs flowing in this row -->
                             <div id="media-list" class="contents">
@@ -1771,6 +1772,7 @@
          UNSPLASH SEARCH MODAL (only rendered when an API key is configured)
          ════════════════════════════════════════════════════════════ -->
     {% if unsplash_enabled %}
+{% if jrc_features.unsplash %}
     <div x-show="showUnsplashModal" x-cloak
          class="fixed inset-0 z-[60] flex items-center justify-center"
          @keydown.escape.window="showUnsplashModal && closeUnsplashModal()"
@@ -1857,6 +1859,7 @@
             </div>
         </div>
     </div>
+{% endif %}
     {% endif %}
 
     <!-- ════════════════════════════════════════════════════════════

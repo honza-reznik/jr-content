@@ -1,16 +1,17 @@
+{% load static %}
+{% comment %}JR Content: upraveno 2026-10-23 (blok F2-B10), AGPL-3.0.{% endcomment %}
 <!DOCTYPE html>
 <html>
 <head>
-    <link type="text/css" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css">
-    <link rel="icon" href="https://django-ninja.dev/img/favicon.svg" type="image/svg+xml">
-    <link rel="icon" href="https://django-ninja.dev/img/favicon.png" type="image/png">
+    <link type="text/css" rel="stylesheet" href="{% static 'vendor/swagger-ui-dist/swagger-ui.css' %}">
+    <link rel="icon" type="image/svg+xml" href="{% static 'img/jrc-logo.svg' %}">
     <title>{{ api.title }}</title>
 </head>
 <body>
     <div id="swagger-ui">
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+    <script src="{% static 'vendor/swagger-ui-dist/swagger-ui-bundle.js' %}"></script>
     <script type="application/json" id="swagger-settings" nonce="{{ request.csp_nonce }}">
         {{ swagger_settings | safe }}
     </script>
@@ -19,6 +20,7 @@
         const configJson = document.getElementById("swagger-settings").textContent;
         const configObject = JSON.parse(configJson);
 
+        configObject.validatorUrl = null;
         configObject.dom_id = "#swagger-ui";
         configObject.presets = [
             SwaggerUIBundle.presets.apis,

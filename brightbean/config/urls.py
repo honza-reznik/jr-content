@@ -1,3 +1,4 @@
+# JR Content: upraveno 2026-10-23 (blok F2-B10), AGPL-3.0.
 import logging
 import re
 from urllib.parse import urlsplit
@@ -76,6 +77,9 @@ urlpatterns = [
     path("organizations/media/", include("apps.media_library.urls_org")),
     path("", include("apps.accounts.urls_root")),
 ]
+
+if getattr(settings, "JRC_UI_ENABLED", False):
+    urlpatterns += [path("about/", include("apps.jrc_ui.urls"))]
 
 # ---------------------------------------------------------------------------
 # Intelligence integration — mounted only when env vars are set.

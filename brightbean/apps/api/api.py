@@ -1,3 +1,4 @@
+# JR Content: upraveno 2026-10-23 (blok F2-B10), AGPL-3.0.
 """NinjaAPI instance for the Agent API.
 
 Lives at ``/api/v1/`` (mounted in ``config/urls.py``). All routes are
@@ -24,7 +25,16 @@ from apps.api.routers.inbox import router as inbox_router
 from apps.api.routers.me import router as me_router
 from apps.api.routers.media import router as media_router
 from apps.api.routers.posts import router as posts_router
+from apps.jrc_ui.features import api_path_enabled
 from apps.mcp.transport import router as mcp_router
+
+
+class FeatureApiKeyAuth(ApiKeyAuth):
+    def __call__(self, request):
+        # Kontrola i přímo v API, nezávisle na přítomnosti Django middleware.
+        if not api_path_enabled(request.path_info):
+            raise HttpError(404, "Not found")
+        return super().__call__(request)
 
 
 class NoncedSwagger(Swagger):
@@ -36,12 +46,12 @@ class NoncedSwagger(Swagger):
 
 
 api = NinjaAPI(
-    title="Brightbean Agent API",
+    title="JR Content Agent API",
     version="1.0.0",
     description=(
         "Programmatic access for external AI agents. Authentication is via "
         "scoped bearer tokens; create one from the Organization → API Keys "
-        "page in the Brightbean Studio settings.\n\n"
+        "page in the JR Content settings.\n\n"
         "**User-Agent.** Send a `User-Agent` header naming your client "
         "(e.g. `my-agent/1.0`). The hosted Studio sits behind Cloudflare, "
         "which rejects Python's standard-library default "
@@ -83,7 +93,7 @@ api = NinjaAPI(
         "drafts from the workspace's drafts list in the web UI. Published "
         "posts are never deletable — they remain as audit records."
     ),
-    auth=ApiKeyAuth(),
+    auth=FeatureApiKeyAuth(),
     docs=NoncedSwagger(),
     # Trailing slashes are tolerated by the router but we use the
     # explicit-slash form everywhere internally for OpenAPI clarity.

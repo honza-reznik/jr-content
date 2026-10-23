@@ -1,9 +1,10 @@
 <!DOCTYPE html>
+{% comment %}JR Content: upraveno 2026-10-23 (blok F2-B10), AGPL-3.0.{% endcomment %}
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Join {{ invitation.organization.name }} - Brightbean</title>
+    <title>Join {{ invitation.organization.name }} - JR Content</title>
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -79,11 +80,11 @@
 </head>
 <body>
     <div class="card">
-        <div class="logo">Brightbean</div>
+        <div class="logo">JR Content</div>
 
         <h1>Join {{ invitation.organization.name }}</h1>
         <p class="subtitle">
-            {{ invitation.invited_by.display_name }} invited you to join their team on Brightbean.
+            {{ invitation.invited_by.display_name }} invited you to join their team on JR Content.
         </p>
 
         {% if error %}
