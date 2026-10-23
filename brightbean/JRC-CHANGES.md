@@ -119,3 +119,18 @@ aby ji nadále ověřovaly původní testy; v MVP se vůbec nevykresluje.
 Vypínače lze změnit v našem nastavení bez odstranění nebo obnovení upstream kódu.
 Ověřovací skripty a snímky jsou v kořeni JR Content (`scripts/F2-B10/`,
 `ops/screenshoty/F2-B10/`), mimo upstream podsložku. Žádné skutečné sociální účty.
+
+## 2026-10-23 · F2-B03 (oprava po bezpečnostním review)
+
+- `config/urls.py`: místní knihovna médií už není veřejná. Originály, náhledy
+  a historické verze předává chráněnému Django view. Veřejné avatary a ikony
+  kontrolují i normalizovanou cestu, aby přes `../` nešlo obejít ochranu knihovny.
+- `apps/media_library/file_views.py`: přihlášení a kontrola skutečného vlastníka
+  souboru v databázi; členství ve workspace, u společné knihovny členství v její
+  organizaci. Neznámé soubory a cizí workspace vracejí 404. Odpovědi zakazují
+  ukládání do cache, oprávnění se ověřuje při každém požadavku včetně HEAD.
+  Proxy pouze předává požadavek aplikaci a nemá přístup k disku s médii.
+- `tests/test_media_routing.py`: anonymní přístup, cizí workspace téže organizace,
+  oprávněný člen, originály i všechny náhledy/verze, společná knihovna jiné
+  organizace, odvolání členství, odhlášení, osiřelé soubory a obcházení přes
+  veřejné cesty. Stávající kontroly routování a ochrany před únikem `.env` zachovány.

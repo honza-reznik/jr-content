@@ -1,15 +1,18 @@
-# JR Content: upraveno 2026-10-23 (blok F2-B10), AGPL-3.0.
+# JR Content: upraveno 2026-10-23 (bloky F2-B10, F2-B03), AGPL-3.0.
 import logging
+import posixpath
 import re
 from urllib.parse import urlsplit
 
 from django.conf import settings
 from django.contrib import admin
+from django.http import Http404
 from django.urls import include, path, re_path
 from django.views.static import serve
 
 from apps.accounts.views import health_check
 from apps.api.api import api as agent_api
+from apps.media_library.file_views import private_media
 from apps.oauth_server import views as oauth_views
 
 logger = logging.getLogger(__name__)
@@ -113,11 +116,8 @@ if settings.INTELLIGENCE_ENABLED:
 # ---------------------------------------------------------------------------
 # User-uploaded media.
 #
-# Gated on SERVE_MEDIA, not DEBUG: under config.settings.production with
-# STORAGE_BACKEND=local the uploads on disk have no other route, so every
-# {{ asset.file.url }} 404s *and* the absolute URLs apps/publisher/engine.py
-# hands to Instagram, Threads, Facebook, Pinterest and Google Business (which
-# fetch media server-side, with no byte-upload fallback) are unfetchable.
+# Gated on SERVE_MEDIA, not DEBUG: local uploads need a route in production
+# too. Library files require membership even when their URL is known.
 #
 # django.conf.urls.static.static() can't express this — it returns [] whenever
 # DEBUG is False, which is exactly the case that needs the route.
@@ -128,10 +128,10 @@ if settings.INTELLIGENCE_ENABLED:
 # filter: a new upload_to prefix is private-by-default until it is named here,
 # rather than silently world-readable the day it is added.
 #
-# media_library/ (assets, thumbs/, versions/) has to be public — the platforms
-# listed above fetch those URLs server-side as anonymous clients. avatars/ and
-# workspaces/icons/ are page chrome in templates/base.html, carry nothing
-# confidential, and would cost a permission query per page behind a view.
+# JR Content is local-only: media_library/ (assets, thumbs/, versions/) is
+# served by private_media with explicit membership checks. No external
+# publishing client may fetch client files anonymously. Only page chrome
+# (avatars/ and workspaces/icons/) remains public.
 #
 # comment_attachments/ is deliberately absent: PostComment has an "internal"
 # visibility that apps/client_portal/views.py filters out for portal clients,
@@ -139,14 +139,22 @@ if settings.INTELLIGENCE_ENABLED:
 # apps.approvals.views.comment_attachment serves those behind the workspace
 # membership check instead.
 PUBLIC_MEDIA_PREFIXES = (
-    "media_library/",
     "avatars/",
     "workspaces/icons/",
 )
 
 
+def public_media(request, path, document_root):
+    # static.serve normalizes paths. Recheck the normalized target so an URL
+    # such as avatars/../media_library/private.png cannot bypass private_media.
+    normalized = posixpath.normpath(path)
+    if "\\" in path or not normalized.startswith(PUBLIC_MEDIA_PREFIXES):
+        raise Http404
+    return serve(request, normalized, document_root=document_root)
+
+
 def media_urlpatterns():
-    """Route the public subtrees of ``MEDIA_ROOT`` when this process serves media itself."""
+    """Route local media, keeping library files behind membership checks."""
     media_url = settings.MEDIA_URL
     document_root = settings.MEDIA_ROOT
 
@@ -181,8 +189,14 @@ def media_urlpatterns():
 
     return [
         re_path(
+            rf"^{re.escape(prefix)}(?P<path>media_library/.*)$",
+            private_media,
+            {"document_root": document_root},
+        ),
+    ] + [
+        re_path(
             rf"^{re.escape(prefix)}(?P<path>{re.escape(subtree)}.*)$",
-            serve,
+            public_media,
             {"document_root": document_root},
         )
         for subtree in PUBLIC_MEDIA_PREFIXES

@@ -1,3 +1,4 @@
+# JR Content: upraveno 2026-10-23 (blok F2-B03), AGPL-3.0.
 """Routing tests for user-uploaded media (``MEDIA_URL`` -> ``MEDIA_ROOT``).
 
 Three separate regressions are pinned here.
@@ -17,10 +18,11 @@ Django normalises the unset default to ``"/"``, and a ``"/"`` prefix compiles to
 whatever it matches out of the process CWD. That is how the dev server came to
 answer ``GET /.env`` with the repo's own environment file.
 
-The third is the middleware stack in front of the route. ``/media/`` is served
-straight off disk with no view behind it, so ``TosAcceptanceMiddleware`` must
-not redirect it — a user whose ``tos_accepted_at`` is NULL (every account made
-with ``createsuperuser``) would otherwise get a 302 in place of every image.
+The third is the middleware stack in front of the route: avatars and workspace
+icons must remain accessible on the accept-terms page. JR Content adds a fourth
+regression: library originals, thumbnails and historical versions require login
+and membership of their owning workspace (or org for shared assets). Public
+page chrome must never provide a traversal bypass into that library.
 """
 
 import importlib
@@ -37,10 +39,14 @@ from django.conf import settings
 from django.test import Client, override_settings
 from django.urls import Resolver404, clear_url_caches, resolve
 from django.utils import timezone
-from django.views.static import serve
 
 import config.urls
 from apps.accounts.models import User
+from apps.media_library.file_views import private_media
+from apps.media_library.models import MediaAsset, MediaAssetVersion
+from apps.members.models import OrgMembership, WorkspaceMembership
+from apps.organizations.models import Organization
+from apps.workspaces.models import Workspace
 from config.urls import PUBLIC_MEDIA_PREFIXES, media_urlpatterns
 
 BASE_SETTINGS_PATH = Path(config.urls.__file__).resolve().parent / "settings" / "base.py"
@@ -115,8 +121,8 @@ def test_helper_builds_one_prefixed_route():
         with override_settings(MEDIA_URL="/media/", MEDIA_ROOT=media_root):
             patterns = media_urlpatterns()
 
-        assert len(patterns) == len(PUBLIC_MEDIA_PREFIXES)
-        assert {p.callback for p in patterns} == {serve}
+        assert len(patterns) == len(PUBLIC_MEDIA_PREFIXES) + 1
+        assert {p.callback for p in patterns} == {config.urls.public_media, private_media}
         assert {p.default_args["document_root"] for p in patterns} == {media_root}
 
 
@@ -165,13 +171,13 @@ def test_helper_warns_when_document_root_is_missing(caplog):
         "/media/workspaces/icons/2026/09/logo.png",
     ],
 )
-def test_public_prefixes_are_routed_with_debug_off(path):
+def test_media_prefixes_are_routed_with_debug_off(path):
     """The regression from #130: DEBUG is False here, the route still exists."""
     assert settings.DEBUG is False
 
     match = resolve(path)
 
-    assert match.func is serve
+    assert match.func is (private_media if path.startswith("/media/media_library/") else config.urls.public_media)
     assert match.kwargs["path"] == path.removeprefix("/media/")
 
 
@@ -206,7 +212,7 @@ def test_urlconf_has_no_catch_all(path):
         resolve(path)
 
 
-def test_media_file_is_served():
+def test_library_file_requires_login():
     with tempfile.TemporaryDirectory() as media_root:
         probe = Path(media_root) / "media_library" / "2026" / "09" / "routing-probe.png"
         probe.parent.mkdir(parents=True)
@@ -215,8 +221,9 @@ def test_media_file_is_served():
         with urlconf_built_with(SERVE_MEDIA=True, MEDIA_URL="/media/", MEDIA_ROOT=media_root):
             response = Client().get("/media/media_library/2026/09/routing-probe.png")
 
-            assert response.status_code == 200
-            assert b"".join(response.streaming_content) == b"probe-bytes"
+            assert response.status_code == 302
+            assert response["Location"].startswith("/accounts/login/?next=")
+            assert "no-store" in response["Cache-Control"]
 
 
 def test_a_file_outside_the_public_prefixes_is_not_served():
@@ -276,3 +283,102 @@ def test_tos_redirect_still_applies_off_the_media_prefix():
     # The dashboard forwards to the user's workspace, so assert on where it
     # does *not* send them rather than on a bare 200.
     assert client.get("/").get("Location", "") != "/accounts/accept-terms/"
+
+
+@pytest.fixture
+def private_library(tmp_path):
+    """Real disk files, including historical thumbnails, with explicit owners."""
+    with urlconf_built_with(SERVE_MEDIA=True, MEDIA_URL="/media/", MEDIA_ROOT=tmp_path):
+        organization = Organization.objects.create(name="Private org")
+        workspace = Workspace.objects.create(organization=organization, name="Client A")
+        other_workspace = Workspace.objects.create(organization=organization, name="Client B")
+        member = User.objects.create_user(email="member@example.invalid", tos_accepted_at=timezone.now())
+        outsider = User.objects.create_user(email="outsider@example.invalid", tos_accepted_at=timezone.now())
+        for user in (member, outsider):
+            OrgMembership.objects.create(user=user, organization=organization)
+        WorkspaceMembership.objects.create(user=member, workspace=workspace)
+        WorkspaceMembership.objects.create(user=outsider, workspace=other_workspace)
+        asset = MediaAsset.objects.create(
+            organization=organization,
+            workspace=workspace,
+            file="media_library/2026/10/original.png",
+            thumbnail="media_library/thumbs/2026/10/current.jpg",
+            filename="original.png",
+            media_type="image",
+        )
+        version = MediaAssetVersion.objects.create(
+            media_asset=asset,
+            version_number=1,
+            file="media_library/versions/2026/10/old.png",
+            thumbnail="media_library/thumbs/2026/10/old.jpg",
+        )
+        paths = [asset.file.name, asset.thumbnail.name, version.file.name, version.thumbnail.name]
+        for path in paths:
+            target = tmp_path / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"private-client-bytes")
+        yield asset, member, outsider, paths, tmp_path
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("identity", ["anonymous", "other_workspace", "member"])
+@pytest.mark.parametrize("file_index", range(4), ids=["original", "thumbnail", "version", "version_thumbnail"])
+def test_library_file_membership(private_library, identity, file_index):
+    _, member, outsider, paths, _ = private_library
+    client = Client()
+    if identity != "anonymous":
+        client.force_login(member if identity == "member" else outsider)
+    response = client.get("/media/" + paths[file_index])
+    assert response.status_code == {"anonymous": 302, "other_workspace": 404, "member": 200}[identity]
+    if identity == "member":
+        assert b"".join(response.streaming_content) == b"private-client-bytes"
+        assert "private" in response["Cache-Control"]
+        assert "no-store" in response["Cache-Control"]
+
+
+@pytest.mark.django_db
+def test_library_access_is_checked_again_after_membership_revocation(private_library):
+    _, member, _, paths, _ = private_library
+    client = Client()
+    client.force_login(member)
+    response = client.head("/media/" + paths[0])
+    assert response.status_code == 200
+    assert b"".join(response.streaming_content) == b""
+    WorkspaceMembership.objects.filter(user=member).delete()
+    assert client.get("/media/" + paths[0]).status_code == 404
+    client.logout()
+    assert client.get("/media/" + paths[0]).status_code == 302
+
+
+@pytest.mark.django_db
+def test_shared_library_requires_membership_of_the_owning_org(private_library):
+    asset, member, _, paths, _ = private_library
+    asset.workspace = None
+    asset.save(update_fields=["workspace"])
+    stranger = User.objects.create_user(email="other-org@example.invalid", tos_accepted_at=timezone.now())
+    other_org = Organization.objects.create(name="Other org")
+    OrgMembership.objects.create(user=stranger, organization=other_org)
+    client = Client()
+    client.force_login(stranger)
+    assert client.get("/media/" + paths[0]).status_code == 404
+    client.force_login(member)
+    response = client.get("/media/" + paths[0])
+    assert response.status_code == 200
+    response.close()
+
+
+@pytest.mark.django_db
+def test_unregistered_file_is_not_served_even_to_a_member(private_library):
+    _, member, _, _, media_root = private_library
+    (media_root / "media_library/orphan.txt").write_text("orphan")
+    client = Client()
+    client.force_login(member)
+    assert client.get("/media/media_library/orphan.txt").status_code == 404
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("prefix", ["avatars/..", "workspaces/icons/../..", "avatars/%2e%2e"])
+def test_public_route_cannot_traverse_into_private_library(private_library, prefix):
+    _, _, _, paths, _ = private_library
+    response = Client().get(f"/media/{prefix}/{paths[0]}")
+    assert response.status_code == 404
