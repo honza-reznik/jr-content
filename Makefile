@@ -25,7 +25,7 @@ export BUILDX_CONFIG := $(CURDIR)/.cache/docker-buildx
 CMD ?= bash
 export CMD
 
-.PHONY: build build-bb env up down shell test test-smoke test-bb test-ff test-ff-smoke test-isolation test-ff-offline ff-account build-ff reset logs ps
+.PHONY: build build-bb env up down shell test test-fast test-smoke test-bb test-bb-fast test-ff test-ff-smoke test-isolation test-ff-offline test-ff-vitest test-ff-tsc test-ff-lint ff-account build-ff reset logs ps
 build:
 	docker build --tag jrc-dev:local --file docker/Dockerfile docker
 
@@ -66,7 +66,34 @@ shell:
 		$(COMPOSE) exec -T jrc-dev sh -c "$$CMD"; \
 	fi
 
-test: test-smoke test-bb test-ff
+test:
+	@failed=0; \
+	for suite in test-smoke test-bb test-ff; do \
+	  printf '\n=== %s ===\n' "$$suite"; \
+	  if $(MAKE) --no-print-directory "$$suite"; then \
+	    printf 'VÝSLEDEK: %s OK\n' "$$suite"; \
+	  else \
+	    result=$$?; failed=1; printf 'VÝSLEDEK: %s CHYBA (kód %s)\n' "$$suite" "$$result"; \
+	  fi; \
+	done; \
+	printf '\n=== Souhrn make test ===\n'; \
+	if [ "$$failed" -eq 0 ]; then printf 'Všechny sady prošly.\n'; else printf 'Nejméně jedna sada selhala.\n'; fi; \
+	exit "$$failed"
+
+# Rychlá kontrola vlastních změn: prostředí, naše aplikace Brightbean a živý průchod FreeFrame.
+test-fast:
+	@failed=0; \
+	for suite in test-smoke test-bb-fast test-ff-smoke; do \
+	  printf '\n=== %s ===\n' "$$suite"; \
+	  if $(MAKE) --no-print-directory "$$suite"; then \
+	    printf 'VÝSLEDEK: %s OK\n' "$$suite"; \
+	  else \
+	    result=$$?; failed=1; printf 'VÝSLEDEK: %s CHYBA (kód %s)\n' "$$suite" "$$result"; \
+	  fi; \
+	done; \
+	printf '\n=== Souhrn make test-fast ===\n'; \
+	if [ "$$failed" -eq 0 ]; then printf 'Všechny sady prošly.\n'; else printf 'Nejméně jedna sada selhala.\n'; fi; \
+	exit "$$failed"
 
 test-smoke:
 	@sh scripts/workspace.sh check
@@ -80,16 +107,25 @@ test-bb:
 	$(COMPOSE) exec -T jrc-bb-web sh -c 'ruff check . && ruff format --check .'
 	$(COMPOSE) exec -T jrc-bb-web pytest -p no:cacheprovider -o addopts="" -q --tb=short --ds=config.settings.jrc_test
 
+test-bb-fast:
+	@sh scripts/workspace.sh check
+	$(COMPOSE) exec -T jrc-bb-web sh -c 'pytest -p no:cacheprovider -o addopts="" -q --tb=short --ds=config.settings.jrc_test $$(ls -d apps/jrc_*)'
+
 test-isolation:
 	@sh scripts/workspace.sh check
 	sh scripts/test-service-isolation.sh $(COMPOSE)
 	docker run --rm --pull never --network host --user "$(JRC_UID):$(JRC_GID)" \
-	  --env-file .env --volume "$(CURDIR)/scripts:/jrc-scripts:ro" \
+	  --env-file .env \
+	  --volume "$(CURDIR)/scripts:/jrc-scripts:ro" \
 	  jrc-dev:local node /jrc-scripts/test-local-gate.cjs
 
 test-ff-offline:
 	@sh scripts/workspace.sh check
 	$(COMPOSE) run --rm --no-deps -T jrc-ff-web node /jrc-scripts/test-ff-offline.cjs
+
+test-ff-tsc:
+	@sh scripts/workspace.sh check
+	$(COMPOSE) exec -T jrc-ff-web pnpm exec tsc --noEmit
 
 test-ff: test-isolation test-ff-offline
 	@sh scripts/workspace.sh check
@@ -98,16 +134,25 @@ test-ff: test-isolation test-ff-offline
 	done
 	$(COMPOSE) exec -T -e STALE_UPLOAD_TIMEOUT_HOURS=24 -e SOFT_DELETE_RETENTION_DAYS=30 jrc-ff-api python -m pytest apps/api/tests -q -p no:cacheprovider
 	# Upstream jednotkové testy předpokládají kořenovou URL; /video ověřuje živý test a build.
-	$(COMPOSE) exec -T -e NEXT_PUBLIC_BASE_PATH= jrc-ff-web pnpm test --maxWorkers=2
-	$(COMPOSE) exec -T jrc-ff-web pnpm exec tsc --noEmit
-	$(COMPOSE) exec -T jrc-ff-web pnpm lint
+	$(MAKE) --no-print-directory test-ff-vitest
+	$(MAKE) --no-print-directory test-ff-tsc
+	$(MAKE) --no-print-directory test-ff-lint
 
 # Podepsané adresy S3 obsahují 127.0.0.1, proto ověření běží v Dockeru se sítí hostitele.
 test-ff-smoke:
 	@sh scripts/workspace.sh check
 	docker run --rm --network host --pull never --user "$(JRC_UID):$(JRC_GID)" \
-	  --env-file .env --volume "$(CURDIR):/jrc" --workdir /jrc \
+	  --env-file .env \
+	  --volume "$(CURDIR):/jrc" --workdir /jrc \
 	  jrc-ff-api:local python scripts/smoke-ff.py
+
+test-ff-lint:
+	@sh scripts/workspace.sh check
+	$(COMPOSE) exec -T jrc-ff-web pnpm lint
+
+test-ff-vitest:
+	@sh scripts/workspace.sh check
+	$(COMPOSE) exec -T -e NEXT_PUBLIC_BASE_PATH= jrc-ff-web pnpm test --maxWorkers=2 $(VITEST_ARGS)
 
 ff-account:
 	@sh scripts/workspace.sh check
