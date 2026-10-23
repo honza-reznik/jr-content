@@ -176,6 +176,12 @@ Upstream role, schvalovací služby a stavový automat zůstávají beze změny.
   oprávnění zapisovat a vlastníka rozpracované verze. Editace vychází z konkrétní poslední
   uložené verze; uložení, průběžný zápis a zahození vyžadují UUID a očekávanou revizi.
   Konflikt má `status_code = 409` pro navazující HTTP rozhraní. Shodný obsah novou verzi nezaloží.
+  Oprava po review: všechny zápisy vyžadují `create_posts` a autora příspěvku nebo
+  `edit_others_posts`, stejně jako composer (vestavěný klient zatím pouze čte).
+  Koncept po smazaném uživateli nebo odebrání jeho členství smí zahodit správce prostoru
+  (owner/manager či vlastní role s `manage_workspace_settings`), pokud smí upravit příspěvek;
+  nový `edit` takový koncept nahradí pod stejným zámkem dokumentu. Živý cizí koncept
+  správce nepřevezme a kontrola UUID i revize při zahození zůstává povinná.
 - `apps/jrc_texts/migrations/0002_protect_final_versions.py`: PostgreSQL trigger odmítá změnu
   a smazání uložené verze při potvrzení transakce. Odložená kontrola dovolí kaskádu při smazání
   celého dokumentu/obsahu a anonymizaci autora po skutečném smazání jeho účtu. Samostatný

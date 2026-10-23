@@ -137,12 +137,18 @@ def test_write_permissions(document, user, workspace, scenario):
     assert document.versions.count() == 1
 
 
-def test_client_can_edit_own_workspace_but_cannot_read_or_create_foreign_text(document, user, workspace, organization):
+def test_client_can_read_own_workspace_but_cannot_edit_or_access_foreign_text(document, user, workspace, organization):
+    base = base_version(document)
+    draft = services.edit(base.pk, user)
     membership = WorkspaceMembership.objects.get(workspace=workspace, user=user)
     membership.workspace_role = "client"
     membership.save()
-    draft = services.edit(base_version(document).pk, user)
-    services.save(draft.pk, user, expected_revision=0, markdown="Klientská změna")
+    assert services.get_version(base.pk, user).pk == base.pk
+    assert services.latest_version(document.pk, user).pk == base.pk
+    with pytest.raises(PermissionDenied):
+        services.edit(base.pk, user)
+    with pytest.raises(PermissionDenied):
+        services.save(draft.pk, user, expected_revision=0, markdown="Klientská změna")
     foreign = Workspace.objects.create(organization=organization, name="Foreign")
     foreign_post = Post.objects.create(workspace=foreign, author=user, title="Secret")
     with pytest.raises(PermissionDenied):

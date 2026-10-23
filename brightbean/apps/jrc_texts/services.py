@@ -1,7 +1,8 @@
 """Version operations. All writers lock the document before accessing its drafts.
 
 ConflictError.status_code is the HTTP status for the F4/F9 adapters. No service
-implicitly chooses a draft: mutation always requires its UUID and revision.
+implicitly resumes a draft: mutation requires its UUID and revision. Administrators
+may discard an orphan, including when starting a new edit from a saved version.
 """
 
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -9,7 +10,8 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.composer.models import Post
-from apps.jrc_production.services import can_create_content, content_membership
+from apps.jrc_production.services import content_membership
+from apps.members.models import WorkspaceMembership
 
 from .content import normalize_content
 from .models import TextDocument, TextVersion
@@ -21,8 +23,29 @@ class ConflictError(Exception):
 
 def _authorize(document, user, *, write=False):
     membership = content_membership(document.post.workspace, user)
-    if write and not can_create_content(membership):
-        raise PermissionDenied("You cannot edit texts for this client.")
+    permissions = membership.effective_permissions
+    if write and (
+        not permissions.get("create_posts", False)
+        or (document.post.author_id != user.pk and not permissions.get("edit_others_posts", False))
+    ):
+        raise PermissionDenied("You cannot edit texts for this post.")
+
+
+def _can_recover_orphan(draft, user):
+    """Only workspace administrators may remove a draft whose owner has left."""
+    if (
+        draft.draft_owner_id is not None
+        and WorkspaceMembership.objects.filter(
+            workspace_id=draft.document.post.workspace_id, user_id=draft.draft_owner_id
+        ).exists()
+    ):
+        return False
+    membership = content_membership(draft.document.post.workspace, user)
+    return (
+        membership.custom_role_id is None
+        and membership.workspace_role
+        in {WorkspaceMembership.WorkspaceRole.OWNER, WorkspaceMembership.WorkspaceRole.MANAGER}
+    ) or membership.effective_permissions.get("manage_workspace_settings", False)
 
 
 def _document(document_id, user, *, write=False):
@@ -79,10 +102,13 @@ def edit(version_id, user, *, source="editor"):
     latest = document.versions.filter(state=TextVersion.State.FINAL).order_by("-number").first()
     if base.state != TextVersion.State.FINAL or latest.pk != base.pk:
         raise ConflictError("This version is no longer current. Reload the text.")
-    if document.versions.filter(state=TextVersion.State.DRAFT).exists():
+    draft = document.versions.filter(state=TextVersion.State.DRAFT).first()
+    if draft is not None and not _can_recover_orphan(draft, user):
         raise ConflictError("This text already has a draft.")
     if source not in TextVersion.Source.values:
         raise ValidationError("Choose a valid version source.")
+    if draft is not None:
+        draft.delete()
     return TextVersion.objects.create(
         document=document,
         number=base.number + 1,
@@ -96,7 +122,7 @@ def edit(version_id, user, *, source="editor"):
     )
 
 
-def _draft(version_id, user, expected_revision):
+def _draft(version_id, user, expected_revision, *, recover_orphan=False):
     # Resolve only the parent ID; then serialize all draft operations on that parent.
     document_id = TextVersion.objects.filter(pk=version_id).values_list("document_id", flat=True).first()
     if document_id is None:
@@ -105,7 +131,7 @@ def _draft(version_id, user, expected_revision):
     draft = document.versions.filter(pk=version_id).first()
     if draft is None or draft.state != TextVersion.State.DRAFT:
         raise ConflictError("This version is no longer a draft.")
-    if draft.draft_owner_id != user.pk:
+    if draft.draft_owner_id != user.pk and not (recover_orphan and _can_recover_orphan(draft, user)):
         raise PermissionDenied("This draft belongs to another editor.")
     if draft.revision != expected_revision:
         raise ConflictError("This draft changed in another tab. Reload the text.")
@@ -146,5 +172,5 @@ def save(version_id, user, *, expected_revision, content=None, markdown=None):
 
 @transaction.atomic
 def discard(version_id, user, *, expected_revision):
-    draft = _draft(version_id, user, expected_revision)
+    draft = _draft(version_id, user, expected_revision, recover_orphan=True)
     draft.delete()
