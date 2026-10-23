@@ -40,6 +40,42 @@ ani sestavení se písmo nestahuje. Přehled úprav:
 Původní `docker-compose*.yml` FreeFrame se pro JR Content nepoužívají.
 Provozní postup je v `docs-arch/F2-B02/freeframe-provoz.md` (doplněk pro PM do KB).
 
+## 2026-10-23 — F2-B04
+
+- Společný vstup Caddy na `JRC_APP_PORT` vydává web pod `/video` a API pod
+  `/video-api/`; při předání API odstraní předponu. Uvicorn zná veřejnou
+  předponu přes `--root-path`, takže přesměrování a OpenAPI zůstanou pod ní.
+  Caddy jako důvěryhodná proxy přepisuje `X-Real-IP` adresou klienta; API podle
+  ní omezuje počet požadavků a podvržená hlavička limit neobejde.
+- Zabezpečení společného vstupu (review): `DISABLE_DOCS=true` vypíná veřejné
+  `/docs`, `/redoc` a `/openapi.json`; `/video-api/admin/*` vrací 403 (správa
+  instance jen vnitřně). API dostává požadavky bez hlavičky `Cookie` (ověřuje
+  Bearer token). Všechny odpovědi mají `X-Content-Type-Options: nosniff`
+  a `Referrer-Policy: same-origin`; `/video` smí být vložen jen do stejné adresy
+  (`X-Frame-Options: SAMEORIGIN`, `frame-ancestors 'self'`), Brightbean nikam
+  (`DENY`). Záložka Users v nastavení správce FreeFrame proto v prohlížeči nefunguje.
+- `NEXT_PUBLIC_API_URL`, `FRONTEND_URL` a `CORS_ALLOW_ORIGINS` používají
+  společný místní port. `NEXT_PUBLIC_BASE_PATH=/video` zůstává zapnuté.
+  Serverový `apps/web/middleware.ts` používá přednostně `API_INTERNAL_URL`,
+  stejně jako načítání značky na serveru, místo veřejné adresy prohlížeče.
+  Při prvním úspěšném ověření dokončené instalace dál provede kontrolu
+  přihlášení; nastavení cache cookie už nepřeskočí tuto kontrolu.
+  Regresní testy zahrnují anonymní první návštěvu, relaci, nedostupné API
+  i nedokončenou instalaci.
+- Proxy předává `/video` i `/video/*`. Next.js tak může standardně
+  přesměrovat `/video/` na `/video`, bez smyčky mezi aplikací a proxy.
+- API middleware pro dokončení instalace a omezení počtu požadavků čte
+  cestu bez `root_path`. Výjimky pro health, setup, upload a HLS tím platí
+  i pod `/video-api`; dvanáct regresních případů ověřuje obě nasazení
+  a zachování odmítnutí chráněných cest.
+- Dočasné místní porty webu/API i port PostgreSQL odstraněny. `jrc-ff-gate`
+  zůstává pouze pro S3: podepsané adresy S3 se předávají přímo a beze změny.
+  Web, API a workery dál mají jen vnitřní síť bez internetu.
+- Ověřovací skripty brány, nahrávání a časového štítku používají společný vstup.
+  `scripts/test-video-proxy.cjs` ověřuje skutečné heslové přihlášení,
+  chybové odpovědi/CORS a HLS přehrávání v Chromium na 1440/390 px;
+  video vyrábí FFmpegem a pracuje jen v `jrc-f2b04`.
+
 ## 2026-10-23 — F5-B07
 
 - `apps/web/components/review/video-player.tsx`: štítek času nad skutečným obdélníkem

@@ -11,6 +11,7 @@ all subsequent requests pass through without any DB query.
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+from starlette._utils import get_route_path
 
 # Once setup is confirmed, skip the check for all future requests
 _setup_complete = False
@@ -32,7 +33,7 @@ class SetupGuardMiddleware(BaseHTTPMiddleware):
         if _setup_complete:
             return await call_next(request)
 
-        path = request.url.path
+        path = get_route_path(request.scope)
 
         # Always allow exempt paths
         if any(path.startswith(prefix) for prefix in EXEMPT_PREFIXES):

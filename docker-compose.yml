@@ -51,7 +51,10 @@ x-ff: &ff
     S3_BUCKET: jrc-video
     S3_REGION: garage
     AWS_EC2_METADATA_DISABLED: "true"
-    FRONTEND_URL: http://127.0.0.1:${JRC_FF_WEB_PORT:-13022}/video
+    FRONTEND_URL: http://127.0.0.1:${JRC_APP_PORT:-13000}/video
+    CORS_ALLOW_ORIGINS: http://127.0.0.1:${JRC_APP_PORT:-13000}
+    # /docs, /redoc a /openapi.json by byly veřejné bez přihlášení.
+    DISABLE_DOCS: "true"
     MAIL_PROVIDER: smtp
     SMTP_HOST: 127.0.0.1
     SMTP_PORT: 9
@@ -98,13 +101,15 @@ services:
     depends_on:
       jrc-bb-web:
         condition: service_healthy
+      jrc-ff-web:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health/"]
       interval: 3s
       timeout: 6s
       retries: 30
-  # Místní porty úložiště/databáze a dočasné porty FreeFrame do F2-B04.
-  # Pevné TCP cíle; klient nemůže zadat obecný proxy server.
+  # Brána zůstává jen pro S3: podepsané adresy videí načítá přímo prohlížeč.
+  # PostgreSQL je jen ve vnitřní síti (psql přes docker compose exec). Pevný TCP cíl; klient nemůže zadat obecný proxy server.
   jrc-ff-gate:
     image: jrc-dev:local
     restart: unless-stopped
@@ -118,9 +123,6 @@ services:
       - ./scripts/local-gate.cjs:/gate.cjs:ro
     networks: [default, internal]
     ports:
-      - "127.0.0.1:${JRC_FF_API_PORT:-18022}:18022"
-      - "127.0.0.1:${JRC_FF_WEB_PORT:-13022}:13022"
-      - "127.0.0.1:${JRC_POSTGRES_PORT:-15432}:15432"
       - "127.0.0.1:${JRC_S3_PORT:-13900}:13900"
   jrc-ff-db:
     image: postgres:18.6-bookworm
@@ -146,7 +148,7 @@ services:
         condition: service_completed_successfully
   jrc-ff-api:
     <<: *ff
-    command: ["uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--root-path", "/video-api"]
     networks: [internal]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
@@ -188,7 +190,7 @@ services:
     environment:
       NEXT_TELEMETRY_DISABLED: "1"
       NEXT_PUBLIC_BASE_PATH: /video
-      NEXT_PUBLIC_API_URL: http://127.0.0.1:${JRC_FF_API_PORT:-18022}
+      NEXT_PUBLIC_API_URL: http://127.0.0.1:${JRC_APP_PORT:-13000}/video-api
       API_INTERNAL_URL: http://jrc-ff-api:8000
     command: ["pnpm", "exec", "next", "dev", "--hostname", "0.0.0.0"]
     volumes:

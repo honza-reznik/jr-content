@@ -121,6 +121,8 @@ test-bb-fast:
 test-isolation:
 	@sh scripts/workspace.sh check
 	sh scripts/test-service-isolation.sh $(COMPOSE)
+	# PostgreSQL už brána nevystavuje; dostupnost ověřujeme uvnitř vnitřní sítě.
+	$(COMPOSE) exec -T jrc-dev psql -X -Atc 'SELECT 1' | grep -qx 1
 	docker run --rm --pull never --network host --user "$(JRC_UID):$(JRC_GID)" \
 	  --env-file .env \
 	  --volume "$(CURDIR)/scripts:/jrc-scripts:ro" \
@@ -139,7 +141,8 @@ test-ff: test-isolation test-ff-offline
 	@for service in jrc-ff-worker jrc-ff-maintenance jrc-ff-beat; do \
 	  $(COMPOSE) exec -T $$service python - < scripts/smoke-ff-internal.py || exit $$?; \
 	done
-	$(COMPOSE) exec -T -e STALE_UPLOAD_TIMEOUT_HOURS=24 -e SOFT_DELETE_RETENTION_DAYS=30 jrc-ff-api python -m pytest apps/api/tests -q -p no:cacheprovider
+	# Upstream test_smoke ověřuje /docs; v provozu je vypne DISABLE_DOCS (ověřuje test brány).
+	$(COMPOSE) exec -T -e STALE_UPLOAD_TIMEOUT_HOURS=24 -e SOFT_DELETE_RETENTION_DAYS=30 -e DISABLE_DOCS=false jrc-ff-api python -m pytest apps/api/tests -q -p no:cacheprovider
 	# Upstream jednotkové testy předpokládají kořenovou URL; /video ověřuje živý test a build.
 	$(MAKE) --no-print-directory test-ff-vitest
 	$(MAKE) --no-print-directory test-ff-tsc

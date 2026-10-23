@@ -5,7 +5,8 @@ import { withBasePath } from './lib/base-path'
 const PUBLIC_ROUTES = ['/login', '/setup']
 const PUBLIC_PREFIXES = ['/invite/', '/share/']
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+// Server reaches the API over the private container network.
+const API_URL = process.env.API_INTERNAL_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
 function isPublicRoute(pathname: string): boolean {
   if (PUBLIC_ROUTES.includes(pathname)) return true
@@ -24,6 +25,7 @@ export async function middleware(request: NextRequest) {
   // Check if setup is needed — redirect to /setup if no superadmin exists
   // Uses a cookie cache to avoid calling the API on every request
   const setupDone = request.cookies.get('ff_setup_done')?.value
+  let cacheSetupDone = false
   if (!setupDone) {
     try {
       const res = await fetch(`${API_URL}/setup/status`, {
@@ -34,10 +36,8 @@ export async function middleware(request: NextRequest) {
         if (data.needs_setup) {
           return NextResponse.redirect(new URL(withBasePath('/setup'), request.url))
         }
-        // Setup is done — set cookie so we don't check again
-        const response = NextResponse.next()
-        response.cookies.set('ff_setup_done', '1', { path: '/', maxAge: 60 * 60 * 24 }) // 24 hours
-        return response
+        // Cache setup only after the auth check below has also run.
+        cacheSetupDone = true
       }
     } catch {
       // API unreachable — let the request through, the page will show errors
@@ -48,13 +48,19 @@ export async function middleware(request: NextRequest) {
   const accessToken = request.cookies.get('ff_access_token')?.value
   const refreshToken = request.cookies.get('ff_refresh_token')?.value
 
+  let response: NextResponse
   if (!accessToken && !refreshToken) {
     const loginUrl = new URL(withBasePath('/login'), request.url)
     loginUrl.searchParams.set('from', pathname)
-    return NextResponse.redirect(loginUrl)
+    response = NextResponse.redirect(loginUrl)
+  } else {
+    response = NextResponse.next()
   }
 
-  return NextResponse.next()
+  if (cacheSetupDone) {
+    response.cookies.set('ff_setup_done', '1', { path: '/', maxAge: 60 * 60 * 24 })
+  }
+  return response
 }
 
 export const config = {

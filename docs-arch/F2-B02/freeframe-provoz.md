@@ -9,10 +9,12 @@ Přihlášení: e-mail z `JRC_FF_SYNC_EMAIL` (výchozí `jrc-sync@example.com`),
 z `JRC_FF_SYNC_PASSWORD` v místním `.env`. Heslo ani přístupové tokeny nekopíruj do logů.
 `make ff-account` účet bezpečně připraví znovu; při změně hesla zneplatní staré tokeny.
 
-Web je dočasně na `http://127.0.0.1:13022/video/login`, API na
-`http://127.0.0.1:18022/health` a dokumentace API na `/docs`. Porty mění
-`JRC_FF_WEB_PORT` a `JRC_FF_API_PORT`. Pro SSH přidej přesměrování obou portů
-stejně jako u Brightbean. F2-B03 je nahradí společným vstupem.
+Od F2-B04 je web na společném vstupu `http://127.0.0.1:13000/video/login`
+(`JRC_APP_PORT`) a API na `http://127.0.0.1:13000/video-api/health`.
+Dokumentace API (`/docs`, `/redoc`, `/openapi.json`) je vypnutá (`DISABLE_DOCS`)
+a správa `/video-api/admin/*` je přes společný vstup zablokovaná (403).
+Dočasné porty 13022/18022 (`JRC_FF_WEB_PORT`, `JRC_FF_API_PORT`) už neexistují.
+Pro SSH stačí přesměrovat společný port a port S3 (`JRC_S3_PORT`).
 `NEXT_PUBLIC_BASE_PATH=/video`, `NEXT_TELEMETRY_DISABLED=1`; původní Compose FreeFrame
 se nepoužívá. Závislosti webu instaluje pouze Docker, `pnpm install --frozen-lockfile`.
 Po změně zámku balíčků sestav obraz znovu a obnov postradatelný svazek webových závislostí.
@@ -23,8 +25,9 @@ Převodní worker odebírá frontu `transcoding`, jeden převod současně, limi
 smazaných záznamů ve 3:00 UTC. Nedokončené nahrávání se uklízí po 24 hodinách,
 smazané záznamy po 30 dnech. Vyhledávání osiřelých souborů je vypnuté.
 Všechny aplikační služby včetně API, webu, Brightbean, databáze a Garage jsou
-pouze ve vnitřní síti bez internetu. Dočasná `jrc-ff-gate` přenáší výše uvedené
-místní porty na pevné vnitřní cíle (také PG/S3/Brightbean, jejich adresy se nemění).
+pouze ve vnitřní síti bez internetu. Brána `jrc-ff-gate` od F2-B04 přenáší
+jen místní port S3 na pevný vnitřní cíl (podepsané adresy videí z prohlížeče);
+PostgreSQL je dostupný jen uvnitř, např. `make shell CMD='psql -Atc "SELECT 1"'`.
 Jen brána a vývojový `jrc-dev` mají běžnou síť. Brána přenáší TCP beze změny,
 včetně WebSocketů a podpisů S3; neumožňuje volbu libovolného cíle. Používá již
 místní obraz jrc-dev, běží bez tajemství a s jediným připojeným skriptem pro bránu.
@@ -63,7 +66,8 @@ v `ops/test-output/F2-B02/`, mimo git. Automatická sada upstreamu používá p�
 napodobenou databázi; migrace a živý test navíc ověřují skutečný PostgreSQL a Garage.
 
 Oddělené ověření F2-B02: `JRC_PROJECT=jrc-f2b02`, porty uložené v jeho `.env`
-13012 (dev), 15434 (PG), 13912 (Garage), 18012 (Brightbean), 13022 a 18022 (FreeFrame).
+13012 (dev), 15434 (PG), 13912 (Garage), 18012 (Brightbean), 13022 a 18022 (FreeFrame);
+stav F2-B02, dočasné porty FreeFrame a PG zrušil F2-B04.
 Pouze tento projekt lze po testu uklidit přes
 `JRC_PROJECT=jrc-f2b02 docker compose -p jrc-f2b02 --env-file .env -f docker-compose.yml down -v`.
 Výchozí `jrc` nad main ani ostatní projekty bloků se nepřepínají.

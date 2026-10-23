@@ -11,7 +11,7 @@ inboxu/odpovědí a statistik a společné opětovné zapnutí bez restartu.
 
 ```sh
 export JRC_PROJECT=jrc-f2b10
-JRC_APP_PORT=13020 JRC_POSTGRES_PORT=15440 JRC_S3_PORT=13920 JRC_BB_PORT=18020 make up
+JRC_APP_PORT=13020 JRC_S3_PORT=13920 JRC_BB_PORT=18020 make up
 make test
 # Až po dokončení pytest: změna sítě během testů může přerušit jejich spojení s databází.
 docker compose -p jrc-f2b10 --env-file .env exec -T jrc-bb-web python manage.py shell < scripts/F2-B10/seed-ui.py
