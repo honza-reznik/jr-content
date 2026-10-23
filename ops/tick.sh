@@ -411,8 +411,9 @@ PM_RESULT=""   # ok | limit | timeout | chyba
 run_pm() {
   local msg to out rc
   msg="NOČNÍ BĚH $(date -d "@$NOW" '+%Y-%m-%d %H:%M')"
+  # Zpráva jde přes stdin: volby jako --add-dir berou libovolný počet hodnot a spolkly by ji (F0-B10).
   local cmd=("$CLAUDE_BIN" -p --model "$PM_MODEL" --append-system-prompt-file "$PM_PROMPT_FILE"
-             "${CLAUDE_EXTRA_ARGS[@]}" "$msg")
+             "${CLAUDE_EXTRA_ARGS[@]}")
   to=$(effective_timeout "$PM_TIMEOUT")
   # Před FREE_BY nesmí PM po obnově otevřít další okno přes tuto hranici.
   # Rezerva 120 s: timeout po signálu čeká až 60 s (--kill-after), PM musí skončit před obnovou okna.
@@ -428,13 +429,13 @@ run_pm() {
     fi
   fi
   if (( DRY_RUN )); then
-    log "SPUSTIL BYCH PM (v $PROJECT_DIR, timeout ${to} s): $(printf '%q ' "${cmd[@]}")"
+    log "SPUSTIL BYCH PM (v $PROJECT_DIR, timeout ${to} s, zpráva přes stdin: $msg): $(printf '%q ' "${cmd[@]}")"
     return
   fi
-  log "SPOUŠTÍM PM (v $PROJECT_DIR, timeout ${to} s): $(printf '%q ' "${cmd[@]}")"
+  log "SPOUŠTÍM PM (v $PROJECT_DIR, timeout ${to} s, zpráva přes stdin: $msg): $(printf '%q ' "${cmd[@]}")"
   echo "----- výstup PM: začátek -----" >>"$LOGFILE"
   out=$(mktemp "${TMPDIR:-/tmp}/tick-pm.XXXXXX")
-  ( exec 9>&-; cd "$PROJECT_DIR" && exec timeout --kill-after=60 "$to" "${cmd[@]}" ) </dev/null 2>&1 \
+  ( exec 9>&-; cd "$PROJECT_DIR" && exec timeout --kill-after=60 "$to" "${cmd[@]}" ) <<<"$msg" 2>&1 \
     | tee -a "$LOGFILE" >"$out" 9>&-
   rc=${PIPESTATUS[0]}
   echo "----- výstup PM: konec (kód $rc) -----" >>"$LOGFILE"
