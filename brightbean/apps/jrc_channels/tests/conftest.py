@@ -3,6 +3,8 @@ from django.test import override_settings
 
 from apps.workspaces.models import Workspace
 
+from .test_offline import no_network  # noqa: F401
+
 
 @pytest.fixture(autouse=True)
 def _social_provider_test_mode():

@@ -79,8 +79,10 @@ urlpatterns = [
 ]
 
 if getattr(settings, "JRC_UI_ENABLED", False):
+    # JR Content: upraveno 2026-10-23 (bloky F3-B02, F2-B08), AGPL-3.0.
     urlpatterns += [
         path("about/", include("apps.jrc_ui.urls")),
+        path("workspaces/<uuid:workspace_id>/profile/", include("apps.jrc_channels.urls")),
         path("", include("apps.jrc_production.urls")),
     ]
 
