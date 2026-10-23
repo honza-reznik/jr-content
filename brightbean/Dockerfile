@@ -18,6 +18,11 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# JR Content F4-B01: stejné serverové schéma Markdownu jako v editoru, dostupné i pod bind mountem.
+COPY apps/jrc_texts/editor/package*.json /opt/jrc-texts/
+RUN npm ci --prefix /opt/jrc-texts --omit=dev --ignore-scripts --no-audit --no-fund
+COPY apps/jrc_texts/editor/*.mjs /opt/jrc-texts/
+
 COPY . .
 
 # Build Tailwind CSS

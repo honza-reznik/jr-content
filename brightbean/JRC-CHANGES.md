@@ -168,3 +168,21 @@ a služba označení ruční publikace patří navazujícím blokům F3-B02 a F8
   klientského kroku, atomické plánování, časová pásma, zastaralé přesuny, CSRF.
 
 Upstream role, schvalovací služby a stavový automat zůstávají beze změny.
+
+## 2026-10-23 · F4-B01
+
+- `apps/jrc_texts/`: dokumenty scénářů a kanálových popisků, neměnné uložené verze,
+  omezení jedné rozpracované verze a unikátního pořadí. Služby ověřují členství v prostoru,
+  oprávnění zapisovat a vlastníka rozpracované verze. Editace vychází z konkrétní poslední
+  uložené verze; uložení, průběžný zápis a zahození vyžadují UUID a očekávanou revizi.
+  Konflikt má `status_code = 409` pro navazující HTTP rozhraní. Shodný obsah novou verzi nezaloží.
+- `apps/jrc_texts/migrations/0002_protect_final_versions.py`: PostgreSQL trigger odmítá změnu
+  a smazání uložené verze při potvrzení transakce. Odložená kontrola dovolí kaskádu při smazání
+  celého dokumentu/obsahu a anonymizaci autora po skutečném smazání jeho účtu. Samostatný
+  přímý SQL zásah do uložené verze zůstává zakázaný.
+- `apps/jrc_texts/editor/`: serverové schéma Tiptap a převod Markdownu převzaté z prototypu F1-B03.
+  Python spouští omezený místní Node proces s JSON přes standardní vstup/výstup, bez sítě.
+  `Dockerfile` instaluje uzamčené závislosti a skripty do `/opt/jrc-texts`, mimo zdrojový bind mount.
+- `config/settings/jrc_offline.py`: registrace aplikace při běhu i testech.
+
+Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP rozhraní patří dalším blokům.
