@@ -1,10 +1,14 @@
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
+from django.utils import timezone
 
+from apps.approvals import services as approvals
 from apps.composer.models import PlatformPost, Post
+from apps.composer.services import sync_post_scheduled_at
 from apps.jrc_channels.models import ChannelProfile
+from apps.members.models import WorkspaceMembership
 
-from .models import PipelineStage, PostProduction, ProductionStage
+from .models import PipelineStage, PostProduction, ProductionStage, StageChange
 
 _STATUS_TO_STAGE = {
     "pending_review": PipelineStage.REVIEW,
@@ -38,8 +42,14 @@ def create_content(workspace, title, user):
     """Create local content and one draft variant for each enabled client channel.
 
     No enabled channel means the upstream lists would hide the content, so reject
-    creation before writing anything. Authorization belongs to the calling view/API.
+    creation before writing anything. Check authorization here for every caller.
     """
+    membership = content_membership(workspace, user)
+    if not can_create_content(membership):
+        raise PermissionDenied("You cannot create content for this client.")
+    title = title.strip()
+    if not title:
+        raise ValidationError("Enter a content title.")
     channels = list(
         ChannelProfile.objects.filter(social_account__workspace=workspace, is_enabled=True)
         .select_related("social_account")
@@ -55,4 +65,106 @@ def create_content(workspace, title, user):
     PlatformPost.objects.bulk_create(
         [PlatformPost(post=post, social_account=channel.social_account) for channel in channels]
     )
+    return post
+
+
+def content_membership(workspace, user):
+    if not user or not user.is_authenticated or not user.is_active:
+        raise PermissionDenied("Sign in to access content.")
+    membership = (
+        WorkspaceMembership.objects.filter(user=user, workspace=workspace, workspace__is_archived=False)
+        .select_related("custom_role")
+        .first()
+    )
+    if membership is None:
+        raise PermissionDenied("You do not have access to this client.")
+    return membership
+
+
+def is_client(membership):
+    return membership.custom_role_id is None and membership.workspace_role == "client"
+
+
+def can_create_content(membership):
+    # Local content only. Do not grant clients upstream publishing/media permissions.
+    return is_client(membership) or membership.effective_permissions.get("create_posts", False)
+
+
+def available_moves(post, membership):
+    """Offer exactly the transitions the service will authorize for this snapshot."""
+    children = list(post.platform_posts.all())
+    if not children:
+        return []
+    statuses = {pp.status for pp in children}
+    permissions = membership.effective_permissions
+    can_edit = can_create_content(membership) and (
+        post.author_id == membership.user_id or permissions.get("edit_others_posts", False)
+    )
+    moves = []
+    if can_edit and statuses <= {"draft"}:
+        moves.extend(stage for stage in ProductionStage.values if stage != pipeline_stage(post))
+    if can_edit and statuses <= {"draft", "changes_requested", "rejected", "approved", "scheduled"}:
+        if statuses <= {"draft", "changes_requested", "rejected"}:
+            moves.append(PipelineStage.REVIEW)
+        else:
+            moves.append(ProductionStage.EDITING)
+    two_stage = post.workspace.approval_workflow_mode == "required_internal_and_client"
+    if permissions.get("approve_posts", False) and statuses <= {"pending_review", "pending_client", "approved"}:
+        pending = statuses - {"approved"}
+        if pending and (
+            not two_stage or pending == ({"pending_client"} if is_client(membership) else {"pending_review"})
+        ):
+            moves.append(PipelineStage.APPROVED)
+    if permissions.get("publish_directly", False) and statuses <= {"approved"}:
+        moves.append(PipelineStage.READY)
+    return moves
+
+
+@transaction.atomic
+def move_content(post, stage, user, *, expected_stage, scheduled_at=None):
+    """Serialize changes, authorize the actor and delegate editorial decisions to Brightbean."""
+    post = Post.objects.select_for_update(of=("self",)).select_related("workspace").get(pk=post.pk)
+    membership = content_membership(post.workspace, user)
+    children = list(post.platform_posts.select_for_update(of=("self",)).select_related("social_account__jrc_channel"))
+    previous = pipeline_stage(post)
+    if previous != expected_stage:
+        raise ValidationError("This content changed. Refresh the board and try again.")
+    if stage not in PipelineStage.values:
+        raise ValidationError("Choose a valid stage.")
+    if stage not in available_moves(post, membership):
+        raise PermissionDenied("You cannot make this move. Check your permissions and the current stage.")
+    if stage in ProductionStage.values:
+        for child in children:
+            if child.status != "draft":
+                from apps.composer.services import transition_platform_post
+
+                transition_platform_post(child, "draft")
+        production, _ = PostProduction.objects.get_or_create(post=post)
+        production.stage = stage
+        production.stage_changed_at = timezone.now()
+        production.stage_changed_by = user
+        production.save()
+    elif stage == PipelineStage.REVIEW:
+        approvals.submit_for_review(post, user, post.workspace)
+    elif stage == PipelineStage.APPROVED:
+        approvals.approve_post(post, user, post.workspace)
+    elif stage == PipelineStage.READY:
+        if scheduled_at is None or timezone.is_naive(scheduled_at) or scheduled_at <= timezone.now():
+            raise ValidationError("Choose a future publication date and time.")
+        for child in children:
+            # Manual JR channels wait in scheduled until a human marks publication.
+            # The upstream scheduling service assumes live publishing and rejects
+            # mandatory-review workspaces even after approval. Keep its state
+            # machine and aggregate scheduling service, without that direct gate.
+            profile = getattr(child.social_account, "jrc_channel", None)
+            if profile is None or profile.kind not in {ChannelProfile.Kind.MANUAL, ChannelProfile.Kind.CUSTOM}:
+                raise ValidationError("The board can plan manual channels only.")
+            child.transition_to("scheduled")
+            child.scheduled_at = scheduled_at
+            child.save(update_fields=[*PlatformPost.TRANSITION_FIELDS, "scheduled_at", "updated_at"])
+        sync_post_scheduled_at(post)
+    post.refresh_from_db()
+    current = pipeline_stage(post)
+    if current != previous:
+        StageChange.objects.create(post=post, from_stage=previous, to_stage=current, user=user)
     return post

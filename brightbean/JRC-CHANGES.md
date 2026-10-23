@@ -145,3 +145,26 @@ Ověřovací skripty a snímky jsou v kořeni JR Content (`scripts/F2-B10/`,
 
 Stavový automat a modely upstreamu se v tomto bloku nemění. Nástěnka, změny fází přes rozhraní
 a služba označení ruční publikace patří navazujícím blokům F3-B02 a F8-B02.
+
+## 2026-10-23 · F3-B02
+
+- `apps/jrc_production/services.py`: `create_content()` sama ověřuje aktivní členství,
+  oprávnění zakládat obsah a dostupnost klienta; místní obsah smí založit i vestavěná
+  klientská role bez změny globálních oprávnění composeru/API. `move_content()` zamyká
+  obsah při přesunu, kontroluje oprávnění, původní fázi a všechny kanálové kopie. Výrobní
+  fáze zaznamenává do historie; kontrolu a schválení deleguje službám Brightbean.
+  Plánování schválených ručních i vlastních kanálů používá stavový automat Brightbean
+  a `sync_post_scheduled_at()`; nepoužívá bránu pro přímé plánování skutečných účtů,
+  která odmítá i schválený obsah v povinném schvalovacím režimu. Ruční publikaci
+  tato nástěnka nenahrazuje (F8-B02).
+- `apps/jrc_production/urls.py`, `views.py`, `templates/jrc_production/board.html`:
+  nová nástěnka `/board/` s osmi odvozenými fázemi, filtrem klienta a kanálu,
+  formulářem pro založení a přesuny s kontrolou oprávnění. Telefon má volbu zobrazené
+  fáze, všechny akce jsou dostupné i bez přetahování. Filtr nikdy nerozšiřuje přístup.
+- `config/urls.py`: nástěnka a její akce registrované jen v JR Content nastavení.
+- `templates/base.html`: odkaz Content board v navigaci JR Content.
+- `apps/jrc_production/tests/`: oprávnění služeb i HTTP (cizí prostor, role, vlastní
+  oprávnění, archivovaný klient), filtry, víc kanálů, historie, schvalování včetně
+  klientského kroku, atomické plánování, časová pásma, zastaralé přesuny, CSRF.
+
+Upstream role, schvalovací služby a stavový automat zůstávají beze změny.
