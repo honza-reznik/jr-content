@@ -17,7 +17,7 @@ endif
 override COMPOSE := docker compose --project-name $(JRC_PROJECT) --file docker-compose.yml --env-file .env
 # Správa existujících kontejnerů nepotřebuje hesla ani místní .env.
 # Zástupné hodnoty se používají pouze pro načtení konfigurace, nikdy pro up.
-override ADMIN_COMPOSE := PGPASSWORD=unused GARAGE_RPC_SECRET=unused AWS_ACCESS_KEY_ID=unused AWS_SECRET_ACCESS_KEY=unused JRC_BB_SECRET_KEY=unused JRC_BB_ENCRYPTION_KEY_SALT=unused JRC_FF_JWT_SECRET=unused JRC_FF_SYNC_PASSWORD=unused JRC_FF_S3_ACCESS_KEY=unused JRC_FF_S3_SECRET_KEY=unused docker compose --project-name $(JRC_PROJECT) --file docker-compose.yml --env-file /dev/null
+override ADMIN_COMPOSE := PGPASSWORD=unused GARAGE_RPC_SECRET=unused AWS_ACCESS_KEY_ID=unused AWS_SECRET_ACCESS_KEY=unused JRC_BB_SECRET_KEY=unused JRC_BB_ENCRYPTION_KEY_SALT=unused JRC_FF_JWT_SECRET=unused JRC_FF_SYNC_PASSWORD=unused JRC_FF_S3_ACCESS_KEY=unused JRC_FF_S3_SECRET_KEY=unused JRC_BB_S3_ACCESS_KEY=unused JRC_BB_S3_SECRET_KEY=unused docker compose --project-name $(JRC_PROJECT) --file docker-compose.yml --env-file /dev/null
 export JRC_UID := $(shell id -u)
 export JRC_GID := $(shell id -g)
 # Změna bind mountu sama službu nerestartuje; otisk v labelu vynutí novou konfiguraci.
@@ -145,7 +145,8 @@ test-ff: test-isolation test-ff-offline
 	  $(COMPOSE) exec -T $$service python - < scripts/smoke-ff-internal.py || exit $$?; \
 	done
 	# Upstream test_smoke ověřuje /docs; v provozu je vypne DISABLE_DOCS (ověřuje test brány).
-	$(COMPOSE) exec -T -e STALE_UPLOAD_TIMEOUT_HOURS=24 -e SOFT_DELETE_RETENTION_DAYS=30 -e DISABLE_DOCS=false jrc-ff-api python -m pytest apps/api/tests -q -p no:cacheprovider
+	# Upstream testy CORS počítají s vývojovými původy localhost; provoz je vypíná (F2-B05).
+	$(COMPOSE) exec -T -e STALE_UPLOAD_TIMEOUT_HOURS=24 -e SOFT_DELETE_RETENTION_DAYS=30 -e DISABLE_DOCS=false -e CORS_DEV_ORIGINS=true jrc-ff-api python -m pytest apps/api/tests -q -p no:cacheprovider
 	# Upstream jednotkové testy předpokládají kořenovou URL; /video ověřuje živý test a build.
 	$(MAKE) --no-print-directory test-ff-vitest
 	$(MAKE) --no-print-directory test-ff-tsc

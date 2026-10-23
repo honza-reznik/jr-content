@@ -27,10 +27,12 @@
 	@video path /video /video/*
 	handle @video {
 		# Přehrávač se vkládá do Brightbean na stejné adrese, jinam ne.
+		# F2-B05: vynucená CSP; úložiště jen přesný původ místní brány S3 (náhledy,
+		# segmenty HLS, nahrávání částí). Vývojový Next.js potřebuje inline a eval skripty.
 		header {
 			defer
 			X-Frame-Options SAMEORIGIN
-			Content-Security-Policy "frame-ancestors 'self'"
+			Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http://127.0.0.1:{$JRC_S3_PORT}; media-src 'self' blob: http://127.0.0.1:{$JRC_S3_PORT}; connect-src 'self' http://127.0.0.1:{$JRC_S3_PORT}; font-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'"
 		}
 		reverse_proxy jrc-ff-web:3000
 	}

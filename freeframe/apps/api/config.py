@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     # frontend + localhost defaults). Set to "*" to allow any origin — handy for
     # testing on a LAN via a machine's IP; do not use "*" in production.
     cors_allow_origins: str = ""
+    # JR Content F2-B05: false drops the localhost:3000/3001 development defaults,
+    # so the API and the bucket CORS accept only FRONTEND_URL + CORS_ALLOW_ORIGINS.
+    cors_dev_origins: bool = True
     transcoder_engine: str = "ffmpeg"
     # Which rungs of the quality ladder to build, comma-separated. Valid names
     # are the keys of packages.transcoder.ffmpeg_transcoder.QUALITY_MAP; the
@@ -221,8 +224,7 @@ class Settings(BaseSettings):
             # A sub-path deployment puts a path in FRONTEND_URL; an Origin
             # header never has one, so match against the bare origin.
             self.frontend_origin,
-            "http://localhost:3000",
-            "http://localhost:3001",
+            *(("http://localhost:3000", "http://localhost:3001") if self.cors_dev_origins else ()),
             *extra,
         ]
         return list(dict.fromkeys(o for o in candidates if o))
