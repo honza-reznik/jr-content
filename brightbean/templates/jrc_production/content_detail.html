@@ -80,7 +80,54 @@
         {% elif active_tab == "video" %}
             <h2 class="text-lg font-semibold text-stone-900">Video</h2><div class="mt-5 rounded-xl border border-dashed border-stone-300 px-4 py-10 text-center text-sm text-stone-500">Video versions will appear here.</div>
         {% elif active_tab == "caption" %}
-            <h2 class="text-lg font-semibold text-stone-900">Caption</h2><div class="mt-5 rounded-xl border border-dashed border-stone-300 px-4 py-10 text-center text-sm text-stone-500">Channel captions will appear here.</div>
+            <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">Channel captions</h2><p class="mt-1 text-sm text-stone-500">Each channel has its own plain text caption and saved versions.</p></div>
+            {% if caption_error %}<p role="alert" class="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{{ caption_error }}</p>{% endif %}
+            <div class="space-y-5">
+                {% for item in caption_channels %}
+                <article class="rounded-xl border border-stone-200 p-4 sm:p-5" aria-labelledby="caption-title-{{ item.variant.id }}">
+                    <div class="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
+                        <h3 id="caption-title-{{ item.variant.id }}" class="font-semibold text-stone-900">{{ item.platform_label }} · {{ item.variant.social_account.account_name }}</h3>
+                        {% if item.latest %}<p class="text-xs text-stone-500">Saved version {{ item.latest.number }}</p>{% endif %}
+                    </div>
+                    <form method="post" class="mt-4">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="save_caption">
+                        <input type="hidden" name="platform_post" value="{{ item.variant.id }}">
+                        {% if item.latest %}<input type="hidden" name="base_version" value="{{ item.latest.id }}">{% endif %}
+                        <label for="caption-{{ item.variant.id }}" class="mb-1 block text-sm font-medium text-stone-700">Caption</label>
+                        <textarea id="caption-{{ item.variant.id }}" name="caption" rows="7" class="block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm text-stone-900 shadow-sm focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-200 disabled:bg-stone-50" data-caption-counter data-limit="{{ item.char_limit }}" data-escaped-chars="{{ item.escaped_chars }}" {% if not can_edit_captions %}readonly{% endif %}>{{ item.text }}</textarea>
+                        <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
+                            <p class="text-xs text-stone-500">Counted for {{ item.platform_label }}: <span data-caption-count>{{ item.char_count }}</span> / {{ item.char_limit }}</p>
+                            {% if can_edit_captions %}<button type="submit" class="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-300">Save version</button>{% endif %}
+                        </div>
+                    </form>
+                    {% if item.previous %}
+                    <details class="mt-4 border-t border-stone-100 pt-3">
+                        <summary class="cursor-pointer text-sm font-medium text-stone-700">Compare with version {{ item.previous.number }}</summary>
+                        <div class="mt-3 grid gap-3 sm:grid-cols-2">
+                            <section class="min-w-0 rounded-lg bg-stone-50 p-3"><h4 class="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">Previous</h4><p class="whitespace-pre-wrap break-words text-sm text-stone-700">{% for part in item.old_diff %}{% if part.changed %}<del class="rounded bg-red-100 text-red-900">{{ part.text }}</del>{% else %}{{ part.text }}{% endif %}{% endfor %}</p></section>
+                            <section class="min-w-0 rounded-lg bg-stone-50 p-3"><h4 class="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">Current</h4><p class="whitespace-pre-wrap break-words text-sm text-stone-700">{% for part in item.new_diff %}{% if part.changed %}<ins class="rounded bg-green-100 text-green-900 no-underline">{{ part.text }}</ins>{% else %}{{ part.text }}{% endif %}{% endfor %}</p></section>
+                        </div>
+                    </details>
+                    {% endif %}
+                </article>
+                {% empty %}<div class="rounded-xl border border-dashed border-stone-300 px-4 py-10 text-center text-sm text-stone-500">No channels yet. Add a channel before writing a caption.</div>{% endfor %}
+            </div>
+            <script>
+                document.querySelectorAll("[data-caption-counter]").forEach((field) => {
+                    const count = field.closest("form").querySelector("[data-caption-count]");
+                    const limit = Number(field.dataset.limit);
+                    const escaped = new Set(Array.from(field.dataset.escapedChars || ""));
+                    const updateCount = () => {
+                        const length = Array.from(field.value).reduce((total, character) => total + 1 + Number(escaped.has(character)), 0);
+                        count.textContent = String(length);
+                        count.classList.toggle("font-semibold", length > limit);
+                        count.classList.toggle("text-red-700", length > limit);
+                    };
+                    field.addEventListener("input", updateCount);
+                    updateCount();
+                });
+            </script>
         {% else %}
             <h2 class="text-lg font-semibold text-stone-900">Approval</h2><div class="mt-5 rounded-xl border border-dashed border-stone-300 px-4 py-10 text-center text-sm text-stone-500">Approval details will appear here.</div>
         {% endif %}

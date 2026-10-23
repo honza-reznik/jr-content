@@ -115,6 +115,16 @@ Compose, založení databáze a příkazy vývoje jsou v kořeni JR Content, mim
 Skrytá upstream karta Trustpilot zůstává beze změny (včetně původního textu),
 aby ji nadále ověřovaly původní testy; v MVP se vůbec nevykresluje.
 
+## 2026-10-23 · F6-B01
+
+- `apps/jrc_production/views.py`, `templates/jrc_production/content_detail.html`:
+  záložka Caption ukládá samostatné prosté texty kanálů jako verzované dokumenty
+  `jrc_texts`, kontroluje limit podle pravidel účtu a promítá uložený text do
+  `platform_specific_caption`. Zastaralá karta nebo souběžný koncept vrací chybu
+  místo přepsání novější verze; změny mezi posledními verzemi se zobrazují po slovech.
+- `apps/jrc_production/tests/test_captions.py`: oprávnění, limit IG včetně emoji,
+  vznik verze, kopie do varianty, porovnání slov a odmítnutí zastaralého uložení.
+
 ## 2026-10-23 · F2-B12
 
 - `apps/social_accounts/tests/test_youtube_compliance.py`: retenční test používá čtyři pevné
