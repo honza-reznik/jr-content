@@ -144,7 +144,13 @@ Provozní postup je v `docs-arch/F2-B02/freeframe-provoz.md` (doplněk pro PM do
   `jrc-ff-api:8000`; přes společný vstup (Caddy nastavuje `X-Real-IP`) se odmítne.
 - Všechna odmítnutí jsou stejná odpověď 401 `Invalid or expired ticket`; důvod jde jen do logu
   (bez vstupenky a tokenů). Odpověď má `Cache-Control: no-store`. Chybějící nebo krátký klíč = 503.
-- `tests/test_jrc_exchange.py` (79 testů): platné web/api, dvojí použití, souběh 8 požadavků,
+- Oprava po review: tělo požadavku se čte ručně (ne přes model FastAPI), protože standardní
+  odpověď 422 by vrátila odmítnutý vstup, tedy platnou nespotřebovanou vstupenku. Jakýkoliv jiný
+  tvar než `{"ticket": "<text>"}` (seznam, objekt, další klíče, neplatný JSON, větší než 2112 B)
+  je stejná 401; i 401 a 503 mají `Cache-Control: no-store`.
+- `jrc-redis` běží s `--appendfsync always`: každý `SET NX` je na disku dřív, než se vrátí tokeny,
+  takže použitá vstupenka nejde znovu uplatnit ani po pádu stroje. Kontroluje `make test-isolation`.
+- `tests/test_jrc_exchange.py` (95 testů; mimo níže uvedené i chybné tvary těla bez ozvěny): platné web/api, dvojí použití, souběh 8 požadavků,
   prošlá, příliš dlouhá, z budoucnosti, špatný podpis (cizí klíč, `JWT_SECRET`, změněný obsah,
   useknutí, nekanonické base64, token FreeFrame místo vstupenky), cizí, neřízený, neexistující,
   vypnutý, čekající, smazaný účet, superadmin a servisní účet, cíl `api` přes veřejný vstup,
