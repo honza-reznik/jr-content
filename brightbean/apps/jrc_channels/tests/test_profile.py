@@ -76,7 +76,7 @@ def test_create_channel_without_network(editor, workspace, platform, no_network)
         ({"name": "x" * 101, "platform": "custom"}, "at most 100 characters"),
         ({"name": "Ella", "platform": "mastodon"}, "Select a valid choice"),
         ({"name": "Ella", "platform": "custom", "profile_url": "javascript:alert(1)"}, "Enter a valid URL"),
-        ({"name": "Ella", "platform": "custom", "profile_url": "ftp://example.invalid/ella"}, "Use a link"),
+        ({"name": "Ella", "platform": "custom", "profile_url": "ftp://example.invalid/ella"}, "Use a secure link"),
         ({"name": "Ella", "platform": "custom", "profile_url": "https://"}, "Enter a valid URL"),
     ],
 )
