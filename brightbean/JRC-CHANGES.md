@@ -274,3 +274,9 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
   (synchronizace je pak vypnutá). Hodnoty se nevypisují.
 - Provozní poznámka: plná synchronizace (`jrc_sync_freeframe` i každá změna prostoru)
   odebere z projektu FreeFrame i členy přidané ručně mimo JR Content.
+
+## F2-B11 — offline provoz
+
+- `Dockerfile`: sestavení Tailwindu používá `npm ci --no-audit --no-fund`, bez
+  odesílání kontroly závislostí do npm a bez hlášení o příspěvcích.
+- Běhové proměnné pro vypnutí telemetrie a hlášení npm/pip předává společný Compose.

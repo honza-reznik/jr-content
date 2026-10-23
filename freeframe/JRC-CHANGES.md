@@ -2,6 +2,16 @@
 
 Import upstreamu `3829889` (MIT, původní licence a copyright zachovány).
 
+## 2026-10-23 — F2-B11
+
+- Společný Compose vypíná telemetrii i hlášení npm/pip. Také `jrc-dev` běží jen
+  ve vnitřní síti. Místní brány před spuštěním aplikace odeberou výchozí trasy
+  a zvýšená oprávnění; DNS nepředává cizí dotazy. Test izolace zahrnuje všechny služby.
+- Test brány výslovně volá health API z prohlížeče, blokuje cizí HTTP i WebSocket
+  požadavky a nespoléhá na vedlejší požadavek přihlašovací stránky.
+- `make test-ff-vitest` používá jednoho pracovníka pro nižší zátěž při souběžném
+  ověřování bloků. Časové limity upstream testů zůstávají původní.
+
 ## 2026-10-23 — F2-B02
 
 Provozní úpravy žijí převážně v kořeni JR Content. Po review je změněn také
@@ -13,7 +23,7 @@ ani sestavení se písmo nestahuje. Přehled úprav:
   (`maintenance`), jediný beat, Next.js pod `/video` a Redis s trvalou frontou.
   Všechny aplikační služby (také API, web, Brightbean, PG a Garage) mají jen
   vnitřní síť bez internetu. Jediná dočasná `jrc-ff-gate` přenáší místní porty
-  na pevné vnitřní TCP cíle; výjimkou je ještě vývojový `jrc-dev`.
+  na pevné vnitřní TCP cíle; výjimku vývojového `jrc-dev` odstranil F2-B11.
   Brána používá již dostupný obraz jrc-dev a pouze malý Node.js skript,
   nemá tajemství ani přístup k pracovní kopii. E-mailový worker
   neběží, SMTP míří na nepoužitý port 9 na 127.0.0.1.

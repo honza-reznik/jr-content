@@ -1,0 +1,7 @@
+FROM caddy:2.10.2-alpine AS caddy
+FROM jrc-dev:local
+# Statická binárka; sdílený základ poskytuje Node.js, Python a setpriv bez instalace.
+COPY --from=caddy /usr/bin/caddy /usr/local/bin/caddy
+RUN python3 -c "import os; p='/usr/local/bin/caddy'; os.removexattr(p, 'security.capability') if 'security.capability' in os.listxattr(p) else None"
+COPY offline-ingress.py /usr/local/bin/offline-ingress
+ENTRYPOINT ["python3", "/usr/local/bin/offline-ingress"]

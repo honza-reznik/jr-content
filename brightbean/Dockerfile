@@ -26,7 +26,7 @@ COPY apps/jrc_texts/editor/*.mjs /opt/jrc-texts/
 COPY . .
 
 # Build Tailwind CSS
-RUN cd theme/static_src && npm ci && npm run build
+RUN cd theme/static_src && npm ci --no-audit --no-fund && npm run build
 
 # Collect static files
 RUN DJANGO_SETTINGS_MODULE=config.settings.production \
