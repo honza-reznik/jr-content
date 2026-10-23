@@ -4,12 +4,13 @@ Only Brightbean signs tickets (JRC_FF_SSO_SECRET); FreeFrame never issues them.
 Every rejection is the same 401 so a caller learns nothing about the reason.
 """
 
+import json
 import logging
 import os
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -30,9 +31,16 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 INVALID_TICKET = "Invalid or expired ticket"
 
 
-class JrcExchangeRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    ticket: str = Field(min_length=1, max_length=MAX_TICKET_LENGTH)
+# Larger than any valid {"ticket": "..."} body; nothing bigger is even parsed.
+MAX_BODY_BYTES = MAX_TICKET_LENGTH + 64
+# Token responses and every rejection must never be cached (RFC 6749, 5.1).
+NO_STORE = {"Cache-Control": "no-store"}
+
+
+async def raw_body(request: Request) -> bytes:
+    # Read the body ourselves: FastAPI's 422 validation errors echo the rejected input,
+    # which here would be a valid, unspent ticket.
+    return await request.body()
 
 
 class JrcExchangeResponse(BaseModel):
@@ -48,18 +56,40 @@ def _reject(reason: str, claims: dict | None = None):
     # Log the reason and the Brightbean account, never the ticket itself.
     account = claims.get("acct") if claims else None
     logger.warning("JR Content ticket rejected: %s (account %s)", reason, account)
-    raise HTTPException(status_code=401, detail=INVALID_TICKET)
+    raise HTTPException(status_code=401, detail=INVALID_TICKET, headers=NO_STORE)
+
+
+def _ticket_from_body(body: bytes) -> str:
+    """{"ticket": "<string>"} and nothing else; any other shape is the same 401."""
+    if len(body) > MAX_BODY_BYTES:
+        _reject("request body too large")
+    try:
+        data = json.loads(body)
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        _reject("malformed request body")
+    if not isinstance(data, dict) or set(data) != {"ticket"}:
+        _reject("unexpected request body")
+    ticket = data["ticket"]
+    if not isinstance(ticket, str) or not 1 <= len(ticket) <= MAX_TICKET_LENGTH:
+        _reject("malformed ticket field")
+    return ticket
 
 
 @router.post("/jrc-exchange", response_model=JrcExchangeResponse, response_model_exclude_none=True)
-def jrc_exchange(body: JrcExchangeRequest, request: Request, response: Response, db: Session = Depends(get_db)):
-    response.headers["Cache-Control"] = "no-store"
+def jrc_exchange(
+    request: Request,
+    response: Response,
+    body: bytes = Depends(raw_body),
+    db: Session = Depends(get_db),
+):
+    response.headers.update(NO_STORE)
     secret = sso_secret()
     if secret is None:
         logger.error("JRC_FF_SSO_SECRET is missing or too short; JR Content sign-in is disabled.")
-        raise HTTPException(status_code=503, detail="Single sign-on is not configured")
+        raise HTTPException(status_code=503, detail="Single sign-on is not configured", headers=NO_STORE)
+    ticket = _ticket_from_body(body)
     try:
-        claims = verify_ticket(body.ticket, secret=secret)
+        claims = verify_ticket(ticket, secret=secret)
     except TicketError as exc:
         _reject(exc.reason)
     # A server ticket is redeemable only on the internal address (jrc-ff-api:8000).
@@ -73,7 +103,9 @@ def jrc_exchange(body: JrcExchangeRequest, request: Request, response: Response,
     except Exception:
         # Fail closed: without Redis single use cannot be guaranteed.
         logger.error("Redis unavailable; JR Content ticket refused.")
-        raise HTTPException(status_code=503, detail="Sign-in is temporarily unavailable") from None
+        raise HTTPException(
+            status_code=503, detail="Sign-in is temporarily unavailable", headers=NO_STORE
+        ) from None
     if not fresh:
         _reject("ticket already used", claims)
     user = db.query(User).filter(User.id == uuid.UUID(claims["sub"])).first()

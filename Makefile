@@ -123,6 +123,10 @@ test-isolation:
 	sh scripts/test-service-isolation.sh $(COMPOSE)
 	# PostgreSQL už brána nevystavuje; dostupnost ověřujeme uvnitř vnitřní sítě.
 	$(COMPOSE) exec -T jrc-dev psql -X -Atc 'SELECT 1' | grep -qx 1
+	# F5-B02: jednorázovost vstupenek po pádu stroje vyžaduje trvalý zápis každého SET NX.
+	$(COMPOSE) exec -T jrc-redis redis-cli CONFIG GET appendonly | grep -qx yes
+	$(COMPOSE) exec -T jrc-redis redis-cli CONFIG GET appendfsync | grep -qx always
+	@echo 'OK jrc-redis: appendonly yes, appendfsync always'
 	docker run --rm --pull never --network host --user "$(JRC_UID):$(JRC_GID)" \
 	  --env-file .env \
 	  --volume "$(CURDIR)/scripts:/jrc-scripts:ro" \

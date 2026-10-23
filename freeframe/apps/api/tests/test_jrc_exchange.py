@@ -103,6 +103,7 @@ def assert_rejected(response, redis=None, *, consumed=False):
     assert response.status_code == 401
     assert response.json() == {"detail": "Invalid or expired ticket"}
     assert "access_token" not in response.text
+    assert response.headers["cache-control"] == "no-store"
     if redis is not None and not consumed:
         assert redis.calls == []
 
@@ -274,9 +275,7 @@ def test_signed_garbage_payload_is_rejected(client, redis, managed_user):
 
 @pytest.mark.parametrize("ticket", ["", "x" * 2049])
 def test_empty_or_oversized_ticket(client, redis, ticket):
-    response = exchange(client, ticket)
-    assert response.status_code == 422
-    assert redis.calls == []
+    assert_rejected(exchange(client, ticket), redis)
 
 
 def test_non_ascii_ticket(client, redis, managed_user):
@@ -285,7 +284,52 @@ def test_non_ascii_ticket(client, redis, managed_user):
 
 def test_extra_body_fields_rejected(client, redis, managed_user):
     response = client.post("/auth/jrc-exchange", json={"ticket": make_ticket(), "aud": "web"})
-    assert response.status_code == 422
+    assert_rejected(response, redis)
+
+
+# Review F5-B02: FastAPI's 422 would echo the rejected input, i.e. a valid unspent ticket.
+@pytest.mark.parametrize("shape", [
+    lambda t: {"ticket": [t]},
+    lambda t: {"ticket": {"value": t}},
+    lambda t: {"ticket": t, "ticket2": t},
+    lambda t: {"tickets": t},
+    lambda t: [t],
+    lambda t: t,
+    lambda t: {"ticket": [t] * 3},
+    lambda t: {"ticket": None, "x": t},
+])
+def test_malformed_body_never_echoes_ticket(client, redis, managed_user, shape):
+    ticket = make_ticket()
+    response = client.post("/auth/jrc-exchange", json=shape(ticket))
+    assert_rejected(response, redis)
+    assert ticket not in response.text
+    assert ticket.split(".")[1] not in response.text and ticket.split(".")[2] not in response.text
+    # Not spent: the ticket still works once in the correct shape.
+    assert exchange(client, ticket).status_code == 200
+
+
+@pytest.mark.parametrize("content, content_type", [
+    (lambda t: t, "text/plain"),
+    (lambda t: f"ticket={t}", "application/x-www-form-urlencoded"),
+    (lambda t: '{"ticket": "' + t + '"', "application/json"),
+    (lambda t: '{"ticket": "' + t + '", "pad": "' + "x" * 3000 + '"}', "application/json"),
+    (lambda t: "[" * 5000 + "]" * 5000, "application/json"),
+    (lambda t: b"\xff\xfe" + t.encode(), "application/json"),
+    (lambda t: "", "application/json"),
+])
+def test_raw_malformed_bodies_never_echo_ticket(client, redis, managed_user, content, content_type):
+    ticket = make_ticket()
+    response = client.post("/auth/jrc-exchange", content=content(ticket), headers={"Content-Type": content_type})
+    assert_rejected(response, redis)
+    assert ticket not in response.text
+
+
+def test_every_response_is_no_store(client, redis, managed_user, monkeypatch):
+    assert exchange(client, make_ticket()).headers["cache-control"] == "no-store"
+    monkeypatch.setattr("apps.api.routers.jrc_auth.get_redis", BrokenRedis)
+    assert exchange(client, make_ticket()).headers["cache-control"] == "no-store"
+    monkeypatch.setenv("JRC_FF_SSO_SECRET", "")
+    assert exchange(client, make_ticket()).headers["cache-control"] == "no-store"
 
 
 @pytest.mark.parametrize("overrides", [

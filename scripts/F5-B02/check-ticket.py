@@ -149,6 +149,16 @@ service_id = next(m["user_id"] for m in service.request("GET", f"/projects/{proj
 rejected(exchange(encode_ticket(claims_for(CLIENT_ID, sub=service_id), secret)), "servisní superadmin")
 rejected(exchange(issue_ticket(client_user, audience="api"), base=PUBLIC), "serverová vstupenka přes veřejný vstup")
 
+# Review F5-B02: chybný tvar těla nesmí vrátit vstupenku zpět (FastAPI 422 by ji zopakoval).
+for base in (DIRECT, PUBLIC):
+    ticket = issue_ticket(client_user, audience="web")
+    for body in ({"ticket": [ticket]}, {"ticket": {"t": ticket}}, [ticket], {"ticket": ticket, "x": 1}):
+        bad = requests.post(f"{base}/auth/jrc-exchange", json=body, timeout=10, proxies=NO_PROXY)
+        assert ticket not in bad.text and ticket.split(".")[2] not in bad.text, base
+        assert bad.headers["cache-control"] == "no-store", base
+        rejected(bad, f"chybný tvar těla bez ozvěny ({'vnitřní' if base == DIRECT else 'veřejný'} vstup)")
+    assert exchange(ticket, base=base).status_code == 200
+
 # Prohlížeč (podklad F5-B03): webová vstupenka přes společný vstup /video-api.
 web = exchange(issue_ticket(client_user, audience="web", next_path=f"/projects/{project_id}"), base=PUBLIC)
 assert web.status_code == 200, web.status_code

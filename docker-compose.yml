@@ -173,7 +173,8 @@ services:
   jrc-redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
+    # F5-B02: použitá vstupenka (nonce) musí přežít i pád stroje; zápis na disk při každém příkazu.
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "always"]
     networks: [internal]
     volumes:
       - jrc-redis-data:/data
