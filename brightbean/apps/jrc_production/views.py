@@ -11,7 +11,8 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.http import require_GET, require_POST
 
-from apps.approvals.models import ApprovalAction
+from apps.approvals import comments as comment_services
+from apps.approvals.models import ApprovalAction, PostComment
 from apps.composer.models import PlatformPost, Post
 from apps.members.models import WorkspaceMembership
 from apps.social_accounts.models import SocialAccount
@@ -158,10 +159,11 @@ def move(request, workspace_id, post_id):
     return redirect(reverse("jrc_production:board") + "?" + urlencode(filters))
 
 
-TABS = ("script", "video", "caption", "approval", "history")
+TABS = ("script", "video", "caption", "approval", "comments", "history")
 
 
 @login_required
+@require_GET
 def content_detail(request, workspace_id, post_id):
     """Show a workspace member the shared content page and its audit history."""
     workspace = get_object_or_404(Workspace, pk=workspace_id)
@@ -179,7 +181,12 @@ def content_detail(request, workspace_id, post_id):
     if active_tab not in TABS:
         active_tab = "script"
 
+    is_client = membership.workspace_role in (
+        WorkspaceMembership.WorkspaceRole.CLIENT,
+        WorkspaceMembership.WorkspaceRole.VIEWER,
+    )
     can_view_internal_notes = membership.workspace_role not in ("client", "viewer")
+    comments = comment_services.get_comments_for_post(post, request.user)
     history = [
         {
             "kind": "stage",
@@ -227,5 +234,91 @@ def content_detail(request, workspace_id, post_id):
             "history": history[:100],
             "can_view_internal_notes": can_view_internal_notes,
             "can_edit_posts": membership.effective_permissions.get("create_posts", False),
+            "comments": comments,
+            "can_resolve_comments": not is_client and membership.effective_permissions.get("approve_posts", False),
+            "comment_visibility_default": (
+                PostComment.Visibility.EXTERNAL if is_client else PostComment.Visibility.INTERNAL
+            ),
+            "is_client": is_client,
         },
     )
+
+
+def _comment_post_for_member(request, workspace_id, post_id):
+    workspace = get_object_or_404(Workspace, pk=workspace_id)
+    membership = WorkspaceMembership.objects.filter(user=request.user, workspace=workspace).first()
+    if membership is None:
+        raise PermissionDenied("You are not a member of this workspace.")
+    post = get_object_or_404(Post, pk=post_id, workspace=workspace)
+    return workspace, post
+
+
+def _comments_redirect(workspace, post):
+    return redirect(
+        reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.id, "post_id": post.id})
+        + "?tab=comments"
+    )
+
+
+@login_required
+@require_POST
+def add_content_comment(request, workspace_id, post_id):
+    workspace, post = _comment_post_for_member(request, workspace_id, post_id)
+    body = request.POST.get("body", "").strip()
+    if not body:
+        messages.error(request, "Write a comment before sending it.")
+    else:
+        try:
+            comment_services.create_comment(
+                post=post,
+                author=request.user,
+                body=body,
+                visibility=request.POST.get("visibility"),
+            )
+        except (ValueError, PermissionError) as exc:
+            messages.error(request, str(exc))
+        else:
+            messages.success(request, "Comment added.")
+    return _comments_redirect(workspace, post)
+
+
+@login_required
+@require_POST
+def reply_to_content_comment(request, workspace_id, post_id, comment_id):
+    workspace, post = _comment_post_for_member(request, workspace_id, post_id)
+    body = request.POST.get("body", "").strip()
+    if not body:
+        messages.error(request, "Write a reply before sending it.")
+    else:
+        try:
+            comment_services.create_comment(
+                post=post,
+                author=request.user,
+                body=body,
+                parent_id=comment_id,
+            )
+        except (ValueError, PermissionError) as exc:
+            messages.error(request, str(exc))
+        else:
+            messages.success(request, "Reply added.")
+    return _comments_redirect(workspace, post)
+
+
+@login_required
+@require_POST
+def resolve_content_comment(request, workspace_id, post_id, comment_id):
+    workspace, post = _comment_post_for_member(request, workspace_id, post_id)
+    try:
+        comment_services.resolve_comment(
+            comment_id,
+            request.user,
+            workspace,
+            resolved=request.POST.get("resolved") == "true",
+        )
+    except PermissionError as exc:
+        raise PermissionDenied(str(exc)) from exc
+    except ValueError as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(request, "Comment thread updated.")
+    return _comments_redirect(workspace, post)

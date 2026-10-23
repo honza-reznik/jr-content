@@ -298,3 +298,15 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
   přenos do worktree stejně jako Tailwind; žádná CDN ani nové požadavky na internet za běhu.
 - HTTP regrese v `apps/jrc_texts/tests/test_script.py`; skutečný Chromium průchod,
   vymyšlená data a snímky při 1440/390 px v `scripts/F4-B02/`.
+## 2026-10-23 · F3-B04
+
+- `apps/approvals/models.py`, migrace `0004_*`: výchozí viditelnost týmového komentáře je interní;
+  přibyl stav vyřešeno.
+- `apps/approvals/comments.py`, `views.py` a `templates/approvals/partials/comment_form.html`:
+  služba komentářů používá interní výchozí hodnotu pro tým, vynucuje externí viditelnost klienta,
+  nepovoluje odpověď do cizího vlákna a filtruje interní odpovědi klientům.
+- `apps/jrc_production/` a `templates/jrc_production/content_detail.html`: detail obsahu má záložku
+  komentářů, odpovědi a uzavření/obnovení vlákna pro členy s oprávněním schvalovat. Klient může
+  přidávat komentáře a odpovědi, ale nevidí interní obsah ani ovládání vyžádání změn.
+- `apps/jrc_production/tests/test_content_detail.py`: HTTP ověření interního výchozího nastavení,
+  odpovědí, řešení vlákna a hranic klienta.

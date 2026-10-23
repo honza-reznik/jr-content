@@ -91,8 +91,9 @@ class PostComment(models.Model):
     visibility = models.CharField(
         max_length=10,
         choices=Visibility.choices,
-        default=Visibility.EXTERNAL,
+        default=Visibility.INTERNAL,
     )
+    is_resolved = models.BooleanField(default=False)
     attachment = models.ImageField(
         upload_to="comment_attachments/%Y/%m/",
         null=True,
