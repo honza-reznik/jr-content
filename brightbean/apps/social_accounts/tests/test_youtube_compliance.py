@@ -1,9 +1,10 @@
 """Retention boundaries, local deletion, migration compatibility and job races."""
 
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 from io import StringIO
 from unittest.mock import Mock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 from django.core.management import call_command
@@ -211,15 +212,17 @@ def test_missing_scope_is_retryable_and_does_not_force_existing_reconnection(cha
     assert channel.oauth_refresh_token == "fictional-refresh"
 
 
-def test_history_keeps_180_days_and_drops_arbitrary_old_response_payloads(channel):
-    now = timezone.now()
+@pytest.mark.parametrize("hour, minute", [(0, 30), (4, 50), (12, 0), (23, 30)])
+def test_history_keeps_180_days_and_drops_arbitrary_old_response_payloads(channel, hour, minute):
+    now = datetime(2026, 10, 23, hour, minute, tzinfo=ZoneInfo("Europe/Prague")).astimezone(ZoneInfo("UTC"))
+    history_date = now.astimezone(ZoneInfo("America/Los_Angeles")).date()
     old = AccountInsightsSnapshot.objects.create(
-        social_account=channel, metric_key="views", date=now.date() - timedelta(days=181), value=4
+        social_account=channel, metric_key="views", date=history_date - timedelta(days=181), value=4
     )
     retained = AccountInsightsSnapshot.objects.create(
         social_account=channel,
         metric_key="views",
-        date=now.date() - timedelta(days=179),
+        date=history_date - timedelta(days=179),
         value=3,
         raw={"source": "youtube_analytics", "copied_profile": "Old"},
     )

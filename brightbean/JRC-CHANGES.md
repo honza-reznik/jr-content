@@ -115,6 +115,12 @@ Compose, založení databáze a příkazy vývoje jsou v kořeni JR Content, mim
 Skrytá upstream karta Trustpilot zůstává beze změny (včetně původního textu),
 aby ji nadále ověřovaly původní testy; v MVP se vůbec nevykresluje.
 
+## 2026-10-23 · F2-B12
+
+- `apps/social_accounts/tests/test_youtube_compliance.py`: retenční test používá čtyři pevné
+  okamžiky v časovém pásmu Europe/Prague a datum historie odvozuje z Los Angeles, stejně jako
+  úklid aplikace. Výsledek testu tak nezávisí na hodině spuštění.
+
 Žádná upstream funkce, původní licence ani autorské upozornění nebyly odstraněny.
 Vypínače lze změnit v našem nastavení bez odstranění nebo obnovení upstream kódu.
 Ověřovací skripty a snímky jsou v kořeni JR Content (`scripts/F2-B10/`,
