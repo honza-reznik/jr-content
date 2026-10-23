@@ -27,7 +27,7 @@ export BUILDX_CONFIG := $(CURDIR)/.cache/docker-buildx
 CMD ?= bash
 export CMD
 
-.PHONY: build build-bb env up down shell test test-fast test-smoke test-proxy test-bb test-bb-fast test-ff test-ff-smoke test-isolation test-ff-offline test-ff-vitest test-ff-tsc test-ff-lint ff-account build-ff reset logs ps
+.PHONY: build build-bb env up down shell test test-fast test-smoke test-proxy test-s3 test-bb test-bb-fast test-ff test-ff-smoke test-isolation test-ff-offline test-ff-vitest test-ff-tsc test-ff-lint ff-account build-ff reset logs ps
 build:
 	docker build --tag jrc-dev:local --file docker/Dockerfile docker
 
@@ -98,7 +98,7 @@ test-fast:
 	if [ "$$failed" -eq 0 ]; then printf 'Všechny sady prošly.\n'; else printf 'Nejméně jedna sada selhala.\n'; fi; \
 	exit "$$failed"
 
-test-smoke: test-proxy
+test-smoke: test-proxy test-s3
 	@sh scripts/workspace.sh check
 	$(COMPOSE) exec -T jrc-dev bash scripts/smoke.sh
 	$(COMPOSE) exec -T jrc-dev node scripts/test-init-env.cjs
@@ -111,6 +111,16 @@ test-proxy:
 	docker run --rm --pull never --network host --user "$(JRC_UID):$(JRC_GID)" \
 	  --env-file .env --volume "$(CURDIR):/jrc" \
 	  jrc-dev:local node /jrc/scripts/test-proxy.cjs
+
+# Úložiště S3 z pohledu prohlížeče (místní brána): klíče, soukromí jrc-app, CORS, kvóty (F2-B05).
+test-s3:
+	@sh scripts/workspace.sh check
+	docker run --rm --pull never --network host --user "$(JRC_UID):$(JRC_GID)" \
+	  --env-file .env --volume "$(CURDIR)/scripts:/jrc-scripts:ro" \
+	  jrc-dev:local python3 /jrc-scripts/test-s3-storage.py
+	# Výpis bucketu obsahuje identifikátory klíčů; kontrolujeme jen řádek kvóty.
+	$(COMPOSE) exec -T jrc-s3 sh -c 'for b in jrc-app jrc-video; do garage bucket info $$b | grep -q "maximum size" || exit 1; done'
+	@printf 'OK S3: kvóty jrc-app a jrc-video nastavené\n'
 
 test-bb:
 	@sh scripts/workspace.sh check
