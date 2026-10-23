@@ -6,6 +6,14 @@ export JRC_PROJECT ?= jrc
 ifneq ($(shell printf '%s' '$(subst ','',$(JRC_PROJECT))' | grep -Ex 'jrc(-[a-z0-9-]+)?'),$(JRC_PROJECT))
 $(error JRC_PROJECT musí být jrc nebo jrc-<malá písmena, číslice, pomlčky>)
 endif
+# Ochrana dat hlavního prostředí (F0-B09): reset a down projektu jrc jen z hlavní složky.
+ifeq ($(JRC_PROJECT),jrc)
+ifneq ($(CURDIR),/home/honza/jr-content)
+ifneq ($(filter reset down,$(MAKECMDGOALS)),)
+$(error Ve worktree nelze '$(filter reset down,$(MAKECMDGOALS))' hlavního projektu jrc. Použij JRC_PROJECT=jrc-<blok>)
+endif
+endif
+endif
 override COMPOSE := docker compose --project-name $(JRC_PROJECT) --file docker-compose.yml --env-file .env
 # Správa existujících kontejnerů nepotřebuje hesla ani místní .env.
 # Zástupné hodnoty se používají pouze pro načtení konfigurace, nikdy pro up.
