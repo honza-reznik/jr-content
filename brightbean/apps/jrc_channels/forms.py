@@ -18,8 +18,8 @@ class ChannelDetailsForm(forms.Form):
         from urllib.parse import urlsplit
 
         value = self.cleaned_data["profile_url"]
-        if value and urlsplit(value).scheme not in {"http", "https"}:
-            raise forms.ValidationError("Use a link starting with https:// or http://.")
+        if value and urlsplit(value).scheme != "https":
+            raise forms.ValidationError("Use a secure link starting with https://.")
         return value
 
 

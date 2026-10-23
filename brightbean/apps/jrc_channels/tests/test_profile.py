@@ -205,3 +205,14 @@ def test_names_are_escaped(editor, workspace):
     response = editor.get(url(workspace))
     assert b"<script>alert" not in response.content
     assert b"&lt;script&gt;" in response.content
+
+
+def test_profile_link_requires_https():
+    """Review F2-B08: odkaz na profil kanálu jen přes HTTPS."""
+    from apps.jrc_channels.forms import ChannelDetailsForm
+
+    insecure = ChannelDetailsForm(data={"name": "Ella", "profile_url": "http://example.test/ella"})
+    assert not insecure.is_valid()
+    assert "profile_url" in insecure.errors
+    secure = ChannelDetailsForm(data={"name": "Ella", "profile_url": "https://example.test/ella"})
+    assert secure.is_valid(), secure.errors
