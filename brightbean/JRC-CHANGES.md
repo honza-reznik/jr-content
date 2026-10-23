@@ -119,3 +119,23 @@ aby ji nadále ověřovaly původní testy; v MVP se vůbec nevykresluje.
 Vypínače lze změnit v našem nastavení bez odstranění nebo obnovení upstream kódu.
 Ověřovací skripty a snímky jsou v kořeni JR Content (`scripts/F2-B10/`,
 `ops/screenshoty/F2-B10/`), mimo upstream podsložku. Žádné skutečné sociální účty.
+
+## 2026-10-23 · F3-B01
+
+- `apps/jrc_production/`: nové modely `PostProduction` (pouze čtyři výrobní fáze),
+  `StageChange` (historie změn) a `ManualPublication` (údaje o ručním zveřejnění kanálové kopie),
+  včetně úvodní migrace. Databázové omezení nepovolí uložit schvalovací či publikační stav
+  do výrobní fáze. Smazání uživatele zachová historii, smazání příspěvku odstraní jeho rozšíření.
+- `apps/jrc_production/services.py`: `pipeline_stage(post)` přesně převádí souhrnný stav
+  Brightbean podle ADR-002 b1, výrobní fázi čte jen pro `draft`. Starší koncept bez rozšíření
+  čte jako Idea bez zápisu do databáze. `create_content(workspace, title, user)` založí obsah,
+  výrobní rozšíření a koncept pro každý zapnutý kanál daného klienta v jedné transakci
+  (při chybě se neuloží žádná část). Bez zapnutého kanálu vrátí validační chybu, aby nevznikl
+  obsah skrytý v upstream seznamech. Oprávnění řeší volající rozhraní v navazujících blocích.
+- `config/settings/jrc_offline.py`: registrace nové aplikace pro běh i testy.
+- `apps/jrc_production/tests/`: převody všech stavů včetně vícekanálových kombinací,
+  návrat ze schválení do střihu, výběr zapnutých kanálů správného klienta, zrušení neúplného
+  zápisu při chybě a životnost historie. Síťová volání jsou v těchto testech blokována.
+
+Stavový automat a modely upstreamu se v tomto bloku nemění. Nástěnka, změny fází přes rozhraní
+a služba označení ruční publikace patří navazujícím blokům F3-B02 a F8-B02.
