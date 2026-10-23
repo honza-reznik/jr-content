@@ -25,7 +25,16 @@ from apps.api.routers.inbox import router as inbox_router
 from apps.api.routers.me import router as me_router
 from apps.api.routers.media import router as media_router
 from apps.api.routers.posts import router as posts_router
+from apps.jrc_ui.features import api_path_enabled
 from apps.mcp.transport import router as mcp_router
+
+
+class FeatureApiKeyAuth(ApiKeyAuth):
+    def __call__(self, request):
+        # Kontrola i přímo v API, nezávisle na přítomnosti Django middleware.
+        if not api_path_enabled(request.path_info):
+            raise HttpError(404, "Not found")
+        return super().__call__(request)
 
 
 class NoncedSwagger(Swagger):
@@ -84,7 +93,7 @@ api = NinjaAPI(
         "drafts from the workspace's drafts list in the web UI. Published "
         "posts are never deletable — they remain as audit records."
     ),
-    auth=ApiKeyAuth(),
+    auth=FeatureApiKeyAuth(),
     docs=NoncedSwagger(),
     # Trailing slashes are tolerated by the router but we use the
     # explicit-slash form everywhere internally for OpenAPI clarity.

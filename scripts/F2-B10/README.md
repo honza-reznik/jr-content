@@ -5,6 +5,9 @@ Všechny programy aplikace i prohlížeč běží v Dockeru. Použít jen postra
 Snímky a protokoly jsou ignorované gitem. Soubor relace se ukládá jen do vlastního svazku médií,
 nikoli do repozitáře nebo KB. Testovací konfigurace zachovává upstream funkce pro regresní sadu;
 testy `apps/jrc_ui/tests/` a živý browser ověřují vypnuté MVP funkce.
+Součástí celé sady je `test_api_features.py`: platný místní API klíč, skryté MCP
+nástroje ve výpisu i volání (včetně dávek a notifikací), všechny REST operace
+inboxu/odpovědí a statistik a společné opětovné zapnutí bez restartu.
 
 ```sh
 export JRC_PROJECT=jrc-f2b10

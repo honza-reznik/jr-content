@@ -25,6 +25,10 @@ Compose, založení databáze a příkazy vývoje jsou v kořeni JR Content, mim
 - `apps/jrc_ui/`: přepínače funkcí, kontrola přímých adres před přihlášením a CSRF,
   kontext šablon bez onboardingu, vlastní stránka About a místní úplný text licence.
   Přidané testy ověřují GET/POST blokování, hlavní obrazovky a vypnutí RSS bez DNS/HTTP.
+  Po review společný seznam `FEATURE_SURFACES` přiřazuje webové cesty, REST prefixy
+  a MCP nástroje k týmž vypínačům; vyhodnocuje se při každém požadavku.
+  `tests/test_api_features.py` ověřuje i platný API klíč, všechny operace inboxu/odpovědí
+  a statistik, obě MCP adresy, dávky, notifikace a vratnost přepínačů.
 - `config/settings/jrc.py`: `JRC_FEATURES` vypíná inbox, statistiky, Trustpilot,
   onboarding/Get started, nápady, klientský portál, Intelligence, připojení sítí,
   Unsplash, RSS a externí přihlášení (Google, jehož klíč je už vypnutý od F2-B01). CSP povoluje pouze místní zdroje; obrázky a média také data/blob.
@@ -33,7 +37,10 @@ Compose, založení databáze a příkazy vývoje jsou v kořeni JR Content, mim
   `MVP_FEATURES`, stejně jako skutečně běžící aplikace.
 - `config/urls.py`: přidané `/about/` a `/about/license/`, pouze s nastavením JR Content.
 - `apps/composer/views.py`: RSS při vypnutí končí před DNS a HTTP požadavkem.
-- `apps/api/api.py`: název dokumentace API JR Content.
+- `apps/api/api.py`: název dokumentace API JR Content; kontrola vypnutých REST funkcí
+  před ověřením klíče, i bez middleware.
+- `apps/mcp/tools.py`: stejný dynamický filtr při výpisu i vyhledání nástroje;
+  vypnuté nástroje inboxu a statistik nelze objevit ani přímo zavolat přes MCP.
 - `apps/social_accounts/tests/test_views.py`: očekávané texty potvrzení odpojení
   používají JR Content; věcné kontroly jednotlivých typů odpojení zůstávají stejné.
 - `templates/base.html`: podmíněná navigace, skryté nápady/onboarding/Trustpilot,
@@ -48,7 +55,8 @@ Compose, založení databáze a příkazy vývoje jsou v kořeni JR Content, mim
   skryté připojení, opětovné připojení a obnovení webhooků.
 - `templates/ninja/swagger_cdn.html`: místní Swagger JS/CSS a favicon, vypnutý vzdálený
   validátor. `static/vendor/`: konkrétní verze flatpickr, Chart.js, SortableJS a Swagger UI,
-  jejich původní licence/NOTICE a kontrolní součty v přiloženém README.
+  jejich původní licence/NOTICE a kontrolní součty v přiloženém README. Ze Swagger CSS
+  a Chart.js odstraněny pouze odkazy na nepřibalené vývojové mapy, které blokovaly čisté sestavení.
 - `static/img/jrc-logo.svg`, `templates/jrc_ui/`: vlastní značka, informace o odvozené
   verzi a licence; zachován odkaz na původní Brightbean Studio. Původní logo a upstream
   kód zůstávají ve zdrojích. Hlavičky označují upravené soubory a datum.
