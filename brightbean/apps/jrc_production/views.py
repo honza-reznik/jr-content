@@ -1,8 +1,11 @@
+import difflib
+import re
 from zoneinfo import ZoneInfo
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.db import transaction
 from django.db.models import Prefetch
 from django.http import HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
@@ -13,6 +16,9 @@ from django.views.decorators.http import require_GET, require_POST
 
 from apps.approvals.models import ApprovalAction
 from apps.composer.models import PlatformPost, Post
+from apps.jrc_texts import services as text_services
+from apps.jrc_texts.models import TextDocument
+from apps.jrc_texts.services import ConflictError
 from apps.members.models import WorkspaceMembership
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
@@ -161,6 +167,69 @@ def move(request, workspace_id, post_id):
 TABS = ("script", "video", "caption", "approval", "history")
 
 
+def _word_diff(previous, current):
+    """Return safe, whitespace-preserving word diff fragments for a template."""
+
+    def split_words(value):
+        return re.findall(r"\w+|[^\w\s]+|\s+", value, flags=re.UNICODE)
+
+    old_words, new_words = split_words(previous), split_words(current)
+    old_fragments, new_fragments = [], []
+    for operation, old_start, old_end, new_start, new_end in difflib.SequenceMatcher(
+        a=old_words, b=new_words, autojunk=False
+    ).get_opcodes():
+        if operation in ("equal", "delete", "replace"):
+            old_fragments.append({"text": "".join(old_words[old_start:old_end]), "changed": operation != "equal"})
+        if operation in ("equal", "insert", "replace"):
+            new_fragments.append({"text": "".join(new_words[new_start:new_end]), "changed": operation != "equal"})
+    return old_fragments, new_fragments
+
+
+def _caption_channels(post, submitted=None):
+    from apps.jrc_texts.models import TextVersion
+
+    channels = []
+    variants = post.platform_posts.select_related("social_account").order_by("social_account__account_name")
+    for variant in variants:
+        document = TextDocument.objects.filter(platform_post=variant, kind=TextDocument.Kind.CAPTION).first()
+        latest = (
+            document.versions.filter(state=TextVersion.State.FINAL).order_by("-number").first() if document else None
+        )
+        previous = (
+            document.versions.filter(state=TextVersion.State.FINAL, number__lt=latest.number)
+            .order_by("-number")
+            .first()
+            if latest
+            else None
+        )
+        submitted_caption = (
+            (submitted or {}).get("caption") if (submitted or {}).get("platform_post") == str(variant.pk) else None
+        )
+        current_text = (
+            submitted_caption
+            if submitted_caption is not None
+            else (latest.text if latest else variant.effective_caption)
+        )
+        old_diff, new_diff = _word_diff(previous.text, current_text) if previous else ([], [])
+        account = variant.social_account
+        channels.append(
+            {
+                "variant": variant,
+                "platform_label": account.get_platform_display(),
+                "document": document,
+                "latest": latest,
+                "previous": previous,
+                "text": current_text,
+                "char_count": account.caption_wire_length(current_text),
+                "char_limit": account.char_limit,
+                "escaped_chars": account.escaped_chars,
+                "old_diff": old_diff,
+                "new_diff": new_diff,
+            }
+        )
+    return channels
+
+
 @login_required
 def content_detail(request, workspace_id, post_id):
     """Show a workspace member the shared content page and its audit history."""
@@ -178,6 +247,57 @@ def content_detail(request, workspace_id, post_id):
     active_tab = request.GET.get("tab", "script")
     if active_tab not in TABS:
         active_tab = "script"
+
+    can_edit_captions = membership.effective_permissions.get("create_posts", False)
+    caption_error = ""
+    if request.method == "POST":
+        if request.POST.get("action") != "save_caption":
+            return HttpResponseBadRequest("Unknown action.")
+        variant = get_object_or_404(
+            PlatformPost.objects.select_related("post", "social_account"),
+            pk=request.POST.get("platform_post"),
+            post=post,
+        )
+        if not can_edit_captions or (
+            post.author_id != request.user.pk and not membership.effective_permissions.get("edit_others_posts", False)
+        ):
+            raise PermissionDenied("You cannot edit captions for this content.")
+        caption = request.POST.get("caption", "")
+        if variant.social_account.caption_wire_length(caption) > variant.social_account.char_limit:
+            caption_error = f"Caption exceeds the {variant.social_account.char_limit}-character limit."
+        else:
+            try:
+                with transaction.atomic():
+                    Post.objects.select_for_update().get(pk=post.pk)
+                    document = TextDocument.objects.filter(
+                        platform_post=variant, kind=TextDocument.Kind.CAPTION
+                    ).first()
+                    if document is None:
+                        document = text_services.create_document(
+                            post.pk,
+                            request.user,
+                            kind=TextDocument.Kind.CAPTION,
+                            platform_post_id=variant.pk,
+                            format=TextDocument.Format.PLAIN,
+                            content={"text": variant.effective_caption},
+                        )
+                        base = document.versions.filter(state="final").order_by("-number").first()
+                    else:
+                        base_id = request.POST.get("base_version", "")
+                        base = document.versions.filter(pk=base_id, state="final").first()
+                        if base is None:
+                            raise ConflictError("This caption changed in another tab. Reload the page.")
+                    draft = text_services.edit(base.pk, request.user)
+                    saved = text_services.save(draft.pk, request.user, expected_revision=0, content={"text": caption})
+                    variant.platform_specific_caption = saved.text
+                    variant.save(update_fields=["platform_specific_caption", "updated_at"])
+            except ConflictError as exc:
+                caption_error = str(exc) or "This caption changed in another tab. Reload the page."
+            except ValidationError as exc:
+                caption_error = " ".join(exc.messages)
+            else:
+                messages.success(request, "Caption saved as a new version.")
+                return redirect(f"{request.path}?tab=caption")
 
     can_view_internal_notes = membership.workspace_role not in ("client", "viewer")
     history = [
@@ -227,5 +347,8 @@ def content_detail(request, workspace_id, post_id):
             "history": history[:100],
             "can_view_internal_notes": can_view_internal_notes,
             "can_edit_posts": membership.effective_permissions.get("create_posts", False),
+            "can_edit_captions": can_edit_captions,
+            "caption_channels": _caption_channels(post, request.POST if request.method == "POST" else None),
+            "caption_error": caption_error,
         },
     )
