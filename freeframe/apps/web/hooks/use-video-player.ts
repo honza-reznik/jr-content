@@ -52,6 +52,8 @@ export interface UseVideoPlayerReturn extends VideoPlayerControls, VideoPlayerSt
 export interface UseVideoPlayerOptions {
   /** Compare panes: don't touch global review-store signals (seekTarget/playheadTime/activeAnnotation). */
   detached?: boolean
+  /** Keep custom overlays visible on phones without element fullscreen. */
+  preserveOverlayFullscreen?: boolean
 }
 
 export function useVideoPlayer(
@@ -59,6 +61,8 @@ export function useVideoPlayer(
   options?: UseVideoPlayerOptions,
 ): UseVideoPlayerReturn {
   const detached = options?.detached === true
+  const preserveOverlayFullscreen = options?.preserveOverlayFullscreen === true
+  const [windowFullscreen, setWindowFullscreen] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
   const hlsRef = useRef<Hls | null>(null)
   const syncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -88,6 +92,20 @@ export function useVideoPlayer(
   const [isLoading, setIsLoading] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!windowFullscreen) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setWindowFullscreen(false)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [windowFullscreen])
 
   // Ends the current intent to play: disarms an armed retry and invalidates a
   // play() that has not settled yet. Removes the listener from the element the
@@ -389,10 +407,13 @@ export function useVideoPlayer(
   // Safari on iPadOS and the desktop has the prefixed element API; an iPhone
   // has only the video element's own native player. Try them in that order.
   //
-  // The iPhone path shows the system player, so the annotation overlay and our
-  // transport are not visible while it is up. That is a platform limit, not a
-  // choice: there is no way to put custom chrome over a fullscreen video there.
+  // Review uses window fullscreen on phones to preserve custom overlays.
+  // Other consumers keep their existing native-video fallback.
   const toggleFullscreen = useCallback((containerEl: HTMLElement) => {
+    if (windowFullscreen) {
+      setWindowFullscreen(false)
+      return
+    }
     const doc = document as Document & {
       webkitFullscreenElement?: Element | null
       webkitExitFullscreen?: () => Promise<void> | void
@@ -406,9 +427,15 @@ export function useVideoPlayer(
     const active = !!(document.fullscreenElement || doc.webkitFullscreenElement)
     if (!active && !video?.webkitDisplayingFullscreen) {
       if (typeof el.requestFullscreen === 'function') {
-        void Promise.resolve(el.requestFullscreen()).catch(() => {})
+        void Promise.resolve(el.requestFullscreen()).catch(() => {
+          if (preserveOverlayFullscreen) setWindowFullscreen(true)
+        })
       } else if (typeof el.webkitRequestFullscreen === 'function') {
-        void Promise.resolve(el.webkitRequestFullscreen()).catch(() => {})
+        void Promise.resolve(el.webkitRequestFullscreen()).catch(() => {
+          if (preserveOverlayFullscreen) setWindowFullscreen(true)
+        })
+      } else if (preserveOverlayFullscreen) {
+        setWindowFullscreen(true)
       } else if (video && typeof video.webkitEnterFullscreen === 'function') {
         video.webkitEnterFullscreen()
       }
@@ -419,7 +446,7 @@ export function useVideoPlayer(
     } else if (typeof doc.webkitExitFullscreen === 'function') {
       void Promise.resolve(doc.webkitExitFullscreen()).catch(() => {})
     }
-  }, [])
+  }, [windowFullscreen, preserveOverlayFullscreen])
 
   return {
     videoRef,
@@ -436,7 +463,7 @@ export function useVideoPlayer(
     currentQuality,
     selectedQuality,
     isLoading,
-    isFullscreen,
+    isFullscreen: isFullscreen || windowFullscreen,
     error,
     // controls
     play,

@@ -250,7 +250,7 @@ describe('dismissing player menus on the stage', () => {
     stubWidth(1024)
     const { container } = render(<VideoPlayer {...props} />)
 
-    const timeFormatTrigger = container.querySelector('.font-mono')?.closest('button')
+    const timeFormatTrigger = container.querySelector('button[aria-label="Time format"]')
     expect(timeFormatTrigger).toBeTruthy()
     fireEvent.click(timeFormatTrigger!)
     expect(screen.getByText('Time Format')).toBeTruthy()

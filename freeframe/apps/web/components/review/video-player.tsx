@@ -14,7 +14,8 @@ import {
   Repeat,
   MoreHorizontal,
 } from "lucide-react";
-import { cn, formatTime, formatTimecode, formatFrames } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import { videoTimecode } from "@/lib/video-timecode";
 import { renderedMediaBox } from "@/lib/media-frame";
 import { api } from "@/lib/api";
 import { useReviewStore, type TimeFormat } from "@/stores/review-store";
@@ -22,6 +23,7 @@ import { useVideoPlayer } from "@/hooks/use-video-player";
 import { useMediaQuery, MEDIA_SM } from "@/hooks/use-media-query";
 import { useReview } from "./review-provider";
 import { ProgressBar } from "./progress-bar";
+import { VideoTimecodeOverlay } from "./video-timecode-overlay";
 import type { Comment } from "@/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -197,17 +199,9 @@ export function VideoPlayer({
     return () => document.removeEventListener("mousedown", handleClick);
   }, [timeFormatOpen]);
 
+  const fps = currentVersion?.files?.find(file => file.file_type === "video")?.fps;
   function displayTime(seconds: number): string {
-    switch (timeFormat) {
-      case "frames":
-        return formatFrames(seconds);
-      case "standard":
-        return formatTime(seconds);
-      case "timecode":
-        return formatTimecode(seconds);
-      default:
-        return formatTimecode(seconds);
-    }
+    return videoTimecode(seconds, timeFormat, fps);
   }
 
   // Load the stream URL — reset immediately on asset OR version change so the old
@@ -250,7 +244,7 @@ export function VideoPlayer({
     };
   }, [assetId, initialStreamUrl, versionId]);
 
-  const player = useVideoPlayer(streamUrl);
+  const player = useVideoPlayer(streamUrl, { preserveOverlayFullscreen: true });
 
   const {
     videoRef,
@@ -396,7 +390,7 @@ export function VideoPlayer({
         // leftover between the controls and the comment sheet, which is where
         // the sheet expands into anyway.
         "flex flex-col h-full w-full",
-        isFullscreen && "fixed inset-0 z-50",
+        isFullscreen && "fixed inset-0 z-50 bg-black",
         className,
       )}
     >
@@ -433,7 +427,7 @@ export function VideoPlayer({
           // the comment sheet, so the whole frame stays visible as the sheet
           // opens. 70dvh is the fallback for surfaces with no sheet, where the
           // only job is to stop a vertical source pushing the controls off.
-          "max-md:portrait:max-h-[var(--ff-stage-max,70dvh)]",
+          isFullscreen ? "!flex-1 !max-h-none !aspect-auto" : "max-md:portrait:max-h-[var(--ff-stage-max,70dvh)]",
         )}
         style={{ "--stage-aspect": String(mediaAspect) } as React.CSSProperties}
         onClick={handleContainerClick}
@@ -468,6 +462,11 @@ export function VideoPlayer({
             {overlay}
           </VideoFrameConstraint>
         )}
+        <div className="pointer-events-none">
+          <VideoFrameConstraint videoRef={videoRef}>
+            <VideoTimecodeOverlay videoRef={videoRef} source={streamUrl} format={timeFormat} fps={fps} />
+          </VideoFrameConstraint>
+        </div>
       </div>
 
       {/* Progress bar */}
@@ -549,6 +548,7 @@ export function VideoPlayer({
         <div className="relative" ref={timeFormatRef}>
           <button
             onClick={() => setTimeFormatOpen((p) => !p)}
+            aria-label="Time format"
             className="flex items-center gap-1.5 rounded-md bg-bg-tertiary px-3 py-1 hover:bg-bg-hover transition-colors"
           >
             <span className="font-mono text-sm text-text-primary tabular-nums tracking-wide">
