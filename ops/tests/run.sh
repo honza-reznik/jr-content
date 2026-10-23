@@ -37,6 +37,7 @@ setup() {
 F=$T/fake
 printf 'claude' >>"\$F/calls.log"; printf ' [%s]' "\$@" >>"\$F/calls.log"; echo >>"\$F/calls.log"
 echo "claude-cwd=\$PWD stdin=\$(readlink /proc/self/fd/0)" >>"\$F/calls.log"
+[ "\$(readlink /proc/self/fd/0)" = /dev/null ] || printf 'claude-stdin=%s\n' "\$(cat)" >>"\$F/calls.log"
 if [[ \${1:-} == -p && \${2:-} == /usage ]]; then
   [[ -f \$F/usage.txt ]] && cat "\$F/usage.txt"
   exit "\$(cat "\$F/usage.rc" 2>/dev/null || echo 0)"
@@ -222,8 +223,9 @@ tick 2026-10-21T23:00
 check "kód 0" eq "$RC" 0
 check "PM spuštěn jednou" eq "$(count_pm)" 1
 check "přesné argumenty PM" has "$(calls)" \
-  "claude [-p] [--model] [claude-opus-5-5] [--append-system-prompt-file] [$T/kb/vyvoj/prompt-projektovy-manazer.md] [NOČNÍ BĚH 2026-10-21 23:00]"
-check "PM běží v PROJECT_DIR se stdin /dev/null" has "$(calls)" "claude-cwd=$T/proj stdin=/dev/null"
+  "claude [-p] [--model] [claude-opus-5-5] [--append-system-prompt-file] [$T/kb/vyvoj/prompt-projektovy-manazer.md]"
+check "PM běží v PROJECT_DIR" has "$(calls)" "claude-cwd=$T/proj"
+check "zpráva PM přes stdin (ne jako argument, F0-B10)" has "$(calls)" "claude-stdin=NOČNÍ BĚH 2026-10-21 23:00"
 check "řádek brány v logu" has "$(logfile)" "BRÁNA Claude: PUSTÍ · 5h okno běží (využito 18 %), obnova 22.10. 02:09 nejpozději v 07:30 · týden zbývá 30 % (min. 20 %)"
 check "výstup PM v logu" has "$(logfile)" "PM: noc zvládnuta"
 check "PM v pořádku, Codex ne" eq "$(count_codex)" 0
@@ -232,7 +234,7 @@ end
 begin "CLAUDE_EXTRA_ARGS z konfigurace se předají"
 conf 'CLAUDE_EXTRA_ARGS=(--permission-mode=acceptEdits --verbose)'
 tick 2026-10-21T23:00
-check "argumenty předány" has "$(calls)" "[--permission-mode=acceptEdits] [--verbose] [NOČNÍ BĚH 2026-10-21 23:00]"
+check "argumenty předány" has "$(calls)" "[--permission-mode=acceptEdits] [--verbose]"
 end
 
 begin "brána Claude nepustí: pozdní obnova (8:15); koder=A, nic nespustí"
@@ -634,7 +636,7 @@ claude_usage "Oct 26, 8:50am (Europe/Prague)" 70
 TICK_NOW_AFTER_USAGE=2026-10-26T08:30 tick 2026-10-26T08:29
 check "PM spuštěn" eq "$(count_pm)" 1
 check "timeout od 8:30" has "$(logfile)" "timeout 1080 s"
-check "PM dostane aktuální čas" has "$(calls)" "[NOČNÍ BĚH 2026-10-26 08:30]"
+check "PM dostane aktuální čas" has "$(calls)" "claude-stdin=NOČNÍ BĚH 2026-10-26 08:30"
 end
 
 begin "AK8: usage překročí poslední možný start nového okna před FREE_BY"
