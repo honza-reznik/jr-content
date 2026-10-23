@@ -39,3 +39,26 @@ ani sestavení se písmo nestahuje. Přehled úprav:
 
 Původní `docker-compose*.yml` FreeFrame se pro JR Content nepoužívají.
 Provozní postup je v `docs-arch/F2-B02/freeframe-provoz.md` (doplněk pro PM do KB).
+
+## 2026-10-23 — F5-B07
+
+- `apps/web/components/review/video-player.tsx`: štítek času nad skutečným obdélníkem
+  obrazu, také na telefonu a celé obrazovce. FPS bere z video souboru právě vybrané
+  verze; stejnou hodnotu používá i čas ve spodní liště.
+- `video-timecode-overlay.tsx`: čas skutečně vykresleného snímku přes
+  `requestVideoFrameCallback`; během posunu štítek skrytý do dokončení posunu
+  a příchodu snímku. Starší prohlížeče mají zálohu přes události přehrávače.
+  Štítek nebrání klikání ani kreslení poznámek.
+- `apps/web/lib/video-timecode.ts`: počet snímků a non-drop časový kód podle
+  metadat, včetně zlomkových FPS. Non-drop čísluje všechny snímky souvisle;
+  u 29,97 fps se proto číselný čas postupně liší od skutečných sekund.
+  Při neznámém FPS zobrazuje sekundy místo vymyšleného počtu snímků.
+- `apps/web/hooks/use-video-player.ts`: volba zachování překryvu při celé
+  obrazovce; bez elementového API nebo při jeho odmítnutí použije celé okno,
+  včetně ukončení klávesou Escape a obnovení posouvání stránky.
+- Regresní testy překryvu a skutečného hooku; původní test přepínače času
+  používá přístupný název tlačítka místo pořadí prvků.
+- `scripts/test-video-timecode.cjs` (kořen JR Content): živý test v Dockeru
+  `jrc-f5b07`, lokální videa FFmpeg 25/30 fps. Porovnává čas se skutečnou
+  polohou čtverce ve snímku; desktop 1440 a telefon 390, přehrávání, pauza,
+  posun, táhlo, oba režimy celé obrazovky a screenshoty.
