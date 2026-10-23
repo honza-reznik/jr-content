@@ -212,3 +212,27 @@ Upstream role, schvalovací služby a stavový automat zůstávají beze změny.
 - Oprava review: komentáře `ApprovalAction` zobrazí klientovi jen tehdy, když je vytvořil klientský
   nebo čtenářský člen stejného workspace; poznámky interních týmových kroků zůstávají skryté.
   HTTP testy kontrolují obě role a interní `PostComment` se na detailu nevypisuje.
+
+## 2026-10-23 · F4-B01
+
+- `apps/jrc_texts/`: dokumenty scénářů a kanálových popisků, neměnné uložené verze,
+  omezení jedné rozpracované verze a unikátního pořadí. Služby ověřují členství v prostoru,
+  oprávnění zapisovat a vlastníka rozpracované verze. Editace vychází z konkrétní poslední
+  uložené verze; uložení, průběžný zápis a zahození vyžadují UUID a očekávanou revizi.
+  Konflikt má `status_code = 409` pro navazující HTTP rozhraní. Shodný obsah novou verzi nezaloží.
+  Oprava po review: všechny zápisy vyžadují `create_posts` a autora příspěvku nebo
+  `edit_others_posts`, stejně jako composer (vestavěný klient zatím pouze čte).
+  Koncept po smazaném uživateli nebo odebrání jeho členství smí zahodit správce prostoru
+  (owner/manager či vlastní role s `manage_workspace_settings`), pokud smí upravit příspěvek;
+  nový `edit` takový koncept nahradí pod stejným zámkem dokumentu. Živý cizí koncept
+  správce nepřevezme a kontrola UUID i revize při zahození zůstává povinná.
+- `apps/jrc_texts/migrations/0002_protect_final_versions.py`: PostgreSQL trigger odmítá změnu
+  a smazání uložené verze při potvrzení transakce. Odložená kontrola dovolí kaskádu při smazání
+  celého dokumentu/obsahu a anonymizaci autora po skutečném smazání jeho účtu. Samostatný
+  přímý SQL zásah do uložené verze zůstává zakázaný.
+- `apps/jrc_texts/editor/`: serverové schéma Tiptap a převod Markdownu převzaté z prototypu F1-B03.
+  Python spouští omezený místní Node proces s JSON přes standardní vstup/výstup, bez sítě.
+  `Dockerfile` instaluje uzamčené závislosti a skripty do `/opt/jrc-texts`, mimo zdrojový bind mount.
+- `config/settings/jrc_offline.py`: registrace aplikace při běhu i testech.
+
+Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP rozhraní patří dalším blokům.
