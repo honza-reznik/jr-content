@@ -79,6 +79,24 @@ def test_instagram_limit_is_enforced_without_creating_a_version(client, user, in
     assert variant.platform_specific_caption is None
 
 
+def test_caption_newlines_are_normalized_before_exact_limit_check_and_save(client, user, instagram_content):
+    post, variant = instagram_content
+    client.force_login(user)
+    caption = "x\r\n" * 1100  # 2,200 characters after CRLF becomes LF.
+
+    response = _save(client, variant, caption)
+
+    assert response.status_code == 302
+    variant.refresh_from_db()
+    document = TextDocument.objects.get(platform_post=variant, kind=TextDocument.Kind.CAPTION)
+    saved = document.versions.filter(state="final").order_by("-number").first()
+    normalized = caption.replace("\r\n", "\n")
+    assert len(normalized) == 2200
+    assert "\r" not in saved.text
+    assert saved.text == normalized
+    assert variant.platform_specific_caption == normalized
+
+
 def test_caption_versions_compare_words(client, user, instagram_content):
     post, variant = instagram_content
     client.force_login(user)

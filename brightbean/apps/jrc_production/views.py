@@ -262,7 +262,9 @@ def content_detail(request, workspace_id, post_id):
             post.author_id != request.user.pk and not membership.effective_permissions.get("edit_others_posts", False)
         ):
             raise PermissionDenied("You cannot edit captions for this content.")
-        caption = request.POST.get("caption", "")
+        # Textareas can submit Windows-style line endings even though the browser
+        # counter treats every newline as one character. Store and count one form.
+        caption = request.POST.get("caption", "").replace("\r\n", "\n").replace("\r", "\n")
         if variant.social_account.caption_wire_length(caption) > variant.social_account.char_limit:
             caption_error = f"Caption exceeds the {variant.social_account.char_limit}-character limit."
         else:
