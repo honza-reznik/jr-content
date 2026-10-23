@@ -29,6 +29,8 @@ ALLOWED_HTTP = Counter(
         ("intelligence/services/client.py", "InternalClient._request", "httpx.Client.request"): 1,
         ("intelligence/services/client.py", "IntelligenceAPIClient._request", "httpx.Client"): 1,
         ("intelligence/services/client.py", "IntelligenceAPIClient._request", "httpx.Client.request"): 2,
+        # F5-B01: internal Docker API only (jrc-ff-api:8000), no redirects/proxy.
+        ("jrc_video/client.py", "FreeFrameClient._send", "requests.request"): 1,
     }
 )
 

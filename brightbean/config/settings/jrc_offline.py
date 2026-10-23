@@ -26,4 +26,5 @@ JRC_APPS = [
     "apps.jrc_channels.apps.JrcChannelsConfig",
     "apps.jrc_production.apps.JrcProductionConfig",
     "apps.jrc_texts.apps.JrcTextsConfig",
+    "apps.jrc_video.apps.JrcVideoConfig",
 ]

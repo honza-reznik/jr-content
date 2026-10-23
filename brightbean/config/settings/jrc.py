@@ -1,4 +1,6 @@
 # JR Content: přidáno 2026-10-22 (blok F2-B01), AGPL-3.0.
+import os
+
 from .jrc_offline import JRC_APPS
 
 # isort: split
@@ -44,3 +46,9 @@ CSP_IMG_SRC = ("'self'", "data:", "blob:")
 CSP_MEDIA_SRC = ("'self'", "blob:")
 CSP_CONNECT_SRC = ("'self'",)
 CSP_FORM_ACTION = ("'self'",)
+
+# Internal service credentials are read only from the container environment.
+JRC_FF_API_URL = "http://jrc-ff-api:8000"
+JRC_FF_SYNC_EMAIL = os.environ.get("JRC_FF_SYNC_EMAIL", "")
+JRC_FF_SYNC_PASSWORD = os.environ.get("JRC_FF_SYNC_PASSWORD", "")
+JRC_FF_SYNC_ENABLED = bool(JRC_FF_SYNC_EMAIL and JRC_FF_SYNC_PASSWORD)

@@ -236,3 +236,41 @@ Upstream role, schvalovací služby a stavový automat zůstávají beze změny.
 - `config/settings/jrc_offline.py`: registrace aplikace při běhu i testech.
 
 Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP rozhraní patří dalším blokům.
+## 2026-10-23 · F5-B01
+
+- `apps/jrc_video/`: vazby `VideoProject` (workspace → projekt) a `VideoAccount`
+  (uživatel → účet), migrace a synchronizace přes interní API servisním účtem.
+  Signály členství, profilu uživatele a archivace klienta se provádějí po potvrzení
+  databázové změny. Odstranění účtu/prostoru nejprve odebere vzdálený přístup;
+  média FreeFrame zůstávají zachovaná. Neznámé a vlastní role dostanou pouze viewer.
+- Převod rolí dle ADR-003: owner/manager/editor/contributor → editor, client → reviewer,
+  viewer → viewer. Synchronizace odstraní i přebytečná vzdálená členství, zachová
+  servisního vlastníka a udržuje projekty neveřejné. Blokování účtu vypne účet FreeFrame.
+- `python manage.py jrc_sync_freeframe` opraví všechny existující účty, projekty a členství;
+  `--pending` zpracuje jen uložené neúspěšné změny `VideoSyncRequest`. Při chybě vrátí nenulový
+  kód a záznam ponechá k opakování. Po obnovení dostupnosti API spusť příkaz znovu.
+  Při výpadku API změna členství v Brightbean zůstává uložená a vzdálená oprávnění se
+  změní až při úspěšné opravě. Pravidelné automatické opakování tento blok nezavádí.
+  Selhání po uložení (např. blokace uživatele bez členství) se jen zapíše do logu,
+  uživatel nedostane chybovou stránku.
+- Přístupové a obnovovací tokeny se sdílejí jen v paměti procesu; neukládají se do DB,
+  logů ani KB. Heslo servisního účtu přichází pouze z prostředí Dockeru. HTTP klient
+  používá časové limity, nesleduje přesměrování a do chyb nekopíruje těla odpovědí.
+- `tests/test_sync.py`: role, opakování, oprava členství, blokace, archivace, odstranění,
+  transakce, neúspěšné pokusy, bezpečné chyby a obnova tokenu. Živé ověření obou aplikací
+  je `scripts/F5-B01/check-sync.sh` v kořeni JR Content (jen projekt `jrc-f5b01`).
+- `apps/jrc_channels/tests/test_network_inventory.py`: eviduje nový interní HTTP vstup
+  `FreeFrameClient._send`, směrovaný pevně na službu `jrc-ff-api:8000` bez přesměrování.
+- Oprava review (F5-B01): chyba jednoho účtu nebo člena nezastaví synchronizaci ostatních.
+  Odebírání členů běží první a každý krok samostatně; chyby se posbírají, `VideoSyncRequest`
+  zůstane k opakování a na konci se vrátí jedna souhrnná chyba (`last_error` max. 255 znaků).
+  Účet s neúspěšným PUT, ale známou vazbou, se dál odebírá/omezuje podle Brightbean, nic navíc
+  nedostane. `VideoAccount` se ukládá v krátké samostatné transakci hned po úspěšném PUT.
+- `VideoAccountSyncRequest` (migrace 0002): záznam k opakování pro účet bez členství
+  (blokace); `--pending` ho opraví. Smazání uživatele volá `POST /jrc-sync/accounts/{id}/deactivate`
+  i bez místní vazby (podle odvozeného UUID, nikdy podle e-mailu). Bez vazby selhání smazání
+  nezastaví (zapíše se varování), s vazbou ano.
+- Při startu varování v logu, když chybí `JRC_FF_SYNC_EMAIL` nebo `JRC_FF_SYNC_PASSWORD`
+  (synchronizace je pak vypnutá). Hodnoty se nevypisují.
+- Provozní poznámka: plná synchronizace (`jrc_sync_freeframe` i každá změna prostoru)
+  odebere z projektu FreeFrame i členy přidané ručně mimo JR Content.
