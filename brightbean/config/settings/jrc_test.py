@@ -13,3 +13,7 @@ from apps.jrc_ui.features import configure_ui  # noqa: E402
 configure_ui(globals())
 # Upstream regresní sada ověřuje i skryté funkce; naše testy zapínají MVP_FEATURES.
 JRC_FEATURES = {}
+JRC_FF_SYNC_ENABLED = False
+JRC_FF_API_URL = "http://jrc-ff-api:8000"
+JRC_FF_SYNC_EMAIL = "jrc-sync@example.com"
+JRC_FF_SYNC_PASSWORD = "unit-test-only"

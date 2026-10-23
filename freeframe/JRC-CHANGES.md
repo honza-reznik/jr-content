@@ -62,3 +62,23 @@ Provozní postup je v `docs-arch/F2-B02/freeframe-provoz.md` (doplněk pro PM do
   `jrc-f5b07`, lokální videa FFmpeg 25/30 fps. Porovnává čas se skutečnou
   polohou čtverce ve snímku; desktop 1440 a telefon 390, přehrávání, pauza,
   posun, táhlo, oba režimy celé obrazovky a screenshoty.
+
+## 2026-10-23 · F5-B01
+
+- `apps/api/routers/jrc_sync.py`, registrace v `main.py`: interní opakovatelné PUT
+  `/jrc-sync/accounts/{source_uuid}` a `/jrc-sync/projects/{source_uuid}`.
+  Přístup má jen aktivní superadmin se shodným `JRC_FF_SYNC_EMAIL` (servisní účet).
+  Účty vznikají bez hesla a pozvánky; nevytváří se e-mailová úloha.
+  E-mail se kontroluje jen na základní tvar (ne `EmailStr`), aby prošly vyhrazené
+  testovací domény místních dat jako `example.invalid` (ukázkový klient). Profil a blokace
+  se aktualizují při každém volání. Projekt je týmový a neveřejný, vlastníkem je servisní účet.
+- Identifikátory se odvozují pomocí UUIDv5 ze stabilního jmenného prostoru a UUID Brightbean.
+  Ztracená místní vazba se tak může obnovit bez nového účtu/projektu. Transakční zámek
+  PostgreSQL chrání souběžné založení. Konfliktní e-mail se odmítá (409), nepřebírá se
+  cizí účet podle e-mailu; privilegovaný nebo smazaný účet/projekt se nepřepisuje.
+- Role a odebrání členství používají stávající projektové API. Nové uživatelské
+  rozhraní nevzniká; přihlášení jednou vstupenkou a omezení běžného FreeFrame jsou další bloky F5.
+- `tests/test_jrc_sync.py`: přístup běžného uživatele/cizího správce, bezpečné založení,
+  stabilní identita, konflikt e-mailu, ochrana privilegovaných a smazaných záznamů,
+  neveřejný projekt a servisní vlastník. Živý test v kořeni JR Content ověřuje i skutečné role
+  klienta, zákaz nahrávání, oddělení klientů a odvolání přístupu při platném přístupovém tokenu.

@@ -212,3 +212,29 @@ Upstream role, schvalovací služby a stavový automat zůstávají beze změny.
 - Oprava review: komentáře `ApprovalAction` zobrazí klientovi jen tehdy, když je vytvořil klientský
   nebo čtenářský člen stejného workspace; poznámky interních týmových kroků zůstávají skryté.
   HTTP testy kontrolují obě role a interní `PostComment` se na detailu nevypisuje.
+
+## 2026-10-23 · F5-B01
+
+- `apps/jrc_video/`: vazby `VideoProject` (workspace → projekt) a `VideoAccount`
+  (uživatel → účet), migrace a synchronizace přes interní API servisním účtem.
+  Signály členství, profilu uživatele a archivace klienta se provádějí po potvrzení
+  databázové změny. Odstranění účtu/prostoru nejprve odebere vzdálený přístup;
+  média FreeFrame zůstávají zachovaná. Neznámé a vlastní role dostanou pouze viewer.
+- Převod rolí dle ADR-003: owner/manager/editor/contributor → editor, client → reviewer,
+  viewer → viewer. Synchronizace odstraní i přebytečná vzdálená členství, zachová
+  servisního vlastníka a udržuje projekty neveřejné. Blokování účtu vypne účet FreeFrame.
+- `python manage.py jrc_sync_freeframe` opraví všechny existující účty, projekty a členství;
+  `--pending` zpracuje jen uložené neúspěšné změny `VideoSyncRequest`. Při chybě vrátí nenulový
+  kód a záznam ponechá k opakování. Po obnovení dostupnosti API spusť příkaz znovu.
+  Při výpadku API změna členství v Brightbean zůstává uložená a vzdálená oprávnění se
+  změní až při úspěšné opravě. Pravidelné automatické opakování tento blok nezavádí.
+  Selhání po uložení (např. blokace uživatele bez členství) se jen zapíše do logu,
+  uživatel nedostane chybovou stránku.
+- Přístupové a obnovovací tokeny se sdílejí jen v paměti procesu; neukládají se do DB,
+  logů ani KB. Heslo servisního účtu přichází pouze z prostředí Dockeru. HTTP klient
+  používá časové limity, nesleduje přesměrování a do chyb nekopíruje těla odpovědí.
+- `tests/test_sync.py`: role, opakování, oprava členství, blokace, archivace, odstranění,
+  transakce, neúspěšné pokusy, bezpečné chyby a obnova tokenu. Živé ověření obou aplikací
+  je `scripts/F5-B01/check-sync.sh` v kořeni JR Content (jen projekt `jrc-f5b01`).
+- `apps/jrc_channels/tests/test_network_inventory.py`: eviduje nový interní HTTP vstup
+  `FreeFrameClient._send`, směrovaný pevně na službu `jrc-ff-api:8000` bez přesměrování.

@@ -17,6 +17,8 @@ x-bb: &bb
     EMAIL_BACKEND_TYPE: console
     MEDIA_ROOT: /app/media
     APP_URL: http://127.0.0.1:${JRC_APP_PORT:-13000}
+    JRC_FF_SYNC_EMAIL: ${JRC_FF_SYNC_EMAIL:-jrc-sync@example.com}
+    JRC_FF_SYNC_PASSWORD: ${JRC_FF_SYNC_PASSWORD:?Spusťte make env}
   volumes:
     - ./brightbean:/app
     - jrc-bb-media:/app/media
