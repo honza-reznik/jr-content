@@ -224,6 +224,10 @@ function imageCropper() {
     init() {
       this.$nextTick(() => {
         this.cropper = new Cropper(this.$refs.image, {
+          // JR Content F2-B05: a cross-origin check would append ?timestamp= to the
+          // presigned S3 URL and break its signature (403). Only getData() is used
+          // (the crop happens server-side), so the canvas never needs CORS.
+          checkCrossOrigin: false,
           viewMode: 1,
           autoCrop: false,
           responsive: true,
