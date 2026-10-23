@@ -146,6 +146,7 @@ Ověřovací skripty a snímky jsou v kořeni JR Content (`scripts/F2-B10/`,
 Stavový automat a modely upstreamu se v tomto bloku nemění. Nástěnka, změny fází přes rozhraní
 a služba označení ruční publikace patří navazujícím blokům F3-B02 a F8-B02.
 
+
 ## 2026-10-23 · F3-B02
 
 - `apps/jrc_production/services.py`: `create_content()` sama ověřuje aktivní členství,
@@ -197,3 +198,17 @@ Upstream role, schvalovací služby a stavový automat zůstávají beze změny.
   oprávněný člen, originály i všechny náhledy/verze, společná knihovna jiné
   organizace, odvolání členství, odhlášení, osiřelé soubory a obcházení přes
   veřejné cesty. Stávající kontroly routování a ochrany před únikem `.env` zachovány.
+## 2026-10-23 · F3-B03
+
+- `apps/jrc_production/views.py`, `urls.py` a `templates/jrc_production/content_detail.html`:
+  přidána stránka obsahu s kartami Script, Video, Caption, Approval a History. Historie
+  spojuje výrobní `StageChange` a `ApprovalAction`; ostatní připravené karty ukazují prázdný
+  stav. Stránka ukazuje souhrnnou výrobní fázi, stav příspěvku, kanály a datum publikace.
+- Stránka je čitelná členům workspace včetně klienta. Nečlen dostane zákaz přístupu;
+  klient ani divák nevidí interní týmové poznámky. Úprava obsahu odkazuje do původního composeru.
+- `config/urls.py` registruje lokální cestu detailu pod workspace.
+- `apps/jrc_production/tests/test_content_detail.py` ověřuje admina, klienta, zákaz přístupu
+  nečlenovi, citlivost interních poznámek a obě části historie.
+- Oprava review: komentáře `ApprovalAction` zobrazí klientovi jen tehdy, když je vytvořil klientský
+  nebo čtenářský člen stejného workspace; poznámky interních týmových kroků zůstávají skryté.
+  HTTP testy kontrolují obě role a interní `PostComment` se na detailu nevypisuje.
