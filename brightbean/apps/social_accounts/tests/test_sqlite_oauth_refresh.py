@@ -1,3 +1,4 @@
+# JR Content: upraveno 2026-10-23 (blok F2-B07).
 """Exercise token refresh concurrency on the supported SQLite backend."""
 
 import threading
@@ -6,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import Mock
 
 import pytest
+from django.apps import apps
 from django.db import connections
 from django.db.models.signals import pre_save
 from django.db.utils import ConnectionHandler
@@ -35,6 +37,9 @@ def sqlite_accounts(request, tmp_path, django_db_blocker):
         try:
             with connection.schema_editor() as editor:
                 editor.create_model(SocialAccount)
+                # JR Content's pre_save guard reads this table on account saves.
+                if apps.is_installed("apps.jrc_channels"):
+                    editor.create_model(apps.get_model("jrc_channels", "ChannelProfile"))
             connection.disable_constraint_checking()
             accounts = [
                 SocialAccount(

@@ -1,3 +1,4 @@
+# JR Content: upraveno 2026-10-23 (blok F2-B07).
 """Tests for social_accounts models."""
 
 from datetime import timedelta
@@ -134,6 +135,15 @@ class TestDisconnectRevocation:
         ``deleteSession`` wants the refresh JWT, and the app password outlives
         any session anyway."""
         from providers import PROVIDER_REGISTRY
+
+        # JR Content custom channels deliberately have no OAuth provider/grant.
+        if platform == "custom":
+            assert platform not in PROVIDER_REGISTRY
+            account = SocialAccount(platform=platform)
+            assert not account.revokes_platform_grant_on_disconnect
+            assert not account.keeps_platform_grant_on_disconnect
+            assert not account.revocation_token
+            return
 
         provider = PROVIDER_REGISTRY[platform](
             {

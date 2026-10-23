@@ -1,3 +1,4 @@
+# JR Content: upraveno 2026-10-23 (blok F2-B07).
 """Publishing Engine - background worker logic (F-2.4).
 
 This module implements the core publish loop:
@@ -446,6 +447,8 @@ class PublishEngine:
             # four attempts inside a minute instead of across half an hour. For
             # a video platform that also meant re-uploading the file four times.
             .exclude(retry_count__gt=0, next_retry_at__gt=now)
+            # JR Content: manual/custom channels wait for manual publication.
+            .exclude(social_account__jrc_channel__kind__in=["manual", "custom"])
             # Never publish a post that has any platform on hold — a client hold
             # parks the whole post out of the publish path even if a sibling
             # platform is already scheduled.
@@ -1167,6 +1170,7 @@ class PublishEngine:
                 retry_count__lte=MAX_RETRIES,
                 next_retry_at__lte=now,
             )
+            .exclude(social_account__jrc_channel__kind__in=["manual", "custom"])
             .exclude(post__platform_posts__status=PlatformPost.Status.ON_HOLD)
             .select_related("social_account", "post")
         )

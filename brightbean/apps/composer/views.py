@@ -1,3 +1,4 @@
+# JR Content: upraveno 2026-10-23 (blok F2-B07).
 """Views for the Post Composer (F-2.1)."""
 
 import base64
@@ -2120,12 +2121,15 @@ def pinterest_boards(request, workspace_id, account_id):
     account = get_object_or_404(SocialAccount, id=account_id, workspace=workspace, platform="pinterest")
 
     from apps.credentials.models import resolve_platform_credentials
-    from providers import get_provider
+    from providers import ProvidersDisabledError, get_provider
 
     # .env is dominant; admin-entered org credentials are the fallback.
     credentials = resolve_platform_credentials("pinterest", workspace.organization_id)
 
-    provider = get_provider("pinterest", credentials)
+    try:
+        provider = get_provider("pinterest", credentials)
+    except ProvidersDisabledError as exc:
+        return JsonResponse({"available": False, "boards": [], "error": str(exc)})
 
     # Refresh token if expiring
     access_token = account.oauth_access_token
@@ -2156,10 +2160,9 @@ def tiktok_creator_info(request, workspace_id, account_id):
     account = get_object_or_404(SocialAccount, id=account_id, workspace=workspace, platform="tiktok")
 
     from apps.credentials.models import resolve_platform_credentials
-    from providers import get_provider
+    from providers import ProvidersDisabledError, get_provider
 
     credentials = resolve_platform_credentials("tiktok", workspace.organization_id)
-    provider = get_provider("tiktok", credentials)
 
     # This endpoint enriches the composer panel; the real privacy/audit gate is
     # enforced at publish time. When the creator-info lookup can't run (no
@@ -2179,6 +2182,11 @@ def tiktok_creator_info(request, workspace_id, account_id):
                 "max_video_post_duration_sec": None,
             }
         )
+
+    try:
+        provider = get_provider("tiktok", credentials)
+    except ProvidersDisabledError as exc:
+        return _unavailable(str(exc))
 
     # Refresh token if expiring
     access_token = account.oauth_access_token
