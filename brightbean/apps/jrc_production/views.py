@@ -28,10 +28,10 @@ def _memberships(user):
     )
 
 
-def _board_context(request, *, error="", title=""):
+def _board_context(request, *, error="", title="", selected_client=None):
     memberships = _memberships(request.user)
     by_workspace = {str(m.workspace_id): m for m in memberships}
-    selected = request.GET.get("client", "")
+    selected = request.GET.get("client", "") if selected_client is None else str(selected_client)
     channel = request.GET.get("channel", "")
     workspace_ids = list(by_workspace)
     if selected:
@@ -111,7 +111,12 @@ def create(request):
         return render(
             request,
             "jrc_production/board.html",
-            _board_context(request, error=" ".join(exc.messages), title=title),
+            _board_context(
+                request,
+                error=" ".join(exc.messages),
+                title=title,
+                selected_client=membership.workspace_id,
+            ),
             status=400,
         )
     messages.success(request, "Content added to Idea.")

@@ -170,11 +170,17 @@ def test_board_does_not_duplicate_multichannel_content(http, post, workspace):
     assert response.content.count(f'data-post="{post.pk}"'.encode()) == 1
 
 
-def test_creation_error_shows_title_and_no_partial_content(http, workspace):
+def test_creation_error_preserves_selected_client_and_title(http, workspace, organization, user):
+    other = Workspace.objects.create(organization=organization, name="Another client")
+    WorkspaceMembership.objects.create(workspace=other, user=user, workspace_role="owner")
     response = http.post(reverse("jrc_production:create"), {"workspace": workspace.pk, "title": "Keep my title"})
     assert response.status_code == 400
     assert b"Enable at least one channel" in response.content
     assert b"Keep my title" in response.content
+    assert response.context["selected_client"] == str(workspace.pk)
+    assert response.context["new_title"] == "Keep my title"
+    assert f'<option value="{workspace.pk}" selected>'.encode() in response.content
+    assert f'<option value="{other.pk}" selected>'.encode() not in response.content
     assert not Post.objects.exists()
 
 
