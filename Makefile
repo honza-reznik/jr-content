@@ -17,7 +17,7 @@ export BUILDX_CONFIG := $(CURDIR)/.cache/docker-buildx
 CMD ?= bash
 export CMD
 
-.PHONY: build build-bb env up down shell test test-smoke test-bb test-ff test-ff-smoke ff-account build-ff reset logs ps
+.PHONY: build build-bb env up down shell test test-smoke test-bb test-ff test-ff-smoke test-isolation test-ff-offline ff-account build-ff reset logs ps
 build:
 	docker build --tag jrc-dev:local --file docker/Dockerfile docker
 
@@ -72,7 +72,18 @@ test-bb:
 	$(COMPOSE) exec -T jrc-bb-web sh -c 'ruff check . && ruff format --check .'
 	$(COMPOSE) exec -T jrc-bb-web pytest -p no:cacheprovider -o addopts="" -q --tb=short --ds=config.settings.jrc_test
 
-test-ff:
+test-isolation:
+	@sh scripts/workspace.sh check
+	sh scripts/test-service-isolation.sh $(COMPOSE)
+	docker run --rm --pull never --network host --user "$(JRC_UID):$(JRC_GID)" \
+	  --env-file .env --volume "$(CURDIR)/scripts:/jrc-scripts:ro" \
+	  jrc-dev:local node /jrc-scripts/test-local-gate.cjs
+
+test-ff-offline:
+	@sh scripts/workspace.sh check
+	$(COMPOSE) run --rm --no-deps -T jrc-ff-web node /jrc-scripts/test-ff-offline.cjs
+
+test-ff: test-isolation test-ff-offline
 	@sh scripts/workspace.sh check
 	@for service in jrc-ff-worker jrc-ff-maintenance jrc-ff-beat; do \
 	  $(COMPOSE) exec -T $$service python - < scripts/smoke-ff-internal.py || exit $$?; \

@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { DM_Sans } from "next/font/google";
+import localFont from "next/font/local";
 import { ToastProvider } from "@/components/shared/toast";
 import { ThemeInitializer } from "@/components/shared/theme-initializer";
 import { BrandingHead } from "@/components/shared/branding-head";
@@ -9,11 +9,11 @@ import { accentVars } from "@/lib/accent";
 import { withBasePath } from "@/lib/base-path";
 import "./globals.css";
 
-const dmSans = DM_Sans({
-  subsets: ["latin"],
+const dmSans = localFont({
+  src: "./fonts/DMSans-variable.ttf",
   display: "swap",
   variable: "--font-sans",
-  weight: ["400", "500", "600", "700"],
+  weight: "100 1000",
   preload: true,
 });
 

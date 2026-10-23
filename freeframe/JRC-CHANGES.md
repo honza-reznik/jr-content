@@ -4,12 +4,18 @@ Import upstreamu `3829889` (MIT, původní licence a copyright zachovány).
 
 ## 2026-10-23 — F2-B02
 
-Původní soubory FreeFrame nejsou změněné. Přidán tento přehled. Provozní úpravy žijí
-v kořeni JR Content:
+Provozní úpravy žijí převážně v kořeni JR Content. Po review je změněn také
+`apps/web/app/layout.tsx`: `next/font/local` a původní DM Sans v `app/fonts/`
+s licencí SIL OFL 1.1 a přesným zdrojem/otisky v jeho README. Při prvním spuštění
+ani sestavení se písmo nestahuje. Přehled úprav:
 
 - `docker-compose.yml`: API, převodní worker (fronta `transcoding`, 4 CPU), údržba
   (`maintenance`), jediný beat, Next.js pod `/video` a Redis s trvalou frontou.
-  Worker, údržba, beat a Redis mají jen vnitřní síť bez internetu. E-mailový worker
+  Všechny aplikační služby (také API, web, Brightbean, PG a Garage) mají jen
+  vnitřní síť bez internetu. Jediná dočasná `jrc-ff-gate` přenáší místní porty
+  na pevné vnitřní TCP cíle; výjimkou je ještě vývojový `jrc-dev`.
+  Brána používá již dostupný obraz jrc-dev a pouze malý Node.js skript,
+  nemá tajemství ani přístup k pracovní kopii. E-mailový worker
   neběží, SMTP míří na nepoužitý port 9 na 127.0.0.1.
 - `docker/Dockerfile.ff-api`: místní vývojový obraz s přesnými Python závislostmi
   upstreamu, FFmpegem a pytest. `docker/Dockerfile.ff-web`: pnpm 10.15.0,
@@ -22,7 +28,11 @@ v kořeni JR Content:
 - `docker/garage-entrypoint.sh`: bucket `jrc-video` a samostatný klíč, také při
   spuštění nad dříve vytvořeným svazkem Garage.
 - `Makefile`: sestavení, servisní účet, pytest/Vitest/tsc/lint v `make test-ff`;
-  síťová kontrola vnitřních služeb; jednotkové testy webu používají výchozí
+  `test-isolation` kontroluje sítě/porty všech služeb včetně inicializací
+  a skutečné IPv4/IPv6 spojení z každé běžící aplikační služby.
+  `test-ff-offline` ověřuje studenou kompilaci, požadavky Chromium, načtení
+  místního písma a produkční sestavení; zachytí i neúspěšný pokus serveru
+  o cizí spojení. Obě kontroly jsou součástí test-ff; jednotkové testy používají výchozí
   prázdný basePath upstreamu, nasazení `/video` ověřuje build a živý test; součást celkového `make test`.
   `make test-ff-smoke` vytvoří 1080p video FFmpegem a ověří živé multipart
   nahrání i převod na stav `ready` přes API a Garage.

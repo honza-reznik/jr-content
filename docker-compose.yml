@@ -73,6 +73,25 @@ x-ff: &ff
       condition: service_healthy
 
 services:
+  # Jediný vstup z místních portů; pevné TCP cíle, žádný obecný proxy server.
+  jrc-ff-gate:
+    image: jrc-dev:local
+    restart: unless-stopped
+    init: true
+    user: "${JRC_UID:-1000}:${JRC_GID:-1000}"
+    command: ["node", "/gate.cjs"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - ./scripts/local-gate.cjs:/gate.cjs:ro
+    networks: [default, internal]
+    ports:
+      - "127.0.0.1:${JRC_FF_API_PORT:-18022}:18022"
+      - "127.0.0.1:${JRC_FF_WEB_PORT:-13022}:13022"
+      - "127.0.0.1:${JRC_BB_PORT:-18011}:18011"
+      - "127.0.0.1:${JRC_POSTGRES_PORT:-15432}:15432"
+      - "127.0.0.1:${JRC_S3_PORT:-13900}:13900"
   jrc-ff-db:
     image: postgres:18.6-bookworm
     restart: "no"
@@ -98,9 +117,7 @@ services:
   jrc-ff-api:
     <<: *ff
     command: ["uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
-    networks: [default, internal]
-    ports:
-      - "127.0.0.1:${JRC_FF_API_PORT:-18022}:8000"
+    networks: [internal]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
       interval: 3s
@@ -148,9 +165,8 @@ services:
       - ./freeframe/apps/web:/app
       - jrc-ff-web-modules:/app/node_modules
       - jrc-ff-web-next:/app/.next
-    ports:
-      - "127.0.0.1:${JRC_FF_WEB_PORT:-13022}:3000"
-    networks: [default]
+      - ./scripts:/jrc-scripts:ro
+    networks: [internal]
     depends_on:
       jrc-ff-api:
         condition: service_healthy
@@ -197,11 +213,7 @@ services:
   jrc-bb-web:
     <<: *bb
     command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
-    ports:
-      - "127.0.0.1:${JRC_BB_PORT:-18011}:8000"
-    networks:
-      - default
-      - internal
+    networks: [internal]
     healthcheck:
       test: ["CMD", "python", "-c", "import json, urllib.request; assert json.load(urllib.request.urlopen('http://127.0.0.1:8000/health/', timeout=5)) == {'status': 'ok'}"]
       interval: 3s
@@ -235,6 +247,7 @@ services:
       - .:/workspace
     ports:
       - "127.0.0.1:${JRC_APP_PORT:-13000}:3000"
+    networks: [default, internal]
     shm_size: 1gb
     depends_on:
       jrc-postgres:
@@ -242,9 +255,7 @@ services:
       jrc-s3:
         condition: service_healthy
   jrc-postgres:
-    networks:
-      - default
-      - internal
+    networks: [internal]
     image: postgres:18.6-bookworm
     container_name: ${JRC_PROJECT:-jrc}-postgres
     restart: unless-stopped
@@ -252,8 +263,6 @@ services:
       POSTGRES_USER: ${PGUSER:-jrc}
       POSTGRES_DB: ${PGDATABASE:-jrc}
       POSTGRES_PASSWORD: ${PGPASSWORD:?Spusťte make env}
-    ports:
-      - "127.0.0.1:${JRC_POSTGRES_PORT:-15432}:5432"
     volumes:
       - jrc-postgres-data:/var/lib/postgresql
     healthcheck:
@@ -263,7 +272,7 @@ services:
       timeout: 5s
       retries: 30
   jrc-s3:
-    networks: [default, internal]
+    networks: [internal]
     build:
       context: docker
       dockerfile: Dockerfile.s3
@@ -277,8 +286,6 @@ services:
       S3_BUCKET: ${S3_BUCKET:-jrc-local}
       JRC_FF_S3_ACCESS_KEY: ${JRC_FF_S3_ACCESS_KEY:?Spusťte make env}
       JRC_FF_S3_SECRET_KEY: ${JRC_FF_S3_SECRET_KEY:?Spusťte make env}
-    ports:
-      - "127.0.0.1:${JRC_S3_PORT:-13900}:3900"
     volumes:
       - jrc-s3-data:/var/lib/garage
     healthcheck:

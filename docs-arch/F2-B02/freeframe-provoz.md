@@ -22,7 +22,14 @@ Převodní worker odebírá frontu `transcoding`, jeden převod současně, limi
 úklid nahrávání a připomínky, obnovení uvízlých převodů v půl a denní odstranění
 smazaných záznamů ve 3:00 UTC. Nedokončené nahrávání se uklízí po 24 hodinách,
 smazané záznamy po 30 dnech. Vyhledávání osiřelých souborů je vypnuté.
-Worker, údržba, beat a Redis jsou pouze ve vnitřní síti bez internetu.
+Všechny aplikační služby včetně API, webu, Brightbean, databáze a Garage jsou
+pouze ve vnitřní síti bez internetu. Dočasná `jrc-ff-gate` přenáší výše uvedené
+místní porty na pevné vnitřní cíle (také PG/S3/Brightbean, jejich adresy se nemění).
+Jen brána a vývojový `jrc-dev` mají běžnou síť. Brána přenáší TCP beze změny,
+včetně WebSocketů a podpisů S3; neumožňuje volbu libovolného cíle. Používá již
+místní obraz jrc-dev, běží bez tajemství a s jediným připojeným skriptem pro bránu.
+DM Sans je v repozitáři s licencí SIL OFL 1.1 (`freeframe/apps/web/app/fonts/`),
+Next.js ho načítá přes `next/font/local`, žádné Google Fonts při startu ani sestavení.
 E-mailový worker neběží; SMTP je 127.0.0.1:9 bez TLS, pošta neodchází.
 
 Videa jsou v Garage bucketu `jrc-video` v existujícím svazku `jrc-s3-data`.
@@ -35,12 +42,19 @@ data zachová. Web má postradatelné svazky `jrc-ff-web-modules` a `jrc-ff-web-
 ```sh
 make test-ff        # pytest, Vitest, TypeScript, lint, zákaz internetu vnitřních služeb
 make test-ff-smoke  # živé API, přihlášení správce, 1080p -> Garage -> ready, web 200
+make test-isolation # sítě/porty všech služeb, spojení IPv4/IPv6 z běžících služeb
+make test-ff-offline # čerstvá cache, Chromium + místní písmo, audit serveru, offline build
 make test          # celé F0 + Brightbean + FreeFrame před předáním bloku
 ```
 
 Jednotkové testy webu běží s prázdným `NEXT_PUBLIC_BASE_PATH`, jak předpokládá
 upstream. Cestu `/video` ověřuje živý test a produkční sestavení; vlastní testy
 pomocné funkce `base-path` pokrývají oba způsoby nasazení.
+`test-ff` zahrnuje také obě nové kontroly izolace a webu bez internetu. Studený web
+i produkční sestavení běží v jednorázovém kontejneru jen na internal s oddělenou
+dočasnou kopií zdrojů bez `.next`. Test sleduje požadavky prohlížeče a pomocí
+`NODE_OPTIONS` i DNS/TCP pokusy procesů Next.js; cizí doména znamená selhání,
+i pokud spojení zablokovala síť. API testovacího prohlížeče používá vnitřní adresu.
 
 Živý test běží v jednorázovém Docker kontejneru se sítí hostitele, protože podepsané
 adresy videí obsahují místní 127.0.0.1. Nemění jejich adresu ani podpis a nepoužívá
