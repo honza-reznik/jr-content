@@ -1,11 +1,9 @@
-// Porty úložiště/databáze a dočasné porty FreeFrame do F2-B04.
+// Pouze porty úložiště a databáze; FreeFrame používá HTTP proxy.
 // Cíle jsou pevné, provoz včetně WebSocketů a S3 podpisů
 // se přenáší beze změny; klient nemůže zadat jiný cíl ani použít HTTP CONNECT.
 const net = require('node:net');
 
 for (const [port, host, targetPort] of [
-  [18022, 'jrc-ff-api', 8000],
-  [13022, 'jrc-ff-web', 3000],
   [15432, 'jrc-postgres', 5432],
   [13900, 'jrc-s3', 3900],
 ]) {

@@ -5,7 +5,20 @@
 }
 
 :8080 {
-	# /video a /video-api doplní F2-B04. Host včetně portu zůstává původní,
-	# aby Django kontrolovalo CSRF a sestavovalo odkazy pro společnou adresu.
-	reverse_proxy jrc-bb-web:8000
+	# API předponu odstraníme, Next.js naopak potřebuje celý basePath.
+	redir /video-api /video-api/ 308
+	handle_path /video-api/* {
+		# API omezuje počet požadavků podle X-Real-IP; hodnotu od klienta přepíšeme.
+		reverse_proxy jrc-ff-api:8000 {
+			header_up X-Real-IP {remote_host}
+		}
+	}
+	@video path /video /video/*
+	handle @video {
+		reverse_proxy jrc-ff-web:3000
+	}
+	# Host včetně portu zachová kontrolu CSRF i odkazy společného vstupu.
+	handle {
+		reverse_proxy jrc-bb-web:8000
+	}
 }

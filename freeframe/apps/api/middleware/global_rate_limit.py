@@ -11,6 +11,7 @@ Separate limits for read (GET/HEAD/OPTIONS) vs write (POST/PUT/PATCH/DELETE).
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+from starlette._utils import get_route_path
 import jwt
 
 from ..config import settings
@@ -34,7 +35,7 @@ EXEMPT_PATHS = {
 
 class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        path = request.url.path
+        path = get_route_path(request.scope)
 
         # Skip exempt paths — uploads are auth-gated and have their own flow control
         if path in EXEMPT_PATHS or path.startswith("/stream/") or path.startswith("/upload/"):

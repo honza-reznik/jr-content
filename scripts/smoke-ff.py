@@ -10,7 +10,8 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-base = f"http://127.0.0.1:{os.environ.get('JRC_FF_API_PORT', '18022')}"
+origin = f"http://127.0.0.1:{os.environ.get('JRC_APP_PORT', '13000')}"
+base = origin + '/video-api'
 out = Path('ops/test-output/F2-B02')
 out.mkdir(parents=True, exist_ok=True)
 token = None
@@ -85,7 +86,7 @@ while time.monotonic() - started < 180:
         break
     time.sleep(2)
 assert state == 'ready', state
-with urllib.request.urlopen(f"http://127.0.0.1:{os.environ.get('JRC_FF_WEB_PORT', '13022')}/video/login", timeout=60) as response:
+with urllib.request.urlopen(origin + '/video/login', timeout=60) as response:
     assert response.status == 200
 report = {'source_bytes': video.stat().st_size, 'states': states,
           'processing_seconds': round(time.monotonic() - started, 2), 'version': version}

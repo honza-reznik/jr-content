@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - JR Content: časový štítek nad obrazem videa, synchronizovaný s vykresleným snímkem; FPS ze souboru a celá obrazovka se štítkem i na telefonu.
 
 ### Fixed
+- JR Content: web `/video` a API `/video-api/` používají společný místní vstup; serverový middleware volá API po vnitřní síti.
 - JR Content: písmo DM Sans se načítá místně, bez připojení ke Google Fonts při sestavení a spuštění.
 
 ## [1.19.0] - 2026-10-19

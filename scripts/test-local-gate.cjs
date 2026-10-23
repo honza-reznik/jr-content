@@ -6,9 +6,9 @@ const port = (name, fallback) => process.env[name] || fallback;
 const url = (name, fallback) => `http://127.0.0.1:${port(name, fallback)}`;
 
 (async () => {
-  const api = url('JRC_FF_API_PORT', 18022);
-  const web = url('JRC_FF_WEB_PORT', 13022);
   const bb = url('JRC_APP_PORT', 13000);
+  const api = `${bb}/video-api`;
+  const web = bb;
   const s3 = url('JRC_S3_PORT', 13900);
   assert.equal((await fetch(`${api}/health`)).status, 200);
   assert.equal((await fetch(`${bb}/health/`)).status, 200);
@@ -22,7 +22,7 @@ const url = (name, fallback) => `http://127.0.0.1:${port(name, fallback)}`;
     const foreign = [];
     const fonts = [];
     const responses = [];
-    const allowed = new Set([api, web, s3]);
+    const allowed = new Set([web, s3]);
     await context.route('**/*', route => {
       const request = route.request();
       if (!allowed.has(new URL(request.url()).origin)) {
