@@ -20,10 +20,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # JR Content F4-B01: stejné serverové schéma Markdownu jako v editoru, dostupné i pod bind mountem.
 COPY apps/jrc_texts/editor/package*.json /opt/jrc-texts/
-RUN npm ci --prefix /opt/jrc-texts --omit=dev --ignore-scripts --no-audit --no-fund
+RUN npm ci --prefix /opt/jrc-texts --ignore-scripts --no-audit --no-fund
 COPY apps/jrc_texts/editor/*.mjs /opt/jrc-texts/
+RUN npm run build --prefix /opt/jrc-texts
 
 COPY . .
+RUN mkdir -p apps/jrc_texts/static/jrc_texts/dist \
+    && cp /opt/jrc-texts/script.js apps/jrc_texts/static/jrc_texts/dist/script.js
 
 # Build Tailwind CSS
 RUN cd theme/static_src && npm ci && npm run build
