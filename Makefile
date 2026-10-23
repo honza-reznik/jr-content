@@ -25,7 +25,7 @@ export BUILDX_CONFIG := $(CURDIR)/.cache/docker-buildx
 CMD ?= bash
 export CMD
 
-.PHONY: build build-bb env up down shell test test-smoke test-bb test-ff test-ff-smoke test-isolation test-ff-offline ff-account build-ff reset logs ps
+.PHONY: build build-bb env up down shell test test-smoke test-proxy test-bb test-ff test-ff-smoke test-isolation test-ff-offline ff-account build-ff reset logs ps
 build:
 	docker build --tag jrc-dev:local --file docker/Dockerfile docker
 
@@ -68,12 +68,19 @@ shell:
 
 test: test-smoke test-bb test-ff
 
-test-smoke:
+test-smoke: test-proxy
 	@sh scripts/workspace.sh check
 	$(COMPOSE) exec -T jrc-dev bash scripts/smoke.sh
 	$(COMPOSE) exec -T jrc-dev node scripts/test-init-env.cjs
 	$(COMPOSE) exec -T jrc-bb-web python - web < scripts/smoke-bb.py
 	$(COMPOSE) exec -T jrc-bb-worker python - worker < scripts/smoke-bb.py
+
+# Prohlížeč i HTTP požadavky běží v Dockeru proti skutečnému místnímu portu.
+test-proxy:
+	@sh scripts/workspace.sh check
+	docker run --rm --pull never --network host --user "$(JRC_UID):$(JRC_GID)" \
+	  --env-file .env --volume "$(CURDIR):/jrc" \
+	  jrc-dev:local node /jrc/scripts/test-proxy.cjs
 
 test-bb:
 	@sh scripts/workspace.sh check

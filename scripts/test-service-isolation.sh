@@ -2,7 +2,7 @@
 # Hostitel jen řídí Docker/inspect; síťové zkoušky běží v kontejnerech.
 set -eu
 for service in $("$@" config --services); do
-  case "$service" in jrc-dev|jrc-ff-gate) continue ;; esac
+  case "$service" in jrc-dev|jrc-ff-gate|jrc-proxy) continue ;; esac
   ids=$("$@" ps --all --quiet "$service")
   test -n "$ids" || { echo "Chybí služba $service"; exit 1; }
   for container in $ids; do
@@ -27,10 +27,26 @@ for service in $("$@" config --services); do
     fi
   done
 done
-# Brána smí publikovat pouze místní porty, nikdy 0.0.0.0/::.
-gate=$("$@" ps --quiet jrc-ff-gate)
-test -n "$gate"
-bindings=$(docker inspect --format '{{range .HostConfig.PortBindings}}{{range .}}{{.HostIp}}{{"\n"}}{{end}}{{end}}' "$gate")
-test -n "$bindings"
-test -z "$(printf '%s\n' "$bindings" | sed '/^127\.0\.0\.1$/d')"
-echo 'OK brána: všechny publikované porty pouze 127.0.0.1'
+# Oba vstupy smějí publikovat pouze místní porty, nikdy 0.0.0.0/::.
+for service in jrc-ff-gate jrc-proxy; do
+  gate=$("$@" ps --quiet "$service")
+  test -n "$gate"
+  bindings=$(docker inspect --format '{{range .HostConfig.PortBindings}}{{range .}}{{.HostIp}}{{"\n"}}{{end}}{{end}}' "$gate")
+  test -n "$bindings"
+  test -z "$(printf '%s\n' "$bindings" | sed '/^127\.0\.0\.1$/d')"
+  echo "OK $service: všechny publikované porty pouze 127.0.0.1"
+done
+dev=$("$@" ps --quiet jrc-dev)
+test -n "$dev"
+test "$(docker inspect --format '{{len .HostConfig.PortBindings}}' "$dev")" = 0
+echo 'OK jrc-dev: bez publikovaných portů'
+# curl běží přímo v obou kontejnerech Brightbean; ignoruje případné HTTP proxy.
+for service in jrc-bb-web jrc-bb-worker; do
+  "$@" exec -T "$service" sh -c '
+    curl --noproxy "*" --fail --silent --show-error --connect-timeout 3 http://jrc-bb-web:8000/health/ >/dev/null
+    if curl --noproxy "*" --silent --connect-timeout 3 --max-time 4 http://1.1.1.1/ >/dev/null; then
+      echo "CHYBA: curl dosáhl na internet"; exit 1
+    fi
+  '
+  echo "OK $service: curl uvnitř funguje, ven selže"
+done
