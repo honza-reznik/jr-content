@@ -43,7 +43,7 @@ build-bb:
 	# Zdrojový bind mount skryje CSS sestavené v obrazu; přeneseme je do worktree.
 	docker run --rm --network none --pull never --user "$(JRC_UID):$(JRC_GID)" \
 	  --volume "$(CURDIR)/brightbean:/source" jrc-bb:local sh -c \
-	  'mkdir -p /source/theme/static/css/dist && cp /app/theme/static/css/dist/styles.css /source/theme/static/css/dist/styles.css'
+	  'mkdir -p /source/theme/static/css/dist /source/apps/jrc_texts/static/jrc_texts/dist && cp /app/theme/static/css/dist/styles.css /source/theme/static/css/dist/styles.css && cp /opt/jrc-texts/script.js /source/apps/jrc_texts/static/jrc_texts/dist/script.js'
 
 build-ff:
 	docker build --tag jrc-ff-api:local --file docker/Dockerfile.ff-api .

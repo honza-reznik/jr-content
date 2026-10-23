@@ -9,5 +9,11 @@
     "@tiptap/markdown": "^3.32.0",
     "@tiptap/pm": "^3.32.0",
     "@tiptap/starter-kit": "^3.32.0"
+  },
+  "scripts": {
+    "build": "esbuild script.mjs --bundle --format=esm --minify --outfile=script.js"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
   }
 }

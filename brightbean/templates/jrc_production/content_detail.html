@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}{{ post.title|default:"Content" }} · {{ workspace.name }}{% endblock %}
 {% block page_header %}{% endblock %}
 {% block content %}
@@ -49,7 +50,7 @@
                 {% empty %}<li class="rounded-xl border border-dashed border-stone-300 px-4 py-8 text-center text-sm text-stone-500">No history yet.</li>{% endfor %}
             </ol>
         {% elif active_tab == "script" %}
-            <h2 class="text-lg font-semibold text-stone-900">Script</h2><div class="mt-5 rounded-xl border border-dashed border-stone-300 px-4 py-10 text-center text-sm text-stone-500">Script details will appear here.</div>
+            {% include "jrc_texts/script.html" %}
         {% elif active_tab == "video" %}
             <h2 class="text-lg font-semibold text-stone-900">Video</h2><div class="mt-5 rounded-xl border border-dashed border-stone-300 px-4 py-10 text-center text-sm text-stone-500">Video versions will appear here.</div>
         {% elif active_tab == "caption" %}
@@ -60,4 +61,7 @@
         {% if can_view_internal_notes and post.internal_notes %}<aside class="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4"><h3 class="text-sm font-semibold text-amber-900">Team notes</h3><p class="mt-2 whitespace-pre-wrap text-sm text-amber-900">{{ post.internal_notes }}</p></aside>{% endif %}
     </section>
 </div>
+{% endblock %}
+{% block extra_js %}
+{% if active_tab == "script" %}<script type="module" src="{% static 'jrc_texts/dist/script.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
 {% endblock %}

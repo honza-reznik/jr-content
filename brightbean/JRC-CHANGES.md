@@ -280,3 +280,21 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
 - `Dockerfile`: sestavení Tailwindu používá `npm ci --no-audit --no-fund`, bez
   odesílání kontroly závislostí do npm a bez hlášení o příspěvcích.
 - Běhové proměnné pro vypnutí telemetrie a hlášení npm/pip předává společný Compose.
+
+## 2026-10-23 · F4-B02
+
+- Karta Script v detailu obsahu používá místně sestavený Tiptap: nadpisy, tučné písmo,
+  kurzíva, seznamy, checklist a historie úprav. Edit text / Save / Discard, explicitní
+  Resume editing po návratu, průběžný zápis konceptu, seznam neměnných verzí a čtení starších.
+- `apps/jrc_texts/views.py`, `urls.py`: přihlášené místní HTTP rozhraní pouze pro scénář
+  konkrétního příspěvku. Každý požadavek ověřuje členství; zápisy navíc původní služby,
+  CSRF, UUID a revizi konceptu. Čtení nic nezakládá, cizí koncept neposílá text a odpovědi
+  se neukládají do cache. Klient čte uložené verze. Obnova osiřelého konceptu nabízí
+  stejná oprávnění správce jako F4-B01.
+- Prohlížeč řadí průběžné zápisy před Save/Discard, varuje při odchodu s nezapsaným
+  textem a při chybě uchová text k opakování či zkopírování. Konflikt druhé karty
+  zablokuje zápis; informace o úpravách jiného člena se obnovuje při neaktivním editoru.
+- `Dockerfile` a kořenový `Makefile`: npm/esbuild sestaví editor do místního souboru,
+  přenos do worktree stejně jako Tailwind; žádná CDN ani nové požadavky na internet za běhu.
+- HTTP regrese v `apps/jrc_texts/tests/test_script.py`; skutečný Chromium průchod,
+  vymyšlená data a snímky při 1440/390 px v `scripts/F4-B02/`.

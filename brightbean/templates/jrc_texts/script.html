@@ -1,0 +1,38 @@
+{% load static %}
+<link rel="stylesheet" href="{% static 'jrc_texts/script.css' %}">
+<div id="script-panel" data-url="{% url 'jrc_texts:script' workspace_id=workspace.id post_id=post.id %}">
+    {% csrf_token %}
+    <div class="script-heading">
+        <div><h2 class="text-lg font-semibold text-stone-900">Script</h2><p id="script-version" class="mt-1 text-sm text-stone-500">Loading script…</p></div>
+        <div class="script-actions">
+            <button id="script-edit" type="button" hidden>Edit text</button>
+            <button id="script-resume" type="button" hidden>Resume editing</button>
+            <button id="script-save" type="button" hidden>Save</button>
+            <button id="script-discard" type="button" hidden>Discard</button>
+        </div>
+    </div>
+    <p id="script-lock" class="script-lock" hidden></p>
+    <p id="script-message" role="status" aria-live="polite">Loading…</p>
+    <div class="script-actions script-recovery">
+        <button id="script-retry" type="button" hidden>Retry draft save</button>
+        <button id="script-reload" type="button">Reload script</button>
+    </div>
+    <noscript><p>Enable JavaScript to read and edit the script.</p></noscript>
+    <div class="script-layout">
+        <div class="script-paper">
+            <div id="script-toolbar" role="toolbar" aria-label="Text formatting" hidden>
+                <button type="button" data-command="paragraph" aria-label="Paragraph">Text</button>
+                <button type="button" data-command="h2" aria-label="Heading">Heading</button>
+                <button type="button" data-command="bold" aria-label="Bold"><strong>B</strong></button>
+                <button type="button" data-command="italic" aria-label="Italic"><em>I</em></button>
+                <button type="button" data-command="bulletList" aria-label="Bullet list">• List</button>
+                <button type="button" data-command="orderedList" aria-label="Numbered list">1. List</button>
+                <button type="button" data-command="taskList" aria-label="Checklist">☑ Tasks</button>
+                <button type="button" data-command="undo" aria-label="Undo">↶</button>
+                <button type="button" data-command="redo" aria-label="Redo">↷</button>
+            </div>
+            <div id="script-editor" aria-busy="true"></div>
+        </div>
+        <aside class="script-versions" aria-label="Script versions"><h3>Saved versions</h3><p class="script-version-help">Choose a version to read it.</p><ol id="script-versions"></ol></aside>
+    </div>
+</div>

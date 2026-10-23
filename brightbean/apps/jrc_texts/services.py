@@ -21,17 +21,20 @@ class ConflictError(Exception):
     status_code = 409
 
 
+def can_edit_text(post, membership):
+    permissions = membership.effective_permissions
+    return permissions.get("create_posts", False) and (
+        post.author_id == membership.user_id or permissions.get("edit_others_posts", False)
+    )
+
+
 def _authorize(document, user, *, write=False):
     membership = content_membership(document.post.workspace, user)
-    permissions = membership.effective_permissions
-    if write and (
-        not permissions.get("create_posts", False)
-        or (document.post.author_id != user.pk and not permissions.get("edit_others_posts", False))
-    ):
+    if write and not can_edit_text(document.post, membership):
         raise PermissionDenied("You cannot edit texts for this post.")
 
 
-def _can_recover_orphan(draft, user):
+def can_recover_orphan(draft, user):
     """Only workspace administrators may remove a draft whose owner has left."""
     if (
         draft.draft_owner_id is not None
@@ -103,7 +106,7 @@ def edit(version_id, user, *, source="editor"):
     if base.state != TextVersion.State.FINAL or latest.pk != base.pk:
         raise ConflictError("This version is no longer current. Reload the text.")
     draft = document.versions.filter(state=TextVersion.State.DRAFT).first()
-    if draft is not None and not _can_recover_orphan(draft, user):
+    if draft is not None and not can_recover_orphan(draft, user):
         raise ConflictError("This text already has a draft.")
     if source not in TextVersion.Source.values:
         raise ValidationError("Choose a valid version source.")
@@ -131,7 +134,7 @@ def _draft(version_id, user, expected_revision, *, recover_orphan=False):
     draft = document.versions.filter(pk=version_id).first()
     if draft is None or draft.state != TextVersion.State.DRAFT:
         raise ConflictError("This version is no longer a draft.")
-    if draft.draft_owner_id != user.pk and not (recover_orphan and _can_recover_orphan(draft, user)):
+    if draft.draft_owner_id != user.pk and not (recover_orphan and can_recover_orphan(draft, user)):
         raise PermissionDenied("This draft belongs to another editor.")
     if draft.revision != expected_revision:
         raise ConflictError("This draft changed in another tab. Reload the text.")
