@@ -2,8 +2,24 @@
 
 import json
 import socket
+import subprocess
 import sys
 import urllib.request
+
+# Zdrojový bind mount nestačí: Node převodník a jeho závislosti musí být v obrazu.
+markdown = "Scénář **test**"
+conversion = subprocess.run(
+    ["node", "/opt/jrc-texts/bridge.mjs"],
+    input=json.dumps({"markdown": markdown}),
+    text=True,
+    stdout=subprocess.PIPE,
+    check=True,
+    timeout=10,
+)
+converted = json.loads(conversion.stdout)
+assert converted["text"] == markdown
+assert converted["content"]["type"] == "doc"
+print("OK Brightbean: serverový převodník scénáře je dostupný v obrazu a převádí Markdown")
 
 if sys.argv[1] == "web":
     with urllib.request.urlopen("http://127.0.0.1:8000/health/", timeout=10) as response:

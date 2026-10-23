@@ -9,7 +9,8 @@ x-offline: &offline
 x-bb: &bb
   build:
     context: ./brightbean
-  image: jrc-bb:local
+  # Helper editoru žije v obrazu mimo bind mount; obraz musí patřit tomuto projektu.
+  image: jrc-bb:${JRC_PROJECT:?JRC_PROJECT není nastavený, použij make}
   restart: unless-stopped
   init: true
   user: "${JRC_UID:-1000}:${JRC_GID:-1000}"

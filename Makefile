@@ -39,10 +39,11 @@ env:
 	  jrc-dev:local node scripts/init-env.cjs
 
 build-bb:
-	docker build --tag jrc-bb:local brightbean
+	# Worktree nesmějí přepsat obraz jinému ověřovacímu projektu.
+	docker build --tag jrc-bb:$(JRC_PROJECT) brightbean
 	# Zdrojový bind mount skryje CSS sestavené v obrazu; přeneseme je do worktree.
 	docker run --rm --network none --pull never --user "$(JRC_UID):$(JRC_GID)" \
-	  --volume "$(CURDIR)/brightbean:/source" jrc-bb:local sh -c \
+	  --volume "$(CURDIR)/brightbean:/source" jrc-bb:$(JRC_PROJECT) sh -c \
 	  'mkdir -p /source/theme/static/css/dist /source/apps/jrc_texts/static/jrc_texts/dist && cp /app/theme/static/css/dist/styles.css /source/theme/static/css/dist/styles.css && cp /opt/jrc-texts/script.js /source/apps/jrc_texts/static/jrc_texts/dist/script.js'
 
 build-ff:
