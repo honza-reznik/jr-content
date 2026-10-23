@@ -132,3 +132,12 @@ Provozní postup je v `docs-arch/F2-B02/freeframe-provoz.md` (doplněk pro PM do
   stabilní identita, konflikt e-mailu, ochrana privilegovaných a smazaných záznamů,
   neveřejný projekt a servisní vlastník. Živý test v kořeni JR Content ověřuje i skutečné role
   klienta, zákaz nahrávání, oddělení klientů a odvolání přístupu při platném přístupovém tokenu.
+
+## 2026-10-24 — F2-B05
+
+- `apps/api/config.py`: nastavení `CORS_DEV_ORIGINS` (výchozí `true` jako upstream). JR Content
+  nastavuje `false`, takže API i CORS bucketu `jrc-video` povolují jen původ aplikace
+  (`FRONTEND_URL`, `CORS_ALLOW_ORIGINS`), bez `localhost:3000/3001`. Upstream testy CORS běží
+  s `CORS_DEV_ORIGINS=true`; nový test `test_startup_cors_without_dev_origins`.
+- Stránka `/video` má ve společném vstupu vynucenou CSP s přesným původem S3 pro náhledy,
+  segmenty HLS a nahrávání po částech (`docker/Caddyfile`).

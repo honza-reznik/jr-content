@@ -110,6 +110,7 @@ async function brightbean(browser) {
 
   assertClean(state, 'Brightbean knihovna');
   console.log('OK Brightbean 1440: nahrání a náhled bez porušení CSP, cizích adres, chyb JS a HTTP.');
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: path.join(shots, 'bb-media-1440.png'), fullPage: true });
 
   // Detail a editor obrázku načítají originál z S3 (editor klonuje obrázek cross-origin).
@@ -147,10 +148,10 @@ async function request(method, route, data) {
 }
 
 async function freeframe(browser) {
-  // Malé místní video, ale větší než jedna část nahrávání (min. 5 MiB), aby šlo po částech.
+  // Malé místní video, ale větší než jedna část nahrávání (část má 10 MiB), aby šlo po částech.
   const video = path.join(output, 'f2b05-video.mp4');
-  ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=1280x720:rate=25:duration=6',
-    '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=6',
+  ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=1280x720:rate=25:duration=12',
+    '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=12',
     '-c:v', 'libx264', '-preset', 'ultrafast', '-qp', '0', '-pix_fmt', 'yuv420p', '-c:a', 'aac', video]);
   const size = fs.statSync(video).size;
   token = (await request('POST', '/auth/login', {
@@ -172,10 +173,10 @@ async function freeframe(browser) {
   await page.goto(`${origin}/video/projects/${project.id}`, { waitUntil: 'networkidle' });
   const initiated = page.waitForResponse(item => item.url().endsWith('/upload/initiate'));
   const completed = page.waitForResponse(item => item.url().endsWith('/upload/complete'), { timeout: 180000 });
-  await page.getByRole('button', { name: /upload/i }).first().click();
-  await page.locator('input[type="file"][accept="video/*,audio/*,image/*"]').setInputFiles(video);
+  await page.getByRole('button', { name: 'Upload', exact: true }).first().click();
+  await page.getByRole('dialog').locator('input[type="file"]').setInputFiles(video);
   await page.screenshot({ path: path.join(shots, 'ff-upload-dialog-1440.png') });
-  await page.getByRole('dialog').getByRole('button', { name: /^upload/i }).last().click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Start upload', exact: true }).click();
   const upload = await (await initiated).json();
   assert((await completed).ok(), 'Dokončení nahrávání selhalo');
   const parts = state.s3Requests.filter(([method]) => method === 'PUT');
