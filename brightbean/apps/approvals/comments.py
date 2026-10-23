@@ -80,7 +80,7 @@ def create_comment(post, author, body, visibility=None, parent_id=None, attachme
     workspace = post.workspace
     mentions = MENTION_REGEX.findall(body)
     if mentions:
-        _notify_mentions(mentions, post, author, workspace, body)
+        _notify_mentions(mentions, post, author, workspace, body, visibility)
 
     return comment
 
@@ -206,12 +206,21 @@ def resolve_comment(comment_id, user, workspace, *, resolved=True):
     return comment
 
 
-def _notify_mentions(mentions, post, author, workspace, body):
+def _notify_mentions(mentions, post, author, workspace, body, visibility):
     """Send notifications to @mentioned workspace members."""
     # Build lookup of display names / email prefixes → user
     memberships = WorkspaceMembership.objects.filter(
         workspace=workspace,
     ).select_related("user")
+    if visibility == PostComment.Visibility.INTERNAL:
+        # The notification contains the comment text, so its recipients must
+        # have the same visibility as the comment itself.
+        memberships = memberships.exclude(
+            workspace_role__in=(
+                WorkspaceMembership.WorkspaceRole.CLIENT,
+                WorkspaceMembership.WorkspaceRole.VIEWER,
+            )
+        )
 
     name_to_user = {}
     for m in memberships:
