@@ -1,0 +1,112 @@
+{% extends "layouts/workspace_settings.html" %}
+{% block title %}{{ workspace.name }} · Client profile · JR Content{% endblock %}
+{% block extra_head %}
+<style>
+    .client-profile { max-width: 880px; color: var(--text-primary); }
+    .client-profile h1 { font-size: 1.75rem; font-weight: 700; overflow-wrap: anywhere; }
+    .client-profile h2 { font-size: 1.125rem; font-weight: 650; }
+    .client-profile p { color: var(--text-secondary); line-height: 1.6; }
+    .profile-heading { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
+    .profile-avatar { width: 60px; height: 60px; flex-shrink: 0; display: grid; place-items: center; border-radius: 18px; background: #ffedd5; color: #9a3412; font-size: 24px; font-weight: 700; }
+    .profile-note { padding: 16px 20px; border-radius: 12px; background: #f5f5f4; margin-bottom: 28px; font-size: 14px; }
+    .channels-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+    .channel-card { border: 1px solid var(--border); border-radius: 16px; background: var(--surface-0); padding: 20px; margin-bottom: 14px; min-width: 0; }
+    .channel-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+    .channel-title { font-size: 18px; font-weight: 650; overflow-wrap: anywhere; }
+    .channel-type { color: var(--text-secondary); font-size: 13px; margin-bottom: 3px; }
+    .channel-status { border-radius: 999px; padding: 4px 11px; font-size: 13px; font-weight: 600; white-space: nowrap; background: #f5f5f4; color: #57534e; }
+    .channel-status.on { background: #ecfdf5; color: #065f46; }
+    .channel-link { display: inline-block; margin-top: 10px; font-size: 14px; color: #9a3412; text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
+    .channel-actions { margin-top: 18px; display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+    .profile-button { display: inline-flex; justify-content: center; align-items: center; min-height: 44px; padding: 9px 18px; border: 1px solid var(--border); background: var(--surface-0); border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; color: var(--text-primary); }
+    .profile-button.primary { background: #c2410c; color: white; border-color: #c2410c; }
+    .client-profile :is(button, a, summary, input, select):focus-visible { outline: 3px solid #c2410c; outline-offset: 3px; }
+    .channel-editor { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 16px; }
+    .client-profile summary { cursor: pointer; font-size: 14px; font-weight: 600; min-height: 44px; padding: 11px 0; }
+    .channel-editor[open] summary { margin-bottom: 12px; }
+    .profile-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 18px; }
+    .profile-field { min-width: 0; }
+    .profile-field label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 7px; }
+    .profile-field :is(input, select) { width: 100%; min-width: 0; min-height: 44px; padding: 10px 12px; border: 1px solid #a8a29e; border-radius: 8px; background: var(--surface-0); font-size: 16px; color: var(--text-primary); }
+    .profile-field .errorlist { color: #b91c1c; font-size: 14px; margin-top: 6px; }
+    .profile-help { font-size: 13px; margin-top: 6px; }
+    .add-channel { margin-top: 24px; border: 1px dashed #a8a29e; border-radius: 16px; padding: 8px 20px; }
+    .add-channel[open] { padding-bottom: 20px; }
+    .add-channel .profile-fields { margin-top: 16px; }
+    @media (max-width: 600px) {
+        .profile-fields { grid-template-columns: 1fr; }
+        .channel-card { padding: 16px; }
+        .profile-heading { gap: 12px; }
+        .client-profile h1 { font-size: 1.5rem; }
+    }
+</style>
+{% endblock %}
+{% block content %}
+<div class="client-profile">
+    <header class="profile-heading">
+        <div class="profile-avatar" aria-hidden="true">{{ workspace.name|first|upper }}</div>
+        <div style="min-width:0">
+            <p style="font-size:13px">Client profile</p>
+            <h1>{{ workspace.name }}</h1>
+        </div>
+    </header>
+    <p class="profile-note">Plan content here, then publish it yourself. Channels do not sign in to social networks or publish automatically.</p>
+    <section aria-labelledby="channels-title">
+        <div class="channels-heading">
+            <h2 id="channels-title">Channels</h2>
+            <p style="font-size:14px">{{ enabled_count }} of {{ channels|length }} on</p>
+        </div>
+        {% if not can_manage_channels %}<p style="font-size:14px;margin-bottom:16px">You can view these channels. Ask a workspace owner or manager to make changes.</p>{% endif %}
+        {% for channel in channels %}
+        <article class="channel-card" aria-labelledby="title-{{ channel.account.pk }}" data-channel="{{ channel.account.platform }}">
+            <div class="channel-top">
+                <div style="min-width:0">
+                    <div class="channel-type">{% if channel.account.platform == 'custom' %}Custom channel{% else %}{{ channel.account.get_platform_display }}{% endif %}</div>
+                    <h3 class="channel-title" id="title-{{ channel.account.pk }}">{{ channel.profile.display_name|default:channel.account.account_name }}</h3>
+                </div>
+                <span class="channel-status {% if channel.profile.is_enabled %}on{% endif %}">{% if channel.profile.is_enabled %}On{% else %}Off{% endif %}</span>
+            </div>
+            {% if channel.profile.profile_url %}
+            <a class="channel-link" href="{{ channel.profile.profile_url }}" target="_blank" rel="noopener noreferrer">Open profile <span aria-hidden="true">↗</span><span class="sr-only"> for {{ channel.profile.display_name|default:channel.account.account_name }} (opens in a new tab)</span></a>
+            {% else %}<p class="profile-help">No profile link added.</p>{% endif %}
+            {% if not channel.profile.is_enabled %}<p class="profile-help">Hidden from new post selections. Existing posts are kept.</p>{% endif %}
+            {% if can_manage_channels %}
+            <div class="channel-actions">
+                <form method="post" action="{% url 'jrc_channels:toggle' workspace_id=workspace.id account_id=channel.account.pk %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="enabled" value="{% if channel.profile.is_enabled %}false{% else %}true{% endif %}">
+                    <button class="profile-button" type="submit" aria-label="{% if channel.profile.is_enabled %}Turn off{% else %}Turn on{% endif %} {{ channel.profile.display_name|default:channel.account.account_name }}">{% if channel.profile.is_enabled %}Turn off{% else %}Turn on{% endif %}</button>
+                </form>
+                {% if channel.profile.is_enabled %}<p class="profile-help">Available when creating posts.</p>{% endif %}
+            </div>
+            <details class="channel-editor" {% if channel.is_editing %}open{% endif %}>
+                <summary>Edit channel<span class="sr-only"> {{ channel.profile.display_name|default:channel.account.account_name }}</span></summary>
+                <form method="post" action="{% url 'jrc_channels:edit' workspace_id=workspace.id account_id=channel.account.pk %}">
+                    {% csrf_token %}
+                    {% include "jrc_channels/fields.html" with form=channel.form %}
+                    <button class="profile-button primary" type="submit">Save channel</button>
+                </form>
+            </details>
+            {% endif %}
+        </article>
+        {% empty %}
+        <div class="channel-card">
+            <h3 class="channel-title">No channels yet</h3>
+            <p style="margin-top:8px">Add the places where {{ workspace.name }} shares content, such as Instagram or Forendors.</p>
+        </div>
+        {% endfor %}
+    </section>
+    {% if can_manage_channels %}
+    <details class="add-channel" {% if add_form.is_bound or not channels %}open{% endif %}>
+        <summary>Add a channel</summary>
+        <p style="font-size:14px">Choose a type and a name you will recognise. For Forendors or another service, choose Other.</p>
+        <form method="post" action="{% url 'jrc_channels:profile' workspace_id=workspace.id %}">
+            {% csrf_token %}
+            {% include "jrc_channels/fields.html" with form=add_form %}
+            <button class="profile-button primary" type="submit">Add channel</button>
+        </form>
+    </details>
+    <p class="profile-help" style="margin-top:16px">Turning a channel off keeps its posts. You can turn it back on at any time.</p>
+    {% endif %}
+</div>
+{% endblock %}

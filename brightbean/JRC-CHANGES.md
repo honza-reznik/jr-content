@@ -125,3 +125,19 @@ aby ji nadále ověřovaly původní testy; v MVP se vůbec nevykresluje.
 Vypínače lze změnit v našem nastavení bez odstranění nebo obnovení upstream kódu.
 Ověřovací skripty a snímky jsou v kořeni JR Content (`scripts/F2-B10/`,
 `ops/screenshoty/F2-B10/`), mimo upstream podsložku. Žádné skutečné sociální účty.
+
+## 2026-10-23 · F2-B08
+
+- `apps/jrc_channels/forms.py`, `views.py`, `urls.py`, `templates/jrc_channels/`: profil klienta
+  s ručním založením kanálu, názvem a odkazem, vratným zapnutím/vypnutím přes službu F2-B07.
+  Změny vyžadují členství v daném workspace a oprávnění `manage_social_accounts`; cizí kanál
+  nelze upravit přes podvržené ID. Odkazy se jen validují a ukládají, nestahují se ani neověřují DNS.
+- `apps/jrc_channels/management/commands/jrc_seed_demo.py`: opakovatelné demo Ella, Instagram,
+  Forendors s adresami `example.invalid`, bez hesla a bez skutečných účtů. Volba `--owner-email`
+  dá přístup existujícímu místnímu uživateli. Opakování zachová vlastní názvy, odkazy, stav i obsah.
+- `config/urls.py`: adresa `/workspaces/<id>/profile/` jen v režimu JR Content.
+- `templates/base.html`, `templates/layouts/workspace_settings.html`: dostupný odkaz
+  „Client profile“ v hlavní navigaci, nastavení a u kanálů; původní upstream režim zůstává zachovaný.
+- `apps/jrc_channels/tests/test_profile.py`, `test_seed_demo.py`: oprávnění, oddělení klientů,
+  validace odkazů, vratné vypnutí bez ztráty obsahu a opakované demo se zákazem sítě.
+  Vizuální a funkční scénář pro 1440 a 390 px je `scripts/F2-B08/check-profile.cjs` v kořeni projektu.

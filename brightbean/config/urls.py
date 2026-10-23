@@ -80,6 +80,10 @@ urlpatterns = [
 
 if getattr(settings, "JRC_UI_ENABLED", False):
     urlpatterns += [path("about/", include("apps.jrc_ui.urls"))]
+    # JR Content: upraveno 2026-10-23 (blok F2-B08), AGPL-3.0.
+    urlpatterns += [
+        path("workspaces/<uuid:workspace_id>/profile/", include("apps.jrc_channels.urls")),
+    ]
 
 # ---------------------------------------------------------------------------
 # Intelligence integration — mounted only when env vars are set.
