@@ -46,7 +46,7 @@ def _detail_url(workspace, post, tab="script"):
 
 def test_workspace_admin_can_view_content_tabs_and_combined_history(client, workspace, user, content_with_history):
     post = content_with_history
-    WorkspaceMembership.objects.create(user=user, workspace=workspace, workspace_role="manager")
+    WorkspaceMembership.objects.filter(user=user, workspace=workspace).update(workspace_role="manager")
     client.force_login(user)
 
     response = client.get(_detail_url(workspace, post, "history"))
@@ -91,6 +91,7 @@ def test_client_can_view_content_but_not_team_notes(client, workspace, content_w
 
 
 def test_nonmember_cannot_view_content(client, workspace, user, content_with_history):
+    WorkspaceMembership.objects.filter(user=user, workspace=workspace).delete()
     client.force_login(user)
 
     response = client.get(_detail_url(workspace, content_with_history))
