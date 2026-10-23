@@ -1,0 +1,12 @@
+{% extends "email/base.html" %}
+
+{% block content %}
+<h2>You've been added to a project</h2>
+<p><strong>{{ adder_name }}</strong> has added you to the project <strong>{{ project_name }}</strong>.</p>
+{% if role %}
+<p><strong>Your role:</strong> {{ role }}</p>
+{% endif %}
+<p>
+    <a href="{{ project_link }}" class="button">View Project</a>
+</p>
+{% endblock %}

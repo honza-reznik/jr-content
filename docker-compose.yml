@@ -26,7 +26,155 @@ x-bb: &bb
     jrc-bb-migrate:
       condition: service_completed_successfully
 
+x-ff: &ff
+  build:
+    context: .
+    dockerfile: docker/Dockerfile.ff-api
+  image: jrc-ff-api:local
+  restart: unless-stopped
+  init: true
+  user: "${JRC_UID:-1000}:${JRC_GID:-1000}"
+  working_dir: /workspace
+  environment: &ff-environment
+    DATABASE_URL: postgresql://${PGUSER:-jrc}:${PGPASSWORD:?Spusťte make env}@jrc-postgres:5432/freeframe
+    REDIS_URL: redis://jrc-redis:6379/0
+    JWT_SECRET: ${JRC_FF_JWT_SECRET:?Spusťte make env}
+    JRC_FF_SYNC_EMAIL: ${JRC_FF_SYNC_EMAIL:-jrc-sync@example.com}
+    JRC_FF_SYNC_PASSWORD: ${JRC_FF_SYNC_PASSWORD:?Spusťte make env}
+    S3_STORAGE: minio
+    S3_ENDPOINT: http://jrc-s3:3900
+    S3_PUBLIC_ENDPOINT: http://127.0.0.1:${JRC_S3_PORT:-13900}
+    S3_ACCESS_KEY: ${JRC_FF_S3_ACCESS_KEY:?Spusťte make env}
+    S3_SECRET_KEY: ${JRC_FF_S3_SECRET_KEY:?Spusťte make env}
+    S3_BUCKET: jrc-video
+    S3_REGION: garage
+    AWS_EC2_METADATA_DISABLED: "true"
+    FRONTEND_URL: http://127.0.0.1:${JRC_FF_WEB_PORT:-13022}/video
+    MAIL_PROVIDER: smtp
+    SMTP_HOST: 127.0.0.1
+    SMTP_PORT: 9
+    SMTP_USE_TLS: "false"
+    TRANSCODING_CONCURRENCY: 1
+    TRANSCODER_CPU_LIMIT: 4
+    STALE_UPLOAD_TIMEOUT_HOURS: 24
+    SOFT_DELETE_RETENTION_DAYS: 30
+    ORPHAN_SWEEP_GRACE_HOURS: 0
+  volumes:
+    - ./freeframe:/workspace
+    - ./scripts:/jrc-scripts:ro
+  networks:
+    - internal
+  depends_on:
+    jrc-ff-migrate:
+      condition: service_completed_successfully
+    jrc-redis:
+      condition: service_healthy
+    jrc-s3:
+      condition: service_healthy
+
 services:
+  # Jediný vstup z místních portů; pevné TCP cíle, žádný obecný proxy server.
+  jrc-ff-gate:
+    image: jrc-dev:local
+    restart: unless-stopped
+    init: true
+    user: "${JRC_UID:-1000}:${JRC_GID:-1000}"
+    command: ["node", "/gate.cjs"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - ./scripts/local-gate.cjs:/gate.cjs:ro
+    networks: [default, internal]
+    ports:
+      - "127.0.0.1:${JRC_FF_API_PORT:-18022}:18022"
+      - "127.0.0.1:${JRC_FF_WEB_PORT:-13022}:13022"
+      - "127.0.0.1:${JRC_BB_PORT:-18011}:18011"
+      - "127.0.0.1:${JRC_POSTGRES_PORT:-15432}:15432"
+      - "127.0.0.1:${JRC_S3_PORT:-13900}:13900"
+  jrc-ff-db:
+    image: postgres:18.6-bookworm
+    restart: "no"
+    environment:
+      PGHOST: jrc-postgres
+      PGUSER: ${PGUSER:-jrc}
+      PGDATABASE: ${PGDATABASE:-jrc}
+      PGPASSWORD: ${PGPASSWORD:?Spusťte make env}
+    command: ["sh", "/scripts/init-freeframe-db.sh"]
+    volumes:
+      - ./scripts/init-freeframe-db.sh:/scripts/init-freeframe-db.sh:ro
+    networks: [internal]
+    depends_on:
+      jrc-postgres:
+        condition: service_healthy
+  jrc-ff-migrate:
+    <<: *ff
+    restart: "no"
+    command: ["sh", "-c", "cd apps/api && alembic upgrade head && cd /workspace && PYTHONPATH=/workspace python /jrc-scripts/init-freeframe-account.py"]
+    depends_on:
+      jrc-ff-db:
+        condition: service_completed_successfully
+  jrc-ff-api:
+    <<: *ff
+    command: ["uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 3s
+      timeout: 6s
+      retries: 30
+  jrc-ff-worker:
+    <<: *ff
+    command: ["celery", "-A", "apps.api.tasks.celery_app", "worker", "-Q", "transcoding", "-c", "1", "--loglevel=info"]
+  jrc-ff-maintenance:
+    <<: *ff
+    command: ["celery", "-A", "apps.api.tasks.celery_app", "worker", "-Q", "maintenance", "-c", "1", "--loglevel=info"]
+  jrc-ff-beat:
+    <<: *ff
+    # Pevný název zabraňuje škálování na více instancí plánovače.
+    container_name: ${JRC_PROJECT:?JRC_PROJECT není nastavený, použij make (výchozí jrc) nebo JRC_PROJECT=jrc-<blok>}-ff-beat
+    command: ["celery", "-A", "apps.api.tasks.celery_app", "beat", "-s", "/tmp/celerybeat-schedule", "--loglevel=info"]
+  jrc-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    networks: [internal]
+    volumes:
+      - jrc-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  jrc-ff-web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ff-web
+    image: jrc-ff-web:local
+    restart: unless-stopped
+    init: true
+    user: "${JRC_UID:-1000}:${JRC_GID:-1000}"
+    working_dir: /app
+    environment:
+      NEXT_TELEMETRY_DISABLED: "1"
+      NEXT_PUBLIC_BASE_PATH: /video
+      NEXT_PUBLIC_API_URL: http://127.0.0.1:${JRC_FF_API_PORT:-18022}
+      API_INTERNAL_URL: http://jrc-ff-api:8000
+    command: ["pnpm", "exec", "next", "dev", "--hostname", "0.0.0.0"]
+    volumes:
+      - ./freeframe/apps/web:/app
+      - jrc-ff-web-modules:/app/node_modules
+      - jrc-ff-web-next:/app/.next
+      - ./scripts:/jrc-scripts:ro
+    networks: [internal]
+    depends_on:
+      jrc-ff-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/video/login').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 20s
+      retries: 30
   jrc-bb-db:
     image: postgres:18.6-bookworm
     restart: "no"
@@ -65,11 +213,7 @@ services:
   jrc-bb-web:
     <<: *bb
     command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
-    ports:
-      - "127.0.0.1:${JRC_BB_PORT:-18011}:8000"
-    networks:
-      - default
-      - internal
+    networks: [internal]
     healthcheck:
       test: ["CMD", "python", "-c", "import json, urllib.request; assert json.load(urllib.request.urlopen('http://127.0.0.1:8000/health/', timeout=5)) == {'status': 'ok'}"]
       interval: 3s
@@ -103,6 +247,7 @@ services:
       - .:/workspace
     ports:
       - "127.0.0.1:${JRC_APP_PORT:-13000}:3000"
+    networks: [default, internal]
     shm_size: 1gb
     depends_on:
       jrc-postgres:
@@ -110,9 +255,7 @@ services:
       jrc-s3:
         condition: service_healthy
   jrc-postgres:
-    networks:
-      - default
-      - internal
+    networks: [internal]
     image: postgres:18.6-bookworm
     container_name: ${JRC_PROJECT:?JRC_PROJECT není nastavený, použij make (výchozí jrc) nebo JRC_PROJECT=jrc-<blok>}-postgres
     restart: unless-stopped
@@ -120,8 +263,6 @@ services:
       POSTGRES_USER: ${PGUSER:-jrc}
       POSTGRES_DB: ${PGDATABASE:-jrc}
       POSTGRES_PASSWORD: ${PGPASSWORD:?Spusťte make env}
-    ports:
-      - "127.0.0.1:${JRC_POSTGRES_PORT:-15432}:5432"
     volumes:
       - jrc-postgres-data:/var/lib/postgresql
     healthcheck:
@@ -131,6 +272,7 @@ services:
       timeout: 5s
       retries: 30
   jrc-s3:
+    networks: [internal]
     build:
       context: docker
       dockerfile: Dockerfile.s3
@@ -142,12 +284,12 @@ services:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?Spusťte make env}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?Spusťte make env}
       S3_BUCKET: ${S3_BUCKET:-jrc-local}
-    ports:
-      - "127.0.0.1:${JRC_S3_PORT:-13900}:3900"
+      JRC_FF_S3_ACCESS_KEY: ${JRC_FF_S3_ACCESS_KEY:?Spusťte make env}
+      JRC_FF_S3_SECRET_KEY: ${JRC_FF_S3_SECRET_KEY:?Spusťte make env}
     volumes:
       - jrc-s3-data:/var/lib/garage
     healthcheck:
-      test: ["CMD-SHELL", "test -f /var/lib/garage/meta/.jrc-initialized && garage status >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "test -f /var/lib/garage/meta/.jrc-initialized && test -f /var/lib/garage/meta/.jrc-video-initialized && garage status >/dev/null 2>&1"]
       interval: 2s
       timeout: 5s
       retries: 40
@@ -163,3 +305,9 @@ volumes:
     name: ${JRC_PROJECT:?JRC_PROJECT není nastavený, použij make (výchozí jrc) nebo JRC_PROJECT=jrc-<blok>}-s3-data
   jrc-bb-media:
     name: ${JRC_PROJECT:?JRC_PROJECT není nastavený, použij make (výchozí jrc) nebo JRC_PROJECT=jrc-<blok>}-bb-media
+  jrc-redis-data:
+    name: ${JRC_PROJECT:?JRC_PROJECT není nastavený, použij make (výchozí jrc) nebo JRC_PROJECT=jrc-<blok>}-redis-data
+  jrc-ff-web-modules:
+    name: ${JRC_PROJECT:?JRC_PROJECT není nastavený, použij make (výchozí jrc) nebo JRC_PROJECT=jrc-<blok>}-ff-web-modules
+  jrc-ff-web-next:
+    name: ${JRC_PROJECT:?JRC_PROJECT není nastavený, použij make (výchozí jrc) nebo JRC_PROJECT=jrc-<blok>}-ff-web-next

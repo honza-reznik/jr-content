@@ -1,0 +1,10 @@
+{% extends "email/base.html" %}
+
+{% block content %}
+<h2>New comment on {{ asset_name }}</h2>
+<p><strong>{{ commenter_name }}</strong> commented:</p>
+<div class="quote">{{ comment_preview }}</div>
+<p>
+    <a href="{{ asset_link }}" class="button">View Comment</a>
+</p>
+{% endblock %}
