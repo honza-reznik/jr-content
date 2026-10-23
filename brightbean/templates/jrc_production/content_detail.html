@@ -44,7 +44,7 @@
                     <span class="absolute -left-[5px] top-1 h-2.5 w-2.5 rounded-full {% if item.kind == 'approval' %}bg-blue-500{% else %}bg-orange-500{% endif %}"></span>
                     <div class="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between"><p class="text-sm font-medium text-stone-800">{{ item.label }}</p><time class="text-xs text-stone-400">{{ item.created_at|date:"M j, Y · g:i A" }}</time></div>
                     <p class="mt-1 text-xs text-stone-500">{% if item.actor %}{{ item.actor.display_name|default:item.actor.email }}{% else %}System{% endif %} · {% if item.kind == "approval" %}Approval{% else %}Production stage{% endif %}</p>
-                    {% if item.note %}{% if can_view_internal_notes or item.kind == "approval" %}<p class="mt-2 whitespace-pre-wrap rounded-lg bg-stone-50 p-3 text-sm text-stone-600">{{ item.note }}</p>{% endif %}{% endif %}
+                    {% if item.note and item.can_view_note %}<p class="mt-2 whitespace-pre-wrap rounded-lg bg-stone-50 p-3 text-sm text-stone-600">{{ item.note }}</p>{% endif %}
                 </li>
                 {% empty %}<li class="rounded-xl border border-dashed border-stone-300 px-4 py-8 text-center text-sm text-stone-500">No history yet.</li>{% endfor %}
             </ol>

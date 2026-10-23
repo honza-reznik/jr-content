@@ -37,9 +37,21 @@ def content_detail(request, workspace_id, post_id):
             "label": f"Moved from {change.get_from_stage_display()} to {change.get_to_stage_display()}",
             "actor": change.user,
             "note": change.note,
+            "can_view_note": can_view_internal_notes,
         }
         for change in post.jrc_stage_changes.select_related("user").all()
     ]
+    approval_actions = list(ApprovalAction.objects.filter(post=post).select_related("user"))
+    external_actor_ids = set(
+        WorkspaceMembership.objects.filter(
+            workspace=workspace,
+            user_id__in=[action.user_id for action in approval_actions if action.user_id],
+            workspace_role__in=(
+                WorkspaceMembership.WorkspaceRole.CLIENT,
+                WorkspaceMembership.WorkspaceRole.VIEWER,
+            ),
+        ).values_list("user_id", flat=True)
+    )
     history.extend(
         {
             "kind": "approval",
@@ -47,8 +59,9 @@ def content_detail(request, workspace_id, post_id):
             "label": action.get_action_display(),
             "actor": action.user,
             "note": action.comment,
+            "can_view_note": can_view_internal_notes or action.user_id in external_actor_ids,
         }
-        for action in ApprovalAction.objects.filter(post=post).select_related("user")
+        for action in approval_actions
     )
     history.sort(key=lambda item: item["created_at"], reverse=True)
 

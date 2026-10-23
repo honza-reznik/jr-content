@@ -157,3 +157,6 @@ a služba označení ruční publikace patří navazujícím blokům F3-B02 a F8
 - `config/urls.py` registruje lokální cestu detailu pod workspace.
 - `apps/jrc_production/tests/test_content_detail.py` ověřuje admina, klienta, zákaz přístupu
   nečlenovi, citlivost interních poznámek a obě části historie.
+- Oprava review: komentáře `ApprovalAction` zobrazí klientovi jen tehdy, když je vytvořil klientský
+  nebo čtenářský člen stejného workspace; poznámky interních týmových kroků zůstávají skryté.
+  HTTP testy kontrolují obě role a interní `PostComment` se na detailu nevypisuje.
