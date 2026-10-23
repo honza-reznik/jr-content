@@ -131,7 +131,11 @@ def retry_youtube_revocations():
 @transaction.atomic
 def purge_connection(account, *, check_generation=False):
     """Delete all copied API data; keep authored Posts and original uploads."""
-    current_rows = SocialAccount.objects.select_for_update().filter(pk=account.pk, platform="youtube")
+    # Local content is authored data, never an OAuth/API copy to purge. Keep
+    # this guard here so every caller (including stale queued jobs) is safe.
+    current_rows = SocialAccount.objects.select_for_update(of=("self",)).filter(
+        pk=account.pk, platform="youtube", jrc_channel__isnull=True
+    )
     if check_generation:
         current_rows = current_rows.filter(youtube_data_generation=account.youtube_data_generation)
     current = current_rows.first()
@@ -145,7 +149,9 @@ def purge_connection(account, *, check_generation=False):
 
 
 def purge_organization(organization):
-    for account in SocialAccount.objects.filter(platform="youtube", workspace__organization=organization):
+    for account in SocialAccount.objects.filter(
+        platform="youtube", workspace__organization=organization, jrc_channel__isnull=True
+    ):
         purge_connection(account)
 
 
@@ -167,6 +173,9 @@ def _grant_and_profile(account, provider):
 
 
 def _delete_expired(account, now):
+    if SocialAccount.objects.filter(pk=account.pk, jrc_channel__isnull=False).exists():
+        return
+
     from apps.analytics.models import AccountInsightsSnapshot, PostInsightsSnapshot, YouTubePeriodReport
     from apps.composer.models import PlatformPost
     from apps.inbox.models import InboxMessage
@@ -247,6 +256,11 @@ def check_connection(account, *, provider=None, now=None, enforce=True):
     from apps.analytics.tasks import _resolve_provider, _write_post_metrics_snapshot
     from apps.composer.models import PlatformPost
     from apps.inbox.models import InboxMessage
+
+    # Also protect calls with a provider supplied explicitly, independently of
+    # the global switch and before any profile refresh or content deletion.
+    if SocialAccount.objects.filter(pk=account.pk, jrc_channel__isnull=False).exists():
+        return
 
     now = now or timezone.now()
     try:
@@ -404,5 +418,5 @@ def enforce_youtube_retention():
     if not settings.YOUTUBE_COMPLIANCE_ENFORCEMENT:
         logger.info("YouTube enforcement awaiting staging dry-run review")
         return
-    for account in SocialAccount.objects.filter(platform="youtube").iterator():
+    for account in SocialAccount.objects.filter(platform="youtube", jrc_channel__isnull=True).iterator():
         check_connection(account)

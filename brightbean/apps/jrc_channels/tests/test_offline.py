@@ -14,13 +14,19 @@ from apps.composer.models import PlatformPost, Post
 from apps.inbox.models import InboxMessage, InboxReply
 from apps.inbox.services import create_reply_draft, send_reply_now
 from apps.inbox.tasks import InboxSyncEngine
-from apps.jrc_channels.services import create_manual_channel
-from apps.members.models import WorkspaceMembership
+from apps.jrc_channels.services import create_manual_channel, set_channel_enabled
+from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.publisher.engine import PublishEngine
 from apps.social_accounts.models import AnalyticsPlatformConfig
 from apps.social_accounts.tasks import check_social_account_health, schedule_all_health_checks
 from apps.social_accounts.webhooks import retry_failed_subscription
-from apps.social_accounts.youtube_compliance import check_connection
+from apps.social_accounts.youtube_compliance import (
+    _delete_expired,
+    check_connection,
+    enforce_youtube_retention,
+    purge_connection,
+    purge_organization,
+)
 from providers import PROVIDER_REGISTRY, ProvidersDisabledError, get_provider
 
 
@@ -38,10 +44,18 @@ def no_network(monkeypatch, db):
 
     monkeypatch.setattr(socket.socket, "connect", forbidden)
     monkeypatch.setattr(socket.socket, "connect_ex", forbidden)
+    monkeypatch.setattr(socket, "getaddrinfo", forbidden)
     monkeypatch.setattr(socket, "create_connection", forbidden)
     monkeypatch.setattr(httpx.Client, "send", forbidden)
     monkeypatch.setattr(httpx.AsyncClient, "send", forbidden)
     monkeypatch.setattr(requests.Session, "send", forbidden)
+
+
+@pytest.mark.parametrize("entrypoint", [socket.getaddrinfo, socket.create_connection])
+def test_network_guard_blocks_dns_and_connection_helpers(entrypoint, no_network):
+    # Look up the patched function by name, rather than the captured original.
+    with pytest.raises(pytest.fail.Exception, match="Attempted an outgoing connection"):
+        getattr(socket, entrypoint.__name__)("example.invalid", 443)
 
 
 @pytest.mark.parametrize("platform", [*PROVIDER_REGISTRY, "custom", "unknown"])
@@ -58,7 +72,7 @@ def test_switch_blocks_before_provider_construction(platform, no_network):
 def test_all_background_paths_and_composer_are_offline(
     workspace, org_owner, user, client, no_network, django_capture_on_commit_callbacks
 ):
-    platforms = ["instagram", "facebook", "tiktok", "pinterest", "youtube", "custom"]
+    platforms = ["instagram", "facebook", "linkedin_personal", "linkedin_company", "tiktok", "youtube", "custom"]
     accounts = {p: create_manual_channel(workspace, p, "Ella") for p in platforms}
     assert not Task.objects.filter(task_name="apps.analytics.tasks.backfill_account_analytics").exists()
     post = Post.objects.create(workspace=workspace, author=user, scheduled_at=timezone.now() - timedelta(minutes=1))
@@ -112,9 +126,19 @@ def test_all_background_paths_and_composer_are_offline(
 
     WorkspaceMembership.objects.create(user=user, workspace=workspace, workspace_role="owner")
     client.force_login(user)
+    # Pinterest has no manual channel. Keep exercising its original endpoint
+    # using a legacy OAuth account, with the same provider/network guards.
+    from apps.social_accounts.models import SocialAccount
+
+    pinterest = SocialAccount(
+        workspace=workspace, platform="pinterest", account_name="Legacy", account_platform_id="fake-pinterest"
+    )
+    pinterest._skip_analytics_backfill = True
+    pinterest.save()
     for platform, endpoint in [("pinterest", "pinterest_boards"), ("tiktok", "tiktok_creator_info")]:
+        account = pinterest if platform == "pinterest" else accounts[platform]
         response = client.get(
-            reverse(f"composer:{endpoint}", kwargs={"workspace_id": workspace.pk, "account_id": accounts[platform].pk})
+            reverse(f"composer:{endpoint}", kwargs={"workspace_id": workspace.pk, "account_id": account.pk})
         )
         assert response.status_code == 200
         assert response.json()["available"] is False
@@ -168,3 +192,86 @@ def test_old_local_youtube_channel_is_not_subject_to_oauth_retention(workspace, 
     account.refresh_from_db()
     assert account.connection_status == "connected"
     assert PlatformPost.objects.filter(pk=pp.pk).exists()
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+@pytest.mark.parametrize("providers_enabled", [True, False])
+@pytest.mark.parametrize("cleanup", ["organization", "connection", "generation", "expired", "verification", "daily"])
+def test_all_youtube_cleanup_paths_preserve_manual_content(
+    workspace, user, no_network, settings, enabled, providers_enabled, cleanup
+):
+    account = create_manual_channel(workspace, "youtube", "Ella")
+    set_channel_enabled(account, enabled=enabled)
+    now = timezone.now()
+    account.youtube_verification_started_at = now - timedelta(days=400)
+    account.youtube_authorized_by = user
+    account.save(update_fields=["youtube_verification_started_at", "youtube_authorized_by"])
+    post = Post.objects.create(workspace=workspace, author=user, caption="Authored content")
+    pp = PlatformPost.objects.create(
+        post=post,
+        social_account=account,
+        status="published",
+        platform_post_id="manual-video",
+        platform_extra={"snippet": {"title": "Local authored data"}},
+    )
+    settings.JRC_SOCIAL_PROVIDERS_ENABLED = providers_enabled
+    settings.YOUTUBE_COMPLIANCE_ENFORCEMENT = True
+    # An explicitly supplied provider must not be consulted for a local channel.
+    from unittest.mock import Mock
+
+    provider = Mock()
+    provider.get_profile.side_effect = AssertionError("Local channel must never be verified")
+    if cleanup == "organization":
+        purge_organization(workspace.organization)
+    elif cleanup in {"connection", "generation"}:
+        purge_connection(account, check_generation=cleanup == "generation")
+    elif cleanup == "expired":
+        _delete_expired(account, now)
+    elif cleanup == "verification":
+        check_connection(account, provider=provider, now=now)
+    else:
+        enforce_youtube_retention.now()
+    account.refresh_from_db()
+    pp.refresh_from_db()
+    post.refresh_from_db()
+    assert account.account_name == "Ella"
+    assert account.youtube_data_generation == 0
+    assert account.jrc_channel.is_enabled is enabled
+    assert account.connection_status == ("connected" if enabled else "disconnected")
+    assert post.caption == "Authored content"
+    assert pp.platform_extra == {"snippet": {"title": "Local authored data"}}
+    assert not provider.mock_calls
+
+
+def test_organization_deletion_request_preserves_local_youtube(workspace, org_owner, user, client, no_network):
+    from apps.organizations.tasks import execute_scheduled_org_deletion
+
+    # User creation provisions another org automatically. Global settings use
+    # the first org membership, so give this request one unambiguous target.
+    OrgMembership.objects.filter(user=user).exclude(organization=workspace.organization).delete()
+    WorkspaceMembership.objects.create(user=user, workspace=workspace, workspace_role="owner")
+    user.last_workspace_id = workspace.pk
+    user.save(update_fields=["last_workspace_id"])
+    account = create_manual_channel(workspace, "youtube", "Ella")
+    post = Post.objects.create(workspace=workspace, author=user, caption="Keep during grace period")
+    pp = PlatformPost.objects.create(post=post, social_account=account, status="scheduled")
+    client.force_login(user)
+    response = client.post(reverse("organizations:settings"), {"action": "delete_organization"})
+    assert response.status_code == 302
+    org = workspace.organization
+    org.refresh_from_db()
+    assert org.is_deletion_pending
+    assert Task.objects.filter(task_name="apps.organizations.tasks.execute_scheduled_org_deletion").exists()
+    # Execute the queued body during the grace period, then cancel the request.
+    execute_scheduled_org_deletion.now(str(org.pk))
+    response = client.post(reverse("organizations:settings"), {"action": "cancel_deletion"})
+    assert response.status_code == 302
+    org.refresh_from_db()
+    assert not org.is_deletion_pending
+    execute_scheduled_org_deletion.now(str(org.pk))
+    account.refresh_from_db()
+    pp.refresh_from_db()
+    post.refresh_from_db()
+    assert account.jrc_channel.is_enabled
+    assert pp.status == "scheduled"
+    assert post.caption == "Keep during grace period"

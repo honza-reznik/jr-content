@@ -53,28 +53,58 @@ def inspect_source(source, filename):
         if isinstance(node, ast.Attribute):
             return f"{qualified(node.value)}.{node.attr}"
         if isinstance(node, ast.Call):
-            return qualified(node.func)
+            target = qualified(node.func)
+            if target in {"getattr", "builtins.getattr"} and len(node.args) >= 2:
+                attr = node.args[1]
+                if isinstance(attr, ast.Constant) and isinstance(attr.value, str):
+                    return f"{qualified(node.args[0])}.{attr.value}"
+            if target in {"importlib.import_module", "__import__", "builtins.__import__"} and node.args:
+                module = node.args[0]
+                if isinstance(module, ast.Constant) and isinstance(module.value, str):
+                    if (
+                        target != "importlib.import_module"
+                        and len(node.args) < 4
+                        and not any(k.arg == "fromlist" for k in node.keywords)
+                    ):
+                        return module.value.split(".")[0]
+                    return module.value
+            return target
         return ast.unparse(node)
 
     constructors = {"httpx.Client", "httpx.AsyncClient", "requests.Session", "requests.sessions.Session"}
 
     def binding(value):
         name = qualified(value)
-        if isinstance(value, ast.Call):
+        if isinstance(value, ast.Call) and qualified(value.func) not in {
+            "getattr",
+            "builtins.getattr",
+            "importlib.import_module",
+            "__import__",
+            "builtins.__import__",
+        }:
             return name if name in constructors else None
-        return name if name.startswith(("httpx", "requests", "providers")) else None
+        return (
+            name
+            if name.startswith(("httpx", "requests", "providers", "importlib", "builtins"))
+            or name in {"getattr", "__import__"}
+            else None
+        )
 
     # Follow import aliases and Client/Session bindings, not HTTP responses.
-    for _ in range(3):
+    for _ in range(len(list(ast.walk(tree)))):
+        previous = aliases.copy()
         for node in ast.walk(tree):
-            if isinstance(node, ast.Assign):
-                for target in node.targets:
+            if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for target in targets:
                     if isinstance(target, ast.Name) and (name := binding(node.value)):
                         aliases[target.id] = name
             elif isinstance(node, (ast.With, ast.AsyncWith)):
                 for item in node.items:
                     if isinstance(item.optional_vars, ast.Name) and (name := binding(item.context_expr)):
                         aliases[item.optional_vars.id] = name
+        if aliases == previous:
+            break
 
     def scope(node):
         names = []
@@ -88,7 +118,7 @@ def inspect_source(source, filename):
     violations = []
     metadata_reads = 0
     for node in ast.walk(tree):
-        if isinstance(node, (ast.Name, ast.Attribute)) and qualified(node).endswith("PROVIDER_REGISTRY"):
+        if isinstance(node, (ast.Name, ast.Attribute, ast.Call)) and qualified(node).endswith("PROVIDER_REGISTRY"):
             parent = parents.get(node)
             # The single exception only iterates classes to read auth_type.
             if not (
@@ -159,6 +189,22 @@ def test_network_entrypoint_inventory():
         "from httpx import Client as C\nc = C()\nc.get('https://example.invalid')",
         "from requests import get as fetch\nfetch('https://example.invalid')",
         "import requests as r\ns = r.Session()\ns.post('https://example.invalid')",
+        "import httpx\nc: httpx.Client = httpx.Client()\nc.get('https://example.invalid')",
+        "import requests\ns: object = requests.Session()\ns.get('https://example.invalid')",
+        "from providers.instagram import InstagramProvider\ncls: type = InstagramProvider\ncls()",
+        "import providers.instagram as ig\ncls = getattr(ig, 'InstagramProvider')\ncls()",
+        "import httpx\nfetch = getattr(httpx, 'get')\nfetch('https://example.invalid')",
+        "import requests\ngetattr(requests, 'get')('https://example.invalid')",
+        "import importlib\nm = importlib.import_module('httpx')\nm.get('https://example.invalid')",
+        "from importlib import import_module as load\nm: object = load('requests')\nm.get('https://example.invalid')",
+        "import importlib\nm = importlib.import_module('providers.instagram')\ncls = m.InstagramProvider\ncls()",
+        "m = __import__('httpx')\nm.get('https://example.invalid')",
+        "m = __import__('providers.instagram', fromlist=['InstagramProvider'])\ncls = m.InstagramProvider\ncls()",
+        "m = __import__('providers.instagram')\nm.instagram.InstagramProvider()",
+        "import builtins as b\nload = b.__import__\nm = load('requests')\nm.get('https://example.invalid')",
+        "from builtins import getattr as attr\nimport httpx\nf: object = attr(httpx, 'get')\nf('https://example.invalid')",
+        "import providers\nr = getattr(providers, 'PROVIDER_REGISTRY')\nr['instagram']()",
+        "from providers.instagram import InstagramProvider\na = InstagramProvider\nb = a\nc = b\nd = c\ne = d\ne()",
     ],
 )
 def test_inventory_detects_new_bypasses(source):
@@ -172,3 +218,16 @@ def test_inventory_allows_guarded_factory():
     )
     assert not calls
     assert not violations
+
+
+@pytest.mark.parametrize(
+    "source,method",
+    [
+        ("import httpx\nc: object = httpx.Client()\nc.get('https://example.invalid')", "httpx.Client.get"),
+        ("import requests\ns: object = requests.Session()\ns.post('https://example.invalid')", "requests.Session.post"),
+    ],
+)
+def test_annotated_clients_track_requests_as_well_as_construction(source, method):
+    calls, violations, _ = inspect_source(source, "new_module.py")
+    assert not violations
+    assert calls["new_module.py", "", method] == 1

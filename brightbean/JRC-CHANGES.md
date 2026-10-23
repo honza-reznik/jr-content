@@ -44,6 +44,10 @@ Compose, založení databáze a příkazy vývoje jsou v kořeni JR Content, mim
   mazání starých OAuth dat. Regresní test prokázal, že bez této výjimky by původní kontrola
   po 29 dnech smazala ruční YouTube kanál i jeho obsah; zákaz poskytovatele se nesmí vykládat
   jako neplatný souhlas skutečného účtu.
+  Oprava po review: `purge_connection`, `purge_organization`, denní úloha, `check_connection`
+  i přímý úklid starých dat vynechávají účty s místním profilem. Ochrana nezávisí na vypínači
+  poskytovatelů a platí také pro dříve naplánované úlohy a explicitně předaného poskytovatele.
+  Naplánování zrušení organizace tak během ochranné lhůty zachová ruční YouTube i jeho příspěvky.
 - `conftest.py`: původní testy poskytovatelů a integrací je mají dočasně zapnuté, aby mohly dál
   ověřovat původní funkce s náhradami síťových odpovědí. Nastavení běžící aplikace se nemění.
   `apps/jrc_channels/tests/conftest.py` ponechává u našich testů vypínač vypnutý.
@@ -56,3 +60,8 @@ Compose, založení databáze a příkazy vývoje jsou v kořeni JR Content, mim
   (strom struktury zdrojového kódu) s přesným seznamem dosavadních HTTP volání a jedinou výjimkou
   pro čtení `auth_type` v `social_accounts/views.py`; dynamické ověření úloh, signálu statistik,
   publikace, obou endpointů composeru a inboxu se zákazem síťových spojení.
+  Oprava po review: statický audit sleduje i anotovaná přiřazení, řetězce aliasů,
+  `getattr`, `importlib.import_module` a `__import__`; dynamická ochrana blokuje také
+  `socket.getaddrinfo` a `socket.create_connection`. Pinterest endpoint se ověřuje
+  na původním typu účtu. Služba ručních kanálů nově přijímá výhradně IG, FB, oba druhy
+  LinkedIn, TikTok, YouTube a `custom`; ostatní sítě odmítne ještě před uložením účtu.

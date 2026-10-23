@@ -3,17 +3,20 @@ from uuid import uuid4
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
-from apps.credentials.models import PlatformCredential
 from apps.social_accounts.models import SocialAccount
 
 from .models import ChannelProfile
+
+MANUAL_PLATFORMS = frozenset(
+    {"instagram", "facebook", "linkedin_personal", "linkedin_company", "tiktok", "youtube", "custom"}
+)
 
 
 @transaction.atomic
 def create_manual_channel(workspace, platform, name, handle="", *, display_name="", profile_url=""):
     """Create a local channel without OAuth, credentials or analytics backfill."""
-    if platform not in PlatformCredential.Platform.values:
-        raise ValidationError({"platform": "Unknown platform"})
+    if platform not in MANUAL_PLATFORMS:
+        raise ValidationError({"platform": "This platform is not supported for manual channels"})
     account = SocialAccount(
         workspace=workspace,
         platform=platform,

@@ -71,6 +71,20 @@ def test_invalid_channel_rolls_back_entire_creation(workspace, kwargs):
     assert not ChannelProfile.objects.exists()
 
 
+@pytest.mark.parametrize(
+    "platform", ["mastodon", "bluesky", "pinterest", "threads", "google_business", "devto", "instagram_login"]
+)
+def test_unsupported_manual_platform_is_rejected_before_save(workspace, platform):
+    with (
+        patch.object(SocialAccount, "save", side_effect=AssertionError("Unsupported account must never be saved")),
+        pytest.raises(ValidationError) as error,
+    ):
+        create_manual_channel(workspace, platform, "Ella")
+    assert "platform" in error.value.message_dict
+    assert not SocialAccount.objects.exists()
+    assert not ChannelProfile.objects.exists()
+
+
 @pytest.mark.parametrize("platform", ["instagram", "custom"])
 @pytest.mark.parametrize("partial", [True, False])
 def test_upstream_save_cannot_change_status_or_tokens(workspace, platform, partial):
