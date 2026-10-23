@@ -5,20 +5,41 @@
 }
 
 :8080 {
+	# Bezpečnostní hlavičky pro všechny odpovědi; defer přepíše hodnotu aplikace.
+	header {
+		defer
+		X-Content-Type-Options nosniff
+		Referrer-Policy same-origin
+	}
 	# API předponu odstraníme, Next.js naopak potřebuje celý basePath.
 	redir /video-api /video-api/ 308
 	handle_path /video-api/* {
-		# API omezuje počet požadavků podle X-Real-IP; hodnotu od klienta přepíšeme.
+		# Správa FreeFrame (/admin) je jen vnitřní, přes společný vstup ne.
+		@admin path /admin /admin/*
+		respond @admin 403
+		# API ověřuje Bearer token; cookies Brightbean ani webu mu nepředáváme.
+		# Omezení počtu požadavků počítá podle X-Real-IP; hodnotu od klienta přepíšeme.
 		reverse_proxy jrc-ff-api:8000 {
+			header_up -Cookie
 			header_up X-Real-IP {remote_host}
 		}
 	}
 	@video path /video /video/*
 	handle @video {
+		# Přehrávač se vkládá do Brightbean na stejné adrese, jinam ne.
+		header {
+			defer
+			X-Frame-Options SAMEORIGIN
+			Content-Security-Policy "frame-ancestors 'self'"
+		}
 		reverse_proxy jrc-ff-web:3000
 	}
 	# Host včetně portu zachová kontrolu CSRF i odkazy společného vstupu.
 	handle {
+		header {
+			defer
+			X-Frame-Options DENY
+		}
 		reverse_proxy jrc-bb-web:8000
 	}
 }

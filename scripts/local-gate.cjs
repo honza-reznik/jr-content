@@ -1,10 +1,9 @@
-// Pouze porty úložiště a databáze; FreeFrame používá HTTP proxy.
-// Cíle jsou pevné, provoz včetně WebSocketů a S3 podpisů
+// Pouze port úložiště S3 pro podepsané adresy z prohlížeče; FreeFrame i Brightbean
+// používají HTTP proxy, PostgreSQL zůstává jen ve vnitřní síti. Cíl je pevný, provoz včetně WebSocketů a S3 podpisů
 // se přenáší beze změny; klient nemůže zadat jiný cíl ani použít HTTP CONNECT.
 const net = require('node:net');
 
 for (const [port, host, targetPort] of [
-  [15432, 'jrc-postgres', 5432],
   [13900, 'jrc-s3', 3900],
 ]) {
   net.createServer(client => {

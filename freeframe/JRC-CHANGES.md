@@ -47,6 +47,13 @@ Provozní postup je v `docs-arch/F2-B02/freeframe-provoz.md` (doplněk pro PM do
   předponu přes `--root-path`, takže přesměrování a OpenAPI zůstanou pod ní.
   Caddy jako důvěryhodná proxy přepisuje `X-Real-IP` adresou klienta; API podle
   ní omezuje počet požadavků a podvržená hlavička limit neobejde.
+- Zabezpečení společného vstupu (review): `DISABLE_DOCS=true` vypíná veřejné
+  `/docs`, `/redoc` a `/openapi.json`; `/video-api/admin/*` vrací 403 (správa
+  instance jen vnitřně). API dostává požadavky bez hlavičky `Cookie` (ověřuje
+  Bearer token). Všechny odpovědi mají `X-Content-Type-Options: nosniff`
+  a `Referrer-Policy: same-origin`; `/video` smí být vložen jen do stejné adresy
+  (`X-Frame-Options: SAMEORIGIN`, `frame-ancestors 'self'`), Brightbean nikam
+  (`DENY`). Záložka Users v nastavení správce FreeFrame proto v prohlížeči nefunguje.
 - `NEXT_PUBLIC_API_URL`, `FRONTEND_URL` a `CORS_ALLOW_ORIGINS` používají
   společný místní port. `NEXT_PUBLIC_BASE_PATH=/video` zůstává zapnuté.
   Serverový `apps/web/middleware.ts` používá přednostně `API_INTERNAL_URL`,
@@ -61,8 +68,8 @@ Provozní postup je v `docs-arch/F2-B02/freeframe-provoz.md` (doplněk pro PM do
   cestu bez `root_path`. Výjimky pro health, setup, upload a HLS tím platí
   i pod `/video-api`; dvanáct regresních případů ověřuje obě nasazení
   a zachování odmítnutí chráněných cest.
-- Dočasné místní porty webu/API odstraněny. `jrc-ff-gate` zůstává pouze
-  pro PostgreSQL a S3: podepsané adresy S3 se předávají přímo a beze změny.
+- Dočasné místní porty webu/API i port PostgreSQL odstraněny. `jrc-ff-gate`
+  zůstává pouze pro S3: podepsané adresy S3 se předávají přímo a beze změny.
   Web, API a workery dál mají jen vnitřní síť bez internetu.
 - Ověřovací skripty brány, nahrávání a časového štítku používají společný vstup.
   `scripts/test-video-proxy.cjs` ověřuje skutečné heslové přihlášení,

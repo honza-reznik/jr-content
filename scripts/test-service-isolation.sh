@@ -36,8 +36,8 @@ for service in jrc-ff-gate jrc-proxy; do
   test -z "$(printf '%s\n' "$bindings" | sed '/^127\.0\.0\.1$/d')"
   if [ "$service" = jrc-ff-gate ]; then
     ports=$(docker inspect --format '{{range $port, $_ := .HostConfig.PortBindings}}{{$port}} {{end}}' "$gate")
-    test "$ports" = '13900/tcp 15432/tcp ' || {
-      echo 'CHYBA: brána smí vystavit jen S3 a PostgreSQL'; exit 1;
+    test "$ports" = '13900/tcp ' || {
+      echo 'CHYBA: brána smí vystavit jen S3'; exit 1;
     }
   fi
   echo "OK $service: všechny publikované porty pouze 127.0.0.1"

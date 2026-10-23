@@ -67,7 +67,9 @@ async function main() {
   const redirected = await fetch(`${api}/health/`, { redirect: 'manual' });
   assert.equal(redirected.status, 307);
   assert.equal(redirected.headers.get('location'), `${api}/health`);
-  assert((await (await fetch(`${api}/docs`)).text()).includes('/video-api/openapi.json'));
+  for (const route of ['/docs', '/redoc', '/openapi.json']) {
+    assert.equal((await fetch(api + route)).status, 404, route);
+  }
   assert.equal((await fetch(`${api}/projects`)).status, 401);
   assert.equal((await fetch(`${api}/projects`, { headers: { Authorization: 'Bearer invalid' } })).status, 401);
   assert.equal((await fetch(`${api}/auth/login`, { method: 'POST',
@@ -95,7 +97,10 @@ async function main() {
   assert.equal(shareStatuses.at(-1), 429, `X-Real-IP: ${shareStatuses.join(' ')}`);
   const { project, upload } = await fixture();
   assert.equal((await fetch(`${api}/assets/${upload.asset_id}/stream`)).status, 401);
-  console.log('OK proxy API: předpony, 401/404, CORS, X-Real-IP, přihlášení, místní upload a převod ready.');
+  // Ani platný token správce instance nedosáhne přes společný vstup na /admin.
+  assert.equal((await fetch(`${api}/admin/users`, {
+    headers: { Authorization: `Bearer ${token}` } })).status, 403);
+  console.log('OK proxy API: předpony, 401/404, docs 404, /admin 403, CORS, X-Real-IP, přihlášení, místní upload a převod ready.');
   const browser = await chromium.launch({ headless: true });
   try {
     for (const width of [1440, 390]) {
