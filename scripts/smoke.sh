@@ -7,7 +7,7 @@ printf 'Ověření nástrojů v jrc-dev\n'
 node --version
 python3 --version
 git --version
-make --version | head -n 1
+make --version | sed -n '1p'
 ffmpeg -version | sed -n '1p'
 
 result=$(PGCONNECT_TIMEOUT=10 psql -X -v ON_ERROR_STOP=1 -Atc 'SELECT 1')

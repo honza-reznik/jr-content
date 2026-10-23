@@ -31,11 +31,20 @@ const url = (name, fallback) => `http://127.0.0.1:${port(name, fallback)}`;
     "frame-ancestors 'self'");
   const browser = await chromium.launch({ headless: true });
   try {
-    const context = await browser.newContext();
+    const context = await browser.newContext({ serviceWorkers: 'block' });
     const foreign = [];
     const fonts = [];
     const responses = [];
     const allowed = new Set([web, s3]);
+    await context.routeWebSocket('**/*', socket => {
+      const address = new URL(socket.url());
+      address.protocol = address.protocol === 'wss:' ? 'https:' : 'http:';
+      if (!allowed.has(address.origin)) {
+        foreign.push(socket.url());
+        return socket.close();
+      }
+      socket.connectToServer();
+    });
     await context.route('**/*', route => {
       const request = route.request();
       if (!allowed.has(new URL(request.url()).origin)) {
@@ -47,17 +56,26 @@ const url = (name, fallback) => `http://127.0.0.1:${port(name, fallback)}`;
     });
     const page = await context.newPage();
     page.on('response', response => responses.push([response.url(), response.status()]));
-    // Formulář je viditelný už ze serverového HTML; API se zavolá až po spuštění
-    // JavaScriptu. Při zatíženém stroji samotné networkidle tento krok nepokrývá.
-    const apiReady = page.waitForResponse(response => response.url().startsWith(`${api}/`)
-      && response.status() === 200, { timeout: 60000 });
-    await page.goto(`${web}/video/login`, { waitUntil: 'networkidle' });
+    const sockets = [];
+    page.on('websocket', socket => sockets.push(socket.url()));
+    // Login nemusí API sám volat. Požadavek z kontextu stránky výslovně ověří
+    // skutečnou veřejnou cestu přes proxy, včetně pravidel prohlížeče.
+    await page.goto(`${web}/video/login`, { waitUntil: 'networkidle', timeout: 60000 });
     await page.locator('input[type="email"]').waitFor({ state: 'visible' });
-    await apiReady;
+    const health = await page.evaluate(async address => {
+      const response = await fetch(address);
+      return { status: response.status, body: await response.json() };
+    }, `${api}/health`);
+    assert.equal(health.status, 200);
+    assert.equal(health.body.status, 'ok');
     await page.evaluate(() => document.fonts.ready);
     assert(fonts.length > 0 && fonts.every(font => font.startsWith(`${web}/video/_next/`)));
     assert(responses.some(([address, status]) => address.startsWith(api) && status === 200), 'Prohlížeč nedosáhne na API');
     assert.deepEqual(foreign, [], 'Skutečný web zkusil cizí doménu');
+    assert(sockets.every(address => {
+      const socket = new URL(address);
+      return socket.hostname === '127.0.0.1' && socket.port === port('JRC_APP_PORT', 13000).toString();
+    }), 'Skutečný web zkusil cizí WebSocket');
     console.log('OK brána: API, Brightbean, S3; /admin 403, docs 404, bezpečnostní hlavičky; Chromium přes skutečný web načetl místní písmo/API bez cizí domény.');
   } finally {
     await browser.close();

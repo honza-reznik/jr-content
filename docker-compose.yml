@@ -1,4 +1,11 @@
 name: ${JRC_PROJECT:?JRC_PROJECT není nastavený, použij make (výchozí jrc) nebo JRC_PROJECT=jrc-<blok>}
+x-offline: &offline
+  NEXT_TELEMETRY_DISABLED: "1"
+  DO_NOT_TRACK: "1"
+  NPM_CONFIG_AUDIT: "false"
+  NPM_CONFIG_FUND: "false"
+  NPM_CONFIG_UPDATE_NOTIFIER: "false"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
 x-bb: &bb
   build:
     context: ./brightbean
@@ -7,6 +14,7 @@ x-bb: &bb
   init: true
   user: "${JRC_UID:-1000}:${JRC_GID:-1000}"
   environment:
+    <<: *offline
     DJANGO_SETTINGS_MODULE: config.settings.jrc
     SECRET_KEY: ${JRC_BB_SECRET_KEY:?Spusťte make env}
     ENCRYPTION_KEY_SALT: ${JRC_BB_ENCRYPTION_KEY_SALT:?Spusťte make env}
@@ -38,6 +46,7 @@ x-ff: &ff
   user: "${JRC_UID:-1000}:${JRC_GID:-1000}"
   working_dir: /workspace
   environment: &ff-environment
+    <<: *offline
     DATABASE_URL: postgresql://${PGUSER:-jrc}:${PGPASSWORD:?Spusťte make env}@jrc-postgres:5432/freeframe
     REDIS_URL: redis://jrc-redis:6379/0
     JWT_SECRET: ${JRC_FF_JWT_SECRET:?Spusťte make env}
@@ -80,22 +89,35 @@ x-ff: &ff
 services:
   # Společný webový vstup. Aplikace samotné zůstávají bez cesty na internet.
   jrc-proxy:
-    image: caddy:2.10.2-alpine
+    build:
+      context: docker
+      dockerfile: Dockerfile.ingress
+    image: jrc-ingress:local
     restart: unless-stopped
-    init: true
-    user: "${JRC_UID:-1000}:${JRC_GID:-1000}"
+    # Vstupní proces nejprve odstraní trasy a pak exec jako UID/GID bez capabilities.
+    user: "0:0"
     command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
     read_only: true
     cap_drop: [ALL]
-    # Oficiální binárka má tuto file capability; musí být v povolené sadě pro exec.
-    cap_add: [NET_BIND_SERVICE]
+    cap_add: [NET_ADMIN, SETUID, SETGID, SETPCAP]
     security_opt: [no-new-privileges:true]
+    environment:
+      <<: *offline
+      JRC_UID: ${JRC_UID:-1000}
+      JRC_GID: ${JRC_GID:-1000}
+      XDG_DATA_HOME: /data
+      XDG_CONFIG_HOME: /config
+    # Compose při změně obsahu znovu vytvoří proxy i se souborem nově připojeným.
+    labels:
+      cz.jr-content.caddyfile-sha256: ${JRC_CADDYFILE_SHA256:-unset}
     volumes:
       - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
     tmpfs:
       - /data:uid=${JRC_UID:-1000},gid=${JRC_GID:-1000},mode=0700
       - /config:uid=${JRC_UID:-1000},gid=${JRC_GID:-1000},mode=0700
-    networks: [default, internal]
+    networks: [ingress, internal]
+    # Docker DNS dál překládá názvy služeb, cizí dotazy nemá kam předat.
+    dns: [127.0.0.1]
     ports:
       - "127.0.0.1:${JRC_APP_PORT:-13000}:8080"
     depends_on:
@@ -104,30 +126,39 @@ services:
       jrc-ff-web:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health/"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 3s
       timeout: 6s
       retries: 30
   # Brána zůstává jen pro S3: podepsané adresy videí načítá přímo prohlížeč.
   # PostgreSQL je jen ve vnitřní síti (psql přes docker compose exec). Pevný TCP cíl; klient nemůže zadat obecný proxy server.
   jrc-ff-gate:
-    image: jrc-dev:local
+    build:
+      context: docker
+      dockerfile: Dockerfile.ingress
+    image: jrc-ingress:local
     restart: unless-stopped
-    init: true
-    user: "${JRC_UID:-1000}:${JRC_GID:-1000}"
+    user: "0:0"
     command: ["node", "/gate.cjs"]
     read_only: true
     cap_drop: [ALL]
+    cap_add: [NET_ADMIN, SETUID, SETGID, SETPCAP]
     security_opt: [no-new-privileges:true]
+    environment:
+      <<: *offline
+      JRC_UID: ${JRC_UID:-1000}
+      JRC_GID: ${JRC_GID:-1000}
     volumes:
       - ./scripts/local-gate.cjs:/gate.cjs:ro
-    networks: [default, internal]
+    networks: [ingress, internal]
+    dns: [127.0.0.1]
     ports:
       - "127.0.0.1:${JRC_S3_PORT:-13900}:13900"
   jrc-ff-db:
     image: postgres:18.6-bookworm
     restart: "no"
     environment:
+      <<: *offline
       PGHOST: jrc-postgres
       PGUSER: ${PGUSER:-jrc}
       PGDATABASE: ${PGDATABASE:-jrc}
@@ -169,6 +200,7 @@ services:
   jrc-redis:
     image: redis:7-alpine
     restart: unless-stopped
+    environment: *offline
     command: ["redis-server", "--appendonly", "yes"]
     networks: [internal]
     volumes:
@@ -188,7 +220,7 @@ services:
     user: "${JRC_UID:-1000}:${JRC_GID:-1000}"
     working_dir: /app
     environment:
-      NEXT_TELEMETRY_DISABLED: "1"
+      <<: *offline
       NEXT_PUBLIC_BASE_PATH: /video
       NEXT_PUBLIC_API_URL: http://127.0.0.1:${JRC_APP_PORT:-13000}/video-api
       API_INTERNAL_URL: http://jrc-ff-api:8000
@@ -211,6 +243,7 @@ services:
     image: postgres:18.6-bookworm
     restart: "no"
     environment:
+      <<: *offline
       PGHOST: jrc-postgres
       PGUSER: ${PGUSER:-jrc}
       PGDATABASE: ${PGDATABASE:-jrc}
@@ -230,6 +263,7 @@ services:
     user: "0:0"
     command: ["sh", "-c", "chown $${JRC_UID}:$${JRC_GID} /app/media && exec setpriv --reuid=$${JRC_UID} --regid=$${JRC_GID} --clear-groups python manage.py migrate --noinput"]
     environment:
+      <<: *offline
       DJANGO_SETTINGS_MODULE: config.settings.jrc
       SECRET_KEY: ${JRC_BB_SECRET_KEY:?Spusťte make env}
       ENCRYPTION_KEY_SALT: ${JRC_BB_ENCRYPTION_KEY_SALT:?Spusťte make env}
@@ -261,6 +295,7 @@ services:
     init: true
     user: "${JRC_UID:-1000}:${JRC_GID:-1000}"
     environment:
+      <<: *offline
       HOME: /tmp/jrc-home
       PGHOST: jrc-postgres
       PGPORT: 5432
@@ -277,7 +312,7 @@ services:
     command: ["sh", "-c", "mkdir -p /tmp/jrc-home && exec sleep infinity"]
     volumes:
       - .:/workspace
-    networks: [default, internal]
+    networks: [internal]
     shm_size: 1gb
     depends_on:
       jrc-postgres:
@@ -290,6 +325,7 @@ services:
     container_name: ${JRC_PROJECT:?JRC_PROJECT není nastavený, použij make (výchozí jrc) nebo JRC_PROJECT=jrc-<blok>}-postgres
     restart: unless-stopped
     environment:
+      <<: *offline
       POSTGRES_USER: ${PGUSER:-jrc}
       POSTGRES_DB: ${PGDATABASE:-jrc}
       POSTGRES_PASSWORD: ${PGPASSWORD:?Spusťte make env}
@@ -310,6 +346,7 @@ services:
     container_name: ${JRC_PROJECT:?JRC_PROJECT není nastavený, použij make (výchozí jrc) nebo JRC_PROJECT=jrc-<blok>}-s3
     restart: unless-stopped
     environment:
+      <<: *offline
       GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:?Spusťte make env}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?Spusťte make env}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?Spusťte make env}
@@ -326,8 +363,11 @@ services:
 networks:
   internal:
     internal: true
-  default:
-    name: ${JRC_PROJECT:?JRC_PROJECT není nastavený, použij make (výchozí jrc) nebo JRC_PROJECT=jrc-<blok>}-network
+  ingress:
+    # Pouze místní vstupní porty. Brány před exec odstraní výchozí trasy;
+    # navíc není povolen překlad jejich adres na adresu hostitele.
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
 volumes:
   jrc-postgres-data:
     name: ${JRC_PROJECT:?JRC_PROJECT není nastavený, použij make (výchozí jrc) nebo JRC_PROJECT=jrc-<blok>}-postgres-data

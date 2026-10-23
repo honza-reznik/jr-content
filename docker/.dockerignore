@@ -1,6 +1,8 @@
 *
 !Dockerfile
 !Dockerfile.s3
+!Dockerfile.ingress
+!offline-ingress.py
 !garage.toml
 !garage-entrypoint.sh
 !jrc-playwright-mcp
