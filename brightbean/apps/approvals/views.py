@@ -188,7 +188,7 @@ def add_comment(request, workspace_id, post_id):
     if not body:
         return HttpResponse("Comment body is required.", status=400)
 
-    visibility = request.POST.get("visibility", PostComment.Visibility.EXTERNAL)
+    visibility = request.POST.get("visibility")
     parent_id = request.POST.get("parent_id") or None
     attachment = request.FILES.get("attachment")
 

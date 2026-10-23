@@ -19,14 +19,15 @@ MENTION_REGEX = re.compile(r"(?:^|(?<=\s))@(\w[\w.]*)")
 MAX_ATTACHMENT_SIZE = 5 * 1024 * 1024  # 5MB
 
 
-def create_comment(post, author, body, visibility, parent_id=None, attachment=None):
+def create_comment(post, author, body, visibility=None, parent_id=None, attachment=None):
     """Create a comment on a post and notify @mentioned users.
 
     Args:
         post: The Post instance.
         author: The User who wrote the comment.
         body: Comment text.
-        visibility: "internal" or "external".
+        visibility: "internal" or "external". Team comments default to internal;
+            clients are always external.
         parent_id: UUID of parent comment for threading (optional).
         attachment: UploadedFile for image attachment (optional).
 
@@ -36,13 +37,35 @@ def create_comment(post, author, body, visibility, parent_id=None, attachment=No
     if attachment and attachment.size > MAX_ATTACHMENT_SIZE:
         raise ValueError("Attachment exceeds 5MB limit.")
 
+    membership = WorkspaceMembership.objects.filter(user=author, workspace=post.workspace).first()
+    if membership is None:
+        raise PermissionError("You are not a member of this workspace.")
+    is_client = membership.workspace_role in (
+        WorkspaceMembership.WorkspaceRole.CLIENT,
+        WorkspaceMembership.WorkspaceRole.VIEWER,
+    )
+
     parent_comment = None
     if parent_id:
         parent_comment = PostComment.objects.filter(
             id=parent_id,
             post=post,
+            parent_comment__isnull=True,
             deleted_at__isnull=True,
         ).first()
+        if parent_comment is None:
+            raise ValueError("Comment thread not found.")
+        if is_client and parent_comment.visibility != PostComment.Visibility.EXTERNAL:
+            raise ValueError("Comment thread not found.")
+        # Replies stay at the same privacy level as their parent.
+        visibility = parent_comment.visibility
+    elif is_client:
+        visibility = PostComment.Visibility.EXTERNAL
+    elif visibility is None:
+        visibility = PostComment.Visibility.INTERNAL
+
+    if visibility not in PostComment.Visibility.values:
+        raise ValueError("Choose a valid comment visibility.")
 
     comment = PostComment.objects.create(
         post=post,
@@ -140,17 +163,47 @@ def get_comments_for_post(post, user):
             parent_comment__isnull=True,  # Top-level only; replies are prefetched
         )
         .select_related("author")
-        .prefetch_related(
-            Prefetch("replies", queryset=active_replies),
-        )
+        .prefetch_related(Prefetch("replies", queryset=active_replies))
         .order_by("created_at")
     )
 
     # Clients only see external comments
-    if membership and membership.workspace_role == WorkspaceMembership.WorkspaceRole.CLIENT:
+    if membership and membership.workspace_role in (
+        WorkspaceMembership.WorkspaceRole.CLIENT,
+        WorkspaceMembership.WorkspaceRole.VIEWER,
+    ):
         qs = qs.filter(visibility=PostComment.Visibility.EXTERNAL)
+        active_replies = active_replies.filter(visibility=PostComment.Visibility.EXTERNAL)
+        qs = qs.prefetch_related(None).prefetch_related(Prefetch("replies", queryset=active_replies))
 
     return qs
+
+
+def resolve_comment(comment_id, user, workspace, *, resolved=True):
+    """Resolve or reopen a top-level thread. Only workspace approvers may do this."""
+    comment = PostComment.objects.filter(
+        id=comment_id,
+        post__workspace=workspace,
+        parent_comment__isnull=True,
+        deleted_at__isnull=True,
+    ).first()
+    if comment is None:
+        raise ValueError("Comment thread not found.")
+
+    membership = (
+        WorkspaceMembership.objects.filter(user=user, workspace=workspace).select_related("custom_role").first()
+    )
+    if membership is None:
+        raise PermissionError("You are not a member of this workspace.")
+    if membership.workspace_role in (
+        WorkspaceMembership.WorkspaceRole.CLIENT,
+        WorkspaceMembership.WorkspaceRole.VIEWER,
+    ) or not membership.effective_permissions.get("approve_posts", False):
+        raise PermissionError("You do not have permission to resolve comments.")
+
+    comment.is_resolved = bool(resolved)
+    comment.save(update_fields=["is_resolved", "updated_at"])
+    return comment
 
 
 def _notify_mentions(mentions, post, author, workspace, body):

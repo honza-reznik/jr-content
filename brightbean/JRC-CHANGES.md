@@ -212,3 +212,16 @@ Upstream role, schvalovací služby a stavový automat zůstávají beze změny.
 - Oprava review: komentáře `ApprovalAction` zobrazí klientovi jen tehdy, když je vytvořil klientský
   nebo čtenářský člen stejného workspace; poznámky interních týmových kroků zůstávají skryté.
   HTTP testy kontrolují obě role a interní `PostComment` se na detailu nevypisuje.
+
+## 2026-10-23 · F3-B04
+
+- `apps/approvals/models.py`, migrace `0004_*`: výchozí viditelnost týmového komentáře je interní;
+  přibyl stav vyřešeno.
+- `apps/approvals/comments.py`, `views.py` a `templates/approvals/partials/comment_form.html`:
+  služba komentářů používá interní výchozí hodnotu pro tým, vynucuje externí viditelnost klienta,
+  nepovoluje odpověď do cizího vlákna a filtruje interní odpovědi klientům.
+- `apps/jrc_production/` a `templates/jrc_production/content_detail.html`: detail obsahu má záložku
+  komentářů, odpovědi a uzavření/obnovení vlákna pro členy s oprávněním schvalovat. Klient může
+  přidávat komentáře a odpovědi, ale nevidí interní obsah ani ovládání vyžádání změn.
+- `apps/jrc_production/tests/test_content_detail.py`: HTTP ověření interního výchozího nastavení,
+  odpovědí, řešení vlákna a hranic klienta.
