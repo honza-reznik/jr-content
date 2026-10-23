@@ -6,7 +6,7 @@ x-bb: &bb
   restart: unless-stopped
   init: true
   user: "${JRC_UID:-1000}:${JRC_GID:-1000}"
-  environment:
+  environment: &bb-environment
     DJANGO_SETTINGS_MODULE: config.settings.jrc
     SECRET_KEY: ${JRC_BB_SECRET_KEY:?Spusťte make env}
     ENCRYPTION_KEY_SALT: ${JRC_BB_ENCRYPTION_KEY_SALT:?Spusťte make env}
@@ -149,6 +149,10 @@ services:
   jrc-ff-api:
     <<: *ff
     command: ["uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--root-path", "/video-api"]
+    environment:
+      <<: *ff-environment
+      # F5-B02: klíč vstupenek jen pro API (ověřuje), workery ho nedostávají.
+      JRC_FF_SSO_SECRET: ${JRC_FF_SSO_SECRET:?Spusťte make env}
     networks: [internal]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
@@ -245,6 +249,10 @@ services:
   jrc-bb-web:
     <<: *bb
     command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+    environment:
+      <<: *bb-environment
+      # F5-B02: klíč vstupenek jen pro web Brightbean (vydává), worker ho nedostává.
+      JRC_FF_SSO_SECRET: ${JRC_FF_SSO_SECRET:?Spusťte make env}
     networks: [internal]
     healthcheck:
       test: ["CMD", "python", "-c", "import json, urllib.request; assert json.load(urllib.request.urlopen('http://127.0.0.1:8000/health/', timeout=5)) == {'status': 'ok'}"]

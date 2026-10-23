@@ -17,3 +17,4 @@ JRC_FF_SYNC_ENABLED = False
 JRC_FF_API_URL = "http://jrc-ff-api:8000"
 JRC_FF_SYNC_EMAIL = "jrc-sync@example.com"
 JRC_FF_SYNC_PASSWORD = "unit-test-only"
+JRC_FF_SSO_SECRET = "unit-test-only-sso-secret-0123456789abcdef"

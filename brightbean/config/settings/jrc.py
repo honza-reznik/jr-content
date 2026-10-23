@@ -52,3 +52,5 @@ JRC_FF_API_URL = "http://jrc-ff-api:8000"
 JRC_FF_SYNC_EMAIL = os.environ.get("JRC_FF_SYNC_EMAIL", "")
 JRC_FF_SYNC_PASSWORD = os.environ.get("JRC_FF_SYNC_PASSWORD", "")
 JRC_FF_SYNC_ENABLED = bool(JRC_FF_SYNC_EMAIL and JRC_FF_SYNC_PASSWORD)
+# F5-B02: shared HMAC key for FreeFrame sign-in tickets (only jrc-bb-web has it).
+JRC_FF_SSO_SECRET = os.environ.get("JRC_FF_SSO_SECRET", "")

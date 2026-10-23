@@ -17,7 +17,7 @@ endif
 override COMPOSE := docker compose --project-name $(JRC_PROJECT) --file docker-compose.yml --env-file .env
 # Správa existujících kontejnerů nepotřebuje hesla ani místní .env.
 # Zástupné hodnoty se používají pouze pro načtení konfigurace, nikdy pro up.
-override ADMIN_COMPOSE := PGPASSWORD=unused GARAGE_RPC_SECRET=unused AWS_ACCESS_KEY_ID=unused AWS_SECRET_ACCESS_KEY=unused JRC_BB_SECRET_KEY=unused JRC_BB_ENCRYPTION_KEY_SALT=unused JRC_FF_JWT_SECRET=unused JRC_FF_SYNC_PASSWORD=unused JRC_FF_S3_ACCESS_KEY=unused JRC_FF_S3_SECRET_KEY=unused docker compose --project-name $(JRC_PROJECT) --file docker-compose.yml --env-file /dev/null
+override ADMIN_COMPOSE := PGPASSWORD=unused GARAGE_RPC_SECRET=unused AWS_ACCESS_KEY_ID=unused AWS_SECRET_ACCESS_KEY=unused JRC_BB_SECRET_KEY=unused JRC_BB_ENCRYPTION_KEY_SALT=unused JRC_FF_JWT_SECRET=unused JRC_FF_SYNC_PASSWORD=unused JRC_FF_SSO_SECRET=unused JRC_FF_S3_ACCESS_KEY=unused JRC_FF_S3_SECRET_KEY=unused docker compose --project-name $(JRC_PROJECT) --file docker-compose.yml --env-file /dev/null
 export JRC_UID := $(shell id -u)
 export JRC_GID := $(shell id -g)
 # Buildx zapisuje provozní údaje pouze do worktree, i v omezené relaci agenta.
