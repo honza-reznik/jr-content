@@ -26,23 +26,7 @@
             {% endif %}
 
             <!-- Replies -->
-            {% for reply in comment.replies.all %}
-            {% if not reply.is_deleted %}
-            <div class="flex gap-2 mt-2 pl-2 border-l-2 border-stone-200">
-                <div class="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold text-white flex-shrink-0"
-                     style="background: var(--primary); opacity: 0.7;">
-                    {{ reply.author.display_name|make_list|first|upper }}
-                </div>
-                <div>
-                    <div class="flex items-center gap-1.5">
-                        <span class="text-[0.75rem] font-semibold text-stone-700">{{ reply.author.display_name }}</span>
-                        <span class="text-[0.6875rem] text-stone-400">{{ reply.created_at|timesince }} ago</span>
-                    </div>
-                    <p class="text-[0.8125rem] text-stone-600 leading-relaxed">{{ reply.body }}</p>
-                </div>
-            </div>
-            {% endif %}
-            {% endfor %}
+            {% include "approvals/partials/comment_replies.html" with replies=comment.visible_replies only %}
         </div>
     </div>
     {% empty %}

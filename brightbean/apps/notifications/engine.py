@@ -36,6 +36,7 @@ from .models import (
     NotificationPreference,
     QuietHours,
 )
+from .privacy import protect_note_body
 from .unsubscribe import list_unsubscribe_headers
 
 logger = logging.getLogger(__name__)
@@ -168,13 +169,16 @@ def notify(
         logger.warning("Unknown event_type: %s", event_type)
         return None
 
-    notification = Notification.objects.create(
-        user=user,
-        event_type=event_type,
-        title=title,
-        body=body,
-        data=data or {},
+    notification = protect_note_body(
+        Notification(
+            user=user,
+            event_type=event_type,
+            title=title,
+            body=body,
+            data=data or {},
+        )
     )
+    notification.save()
 
     channels_to_dispatch = _resolve_channels(user, event_type)
     digest_mode = _is_digest_mode(user)
@@ -357,7 +361,7 @@ def _dispatch_in_app(delivery: NotificationDelivery) -> None:
 
 def _dispatch_email(delivery: NotificationDelivery) -> None:
     """Send notification email using Django's email backend."""
-    notification = delivery.notification
+    notification = protect_note_body(delivery.notification)
     user = notification.user
 
     context = {
@@ -396,7 +400,7 @@ def _dispatch_webhook(delivery: NotificationDelivery) -> None:
 
     from apps.common.validators import is_safe_url
 
-    notification = delivery.notification
+    notification = protect_note_body(delivery.notification)
 
     webhook_url = notification.data.get("webhook_url")
     if not webhook_url:
@@ -759,7 +763,7 @@ def _send_digest_email(user, event_type: str | None, notifications: list) -> Non
     """One email standing in for every notification in the batch."""
     total = len(notifications)
     heading = _digest_heading(event_type, total)
-    shown = notifications[:BATCH_MAX_ITEMS]
+    shown = [protect_note_body(notification) for notification in notifications[:BATCH_MAX_ITEMS]]
 
     context = {
         "heading": heading,

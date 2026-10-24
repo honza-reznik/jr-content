@@ -144,7 +144,7 @@ def test_comparison_is_read_only_and_rejects_drafts_and_other_posts(http, post, 
     other = Post.objects.create(workspace=workspace, author=post.author, title="Other script")
     assert http.get(url(other), {"compare_old": first_id, "compare_new": first_id}).status_code == 404
     WorkspaceMembership.objects.filter(workspace=workspace, user=reader).delete()
-    assert http.get(url(post), query).status_code == 403
+    assert http.get(url(post), query).status_code == 404
 
 
 def test_comparison_size_limit_keeps_version_metadata_and_saved_text_readable(http, post):
@@ -208,16 +208,16 @@ def test_nonmember_archived_workspace_anonymous_and_cross_post(http, post, works
     assert send(http, other, "save", **draft_request(state)).status_code == 409
     assert http.get(url(other), {"version": state["latest"]}).status_code == 404
     other_workspace = Workspace.objects.create(organization=organization, name="Other client")
-    assert http.get(url(post).replace(str(workspace.pk), str(other_workspace.pk))).status_code == 403
+    assert http.get(url(post).replace(str(workspace.pk), str(other_workspace.pk))).status_code == 404
     WorkspaceMembership.objects.create(workspace=other_workspace, user=user, workspace_role="owner")
     assert http.get(url(post).replace(str(workspace.pk), str(other_workspace.pk))).status_code == 404
     WorkspaceMembership.objects.filter(workspace=workspace, user=user).delete()
-    assert http.get(url(post)).status_code == 403
-    assert send(http, post, "discard", **draft_request(state)).status_code == 403
+    assert http.get(url(post)).status_code == 404
+    assert send(http, post, "discard", **draft_request(state)).status_code == 404
     WorkspaceMembership.objects.create(workspace=workspace, user=user, workspace_role="owner")
     workspace.is_archived = True
     workspace.save(update_fields=["is_archived"])
-    assert http.get(url(post)).status_code == 403
+    assert http.get(url(post)).status_code == 404
     http.logout()
     assert http.get(url(post)).status_code == 302
     assert send(http, post, "edit", base=None).status_code == 302

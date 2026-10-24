@@ -23,6 +23,40 @@ Licence této odvozené verze: AGPL-3.0; původní licence a autorská práva z�
 - `templates/account/login.html`: skryté pole `next` podle aktuálního rozhraní allauth zachová
   návrat na `/video-sso/` po přihlášení (původní neexistující `redirect_field` jej zahazovalo).
 - `apps/jrc_video/tests/test_sso.py`: regresní testy vydání, vazby na prohlížeč, CSRF, cest a odhlášení.
+## 2026-10-24 · F7-B01 — opravy bezpečnostního review
+
+- Detail obsahu, editor, kalendář, portál a odpovědi po změně komentáře používají
+  společný výběr viditelných vláken včetně libovolně vnořených odpovědí. Client
+  i viewer čtou pouze externí komentáře; skrytý či smazaný předek skryje celé vlákno.
+  Šablony čtou pouze vybrané odpovědi. Mazání kontroluje viditelnost i vazbu
+  komentáře na obsah a klienta z URL, také při přímém volání služby.
+- Upozornění na změny, odmítnutí a zmínku ověřují viditelnost poznámky a aktuální
+  přístup příjemce při vytvoření, čtení i doručení (také opakovaném a souhrnném).
+  Nepřístupnou citaci nahradí obecný text; stará upozornění bez uložené viditelnosti
+  se bezpečně posuzují jako interní. Změna role autora viditelnost poznámky nemění.
+- Přílohy komentářů ověřují i viditelnost celého nadřazeného vlákna; nepřístupné
+  vracejí 404 před otevřením souboru. Odpověď zakazuje uložení do mezipaměti.
+  Autor po změně role na client/viewer nemůže upravovat interní komentář.
+- `apps/approvals/test_note_privacy.py`: regrese pro client/viewer, autora obsahu,
+  interní odpovědi i změny rolí, historii a zásuvku upozornění, e-mail, webhook a souhrn.
+
+## 2026-10-24 · F7-B01
+
+- `StageChange` a `ApprovalAction` ukládají při akci roli autora a viditelnost poznámky.
+  Historie používá uloženou viditelnost i po změně role, odchodu nebo smazání autora.
+  Migrace starých záznamů nastaví bezpečně interní viditelnost a neznámou historickou roli.
+- Formulář popisku i jeho zápis používají stejnou kontrolu jako scénář: owner, manager
+  a editor mohou upravovat všechny texty, contributor jen své; client a viewer jen čtou.
+  Po ztrátě práva upravovat odmítne i textová služba čtení vlastního konceptu.
+  Čtení porovnání a záložky Video je dostupné všem členům klienta. Video zatím nemá zápis
+  (přehrávač je samostatný blok). Vlastní role se u textů řídí svými oprávněními.
+- Pro nástěnku, detail, komentáře a scénář vrací cizí či archivovaný klient 404.
+  Zakázaná akce má stránku 403 s vysvětlením a odkazem na nástěnku, bez textu výjimky.
+  Služba čtení komentářů nevrací žádná data nečlenovi ani neaktivnímu uživateli.
+- Regrese pokrývá všech šest rolí v HTML, scénáři, porovnání a skutečném REST API
+  (včetně dříve vydaného klíče po změně role); interní poznámky, komentáře a odpovědi
+  zůstávají klientovi skryté. Stávající výjimka zakládání místního obsahu pro klienta
+  nemění obecné oprávnění `create_posts` ani práva k interním poznámkám API.
 
 ## 2026-10-22 · F2-B01
 

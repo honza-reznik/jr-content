@@ -65,12 +65,15 @@ def _transition_or_skip(pp, target_status):
 
 def _record_action(post, platform_post, user, action, comment=""):
     """Create an ApprovalAction row for either a bundled or per-PP action."""
+    from apps.members.note_visibility import note_audience
+
     return ApprovalAction.objects.create(
         post=post,
         platform_post=platform_post,
         user=user,
         action=action,
         comment=comment,
+        **note_audience(post.workspace, user),
     )
 
 
@@ -207,10 +210,10 @@ def request_changes(target, user, workspace, comment):
             return moved
 
         if is_bundled:
-            _record_action(post, None, user, ApprovalAction.ActionType.CHANGES_REQUESTED, comment)
+            action = _record_action(post, None, user, ApprovalAction.ActionType.CHANGES_REQUESTED, comment)
         else:
             for pp in moved:
-                _record_action(post, pp, user, ApprovalAction.ActionType.CHANGES_REQUESTED, comment)
+                action = _record_action(post, pp, user, ApprovalAction.ActionType.CHANGES_REQUESTED, comment)
 
     if post.author and post.author != user:
         notify(
@@ -219,6 +222,7 @@ def request_changes(target, user, workspace, comment):
             title="Changes requested on your post",
             body=f'{user.display_name} requested changes: "{comment[:100]}"',
             data={
+                "note_visibility": action.note_visibility,
                 "post_id": str(post.id),
                 "workspace_id": str(workspace.id),
             },
@@ -243,10 +247,10 @@ def reject_post(target, user, workspace, comment):
             return moved
 
         if is_bundled:
-            _record_action(post, None, user, ApprovalAction.ActionType.REJECTED, comment)
+            action = _record_action(post, None, user, ApprovalAction.ActionType.REJECTED, comment)
         else:
             for pp in moved:
-                _record_action(post, pp, user, ApprovalAction.ActionType.REJECTED, comment)
+                action = _record_action(post, pp, user, ApprovalAction.ActionType.REJECTED, comment)
 
     if post.author and post.author != user:
         notify(
@@ -255,6 +259,7 @@ def reject_post(target, user, workspace, comment):
             title="Post rejected",
             body=f'{user.display_name} rejected your post: "{comment[:100]}"',
             data={
+                "note_visibility": action.note_visibility,
                 "post_id": str(post.id),
                 "workspace_id": str(workspace.id),
             },

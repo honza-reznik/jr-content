@@ -7,7 +7,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.db.models import Prefetch
-from django.http import HttpResponseBadRequest
+from django.http import Http404, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -109,9 +109,7 @@ def create(request):
     memberships = {str(m.workspace_id): m for m in _memberships(request.user)}
     membership = memberships.get(request.POST.get("workspace", ""))
     if membership is None:
-        from django.core.exceptions import PermissionDenied
-
-        raise PermissionDenied("You do not have access to this client.")
+        raise Http404
     title = request.POST.get("title", "").strip()
     try:
         create_content(membership.workspace, title, request.user)
@@ -254,7 +252,7 @@ def content_detail(request, workspace_id, post_id):
         WorkspaceMembership.WorkspaceRole.CLIENT,
         WorkspaceMembership.WorkspaceRole.VIEWER,
     )
-    can_edit_captions = membership.effective_permissions.get("create_posts", False)
+    can_edit_captions = text_services.can_edit_text(post, membership)
     caption_error = ""
     if request.method == "POST":
         if request.POST.get("action") != "save_caption":
@@ -264,9 +262,7 @@ def content_detail(request, workspace_id, post_id):
             pk=request.POST.get("platform_post"),
             post=post,
         )
-        if not can_edit_captions or (
-            post.author_id != request.user.pk and not membership.effective_permissions.get("edit_others_posts", False)
-        ):
+        if not can_edit_captions:
             raise PermissionDenied("You cannot edit captions for this content.")
         # Textareas can submit Windows-style line endings even though the browser
         # counter treats every newline as one character. Store and count one form.
@@ -316,21 +312,11 @@ def content_detail(request, workspace_id, post_id):
             "label": f"Moved from {change.get_from_stage_display()} to {change.get_to_stage_display()}",
             "actor": change.user,
             "note": change.note,
-            "can_view_note": can_view_internal_notes,
+            "can_view_note": can_view_internal_notes or change.note_visibility == "external",
         }
         for change in post.jrc_stage_changes.select_related("user").all()
     ]
     approval_actions = list(ApprovalAction.objects.filter(post=post).select_related("user"))
-    external_actor_ids = set(
-        WorkspaceMembership.objects.filter(
-            workspace=workspace,
-            user_id__in=[action.user_id for action in approval_actions if action.user_id],
-            workspace_role__in=(
-                WorkspaceMembership.WorkspaceRole.CLIENT,
-                WorkspaceMembership.WorkspaceRole.VIEWER,
-            ),
-        ).values_list("user_id", flat=True)
-    )
     history.extend(
         {
             "kind": "approval",
@@ -338,7 +324,7 @@ def content_detail(request, workspace_id, post_id):
             "label": action.get_action_display(),
             "actor": action.user,
             "note": action.comment,
-            "can_view_note": can_view_internal_notes or action.user_id in external_actor_ids,
+            "can_view_note": can_view_internal_notes or action.note_visibility == "external",
         }
         for action in approval_actions
     )
@@ -355,7 +341,7 @@ def content_detail(request, workspace_id, post_id):
             "tabs": TABS,
             "history": history[:100],
             "can_view_internal_notes": can_view_internal_notes,
-            "can_edit_posts": membership.effective_permissions.get("create_posts", False),
+            "can_edit_posts": text_services.can_edit_text(post, membership),
             "comments": comments,
             "can_resolve_comments": not is_client and membership.effective_permissions.get("approve_posts", False),
             "comment_visibility_default": (

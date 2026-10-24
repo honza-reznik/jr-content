@@ -99,7 +99,7 @@ def test_http_creation_rejects_forbidden_client(workspace, user, channel, http, 
     else:
         set_role(workspace, user, role)
     response = http.post(reverse("jrc_production:create"), {"workspace": str(workspace.id), "title": "Hidden"})
-    assert response.status_code == 403
+    assert response.status_code == (404 if role == "outsider" else 403)
     assert not Post.objects.exists()
 
 
@@ -109,7 +109,7 @@ def test_foreign_workspace_is_rejected_in_service_and_http(workspace, user, http
     with pytest.raises(PermissionDenied):
         create_content(foreign, "Forbidden content", user)
     response = http.post(reverse("jrc_production:create"), {"workspace": str(foreign.id), "title": "Hidden"})
-    assert response.status_code == 403
+    assert response.status_code == 404
     assert not Post.objects.exists()
 
 
@@ -374,7 +374,7 @@ def test_foreign_post_cannot_move_even_with_forged_workspace(post, workspace, or
     WorkspaceMembership.objects.filter(workspace=workspace, user=user).delete()
     with pytest.raises(PermissionDenied):
         move_content(post, "script", user, expected_stage="idea")
-    assert http.post(move_url(post), {"stage": "script", "expected_stage": "idea"}).status_code == 403
+    assert http.post(move_url(post), {"stage": "script", "expected_stage": "idea"}).status_code == 404
 
 
 def test_writes_require_post_login_and_csrf(post, user, http):

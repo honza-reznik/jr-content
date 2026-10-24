@@ -63,8 +63,10 @@ def _document(document_id, user, *, write=False):
 def get_version(version_id, user):
     version = TextVersion.objects.select_related("document__post__workspace").get(pk=version_id)
     _authorize(version.document, user)
-    if version.state == TextVersion.State.DRAFT and version.draft_owner_id != user.pk:
-        raise PermissionDenied("This draft belongs to another editor.")
+    if version.state == TextVersion.State.DRAFT:
+        _authorize(version.document, user, write=True)
+        if version.draft_owner_id != user.pk:
+            raise PermissionDenied("This draft belongs to another editor.")
     return version
 
 

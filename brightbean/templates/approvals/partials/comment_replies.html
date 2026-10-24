@@ -1,0 +1,14 @@
+{% if replies %}
+<ol class="mt-3 space-y-3 border-l-2 border-stone-200 pl-3">
+    {% for reply in replies %}
+    <li class="min-w-0 rounded-lg bg-white/80 p-2">
+        <div class="flex flex-wrap items-center gap-2">
+            <span class="text-xs font-semibold text-stone-700">{{ reply.author.display_name|default:"Former member" }}</span>
+            <span class="text-xs text-stone-400">{{ reply.created_at|timesince }} ago</span>
+        </div>
+        <p class="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-stone-600">{{ reply.body }}</p>
+        {% include "approvals/partials/comment_replies.html" with replies=reply.visible_replies only %}
+    </li>
+    {% endfor %}
+</ol>
+{% endif %}

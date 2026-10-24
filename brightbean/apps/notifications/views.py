@@ -11,6 +11,7 @@ from .models import (
     NotificationPreference,
     QuietHours,
 )
+from .privacy import protect_note_body
 
 
 @login_required
@@ -18,6 +19,7 @@ from .models import (
 def notification_drawer(request):
     """HTMX partial: renders the 50 most recent notifications for the drawer."""
     notifications = Notification.objects.filter(user=request.user).order_by("-created_at")[:50]
+    notifications = [protect_note_body(notification) for notification in notifications]
     return render(
         request,
         "notifications/partials/drawer.html",
@@ -48,6 +50,7 @@ def notification_list(request):
     per_page = 30
     offset = (page - 1) * per_page
     notifications = qs[offset : offset + per_page]
+    notifications = [protect_note_body(notification) for notification in notifications]
     total = qs.count()
     has_next = total > offset + per_page
     has_prev = page > 1

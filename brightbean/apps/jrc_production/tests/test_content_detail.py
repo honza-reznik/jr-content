@@ -4,6 +4,7 @@ from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.approvals.models import ApprovalAction, PostComment
+from apps.approvals.services import _record_action
 from apps.jrc_channels.services import create_manual_channel
 from apps.jrc_production.models import StageChange
 from apps.jrc_production.services import create_content
@@ -71,8 +72,9 @@ def test_client_can_view_content_but_not_team_notes(client, workspace, content_w
         email="ella@example.test", password="testpass123", name="Ella", tos_accepted_at=timezone.now()
     )
     WorkspaceMembership.objects.create(user=client_user, workspace=workspace, workspace_role="client")
-    ApprovalAction.objects.create(
+    _record_action(
         post=post,
+        platform_post=None,
         user=client_user,
         action=ApprovalAction.ActionType.CHANGES_REQUESTED,
         comment="Please adjust the opening shot.",
@@ -96,7 +98,7 @@ def test_nonmember_cannot_view_content(client, workspace, user, content_with_his
 
     response = client.get(_detail_url(workspace, content_with_history))
 
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 def test_team_can_comment_reply_and_resolve(client, workspace, user, content_with_history):

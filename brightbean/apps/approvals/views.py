@@ -231,6 +231,9 @@ def edit_comment(request, workspace_id, post_id, comment_id):
     # Scope the post + comment lookup to the request workspace so a viewer
     # cannot edit / surface comments belonging to a different workspace.
     post = get_object_or_404(Post, id=post_id, workspace=workspace)
+    comment = get_object_or_404(PostComment, id=comment_id, post=post, deleted_at__isnull=True)
+    if not comment_service.can_view_comment(comment, request.user):
+        raise Http404("Comment not found.")
 
     try:
         comment_service.update_comment(comment_id, request.user, body, workspace=workspace)
@@ -255,13 +258,16 @@ def edit_comment(request, workspace_id, post_id, comment_id):
 def delete_comment(request, workspace_id, post_id, comment_id):
     """Soft-delete a comment."""
     workspace = _get_workspace(request, workspace_id)
+    post = get_object_or_404(Post, id=post_id, workspace=workspace)
+    comment = get_object_or_404(PostComment, id=comment_id, post=post, deleted_at__isnull=True)
+    if not comment_service.can_view_comment(comment, request.user):
+        raise Http404("Comment not found.")
 
     try:
-        comment_service.delete_comment(comment_id, request.user, workspace)
+        comment_service.delete_comment(comment_id, request.user, workspace, post=post)
     except (ValueError, PermissionError) as e:
         return HttpResponse(str(e), status=400 if isinstance(e, ValueError) else 403)
 
-    post = get_object_or_404(Post, id=post_id, workspace=workspace)
     comments = comment_service.get_comments_for_post(post, request.user)
     return render(
         request,
@@ -295,6 +301,8 @@ def comment_attachment(request, workspace_id, post_id, comment_id):
         deleted_at__isnull=True,
     )
 
+    if not comment_service.can_view_comment(comment, request.user):
+        raise Http404("Comment not found.")
     if not comment.attachment:
         raise Http404("This comment has no attachment.")
 
@@ -311,7 +319,7 @@ def comment_attachment(request, workspace_id, post_id, comment_id):
     # validate_image_file_extension already refuses an .html suffix, but this
     # response never passes through a CDN or proxy that would add it.
     response["X-Content-Type-Options"] = "nosniff"
-    response["Cache-Control"] = "private, max-age=3600"
+    response["Cache-Control"] = "private, no-store"
     return response
 
 
