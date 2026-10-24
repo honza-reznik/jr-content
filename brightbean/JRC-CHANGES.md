@@ -3,6 +3,15 @@
 Základ: Brightbean Studio `48801fdcd1009e6ed4863fa9942222a478a297e2`, import F2-B01.
 Licence této odvozené verze: AGPL-3.0; původní licence a autorská práva zůstávají zachována.
 
+## 2026-10-24 · F2-B14
+
+- `templates/media_library/_tag_input.html`: odstraněn vložený skript z panelu detailu načítaného přes HTMX.
+  URL pro ukládání a našeptávání štítků se předávají přes datové atributy.
+- `static/js/media-library.js`: komponenta `tagInput` je dostupná jako statický JavaScript; stránka
+  přímého detailu načítá stejný soubor jako hlavní knihovna médií.
+- `apps/media_library/tests/test_tag_endpoints.py`: regrese ověřuje panel bez vloženého skriptu a načtení
+  komponenty na přímé stránce detailu.
+
 ## 2026-10-24 · F5-B03
 
 - Po review: odhlášení POST vydá na 60 s jednorázové oprávnění v `#grant=…` a SHA-256
