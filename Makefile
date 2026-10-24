@@ -14,6 +14,12 @@ $(error Ve worktree nelze '$(filter reset down,$(MAKECMDGOALS))' hlavního proje
 endif
 endif
 endif
+# F2-B09: obnova a test záloh nikdy nesmí cílit na hlavní projekt (kontrola už při čtení Makefile).
+ifeq ($(JRC_PROJECT),jrc)
+ifneq ($(filter restore test-backup,$(MAKECMDGOALS)),)
+$(error '$(filter restore test-backup,$(MAKECMDGOALS))' je zakázáno pro hlavní projekt jrc. Použij JRC_PROJECT=jrc-<název> (prázdný ověřovací projekt))
+endif
+endif
 override COMPOSE := docker compose --project-name $(JRC_PROJECT) --file docker-compose.yml --env-file .env
 # Správa existujících kontejnerů nepotřebuje hesla ani místní .env.
 # Zástupné hodnoty se používají pouze pro načtení konfigurace, nikdy pro up.
@@ -27,7 +33,7 @@ export BUILDX_CONFIG := $(CURDIR)/.cache/docker-buildx
 CMD ?= bash
 export CMD
 
-.PHONY: build build-bb env check-project-ports up down shell test test-fast test-smoke test-proxy test-s3 test-bb test-bb-fast test-ff test-ff-smoke test-isolation test-ff-offline test-ff-vitest test-ff-tsc test-ff-lint test-f5-b06-embed ff-account build-ff reset logs ps
+.PHONY: backup backup-verify restore test-backup test-backup-guards build build-bb env check-project-ports up down shell test test-fast test-smoke test-proxy test-s3 test-bb test-bb-fast test-ff test-ff-smoke test-isolation test-ff-offline test-ff-vitest test-ff-tsc test-ff-lint test-f5-b06-embed ff-account build-ff reset logs ps
 build:
 	docker build --tag jrc-dev:$(JRC_PROJECT) --file docker/Dockerfile docker
 
@@ -75,7 +81,7 @@ shell:
 
 test: check-project-ports
 	@failed=0; \
-	for suite in test-smoke test-bb test-ff; do \
+	for suite in test-smoke test-bb test-ff test-backup-guards; do \
 	  printf '\n=== %s ===\n' "$$suite"; \
 	  if $(MAKE) --no-print-directory "$$suite"; then \
 	    printf 'VÝSLEDEK: %s OK\n' "$$suite"; \
@@ -207,3 +213,34 @@ logs:
 
 ps:
 	$(ADMIN_COMPOSE) ps
+
+# --- F2-B09: zálohy a obnova (lokálně, jen v Dockeru; podrobně aplikace/provoz/zalohy.md) ---
+# Záloha jen čte běžící prostředí a zapisuje do backups/<projekt>/<datum-čas>/ (mimo git).
+backup:
+	@sh scripts/backup/backup.sh backup
+
+# Přepočítá všechny kontrolní součty zálohy (BACKUP=backups/<projekt>/<datum-čas>).
+backup-verify:
+	@sh scripts/backup/backup.sh verify "$(BACKUP)"
+
+# Obnova jen do PRÁZDNÉHO ověřovacího projektu jrc-<název>; projekt jrc a neprázdné svazky odmítne.
+restore:
+	@sh scripts/backup/backup.sh restore-guard "$(BACKUP)"
+	@$(MAKE) --no-print-directory check-project-ports
+	@$(MAKE) --no-print-directory build
+	@sh scripts/backup/backup.sh restore-precheck "$(BACKUP)"
+	@$(MAKE) --no-print-directory env build-bb build-ff
+	@sh scripts/backup/backup.sh restore-data "$(BACKUP)"
+	@$(MAKE) --no-print-directory up
+	@sh scripts/backup/backup.sh restore-finish
+
+# Pojistky záloh bez běžících služeb: jednotkové testy a odmítnutí obnovy do projektu jrc.
+test-backup-guards:
+	docker run --rm --pull never --network none --user "$(JRC_UID):$(JRC_GID)" \
+	  --env PYTHONDONTWRITEBYTECODE=1 --volume "$(CURDIR)/scripts/backup:/t:ro" --workdir /t \
+	  jrc-dev:$(JRC_PROJECT) python3 -m unittest -b -q
+	sh scripts/backup/test-guards.sh
+
+# Úplný průchod: vlastní data, záloha, obnova do jiného prázdného projektu, porovnání, Chromium.
+test-backup: check-project-ports
+	sh scripts/backup/test-backup.sh

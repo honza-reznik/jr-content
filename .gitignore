@@ -19,3 +19,6 @@ proto/F1-B04/playwright-report/
 audit/
 .claude/scheduled_tasks.lock
 ops/pm-interaktivni
+
+# F2-B09: zálohy obsahují data i tajemství, nikdy do gitu
+backups/
