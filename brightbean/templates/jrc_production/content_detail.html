@@ -78,7 +78,7 @@
         {% elif active_tab == "script" %}
             {% include "jrc_texts/script.html" %}
         {% elif active_tab == "video" %}
-            <h2 class="text-lg font-semibold text-stone-900">Video</h2><div class="mt-5 rounded-xl border border-dashed border-stone-300 px-4 py-10 text-center text-sm text-stone-500">Video versions will appear here.</div>
+            {% include "jrc_video/_upload_tab.html" %}
         {% elif active_tab == "caption" %}
             <style>.jrc-caption-preview .preview-card{background:#fff;border:1px solid #e7e5e4;border-radius:14px;overflow:hidden}</style>
             <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">Channel captions</h2><p class="mt-1 text-sm text-stone-500">Each enabled channel has its own plain text caption and saved versions. The composer shows the latest saved version read-only.</p></div>
@@ -130,4 +130,5 @@
 {% block extra_js %}
 {% if active_tab == "script" %}<script type="module" src="{% static 'jrc_texts/dist/script.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
 {% if active_tab == "caption" %}<script src="{% static 'jrc_production/caption-counter.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
+{% if active_tab == "video" %}<script src="{% static 'jrc_video/upload.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
 {% endblock %}

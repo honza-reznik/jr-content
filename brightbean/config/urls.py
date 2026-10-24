@@ -95,6 +95,8 @@ if getattr(settings, "JRC_UI_ENABLED", False):
         path("about/", include("apps.jrc_ui.urls")),
         path("workspaces/<uuid:workspace_id>/profile/", include("apps.jrc_channels.urls")),
         path("", include("apps.jrc_production.urls")),
+        # JR Content: upraveno 2026-10-24 (blok F5-B05), AGPL-3.0: nahrání verze videa.
+        path("", include("apps.jrc_video.urls")),
         path("", include("apps.jrc_texts.urls")),
     ]
 

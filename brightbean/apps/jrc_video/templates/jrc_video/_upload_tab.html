@@ -1,0 +1,44 @@
+{% comment %}Karta Video: verze videa po kanálech a tlačítko Upload version (F5-B05).{% endcomment %}
+<div id="jrc-video" data-jrc-video
+     data-status-url="{% url 'jrc_video:upload_status' workspace_id=workspace.id post_id=post.id %}"
+     data-start-url="{% url 'jrc_video:upload_start' workspace_id=workspace.id post_id=post.id %}"
+     data-versions-base="{% url 'jrc_video:upload_status' workspace_id=workspace.id post_id=post.id %}versions/"
+     data-csrf="{{ csrf_token }}" data-max-bytes="{{ video_max_bytes }}">
+    <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">Video</h2><p class="mt-1 text-sm text-stone-500">Each channel has its own video and its own versions.</p></div>
+    <p data-video-notice role="status" aria-live="polite" class="mb-4 hidden rounded-lg px-3 py-2 text-sm"></p>
+    <div class="space-y-5">
+        {% for card in video_cards %}
+        <article class="rounded-xl border border-stone-200 p-4 sm:p-5" data-video-channel="{{ card.key }}" data-can-upload="{{ card.can_upload|yesno:'1,0' }}">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <h3 class="min-w-0 break-words font-semibold text-stone-900">{{ card.label }}</h3>
+                {% if card.can_upload %}
+                <div class="flex flex-wrap gap-2">
+                    <button type="button" data-video-upload class="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-300">Upload version</button>
+                    <input type="file" data-video-file class="hidden" accept="{{ video_accept }}">
+                </div>
+                {% endif %}
+            </div>
+            <div data-video-progress class="mt-4 hidden">
+                <div class="flex items-center justify-between gap-3 text-sm text-stone-700"><span data-video-progress-label class="min-w-0 break-words"></span><button type="button" data-video-discard class="hidden rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50">Discard</button></div>
+                <div class="mt-2 h-2 overflow-hidden rounded-full bg-stone-100" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Upload progress"><div data-video-bar class="h-2 rounded-full bg-orange-500" style="width:0%"></div></div>
+            </div>
+            <p data-video-error role="alert" class="mt-3 hidden rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800"></p>
+            <ol class="mt-4 space-y-2" data-video-versions>
+                {% for v in card.versions %}
+                <li class="flex flex-col gap-1 rounded-lg bg-stone-50 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between" data-version="{{ v.id }}" data-status="{{ v.status }}" data-mine="{{ v.mine|yesno:'1,0' }}" data-name="{{ v.filename }}" data-size="{{ v.size_bytes }}">
+                    <div class="min-w-0"><p class="text-sm font-medium text-stone-800">v{{ v.number }} <span class="font-normal text-stone-500">· {{ v.filename }}</span></p><p class="text-xs text-stone-500">{{ v.uploaded_by }} · {{ v.uploaded_at }}{% if v.duration %} · {{ v.duration }}{% endif %}{% if v.resolution %} · {{ v.resolution }}{% endif %}</p></div>
+                    <div class="flex items-center gap-2">
+                        {% if v.mine and v.status == 'uploading' and card.can_upload %}<button type="button" data-video-resume class="rounded-lg border border-orange-300 bg-white px-3 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-50">Continue upload</button>{% endif %}
+                        <span data-video-status class="rounded-full px-2.5 py-1 text-xs font-medium {% if v.status == 'ready' %}bg-emerald-100 text-emerald-800{% elif v.status == 'failed' %}bg-red-100 text-red-800{% else %}bg-amber-100 text-amber-800{% endif %}">{{ v.status_label }}</span>
+                    </div>
+                </li>
+                {% empty %}
+                <li class="rounded-lg border border-dashed border-stone-300 px-4 py-6 text-center text-sm text-stone-500" data-video-empty>No video yet.</li>
+                {% endfor %}
+            </ol>
+        </article>
+        {% empty %}
+        <div class="rounded-xl border border-dashed border-stone-300 px-4 py-10 text-center text-sm text-stone-500">No channels yet. Add a channel before uploading a video.</div>
+        {% endfor %}
+    </div>
+</div>

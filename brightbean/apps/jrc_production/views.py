@@ -405,10 +405,21 @@ def content_detail(request, workspace_id, post_id):
     )
     history.sort(key=lambda item: item["created_at"], reverse=True)
 
+    video_context = {}
+    if active_tab == "video":
+        # F5-B05: video versions per channel (the player and comments are F5-B08).
+        from apps.jrc_video import uploads as video_uploads
+
+        video_context = {
+            "video_cards": video_uploads.channel_cards(request.user, post, membership),
+            "video_accept": video_uploads.allowed_extensions_attr(),
+            "video_max_bytes": video_uploads.max_upload_bytes(),
+        }
     return render(
         request,
         "jrc_production/content_detail.html",
         {
+            **video_context,
             "workspace": workspace,
             "post": post,
             "pipeline_stage": pipeline_stage(post),
