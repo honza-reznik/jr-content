@@ -402,7 +402,7 @@ def get_stream_url(
         # Route through the HLS proxy so the master playlist, variant
         # playlists, and .ts segments all get served via short-lived
         # presigned URLs — the S3 bucket can stay fully private. (#51)
-        token = create_hls_token(media_file.s3_key_processed, **managed_hls_identity(current_user, asset.project_id))
+        token = create_hls_token(media_file.s3_key_processed, **managed_hls_identity(current_user, asset.project_id, db=db))
         url = f"/stream/hls/master.m3u8?token={token}"
     else:
         url = generate_presigned_get_url(media_file.s3_key_processed or media_file.s3_key_raw, **media_expiry)

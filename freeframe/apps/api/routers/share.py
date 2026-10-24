@@ -37,7 +37,7 @@ from ..schemas.share import (
     ShareVerifyRequest,
 )
 from ..services.permissions import (
-    require_project_role, validate_share_link, validate_share_link_with_session,
+    require_share_project_access, require_project_role, validate_share_link, validate_share_link_with_session,
     validate_asset_in_share, enforce_share_link_visibility, _is_descendant_of, folder_chain_is_live,
 )
 from ..services.auth_service import bcrypt_password_bytes
@@ -87,6 +87,11 @@ def _get_project_id_from_link(db: Session, link: ShareLink) -> uuid.UUID:
             raise HTTPException(status_code=404, detail="Shared folder not found")
         return folder.project_id
     raise HTTPException(status_code=400, detail="Invalid share link")
+
+
+def _share_media_expiry(db: Session, link: ShareLink, user: Optional[User]) -> dict:
+    identity = managed_hls_identity(user, _get_project_id_from_link(db, link), db=db)
+    return {"expires_in": MANAGED_MEDIA_SECONDS} if identity else {}
 
 
 def _log_share_activity(
@@ -281,8 +286,8 @@ def _build_share_validate_response(
     # Build asset details for asset shares
     asset_data = None
     branding_data = None
-    media_expiry = {"expires_in": MANAGED_MEDIA_SECONDS} if current_user and current_user.jrc_managed is True else {}
     if link.asset_id:
+        media_expiry = _share_media_expiry(db, link, current_user)
         asset = _get_asset(db, link.asset_id)
         # Get thumbnail URL
         media_file = _get_latest_media_file(db, asset.id)
@@ -295,7 +300,7 @@ def _build_share_validate_response(
             if media_file.s3_key_processed:
                 if asset.asset_type == AssetType.video:
                     # Route through /stream/hls so S3 can stay private (#51)
-                    hls_token = create_hls_token(media_file.s3_key_processed, **managed_hls_identity(current_user, asset.project_id))
+                    hls_token = create_hls_token(media_file.s3_key_processed, **managed_hls_identity(current_user, asset.project_id, db=db))
                     stream_url = f"/stream/hls/master.m3u8?token={hls_token}"
                 else:
                     stream_url = generate_presigned_get_url(media_file.s3_key_processed, **media_expiry)
@@ -374,6 +379,7 @@ def validate_share_link_endpoint(
     browser history, Referer headers, and Cloudflare Tunnel logs.
     """
     link = validate_share_link(db, token)
+    require_share_project_access(db, link, current_user)
 
     # Check secure visibility — requires authenticated user. This is the one
     # place that answers with requires_auth instead of raising, so the client
@@ -422,6 +428,7 @@ def verify_share_link_password(
     logs. See SECURITY_AUDIT H3.
     """
     link = validate_share_link(db, token)
+    require_share_project_access(db, link, current_user)
 
     # Check secure visibility — requires authenticated user (same gate as
     # the GET endpoint). Without this, an anonymous caller who knows the
@@ -1564,7 +1571,7 @@ def get_share_stream_url(
     media_file = _share_media_file(db, link, asset, version_id)
 
     choice = None
-    media_expiry = {"expires_in": MANAGED_MEDIA_SECONDS} if current_user and current_user.jrc_managed is True else {}
+    media_expiry = _share_media_expiry(db, link, current_user)
     if download:
         # The MP4 remuxed from the top rung unless another file was chosen,
         # falling back to the camera master for versions that predate it (see
@@ -1583,7 +1590,7 @@ def get_share_stream_url(
         )
     elif asset.asset_type == AssetType.video and media_file.s3_key_processed:
         # Route through /stream/hls so S3 can stay private (#51)
-        hls_token = create_hls_token(media_file.s3_key_processed, **managed_hls_identity(current_user, asset.project_id))
+        hls_token = create_hls_token(media_file.s3_key_processed, **managed_hls_identity(current_user, asset.project_id, db=db))
         url = f"/stream/hls/master.m3u8?token={hls_token}"
     else:
         url = generate_presigned_get_url(media_file.s3_key_processed or media_file.s3_key_raw, **media_expiry)

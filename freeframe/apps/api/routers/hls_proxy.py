@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..database import get_db
 from ..models.user import UserStatus
-from ..models.project import ProjectRole
+from ..models.project import Project, ProjectRole
 from ..services.auth_service import get_user_by_id
 from ..services.permissions import require_project_role
 from ..services.s3_service import generate_presigned_get_url, get_s3_client
@@ -34,8 +34,11 @@ router = APIRouter(prefix="/stream", tags=["streaming"])
 MANAGED_MEDIA_SECONDS = 180
 
 
-def managed_hls_identity(user, project_id) -> dict:
-    if user is None or user.jrc_managed is not True:
+def managed_hls_identity(user, project_id, *, db: Session | None = None) -> dict:
+    if user is None:
+        return {}
+    managed_project = db is not None and db.query(Project.jrc_managed).filter(Project.id == project_id).scalar() is True
+    if user.jrc_managed is not True and not managed_project:
         return {}
     return {
         "managed": True, "user_id": str(user.id), "project_id": str(project_id),
@@ -50,7 +53,7 @@ def create_hls_token(
     """Create an HLS token; managed sessions also carry a live identity binding."""
     payload = {
         "sub": "hls",
-        "v": 2,
+        "v": 3,
         "pfx": s3_prefix,
         "exp": datetime.now(timezone.utc) + timedelta(hours=expires_hours),
     }
@@ -72,9 +75,9 @@ def _decode_hls_token(token: str) -> dict:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     if payload.get("sub") != "hls":
         raise HTTPException(status_code=403, detail="Invalid token type")
-    # Pre-upgrade tokens carry no user binding and may live for 24 hours.
+    # Pre-upgrade share tokens (v1/v2) may lack a user binding and live for 24 hours.
     # Invalidate that format once, rather than preserving the revocation bypass.
-    if payload.get("v") != 2:
+    if payload.get("v") != 3:
         raise HTTPException(status_code=401, detail="Reload the video to renew its streaming session")
     return payload
 

@@ -133,7 +133,7 @@ def get_project(project_id: uuid.UUID, db: Session = Depends(get_db), current_us
         ProjectMember.user_id == current_user.id,
         ProjectMember.deleted_at.is_(None),
     ).first()
-    if not member and not project.is_public:
+    if not member and (current_user.jrc_managed is True or not project.is_public):
         raise HTTPException(status_code=403, detail="Not a project member")
     resp = ProjectResponse.model_validate(project)
     resp.poster_url = _resolve_poster_url(project)

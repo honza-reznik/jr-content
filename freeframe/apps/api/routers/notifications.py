@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from sqlalchemy import select
 from sqlalchemy.orm import Session
+from ..services.permissions import live_project_membership
 from ..database import get_db
 from ..middleware.auth import get_current_user
 from ..models.user import User
@@ -11,6 +13,15 @@ from ..schemas.asset import NotificationResponse
 import uuid
 
 router = APIRouter(tags=["notifications"])
+
+
+def _with_live_membership(query, current_user: User):
+    if current_user.jrc_managed is True:
+        query = query.filter(Notification.asset_id.in_(select(Asset.id).where(
+            Asset.deleted_at.is_(None),
+            live_project_membership(Asset.project_id, current_user.id),
+        )))
+    return query
 
 
 @router.get("/me/notifications", response_model=list[NotificationResponse], operation_id="get_my_notifications")
@@ -32,6 +43,8 @@ def list_notifications(
             Project.deleted_at.is_(None),
         )
     )
+    query = _with_live_membership(query, current_user)
+
     if unread_only:
         query = query.filter(Notification.read == False)
     notifications = query.order_by(Notification.created_at.desc()).limit(50).all()
@@ -82,10 +95,11 @@ def mark_notification_read(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    notification = db.query(Notification).filter(
+    query = db.query(Notification).filter(
         Notification.id == notification_id,
         Notification.user_id == current_user.id,
-    ).first()
+    )
+    notification = _with_live_membership(query, current_user).first()
     if not notification:
         raise HTTPException(status_code=404, detail="Notification not found")
     notification.read = True
@@ -97,8 +111,9 @@ def mark_all_notifications_read(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    db.query(Notification).filter(
+    query = db.query(Notification).filter(
         Notification.user_id == current_user.id,
         Notification.read == False,
-    ).update({"read": True})
+    )
+    _with_live_membership(query, current_user).update({"read": True}, synchronize_session=False)
     db.commit()

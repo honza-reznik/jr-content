@@ -67,6 +67,7 @@ def test_project_private_and_owned_by_service(client, sync_auth, mock_db, test_u
     assert response.status_code == 200
     project, owner = [call.args[0] for call in mock_db.add.call_args_list]
     assert project.id == remote_id("project", source_id)
+    assert project.jrc_managed is True
     assert project.is_public is False
     assert project.created_by == owner.user_id == test_user.id
     assert owner.role.value == "owner"

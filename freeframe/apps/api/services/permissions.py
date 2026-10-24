@@ -22,6 +22,28 @@ def get_project_member(db: Session, project_id: uuid.UUID, user_id: uuid.UUID) -
     ).first()
 
 
+def live_project_membership(project_id, user_id, minimum_role: ProjectRole = ProjectRole.viewer):
+    """SQL predicate shared by feeds and live events, before paging or signing URLs."""
+    roles = [ProjectRole.owner, ProjectRole.editor, ProjectRole.reviewer, ProjectRole.viewer]
+    return exists().where(
+        ProjectMember.project_id == project_id,
+        ProjectMember.user_id == user_id,
+        ProjectMember.deleted_at.is_(None),
+        ProjectMember.role.in_(roles[:roles.index(minimum_role) + 1]),
+        Project.id == ProjectMember.project_id,
+        Project.deleted_at.is_(None),
+    ).correlate_except(ProjectMember, Project)
+
+
+def require_managed_project_role(
+    db: Session, project_id: uuid.UUID, user: User | None,
+    minimum_role: ProjectRole = ProjectRole.viewer,
+) -> None:
+    """Managed accounts never gain access through authorship, public flags or links."""
+    if user is not None and user.jrc_managed is True:
+        require_project_role(db, project_id, user, minimum_role)
+
+
 def require_live_project(db: Session, project_id: uuid.UUID) -> Project:
     """The project, or 404 "Project not found" when it does not exist or is deleted,
     the same answer GET /projects/{id} gives. Deleting a project has no undo, so
@@ -128,13 +150,9 @@ def project_events_denial(
     for as long as it stays open, so it is a single indexed round trip.
     Token expiry is not checked here; the caller has the token's `exp`.
     """
-    is_member = exists().where(
-        ProjectMember.project_id == project_id,
-        ProjectMember.user_id == user_id,
-        ProjectMember.deleted_at.is_(None),
-    )
+    is_member = live_project_membership(project_id, user_id)
     row = db.execute(
-        select(User.status, User.token_version, Project.is_public, is_member.label("is_member"))
+        select(User.status, User.token_version, User.jrc_managed, Project.is_public, is_member.label("is_member"))
         .join(Project, Project.id == project_id)
         .where(
             User.id == user_id,
@@ -146,7 +164,7 @@ def project_events_denial(
         return EVENTS_ACCESS_REVOKED
     if row.token_version != token_version:
         return EVENTS_TOKEN_REVOKED
-    if not (row.is_member or row.is_public):
+    if not (row.is_member or (not row.jrc_managed and row.is_public)):
         return EVENTS_ACCESS_REVOKED
     return None
 
@@ -277,6 +295,29 @@ def validate_share_link(db: Session, token: str) -> ShareLink:
     return link
 
 
+def require_share_project_access(
+    db: Session, link: ShareLink, current_user: User | None,
+    minimum_role: ProjectRole = ProjectRole.viewer,
+) -> None:
+    """Apply current membership to every JR Content share, including old public links.
+
+    Password sessions, link ownership and the visibility flag cannot replace membership.
+    Resolve all scopes in one query; no share content or signed URL is returned first.
+    """
+    project_id = db.query(func.coalesce(
+        ShareLink.project_id, Asset.project_id, Folder.project_id,
+    )).select_from(ShareLink).outerjoin(Asset, Asset.id == ShareLink.asset_id).outerjoin(
+        Folder, Folder.id == ShareLink.folder_id,
+    ).filter(ShareLink.id == link.id).scalar()
+    managed = db.query(Project.jrc_managed).filter(Project.id == project_id).scalar()
+    if managed is True:
+        if current_user is None:
+            raise HTTPException(status_code=403, detail="Sign in through JR Content to view this link")
+        require_project_role(db, project_id, current_user, minimum_role)
+    else:
+        require_managed_project_role(db, project_id, current_user, minimum_role)
+
+
 def enforce_share_link_visibility(link: ShareLink, current_user: "User | None") -> None:
     """Enforce a share link's visibility setting. Raises 403 for a `secure` link
     with no authenticated caller.
@@ -298,11 +339,13 @@ def validate_share_link_with_session(
     token: str,
     share_session: "str | None" = None,
     current_user: "User | None" = None,
+    minimum_role: ProjectRole = ProjectRole.viewer,
 ) -> ShareLink:
     """Validate a share link, enforce its visibility setting, and verify the
     password session if the link is password-protected.
     Skips password check if the caller is the authenticated link creator."""
     link = validate_share_link(db, token)
+    require_share_project_access(db, link, current_user, minimum_role)
     enforce_share_link_visibility(link, current_user)
     if link.password_hash:
         # Skip password for authenticated link creator (e.g. admin settings preview)

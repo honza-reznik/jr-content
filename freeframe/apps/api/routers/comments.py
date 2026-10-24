@@ -1143,7 +1143,7 @@ def guest_comment(
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_user),
 ):
-    link = validate_share_link_with_session(db, token, share_session=share_session, current_user=current_user)
+    link = validate_share_link_with_session(db, token, share_session=share_session, current_user=current_user, minimum_role=ProjectRole.reviewer)
 
     # Check share link permission allows commenting
     if link.permission == SharePermission.view:

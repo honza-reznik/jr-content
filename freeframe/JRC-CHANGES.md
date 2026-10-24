@@ -23,10 +23,19 @@ Import upstreamu `3829889` (MIT, původní licence a copyright zachovány).
   streamy a stahování řízených účtů. Delší videa fungují bez obnovování celého přehrávače;
   odebrání člena odmítne další požadavek i s platným přehrávacím tokenem. Již stažená data
   nelze vzít zpět a dříve vydaná přímá adresa platí do vypršení.
-- Nový formát HLS tokenu (`v=2`) jednorázově odmítne staré nevázané tokeny z doby před
+- Nový formát HLS tokenu (`v=3`) jednorázově odmítne staré nevázané tokeny z doby před
   nasazením této úpravy, které jinak platily 24 hodin. Již otevřený přehrávač je třeba
   znovu načíst; novou adresu dostane až po kontrole současných oprávnění. Staré přímé S3
   adresy lze omezit pouze jejich původním vypršením.
+- Opravy review: `projects.jrc_managed` (migrace `jrc_f5b04_projects`) označuje nové i starší
+  synchronizované projekty. Jejich veřejné share odkazy vyžadují aktuální přihlášení a členství
+  na všech cestách k obsahu, komentář navíc roli reviewer. Heslo odkazu ani autorství tuto
+  kontrolu nenahrazují; vztahuje se i na místní účet v řízeném projektu. HLS ze share odkazu
+  proto vždy nese uživatele a projekt, přímý stream/stažení má nejvýše 180 s.
+- Již rozpracovaný upload řízeného účtu vyžaduje aktuální roli editor před podpisem další části,
+  obnovením i dokončením. Osobní přehledy a upozornění filtrují aktuální členství už v SQL před
+  stránkováním a podepisováním adres. Veřejnost projektu neobchází členství řízeného účtu ani
+  v detailu projektu a otevřeném proudu událostí SSE (průběžné zprávy ze serveru).
 - Přísnější e-mail synchronizace: NFC a malá písmena, kontrola délky po převodu, odmítnutí
   neviditelných řídicích znaků Unicode, chybných domén a adres; místní ukázkové domény zůstávají.
 - Staré obsluhy v loginu a sdílené složce používají zámek `ff_session_tokens`; obnova cookies

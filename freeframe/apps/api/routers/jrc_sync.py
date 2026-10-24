@@ -151,6 +151,7 @@ def sync_project(
         project = Project(id=identity, name=body.name, created_by=service_user.id, project_type=ProjectType.team)
         db.add(project)
         db.flush()
+    project.jrc_managed = True
     project.name = body.name
     project.is_public = False
     owner = db.query(ProjectMember).filter(
