@@ -62,7 +62,7 @@ for container in $containers; do
     # Sdílený síťový prostor ověří i služby bez Node.js (Garage, Redis, Caddy).
     docker run --rm --pull never --network "container:$container" \
       --user "$(id -u):$(id -g)" --volume "$PWD/scripts/probe-isolation.cjs:/probe.cjs:ro" \
-      jrc-dev:local node /probe.cjs
+      "jrc-dev:$project" node /probe.cjs
     echo "OK $service: bez výchozí trasy, porty jen místně, telemetrie vypnutá, IPv4 i IPv6 ven zablokované"
   else
     test "$(docker inspect --format '{{.State.ExitCode}}' "$container")" = 0

@@ -53,7 +53,7 @@ case "${1:?Chybí operace}" in
             for volume in $volumes; do
                 owner=$(docker run --rm --name "$project-state" --pull never --network none \
                     --mount "type=volume,src=$volume,dst=/state,readonly" \
-                    jrc-dev:local sh -c 'if [ -f /state/.jrc-working-dir ]; then cat /state/.jrc-working-dir; fi') || owner=
+                    "jrc-dev:$project" sh -c 'if [ -f /state/.jrc-working-dir ]; then cat /state/.jrc-working-dir; fi') || owner=
                 [ -z "$owner" ] || break
             done
         fi
@@ -76,7 +76,7 @@ case "${1:?Chybí operace}" in
         for volume in $volumes; do
             docker run --rm --name "$project-state" --pull never --network none \
                 --mount "type=volume,src=$volume,dst=/state" \
-                jrc-dev:local sh -c 'printf "%s\n" "$1" > /state/.jrc-working-dir' sh "$owner"
+                "jrc-dev:$project" sh -c 'printf "%s\n" "$1" > /state/.jrc-working-dir' sh "$owner"
         done
         ;;
     *) printf 'Neznámá operace: %s\n' "$1" >&2; exit 1 ;;

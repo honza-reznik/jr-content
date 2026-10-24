@@ -1,4 +1,5 @@
-FROM jrc-dev:local
+ARG JRC_PROJECT=jrc
+FROM jrc-dev:${JRC_PROJECT}
 USER root
 RUN python3 -m venv /opt/freeframe
 COPY freeframe/apps/api/requirements*.txt /tmp/freeframe/

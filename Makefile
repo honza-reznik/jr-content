@@ -27,16 +27,17 @@ export BUILDX_CONFIG := $(CURDIR)/.cache/docker-buildx
 CMD ?= bash
 export CMD
 
-.PHONY: build build-bb env up down shell test test-fast test-smoke test-proxy test-s3 test-bb test-bb-fast test-ff test-ff-smoke test-isolation test-ff-offline test-ff-vitest test-ff-tsc test-ff-lint ff-account build-ff reset logs ps
+.PHONY: build build-bb env check-project-ports up down shell test test-fast test-smoke test-proxy test-s3 test-bb test-bb-fast test-ff test-ff-smoke test-isolation test-ff-offline test-ff-vitest test-ff-tsc test-ff-lint ff-account build-ff reset logs ps
 build:
-	docker build --tag jrc-dev:local --file docker/Dockerfile docker
+	docker build --tag jrc-dev:$(JRC_PROJECT) --file docker/Dockerfile docker
 
 env:
+	@docker image inspect jrc-dev:$(JRC_PROJECT) >/dev/null 2>&1 || $(MAKE) build
 	@sh scripts/workspace.sh env
-	@docker image inspect jrc-dev:local >/dev/null 2>&1 || $(MAKE) build
 	docker run --rm --name $(JRC_PROJECT)-env --network none --pull never \
 	  --user "$(JRC_UID):$(JRC_GID)" --volume "$(CURDIR):/workspace" \
-	  jrc-dev:local node scripts/init-env.cjs
+	  --env JRC_APP_PORT --env JRC_POSTGRES_PORT --env JRC_S3_PORT --env JRC_BB_PORT \
+	  jrc-dev:$(JRC_PROJECT) node scripts/init-env.cjs
 
 build-bb:
 	# Worktree nesmějí přepsat obraz jinému ověřovacímu projektu.
@@ -47,10 +48,13 @@ build-bb:
 	  'mkdir -p /source/theme/static/css/dist /source/apps/jrc_texts/static/jrc_texts/dist && cp /app/theme/static/css/dist/styles.css /source/theme/static/css/dist/styles.css && cp /opt/jrc-texts/script.js /source/apps/jrc_texts/static/jrc_texts/dist/script.js'
 
 build-ff:
-	docker build --tag jrc-ff-api:local --file docker/Dockerfile.ff-api .
-	docker build --tag jrc-ff-web:local --file docker/Dockerfile.ff-web .
+	docker build --tag jrc-ff-api:$(JRC_PROJECT) --build-arg JRC_PROJECT=$(JRC_PROJECT) --file docker/Dockerfile.ff-api .
+	docker build --tag jrc-ff-web:$(JRC_PROJECT) --build-arg JRC_PROJECT=$(JRC_PROJECT) --file docker/Dockerfile.ff-web .
 
-up: env
+check-project-ports:
+	@sh scripts/check-project-ports.sh
+
+up: env check-project-ports
 	$(MAKE) build
 	$(MAKE) build-bb
 	$(MAKE) build-ff
@@ -69,7 +73,7 @@ shell:
 		$(COMPOSE) exec -T jrc-dev sh -c "$$CMD"; \
 	fi
 
-test:
+test: check-project-ports
 	@failed=0; \
 	for suite in test-smoke test-bb test-ff; do \
 	  printf '\n=== %s ===\n' "$$suite"; \
@@ -110,14 +114,14 @@ test-proxy:
 	@sh scripts/workspace.sh check
 	docker run --rm --pull never --network host --user "$(JRC_UID):$(JRC_GID)" \
 	  --env-file .env --volume "$(CURDIR):/jrc" \
-	  jrc-dev:local node /jrc/scripts/test-proxy.cjs
+	  jrc-dev:$(JRC_PROJECT) node /jrc/scripts/test-proxy.cjs
 
 # Úložiště S3 z pohledu prohlížeče (místní brána): klíče, soukromí jrc-app, CORS, kvóty (F2-B05).
 test-s3:
 	@sh scripts/workspace.sh check
 	docker run --rm --pull never --network host --user "$(JRC_UID):$(JRC_GID)" \
 	  --env-file .env --volume "$(CURDIR)/scripts:/jrc-scripts:ro" \
-	  jrc-dev:local python3 /jrc-scripts/test-s3-storage.py
+	  jrc-dev:$(JRC_PROJECT) python3 /jrc-scripts/test-s3-storage.py
 	# Výpis bucketu obsahuje identifikátory klíčů; kontrolujeme jen řádek kvóty.
 	$(COMPOSE) exec -T jrc-s3 sh -c 'for b in jrc-app jrc-video; do garage bucket info $$b | grep -q "maximum size" || exit 1; done'
 	@printf 'OK S3: kvóty jrc-app a jrc-video nastavené\n'
@@ -143,7 +147,7 @@ test-isolation:
 	docker run --rm --pull never --network host --user "$(JRC_UID):$(JRC_GID)" \
 	  --env-file .env \
 	  --volume "$(CURDIR)/scripts:/jrc-scripts:ro" \
-	  jrc-dev:local node /jrc-scripts/test-local-gate.cjs
+	  jrc-dev:$(JRC_PROJECT) node /jrc-scripts/test-local-gate.cjs
 
 test-ff-offline:
 	@sh scripts/workspace.sh check
@@ -172,7 +176,7 @@ test-ff-smoke:
 	docker run --rm --network host --pull never --user "$(JRC_UID):$(JRC_GID)" \
 	  --env-file .env \
 	  --volume "$(CURDIR):/jrc" --workdir /jrc \
-	  jrc-ff-api:local python scripts/smoke-ff.py
+	  jrc-ff-api:$(JRC_PROJECT) python scripts/smoke-ff.py
 
 test-ff-lint:
 	@sh scripts/workspace.sh check

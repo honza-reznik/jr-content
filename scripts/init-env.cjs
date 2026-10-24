@@ -16,6 +16,10 @@ const values = {
   JRC_BB_S3_SECRET_KEY: crypto.randomBytes(32).toString('hex'),
   JRC_UID: process.getuid(),
   JRC_GID: process.getgid(),
+  JRC_APP_PORT: process.env.JRC_APP_PORT || '13000',
+  JRC_POSTGRES_PORT: process.env.JRC_POSTGRES_PORT || '5432',
+  JRC_S3_PORT: process.env.JRC_S3_PORT || '13900',
+  JRC_BB_PORT: process.env.JRC_BB_PORT || '18011',
 };
 const template = fs.readFileSync('.env.example', 'utf8');
 const exists = fs.existsSync('.env');
@@ -31,7 +35,9 @@ for (const line of template.split('\n')) {
   if (anyFound && anyFound[1].trim() !== '') continue;
   const existing = new RegExp(`^[ \\t]*(?:export[ \\t]+)?${key}[ \\t]*=(.*)$`, 'm');
   const found = existing.exec(content);
-  const value = fallback || values[key];
+  // Pro nový worktree respektuj předané porty. Při doplnění existujícího
+  // souboru ponech výchozí nastavení; nikdy nepřepisuj jeho vlastní hodnoty.
+  const value = (!exists && values[key] !== undefined ? values[key] : fallback) || values[key];
   if (value === undefined) throw new Error(`Chybí generátor hodnoty ${key}`);
   if (found) content = content.replace(existing, `${key}=${value}`);
   else content += `${content && !content.endsWith('\n') ? '\n' : ''}${key}=${value}\n`;
