@@ -520,3 +520,27 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
 - Přehled „Waiting for me“ ukazuje týmu položky čekající na interní kontrolu a žádosti klienta o změny; klientovi
   jeho položky čekající na schválení. Přehled je omezený na aktuálního člena a klienta a nezobrazuje texty poznámek.
 - Přidány testy fáze, viditelnosti kanálu a rolí pro čekající položky.
+
+## 2026-10-24 · F9-B01 — REST API pro texty, fáze a komentáře
+
+- Nový `apps/api/routers/content.py`, připojený v `apps/api/api.py` pod `/api/v1/posts/{id}/…`:
+  `script` (GET, POST), `captions` (GET seznam), `captions/{kopie kanálu}` (GET, POST, PATCH),
+  `stage` (GET, POST) a `comments` (GET, POST). OpenAPI popis je v `api.py` a u jednotlivých tras.
+- Routy samy nic nerozhodují: scénář a popisek jdou přes `apps/jrc_texts/services.py`
+  (verze, `base_version`, konflikt 409), fáze přes `move_content` (`expected_stage`) a komentáře přes
+  `get_visible_comments` / `create_comment`. Klíč jedná jako jeho vydavatel v pracovním prostoru klíče,
+  zúžený právy, která klíč dostal (`_KeyMembership`); klíč bez `create_posts` a `approve_posts` nic nezapisuje.
+  Obsah jiného prostoru nebo s kopií kanálu mimo seznam účtů klíče je 404.
+- `apps/jrc_texts/services.py`: nová `save_caption()` (stejná pravidla jako karta Caption, limit kanálu,
+  nová verze, kopie do `platform_specific_caption`); `create_document()` přijímá `source` (`api`).
+  Karta Caption zůstává beze změny.
+- Žádná jiná cesta API ani MCP `platform_specific_caption` nezapisuje a kopii kanálu nemaže
+  (trasy mazání neexistují); hlídá to test `test_no_other_api_path_rewrites_or_deletes_a_versioned_caption`.
+- Audit: selhání těchto tras se zapisují jako `script.*`, `caption.*`, `stage.*`, `comment.*`.
+- Testy: `apps/api/tests/test_content_api.py`.
+- Opravy po review F9-B01: komentování přes API vyžaduje klíč s `create_posts` nebo `approve_posts` (klíč jen
+  s `view_analytics` a klíč vieweru jsou jen ke čtení) a platí zúžení právy aktuální role vydavatele.
+  `apps/api/routers/posts.py`: u kanálů JR Content (s profilem kanálu) `POST /posts` s
+  `platform_overrides[].caption` a `PATCH /posts/{id}` s `caption` vrací 422 s odkazem na
+  `/posts/{id}/captions/{kopie kanálu}`; popisek tak vzniká jen jako verze. Ostatní pole PATCH a běžné
+  kanály Brightbean (bez profilu JR) fungují beze změny. Testy: `test_content_api.py`.
