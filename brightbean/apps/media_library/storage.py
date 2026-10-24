@@ -41,8 +41,11 @@ def is_s3_backend() -> bool:
     ``__class__`` is proxied to the real backend. This returned False on every
     S3 deployment until it was fixed, which silently disabled the MCP presigned
     upload tools and the media proxy's range-GET path.
+
+    JR Content (F2-B05): the MRO is checked so a subclass of the S3 backend
+    defined elsewhere (``apps.jrc_storage.backends.JrcS3Storage``) still counts.
     """
-    return default_storage.__class__.__module__.startswith("storages.backends.s3")
+    return any(cls.__module__.startswith("storages.backends.s3") for cls in default_storage.__class__.__mro__)
 
 
 # Cloudflare R2 does not implement S3's POST Object API — a presigned POST

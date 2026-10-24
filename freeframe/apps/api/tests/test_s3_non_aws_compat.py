@@ -177,6 +177,21 @@ def test_startup_cors_emits_one_rule_per_origin(monkeypatch):
         assert "ETag" in rule["ExposeHeaders"]
 
 
+def test_startup_cors_without_dev_origins(monkeypatch):
+    # JR Content F2-B05: production-like setup allows the app origin only.
+    monkeypatch.setattr(settings, "s3_storage", "minio")
+    monkeypatch.setattr(settings, "frontend_url", "http://127.0.0.1:13000/video")
+    monkeypatch.setattr(settings, "cors_allow_origins", "http://127.0.0.1:13000")
+    monkeypatch.setattr(settings, "cors_dev_origins", False)
+    fake = _FakeS3()
+    monkeypatch.setattr(s3_service, "_build_s3_client", lambda config=None: fake)
+
+    ensure_bucket_exists()
+
+    assert [r["AllowedOrigins"] for r in fake.cors_config["CORSRules"]] == [["http://127.0.0.1:13000"]]
+    assert settings.cors_origins == ["http://127.0.0.1:13000"]
+
+
 def test_startup_cors_dedupes_frontend_localhost(monkeypatch):
     monkeypatch.setattr(settings, "s3_storage", "minio")
     monkeypatch.setattr(settings, "frontend_url", "http://localhost:3000")

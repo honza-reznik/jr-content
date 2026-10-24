@@ -6,6 +6,15 @@ x-offline: &offline
   NPM_CONFIG_FUND: "false"
   NPM_CONFIG_UPDATE_NOTIFIER: "false"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
+# F2-B05: Brightbean ukládá média do soukromého bucketu jrc-app. Server mluví s Garage
+# uvnitř sítě, podepsané adresy míří na místní bránu S3, kterou otevírá prohlížeč.
+x-bb-s3: &bb-s3
+  JRC_S3_ENDPOINT_URL: http://jrc-s3:3900
+  JRC_S3_PUBLIC_URL: http://127.0.0.1:${JRC_S3_PORT:-13900}
+  JRC_S3_BUCKET: jrc-app
+  JRC_S3_ACCESS_KEY_ID: ${JRC_BB_S3_ACCESS_KEY:?Spusťte make env}
+  JRC_S3_SECRET_ACCESS_KEY: ${JRC_BB_S3_SECRET_KEY:?Spusťte make env}
+  AWS_EC2_METADATA_DISABLED: "true"
 x-bb: &bb
   build:
     context: ./brightbean
@@ -15,7 +24,7 @@ x-bb: &bb
   init: true
   user: "${JRC_UID:-1000}:${JRC_GID:-1000}"
   environment: &bb-environment
-    <<: *offline
+    <<: [*offline, *bb-s3]
     DJANGO_SETTINGS_MODULE: config.settings.jrc
     SECRET_KEY: ${JRC_BB_SECRET_KEY:?Spusťte make env}
     ENCRYPTION_KEY_SALT: ${JRC_BB_ENCRYPTION_KEY_SALT:?Spusťte make env}
@@ -63,6 +72,8 @@ x-ff: &ff
     AWS_EC2_METADATA_DISABLED: "true"
     FRONTEND_URL: http://127.0.0.1:${JRC_APP_PORT:-13000}/video
     CORS_ALLOW_ORIGINS: http://127.0.0.1:${JRC_APP_PORT:-13000}
+    # F2-B05: API ani bucket jrc-video nepovolí vývojové původy localhost:3000/3001.
+    CORS_DEV_ORIGINS: "false"
     # /docs, /redoc a /openapi.json by byly veřejné bez přihlášení.
     DISABLE_DOCS: "true"
     MAIL_PROVIDER: smtp
@@ -106,6 +117,8 @@ services:
       <<: *offline
       JRC_UID: ${JRC_UID:-1000}
       JRC_GID: ${JRC_GID:-1000}
+      # CSP stránky /video povoluje přesně tento původ úložiště (F2-B05).
+      JRC_S3_PORT: ${JRC_S3_PORT:-13900}
       XDG_DATA_HOME: /data
       XDG_CONFIG_HOME: /config
     # Compose při změně obsahu znovu vytvoří proxy i se souborem nově připojeným.
@@ -266,10 +279,14 @@ services:
     <<: *bb
     restart: "no"
     # Nový svazek médií je nejprve nutné předat běžnému uživateli aplikace.
+    # F2-B05: po migraci CORS bucketu jrc-app a idempotentní kopie místních médií do S3
+    # (místní soubory zůstávají).
     user: "0:0"
-    command: ["sh", "-c", "chown $${JRC_UID}:$${JRC_GID} /app/media && exec setpriv --reuid=$${JRC_UID} --regid=$${JRC_GID} --clear-groups python manage.py migrate --noinput"]
+    command: ["sh", "-c", "chown $${JRC_UID}:$${JRC_GID} /app/media && exec setpriv --reuid=$${JRC_UID} --regid=$${JRC_GID} --clear-groups sh -c 'python manage.py migrate --noinput && python manage.py jrc_configure_s3 && python manage.py jrc_migrate_media_to_s3'"]
     environment:
-      <<: *offline
+      <<: [*offline, *bb-s3]
+      APP_URL: http://127.0.0.1:${JRC_APP_PORT:-13000}
+      MEDIA_ROOT: /app/media
       DJANGO_SETTINGS_MODULE: config.settings.jrc
       SECRET_KEY: ${JRC_BB_SECRET_KEY:?Spusťte make env}
       ENCRYPTION_KEY_SALT: ${JRC_BB_ENCRYPTION_KEY_SALT:?Spusťte make env}
@@ -282,6 +299,8 @@ services:
     depends_on:
       jrc-bb-db:
         condition: service_completed_successfully
+      jrc-s3:
+        condition: service_healthy
   jrc-bb-web:
     <<: *bb
     command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
@@ -363,10 +382,14 @@ services:
       S3_BUCKET: ${S3_BUCKET:-jrc-local}
       JRC_FF_S3_ACCESS_KEY: ${JRC_FF_S3_ACCESS_KEY:?Spusťte make env}
       JRC_FF_S3_SECRET_KEY: ${JRC_FF_S3_SECRET_KEY:?Spusťte make env}
+      JRC_BB_S3_ACCESS_KEY: ${JRC_BB_S3_ACCESS_KEY:?Spusťte make env}
+      JRC_BB_S3_SECRET_KEY: ${JRC_BB_S3_SECRET_KEY:?Spusťte make env}
+      JRC_S3_APP_QUOTA: ${JRC_S3_APP_QUOTA:-20GiB}
+      JRC_S3_VIDEO_QUOTA: ${JRC_S3_VIDEO_QUOTA:-100GiB}
     volumes:
       - jrc-s3-data:/var/lib/garage
     healthcheck:
-      test: ["CMD-SHELL", "test -f /var/lib/garage/meta/.jrc-initialized && test -f /var/lib/garage/meta/.jrc-video-initialized && garage status >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "test -f /var/lib/garage/meta/.jrc-initialized && test -f /var/lib/garage/meta/.jrc-video-initialized && test -f /var/lib/garage/meta/.jrc-app-initialized && test -f /tmp/.jrc-ready && garage status >/dev/null 2>&1"]
       interval: 2s
       timeout: 5s
       retries: 40

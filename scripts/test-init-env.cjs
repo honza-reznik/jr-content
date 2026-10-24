@@ -21,6 +21,13 @@ try {
   assert.notEqual(/^JRC_FF_SSO_SECRET=(.*)$/m.exec(fresh)[1], /^JRC_FF_JWT_SECRET=(.*)$/m.exec(fresh)[1]);
   assert.match(fresh, /^JRC_FF_S3_ACCESS_KEY=GK[a-f0-9]{24}$/m);
   assert.match(fresh, /^JRC_FF_S3_SECRET_KEY=[a-f0-9]{64}$/m);
+  assert.match(fresh, /^JRC_BB_S3_ACCESS_KEY=GK[a-f0-9]{24}$/m);
+  assert.match(fresh, /^JRC_BB_S3_SECRET_KEY=[a-f0-9]{64}$/m);
+  assert.match(fresh, /^JRC_S3_APP_QUOTA=20GiB$/m);
+  // Tři samostatné klíče Garage: jrc-local, jrc-video a jrc-app.
+  const keys = ['AWS_ACCESS_KEY_ID', 'JRC_FF_S3_ACCESS_KEY', 'JRC_BB_S3_ACCESS_KEY']
+    .map(name => new RegExp(`^${name}=(.*)$`, 'm').exec(fresh)[1]);
+  assert.equal(new Set(keys).size, 3);
   assert.equal(fs.statSync(path.join(temporary, '.env')).mode & 0o777, 0o600);
   run();
   assert.equal(read(), fresh);
@@ -32,6 +39,7 @@ try {
   assert.match(upgraded, /^JRC_BB_SECRET_KEY=[a-f0-9]{96}$/m);
   assert.match(upgraded, /^JRC_BB_ENCRYPTION_KEY_SALT=[a-f0-9]{64}$/m);
   assert.match(upgraded, /^JRC_FF_SSO_SECRET=[a-f0-9]{96}$/m);
+  assert.match(upgraded, /^JRC_BB_S3_ACCESS_KEY=GK[a-f0-9]{24}$/m);
   run();
   assert.equal(read(), upgraded);
   console.log('OK .env: nové hodnoty, doplnění starého souboru, zachování hesel, opakování a práva 600');

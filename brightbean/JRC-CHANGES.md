@@ -341,3 +341,25 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
 - Kořen JR Content: `JRC_FF_SSO_SECRET` v `.env.example`, `scripts/init-env.cjs` (96 hex znaků,
   zachová existující hodnotu), `docker-compose.yml` (jen `jrc-bb-web` a `jrc-ff-api`), `Makefile`
   (`ADMIN_COMPOSE`). Živý test `scripts/F5-B02/check-ticket.sh` (jen `jrc-f5b02`).
+
+## 2026-10-24 · F2-B05 — úložiště S3
+
+- `config/settings/jrc.py`: média v soukromém bucketu Garage `jrc-app` (vlastní klíč jen pro
+  tento bucket). Server používá vnitřní adresu `jrc-s3:3900`, prohlížeč dostává podepsané adresy
+  platné 15 minut na místní bránu S3 (`JRC_S3_PUBLIC_URL`). `/media/` se už neobsluhuje
+  (`SERVE_MEDIA = False`). CSP `img-src`, `media-src`, `connect-src` doplněna jen o přesný původ
+  S3, vynucená. Podepsaný POST pro nástroje MCP je vypnutý (mířil by na vnitřní adresu).
+- `config/settings/jrc_offline.py`: registrace `apps.jrc_storage`; `STORAGE_BACKEND=local`
+  pro import základu zůstává, aby base.py nedoplnil do CSP `https://` bez portu.
+- `apps/jrc_storage/`: `JrcS3Storage` (podpis pro adresu prohlížeče, provoz přes vnitřní adresu),
+  příkazy `jrc_configure_s3` (CORS bucketu jen pro původ aplikace, GET/HEAD) a
+  `jrc_migrate_media_to_s3` (jednorázová kopie místního svazku do S3; místní soubory se nemažou).
+  Oprava po review: existující objekt v S3 se nikdy nepřepisuje; dokončení se zapíše značkou
+  `.jrc/media-migration-complete.json` v bucketu až po úplném bezchybném průchodu a pak už příkaz nic
+  nekopíruje (stará záloha neobnoví vyměněná ani smazaná média). Přerušená migrace pokračuje,
+  nečitelný adresář je chyba s cestou, vynechá se jen provozní `.jrc-working-dir` (média s tečkou ne).
+  Oba spouští `jrc-bb-migrate` při každém `make up`.
+- `apps/media_library/storage.py`: `is_s3_backend()` uznává i podtřídy S3 backendu (kontrola MRO).
+- `templates/media_library/asset_edit.html`: Cropper s `checkCrossOrigin: false`. Jinak by přidal
+  k podepsané adrese `?timestamp=` a S3 by obrázek odmítl (403). Ořez dělá server podle `getData()`.
+- Testy: `apps/jrc_storage/tests/` (podpis pro veřejnou adresu, kopie médií, CORS, nastavení a CSP).
