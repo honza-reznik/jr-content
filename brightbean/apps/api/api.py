@@ -21,6 +21,7 @@ from ninja.openapi.docs import Swagger
 from apps.api.auth import ApiKeyAuth, McpAuth
 from apps.api.routers.accounts import router as accounts_router
 from apps.api.routers.analytics import router as analytics_router
+from apps.api.routers.content import router as content_router
 from apps.api.routers.inbox import router as inbox_router
 from apps.api.routers.me import router as me_router
 from apps.api.routers.media import router as media_router
@@ -88,6 +89,13 @@ api = NinjaAPI(
         "set yet. Create Pinterest posts as drafts and schedule them from the "
         "composer after choosing a board. The same rule applies to PATCHing "
         "the media of a scheduled post.\n\n"
+        "**Texts, stage and comments of a content (F9-B01).** "
+        "`/posts/{id}/script`, `/captions/{channel_copy_id}`, `/stage` and `/comments` do what the content "
+        "detail page does, with the same rules. A key acts as its issuer in the key's workspace, narrowed by the "
+        "permissions it was granted; a content of another workspace, or one with a channel copy outside the key's "
+        "account allowlist, is 404. Scripts and captions are saved as new versions of Markdown/plain text and need "
+        "`base_version` (409 when it is not the newest). Saved versions are never changed or deleted. Comments "
+        "are filtered by the issuer's role: clients and viewers never see internal comments.\n\n"
         "**Deleting posts.** Posts cannot be deleted via the API in v1. "
         "Cancel a scheduled post with `POST /posts/{id}/cancel`; remove "
         "drafts from the workspace's drafts list in the web UI. Published "
@@ -105,6 +113,8 @@ api = NinjaAPI(
 api.add_router("/me", me_router)
 api.add_router("/accounts", accounts_router)
 api.add_router("/posts", posts_router)
+# JR Content (F9-B01): script, captions, stage and comments of a content, under /posts/{id}/.
+api.add_router("/posts", content_router)
 api.add_router("/media", media_router)
 api.add_router("/analytics", analytics_router)
 api.add_router("/inbox", inbox_router)
@@ -250,6 +260,15 @@ def _action_for_path(method: str, path: str, *, status_code: int) -> str:
     if "/analytics/posts/" in path:
         return f"analytics.read.post.{status_code}"
     if "/posts/" in path:
+        for part, label in (
+            ("/script", "script"),
+            ("/captions", "caption"),
+            ("/stage", "stage"),
+            ("/comments", "comment"),
+        ):
+            if path.rstrip("/").endswith(part) or f"{part}/" in path:
+                verb = "read" if method == "GET" else "write"
+                return f"{label}.{verb}.{status_code}"
         if path.endswith("/schedule"):
             return f"post.schedule.{status_code}"
         if path.endswith("/cancel"):

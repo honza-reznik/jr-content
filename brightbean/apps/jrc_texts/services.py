@@ -9,7 +9,7 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.utils import timezone
 
-from apps.composer.models import Post
+from apps.composer.models import PlatformPost, Post
 from apps.jrc_production.services import content_membership
 from apps.members.models import WorkspaceMembership
 
@@ -76,7 +76,9 @@ def latest_version(document_id, user):
 
 
 @transaction.atomic
-def create_document(post_id, user, *, kind="script", platform_post_id=None, format="rich", content=None, markdown=None):
+def create_document(
+    post_id, user, *, kind="script", platform_post_id=None, format="rich", content=None, markdown=None, source="editor"
+):
     post = Post.objects.select_for_update().select_related("workspace").get(pk=post_id)
     # Authorize before validating any channel-specific data.
     probe = TextDocument(post=post)
@@ -85,12 +87,15 @@ def create_document(post_id, user, *, kind="script", platform_post_id=None, form
         post=post, workspace=post.workspace, kind=kind, platform_post_id=platform_post_id, format=format
     )
     document.full_clean()
+    if source not in TextVersion.Source.values:
+        raise ValidationError("Choose a valid version source.")
     normalized, text = normalize_content(content=content, markdown=markdown, plain=format == "plain")
     document.save()
     TextVersion.objects.create(
         document=document,
         number=1,
         state=TextVersion.State.FINAL,
+        source=source,
         content=normalized,
         text=text,
         created_by=user,
@@ -179,6 +184,57 @@ def save(version_id, user, *, expected_revision, content=None, markdown=None):
 def discard(version_id, user, *, expected_revision):
     draft = _draft(version_id, user, expected_revision, recover_orphan=True)
     draft.delete()
+
+
+@transaction.atomic
+def save_caption(post_id, platform_post_id, user, text, *, base_version_id=None, source="editor"):
+    """Save a channel caption as a new version and copy it to the channel variant (F9-B01).
+
+    The same rules as the Caption tab: the post is locked, the channel limit is checked,
+    the base must be the newest saved version (``ConflictError`` otherwise) and the caption
+    is only ever written by a new version. A channel without history starts it from the
+    caption it currently has, so ``base_version_id`` must then be empty.
+    Returns ``(version, changed)``; saving an identical text creates no version.
+    """
+    post = Post.objects.select_for_update().select_related("workspace").get(pk=post_id)
+    _authorize(TextDocument(post=post), user, write=True)
+    variant = (
+        PlatformPost.objects.select_for_update(of=("self",))
+        .select_related("social_account")
+        .get(pk=platform_post_id, post=post)
+    )
+    account = variant.social_account
+    if account.caption_wire_length(text) > account.char_limit:
+        raise ValidationError(f"Caption exceeds the {account.char_limit}-character limit.")
+    document = TextDocument.objects.filter(platform_post=variant, kind=TextDocument.Kind.CAPTION).first()
+    created = False
+    if document is None:
+        if base_version_id is not None:
+            raise ConflictError("This caption has no saved version yet. Reload the text.")
+        document = create_document(
+            post.pk,
+            user,
+            kind=TextDocument.Kind.CAPTION,
+            platform_post_id=variant.pk,
+            format=TextDocument.Format.PLAIN,
+            content={"text": variant.effective_caption},
+            source=source,
+        )
+        base = document.versions.filter(state=TextVersion.State.FINAL).order_by("-number").first()
+        created = True
+    else:
+        base = (
+            document.versions.filter(pk=base_version_id, state=TextVersion.State.FINAL).first()
+            if base_version_id is not None
+            else None
+        )
+        if base is None:
+            raise ConflictError("This caption changed in another place. Reload the text.")
+    draft = edit(base.pk, user, source=source)
+    saved = save(draft.pk, user, expected_revision=0, content={"text": text})
+    variant.platform_specific_caption = saved.text
+    variant.save(update_fields=["platform_specific_caption", "updated_at"])
+    return saved, created or saved.pk != base.pk
 
 
 def latest_saved_captions(platform_post_ids):
