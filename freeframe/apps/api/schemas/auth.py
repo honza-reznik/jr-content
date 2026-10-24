@@ -81,6 +81,7 @@ class UserResponse(BaseModel):
     status: UserStatus
     email_verified: bool = False
     is_superadmin: bool = False
+    jrc_managed: bool = False
     preferences: dict = {}
 
     model_config = {"from_attributes": True}

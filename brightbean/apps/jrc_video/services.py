@@ -8,7 +8,7 @@ from apps.members.models import WorkspaceMembership
 from apps.workspaces.models import Workspace
 
 from .client import FreeFrameClient, FreeFrameError
-from .models import VideoAccount, VideoAccountSyncRequest, VideoProject, VideoSyncRequest
+from .models import VideoAccount, VideoAccountRevocation, VideoAccountSyncRequest, VideoProject, VideoSyncRequest
 
 logger = logging.getLogger(__name__)
 ROLE_MAP = {
@@ -24,6 +24,21 @@ ROLE_MAP = {
 def error_text(exc):
     # VideoSyncRequest.last_error / VideoAccountSyncRequest.last_error are 255 chars.
     return str(exc)[:255]
+
+
+def revoke_account(user_id, api):
+    # The user row lock in sync_account / pre_delete ensures no successful
+    # account synchronization can reactivate the identity after deletion commits.
+    api.request("POST", f"/jrc-sync/accounts/{user_id}/deactivate")
+    VideoAccountRevocation.objects.filter(source_user_id=user_id).delete()
+
+
+def try_revoke_account(user_id):
+    try:
+        revoke_account(user_id, FreeFrameClient())
+    except FreeFrameError as exc:
+        VideoAccountRevocation.objects.filter(source_user_id=user_id).update(last_error=error_text(exc))
+        logger.warning("FreeFrame deactivation of deleted user %s failed; queued for retry.", user_id)
 
 
 def sync_account(user_id, api):

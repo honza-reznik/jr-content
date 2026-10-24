@@ -21,7 +21,7 @@ from ..services.downloads import (
     describe_choices, download_choices, download_filename, may_download_original,
     original_allowed_for_download, pick_or_refuse,
 )
-from .hls_proxy import create_hls_token
+from .hls_proxy import create_hls_token, managed_hls_identity, MANAGED_MEDIA_SECONDS
 from ..schemas.upload import (
     InitiateUploadRequest, InitiateUploadResponse,
     ALLOWED_MIME_TYPES, mime_to_asset_type,
@@ -272,6 +272,8 @@ def update_asset(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    if current_user.jrc_managed is True and "status" in body.model_fields_set:
+        raise HTTPException(status_code=403, detail="Manage content approval in JR Content")
     asset = db.query(Asset).filter(Asset.id == asset_id, Asset.deleted_at.is_(None)).first()
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
@@ -377,6 +379,7 @@ def get_stream_url(
     current_user: User = Depends(get_current_user),
 ):
     asset, media_file = _ready_media_file(db, asset_id, version_id, current_user)
+    media_expiry = {"expires_in": MANAGED_MEDIA_SECONDS} if current_user.jrc_managed is True else {}
 
     if download:
         # A download needs one file, and the ladder is segments. With no choice
@@ -393,17 +396,21 @@ def get_stream_url(
         )
         url = generate_presigned_get_url(
             choice.s3_key, download_filename=download_filename(asset, media_file, choice),
+            **media_expiry,
         )
     elif asset.asset_type == AssetType.video and media_file.s3_key_processed:
         # Route through the HLS proxy so the master playlist, variant
         # playlists, and .ts segments all get served via short-lived
         # presigned URLs — the S3 bucket can stay fully private. (#51)
-        token = create_hls_token(media_file.s3_key_processed)
+        token = create_hls_token(media_file.s3_key_processed, **managed_hls_identity(current_user, asset.project_id))
         url = f"/stream/hls/master.m3u8?token={token}"
     else:
-        url = generate_presigned_get_url(media_file.s3_key_processed or media_file.s3_key_raw)
+        url = generate_presigned_get_url(media_file.s3_key_processed or media_file.s3_key_raw, **media_expiry)
 
-    return StreamUrlResponse(url=url, asset_type=asset.asset_type)
+    return StreamUrlResponse(
+        url=url, asset_type=asset.asset_type,
+        expires_in=MANAGED_MEDIA_SECONDS if current_user.jrc_managed is True else 3600,
+    )
 
 
 @router.get("/assets/{asset_id}/downloads", response_model=list[DownloadOption])

@@ -52,7 +52,7 @@ from ..services.downloads import (
     original_allowed_for_download, pick_or_refuse,
 )
 from ..services.crypto_service import encrypt_password, decrypt_password
-from .hls_proxy import create_hls_token
+from .hls_proxy import create_hls_token, managed_hls_identity, MANAGED_MEDIA_SECONDS
 from ..models.project import Project, ProjectRole
 from ..tasks.email_tasks import send_share_email
 from ..tasks.celery_app import send_task_safe
@@ -281,6 +281,7 @@ def _build_share_validate_response(
     # Build asset details for asset shares
     asset_data = None
     branding_data = None
+    media_expiry = {"expires_in": MANAGED_MEDIA_SECONDS} if current_user and current_user.jrc_managed is True else {}
     if link.asset_id:
         asset = _get_asset(db, link.asset_id)
         # Get thumbnail URL
@@ -294,12 +295,12 @@ def _build_share_validate_response(
             if media_file.s3_key_processed:
                 if asset.asset_type == AssetType.video:
                     # Route through /stream/hls so S3 can stay private (#51)
-                    hls_token = create_hls_token(media_file.s3_key_processed)
+                    hls_token = create_hls_token(media_file.s3_key_processed, **managed_hls_identity(current_user, asset.project_id))
                     stream_url = f"/stream/hls/master.m3u8?token={hls_token}"
                 else:
-                    stream_url = generate_presigned_get_url(media_file.s3_key_processed)
+                    stream_url = generate_presigned_get_url(media_file.s3_key_processed, **media_expiry)
             elif media_file.s3_key_raw:
-                stream_url = generate_presigned_get_url(media_file.s3_key_raw)
+                stream_url = generate_presigned_get_url(media_file.s3_key_raw, **media_expiry)
 
         asset_data = {
             "id": str(asset.id),
@@ -1563,6 +1564,7 @@ def get_share_stream_url(
     media_file = _share_media_file(db, link, asset, version_id)
 
     choice = None
+    media_expiry = {"expires_in": MANAGED_MEDIA_SECONDS} if current_user and current_user.jrc_managed is True else {}
     if download:
         # The MP4 remuxed from the top rung unless another file was chosen,
         # falling back to the camera master for versions that predate it (see
@@ -1577,13 +1579,14 @@ def get_share_stream_url(
         )
         url = generate_presigned_get_url(
             choice.s3_key, download_filename=download_filename(asset, media_file, choice),
+            **media_expiry,
         )
     elif asset.asset_type == AssetType.video and media_file.s3_key_processed:
         # Route through /stream/hls so S3 can stay private (#51)
-        hls_token = create_hls_token(media_file.s3_key_processed)
+        hls_token = create_hls_token(media_file.s3_key_processed, **managed_hls_identity(current_user, asset.project_id))
         url = f"/stream/hls/master.m3u8?token={hls_token}"
     else:
-        url = generate_presigned_get_url(media_file.s3_key_processed or media_file.s3_key_raw)
+        url = generate_presigned_get_url(media_file.s3_key_processed or media_file.s3_key_raw, **media_expiry)
 
     # Log activity
     activity_action = ShareActivityAction.downloaded if download else ShareActivityAction.viewed_asset

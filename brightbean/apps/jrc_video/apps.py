@@ -25,6 +25,22 @@ class JrcVideoConfig(AppConfig):
     verbose_name = "JR Content video"
 
     def ready(self):
-        from . import signals  # noqa: F401
+        # django-background-tasks imports '<INSTALLED_APPS entry>.tasks' and
+        # cannot discover an entry naming an AppConfig class. Register the
+        # callable on worker startup as well as in the migration process.
+        from . import signals, tasks  # noqa: F401
 
         warn_if_sync_disabled()
+        from django.db.models.signals import post_migrate
+
+        post_migrate.connect(self._register_tasks, sender=self)
+
+    @staticmethod
+    def _register_tasks(sender, **kwargs):
+        from apps.common.background import register_recurring_task
+
+        from .tasks import SYNC_INTERVAL_SECONDS, retry_freeframe_sync
+
+        register_recurring_task(
+            retry_freeframe_sync, repeat=SYNC_INTERVAL_SECONDS, verbose_name="jrc_retry_freeframe_sync"
+        )

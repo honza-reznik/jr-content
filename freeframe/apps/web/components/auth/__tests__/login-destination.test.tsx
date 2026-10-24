@@ -4,7 +4,7 @@ import LoginPage from '@/app/(auth)/login/page'
 
 const replace = vi.hoisted(() => vi.fn())
 vi.mock('next/navigation', () => ({ useRouter: () => ({ replace }) }))
-vi.mock('@/lib/auth', () => ({ getAccessToken: () => 'signed-in' }))
+vi.mock('@/lib/auth', () => ({ restoreSessionCookies: async () => true }))
 vi.mock('@/lib/api', () => ({ api: { get: vi.fn() } }))
 vi.mock('@/components/auth/login-form', () => ({ LoginForm: () => null }))
 vi.mock('@/components/shared/powered-by-badge', () => ({ PoweredByBadge: () => null }))

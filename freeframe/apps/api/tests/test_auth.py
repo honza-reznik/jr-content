@@ -31,6 +31,7 @@ def _mock_user(
     u.avatar_url = None
     u.avatar_color = None
     u.token_version = 1
+    u.jrc_managed = False
     u.created_at = datetime.now(timezone.utc)
     u.deleted_at = None
     return u

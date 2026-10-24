@@ -2,20 +2,28 @@
 
 Rewrites m3u8 manifests so that:
 - Variant playlist URLs go through this proxy (with token auth)
-- Segment (.ts) URLs become presigned S3 URLs (direct to S3)
+- Managed segment requests also check live membership before a short S3 redirect
+- Other segment (.ts) URLs become presigned S3 URLs (direct to S3)
 
 This eliminates the need for a public bucket policy on processed/*.
 """
 
 import logging
 import posixpath
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import jwt
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import Response
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response, RedirectResponse
+from sqlalchemy.orm import Session
 
 from ..config import settings
+from ..database import get_db
+from ..models.user import UserStatus
+from ..models.project import ProjectRole
+from ..services.auth_service import get_user_by_id
+from ..services.permissions import require_project_role
 from ..services.s3_service import generate_presigned_get_url, get_s3_client
 
 logger = logging.getLogger(__name__)
@@ -23,13 +31,33 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/stream", tags=["streaming"])
 
 
-def create_hls_token(s3_prefix: str, expires_hours: int = 24) -> str:
-    """Create a short-lived JWT for HLS proxy access."""
+MANAGED_MEDIA_SECONDS = 180
+
+
+def managed_hls_identity(user, project_id) -> dict:
+    if user is None or user.jrc_managed is not True:
+        return {}
+    return {
+        "managed": True, "user_id": str(user.id), "project_id": str(project_id),
+        "token_version": user.token_version,
+    }
+
+
+def create_hls_token(
+    s3_prefix: str, expires_hours: int = 24, *, managed: bool = False,
+    user_id: str | None = None, project_id: str | None = None, token_version: int | None = None,
+) -> str:
+    """Create an HLS token; managed sessions also carry a live identity binding."""
     payload = {
         "sub": "hls",
+        "v": 2,
         "pfx": s3_prefix,
         "exp": datetime.now(timezone.utc) + timedelta(hours=expires_hours),
     }
+    if managed:
+        if not user_id or not project_id or token_version is None:
+            raise ValueError("Managed HLS requires a user, project and token version")
+        payload.update(uid=user_id, pid=project_id, ver=token_version)
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
@@ -44,6 +72,10 @@ def _decode_hls_token(token: str) -> dict:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     if payload.get("sub") != "hls":
         raise HTTPException(status_code=403, detail="Invalid token type")
+    # Pre-upgrade tokens carry no user binding and may live for 24 hours.
+    # Invalidate that format once, rather than preserving the revocation bypass.
+    if payload.get("v") != 2:
+        raise HTTPException(status_code=401, detail="Reload the video to renew its streaming session")
     return payload
 
 
@@ -60,7 +92,8 @@ def _segment_url_lifetime(payload: dict) -> int:
     if exp is None:
         return SEGMENT_URL_MAX_SECONDS
     remaining = int(exp - datetime.now(timezone.utc).timestamp())
-    return max(1, min(SEGMENT_URL_MAX_SECONDS, remaining))
+    maximum = MANAGED_MEDIA_SECONDS if "uid" in payload else SEGMENT_URL_MAX_SECONDS
+    return max(1, min(maximum, remaining))
 
 
 def _rewrite_manifest(
@@ -69,6 +102,7 @@ def _rewrite_manifest(
     manifest_path: str,
     token: str,
     segment_expires_in: int = SEGMENT_URL_MAX_SECONDS,
+    proxy_segments: bool = False,
 ) -> str:
     """Rewrite URLs in an m3u8 manifest.
 
@@ -97,6 +131,11 @@ def _rewrite_manifest(
             # Variant playlist -> proxy URL with token
             result.append(f"{relative_key}?token={token}")
         elif stripped.endswith(".ts"):
+            if proxy_segments:
+                # Keep the request at the proxy so membership is checked for
+                # every segment, including long videos and seeking after pause.
+                result.append(f"{stripped}?token={token}")
+                continue
             # Segment -> presigned S3 URL (direct to S3), signed for what is
             # left of the token, so pause-and-resume works for as long as the
             # token does and no longer
@@ -108,14 +147,29 @@ def _rewrite_manifest(
     return "\n".join(result)
 
 
+def _authorize_managed_hls(payload: dict, db: Session):
+    if "uid" not in payload:
+        return
+    try:
+        user = get_user_by_id(db, uuid.UUID(payload["uid"]))
+        project_id = uuid.UUID(payload["pid"])
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(status_code=401, detail="Invalid streaming session") from None
+    if not user or user.status != UserStatus.active or user.token_version != payload.get("ver"):
+        raise HTTPException(status_code=401, detail="Streaming session revoked")
+    require_project_role(db, project_id, user, ProjectRole.viewer)
+
+
 @router.get("/hls/{path:path}")
-def hls_proxy(path: str, token: str = Query(...)):
+def hls_proxy(path: str, token: str = Query(...), db: Session = Depends(get_db)):
     """Proxy HLS manifests with URL rewriting for secure streaming."""
     payload = _decode_hls_token(token)
+    _authorize_managed_hls(payload, db)
     s3_prefix = payload["pfx"]
 
-    # Only proxy m3u8 manifests
-    if not path.endswith(".m3u8"):
+    # Managed segments check membership before redirecting to private S3.
+    managed_segment = "uid" in payload and path.endswith(".ts")
+    if not path.endswith(".m3u8") and not managed_segment:
         raise HTTPException(status_code=400, detail="Only .m3u8 files are proxied")
 
     # Prevent directory traversal
@@ -127,6 +181,12 @@ def hls_proxy(path: str, token: str = Query(...)):
     s3_key = f"{s3_prefix}/{normalised}"
     if not s3_key.startswith(s3_prefix + "/"):
         raise HTTPException(status_code=400, detail="Invalid path")
+
+    if managed_segment:
+        return RedirectResponse(
+            generate_presigned_get_url(s3_key, expires_in=_segment_url_lifetime(payload)),
+            status_code=302, headers={"Cache-Control": "no-store"},
+        )
 
     # Fetch manifest from S3
     s3 = get_s3_client()
@@ -141,10 +201,11 @@ def hls_proxy(path: str, token: str = Query(...)):
 
     rewritten = _rewrite_manifest(
         content, s3_prefix, normalised, token, _segment_url_lifetime(payload),
+        proxy_segments="uid" in payload,
     )
 
     return Response(
         content=rewritten,
         media_type="application/vnd.apple.mpegurl",
-        headers={"Cache-Control": "no-cache"},
+        headers={"Cache-Control": "no-store"},
     )

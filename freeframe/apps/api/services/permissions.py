@@ -88,7 +88,7 @@ def require_project_visible(db: Session, project_id: uuid.UUID, user: User) -> P
     Returns the membership, if any."""
     project = require_live_project(db, project_id)
     member = get_project_member(db, project_id, user.id)
-    if not member and not project.is_public:
+    if not member and (user.jrc_managed is True or not project.is_public):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a project member")
     return member
 
@@ -162,6 +162,11 @@ def can_access_asset(db: Session, asset: Asset, user: User) -> bool:
     ).first()
     if not project_live:
         return False
+
+    # Brightbean owns all access to managed accounts. Authorship, public
+    # projects and old direct shares must not bypass a revoked membership.
+    if user.jrc_managed is True:
+        return get_project_member(db, asset.project_id, user.id) is not None
 
     # 1. Asset creator
     if asset.created_by == user.id:

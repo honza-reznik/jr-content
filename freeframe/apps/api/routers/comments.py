@@ -49,7 +49,7 @@ from ..services import s3_service
 from ..services import comment_export
 from ..services.permissions import (
     require_asset_access, can_access_asset, validate_share_link_with_session, validate_asset_in_share,
-    require_asset_project_live,
+    require_asset_project_live, require_project_role,
 )
 from ..tasks.email_tasks import send_mention_email, send_comment_email
 from ..tasks.celery_app import send_task_safe
@@ -156,6 +156,11 @@ def _get_asset(db: Session, asset_id: uuid.UUID) -> Asset:
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
     return asset
+
+
+def _require_managed_comment_role(db: Session, asset: Asset, user: Optional[User]):
+    if user is not None and user.jrc_managed is True:
+        require_project_role(db, asset.project_id, user, ProjectRole.reviewer)
 
 
 def _get_comment(db: Session, comment_id: uuid.UUID) -> Comment:
@@ -483,6 +488,7 @@ def create_comment(
 ):
     asset = _get_asset(db, asset_id)
     require_asset_access(db, asset, current_user)
+    _require_managed_comment_role(db, asset, current_user)
 
     version = db.query(AssetVersion).filter(
         AssetVersion.id == body.version_id, AssetVersion.asset_id == asset_id,
@@ -565,6 +571,7 @@ def reply_to_comment(
 ):
     asset = _get_asset(db, asset_id)
     require_asset_access(db, asset, current_user)
+    _require_managed_comment_role(db, asset, current_user)
     parent = db.query(Comment).filter(
         Comment.id == comment_id, Comment.asset_id == asset_id, Comment.deleted_at.is_(None),
     ).first()
@@ -630,6 +637,8 @@ def update_comment(
         raise HTTPException(status_code=404, detail="Comment not found")
     # The author gets past with no access check, so this is what closes a deleted project.
     require_asset_project_live(db, comment.asset_id)
+    if current_user.jrc_managed is True:
+        _require_managed_comment_role(db, _get_asset(db, comment.asset_id), current_user)
     # Allow comment owner or project owner to edit
     if comment.author_id != current_user.id:
         asset = _get_asset(db, comment.asset_id)
@@ -659,6 +668,8 @@ def delete_comment(
         raise HTTPException(status_code=404, detail="Comment not found")
     # The author gets past with no access check, so this is what closes a deleted project.
     require_asset_project_live(db, comment.asset_id)
+    if current_user.jrc_managed is True:
+        _require_managed_comment_role(db, _get_asset(db, comment.asset_id), current_user)
     # Allow comment owner or project owner to delete
     if comment.author_id != current_user.id:
         asset = _get_asset(db, comment.asset_id)
@@ -685,6 +696,7 @@ def resolve_comment(
         raise HTTPException(status_code=404, detail="Comment not found")
     asset = _get_asset(db, comment.asset_id)
     require_asset_access(db, asset, current_user)
+    _require_managed_comment_role(db, asset, current_user)
     comment.resolved = not comment.resolved
     db.commit()
     db.refresh(comment)
@@ -715,6 +727,7 @@ def create_attachment(
     comment = _get_comment(db, comment_id)
     asset = _get_asset(db, comment.asset_id)
     require_asset_access(db, asset, current_user)
+    _require_managed_comment_role(db, asset, current_user)
 
     # Sanitize the filename so it cannot break the S3 key or the presigned
     # URL. S3 flattens path separators, so this isn't traversal — but
@@ -768,6 +781,7 @@ def delete_attachment(
     comment = _get_comment(db, comment_id)
     asset = _get_asset(db, comment.asset_id)
     require_asset_project_live(db, asset.id)
+    _require_managed_comment_role(db, asset, current_user)
 
     attachment = db.query(CommentAttachment).filter(
         CommentAttachment.id == attachment_id,
@@ -807,6 +821,7 @@ def toggle_reaction(
     comment = _get_comment(db, comment_id)
     asset = _get_asset(db, comment.asset_id)
     require_asset_access(db, asset, current_user)
+    _require_managed_comment_role(db, asset, current_user)
 
     existing = db.query(CommentReaction).filter(
         CommentReaction.comment_id == comment_id,
@@ -1142,6 +1157,7 @@ def guest_comment(
         raise HTTPException(status_code=400, detail="asset_id is required for folder/project shares")
     asset = _get_asset(db, target_asset_id)
     validate_asset_in_share(db, link, asset)
+    _require_managed_comment_role(db, asset, current_user)
 
     # A reply must answer a comment a guest on this link can actually see: a live,
     # non-internal comment on the asset the link resolved to (`asset.id`, never

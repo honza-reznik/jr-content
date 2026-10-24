@@ -3,7 +3,7 @@
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { api } from '@/lib/api'
-import { getAccessToken } from '@/lib/auth'
+import { restoreSessionCookies } from '@/lib/auth'
 import { safeAppDestination } from '@/lib/app-destination'
 import { LoginForm } from '@/components/auth/login-form'
 import { PoweredByBadge } from '@/components/shared/powered-by-badge'
@@ -25,16 +25,19 @@ export default function LoginPage() {
       }
     }
 
-    const token = getAccessToken()
-    if (token) {
-      document.cookie = `ff_access_token=${token}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`
-      const params = new URLSearchParams(window.location.search)
-      const from = params.get('from')
-      router.replace(safeAppDestination(from) || '/projects')
-      return
+    async function restoreSession() {
+      try {
+        if (await restoreSessionCookies()) {
+          const params = new URLSearchParams(window.location.search)
+          router.replace(safeAppDestination(params.get('from')) || '/projects')
+          return
+        }
+      } catch {
+        // A browser without a session lock must not write cookies.
+      }
+      await checkSetup()
     }
-
-    checkSetup()
+    void restoreSession()
   }, [router])
 
   return (

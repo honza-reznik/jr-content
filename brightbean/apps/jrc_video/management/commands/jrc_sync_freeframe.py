@@ -2,8 +2,8 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 
 from apps.jrc_video.client import FreeFrameClient, FreeFrameError
-from apps.jrc_video.models import VideoAccount, VideoAccountSyncRequest, VideoSyncRequest
-from apps.jrc_video.services import error_text, mark_account_failed, sync_account, sync_workspace
+from apps.jrc_video.models import VideoAccount, VideoAccountRevocation, VideoAccountSyncRequest, VideoSyncRequest
+from apps.jrc_video.services import error_text, mark_account_failed, revoke_account, sync_account, sync_workspace
 from apps.workspaces.models import Workspace
 
 
@@ -21,6 +21,14 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         api = FreeFrameClient()
         failures = 0
+        # Deletions have priority and no user FK; even a full run must retry them.
+        for user_id in list(VideoAccountRevocation.objects.values_list("source_user_id", flat=True)):
+            try:
+                revoke_account(user_id, api)
+            except FreeFrameError as exc:
+                failures += 1
+                VideoAccountRevocation.objects.filter(source_user_id=user_id).update(last_error=error_text(exc))
+                self.stderr.write(str(exc))
         user_ids = VideoAccount.objects.values_list("user_id", flat=True)
         if options["pending"]:
             user_ids = VideoAccountSyncRequest.objects.values_list("user_id", flat=True)

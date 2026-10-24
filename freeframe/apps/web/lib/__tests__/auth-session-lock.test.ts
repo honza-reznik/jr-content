@@ -96,6 +96,7 @@ it.each(['missing', 'refused'])('fails closed when Web Locks are %s', async fail
   await expect(auth.setTokens('late', 'late-r')).rejects.toThrow()
   await expect(auth.setTokensIfSessionCurrent('late', 'late-r', null)).rejects.toThrow()
   await expect(auth.removeTokens()).rejects.toThrow()
+  await expect(auth.restoreSessionCookies()).rejects.toThrow()
   await expect(auth.clearTokens()).rejects.toThrow()
   await bindTicket()
   vi.stubGlobal('fetch', vi.fn(async () => ({
@@ -108,5 +109,21 @@ it.each(['missing', 'refused'])('fails closed when Web Locks are %s', async fail
   await expect(auth.refreshAccessToken()).resolves.toBeNull()
   expect(writes).not.toHaveBeenCalled()
   expect(auth.getAccessToken()).toBeNull()
+  expect(document.cookie).not.toMatch(/ff_(access|refresh)_token=/)
+})
+
+it('cookie restoration queued after logout cannot resurrect either cookie', async () => {
+  const request = mockSessionLocks()
+  const auth = await import('../auth')
+  await auth.setTokens('old', 'old-r')
+  let release!: () => void
+  const blocker = request(request.mock.calls[0][0], () => new Promise<void>(resolve => { release = resolve }))
+  await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+  const logout = auth.removeTokens()
+  const restore = auth.restoreSessionCookies()
+  release()
+  await blocker
+  await logout
+  await expect(restore).resolves.toBe(false)
   expect(document.cookie).not.toMatch(/ff_(access|refresh)_token=/)
 })

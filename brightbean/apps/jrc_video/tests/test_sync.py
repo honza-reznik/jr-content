@@ -192,23 +192,34 @@ def test_moving_membership_also_revokes_previous_workspace(
     assert {call.args[0] for call in sync.call_args_list} == {workspace.pk, other.pk}
 
 
-def test_user_deletion_aborts_if_remote_revocation_fails(workspace, user, api, settings):
-    from django.db import transaction
-
+def test_user_deletion_retries_remote_revocation_after_outage(
+    workspace, user, api, settings, django_capture_on_commit_callbacks
+):
     from apps.accounts.models import User
+    from apps.jrc_video.models import VideoAccountRevocation
 
     WorkspaceMembership.objects.create(workspace=workspace, user=user, workspace_role="client")
     sync_workspace(workspace.pk, api=api)
     settings.JRC_FF_SYNC_ENABLED = True
     failing = Mock()
     failing.request.side_effect = FreeFrameError("Unavailable")
+    user_id = user.pk
     with (
-        patch("apps.jrc_video.signals.FreeFrameClient", return_value=failing),
-        pytest.raises(FreeFrameError),
-        transaction.atomic(),
+        patch("apps.jrc_video.services.FreeFrameClient", return_value=failing),
+        django_capture_on_commit_callbacks(execute=True),
     ):
         user.delete()
-    assert User.objects.filter(pk=user.pk).exists()
+    assert not User.objects.filter(pk=user_id).exists()
+    assert VideoAccountRevocation.objects.get(source_user_id=user_id).last_error == "Unavailable"
+    with (
+        patch("apps.jrc_video.management.commands.jrc_sync_freeframe.FreeFrameClient", return_value=api),
+        patch("apps.jrc_video.management.commands.jrc_sync_freeframe.sync_workspace"),
+    ):
+        call_command("jrc_sync_freeframe", pending=True)
+    assert not VideoAccountRevocation.objects.exists()
+    assert any(
+        call.args[:2] == ("POST", f"/jrc-sync/accounts/{user_id}/deactivate") for call in api.request.call_args_list
+    )
 
 
 def test_sync_keeps_change_queued_during_api_request(workspace, api):
@@ -434,27 +445,34 @@ def test_long_error_is_truncated_for_retry_marker(workspace, user, api):
     assert len(VideoSyncRequest.objects.get(workspace=workspace).last_error) == 255
 
 
-def test_deleting_user_without_mapping_deactivates_by_identity(user, settings):
+def test_deleting_user_without_mapping_deactivates_by_identity(user, settings, django_capture_on_commit_callbacks):
     settings.JRC_FF_SYNC_ENABLED = True
     remote = Mock()
     remote.request.return_value = {"id": str(uuid.uuid4()), "found": True}
-    with patch("apps.jrc_video.signals.FreeFrameClient", return_value=remote):
+    with (
+        patch("apps.jrc_video.services.FreeFrameClient", return_value=remote),
+        patch("apps.jrc_video.services.try_sync_workspace"),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
         pk = user.pk
         user.delete()
     remote.request.assert_called_once_with("POST", f"/jrc-sync/accounts/{pk}/deactivate")
 
 
-def test_deleting_user_without_mapping_survives_api_failure(user, settings, caplog):
+def test_deleting_user_without_mapping_survives_api_failure(user, settings, caplog, django_capture_on_commit_callbacks):
     from apps.accounts.models import User
 
     settings.JRC_FF_SYNC_ENABLED = True
     failing = Mock()
     failing.request.side_effect = FreeFrameError("Unavailable")
-    with patch("apps.jrc_video.signals.FreeFrameClient", return_value=failing):
+    with (
+        patch("apps.jrc_video.services.FreeFrameClient", return_value=failing),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
         pk = user.pk
         user.delete()
     assert not User.objects.filter(pk=pk).exists()
-    assert "without mapping failed" in caplog.text
+    assert "queued for retry" in caplog.text
 
 
 def test_command_pending_repairs_failed_account(user, api):
@@ -466,6 +484,81 @@ def test_command_pending_repairs_failed_account(user, api):
         call_command("jrc_sync_freeframe", pending=True)
     assert not VideoAccountSyncRequest.objects.exists()
     assert any(call.args[1] == f"/jrc-sync/accounts/{user.pk}" for call in api.request.call_args_list)
+
+
+def test_deleted_user_revocation_is_atomic_with_local_deletion(user, settings, django_capture_on_commit_callbacks):
+    from django.db import transaction
+
+    from apps.accounts.models import User
+    from apps.jrc_video.models import VideoAccountRevocation
+
+    settings.JRC_FF_SYNC_ENABLED = True
+    user_id = user.pk
+    with (
+        patch("apps.jrc_video.services.FreeFrameClient") as remote,
+        django_capture_on_commit_callbacks(execute=True),
+        pytest.raises(RuntimeError),
+        transaction.atomic(),
+    ):
+        user.delete()
+        raise RuntimeError("rollback")
+    assert User.objects.filter(pk=user_id).exists()
+    assert not VideoAccountRevocation.objects.exists()
+    remote.assert_not_called()
+
+
+def test_pending_revocations_continue_after_one_failure(api):
+    from apps.jrc_video.models import VideoAccountRevocation
+
+    first, second = uuid.uuid4(), uuid.uuid4()
+    VideoAccountRevocation.objects.bulk_create(
+        [VideoAccountRevocation(source_user_id=first), VideoAccountRevocation(source_user_id=second)]
+    )
+    original = api.request.side_effect
+
+    def one_fails(method, path, payload=None):
+        if str(first) in path:
+            raise FreeFrameError("Unavailable")
+        return original(method, path, payload)
+
+    api.request.side_effect = one_fails
+    with (
+        patch("apps.jrc_video.management.commands.jrc_sync_freeframe.FreeFrameClient", return_value=api),
+        pytest.raises(CommandError),
+    ):
+        call_command("jrc_sync_freeframe", pending=True)
+    assert VideoAccountRevocation.objects.filter(source_user_id=first).exists()
+    assert not VideoAccountRevocation.objects.filter(source_user_id=second).exists()
+
+
+def test_recurring_sync_is_registered_once_and_runs_pending(settings):
+    from background_task.models import Task
+
+    from apps.jrc_video.apps import JrcVideoConfig
+    from apps.jrc_video.tasks import retry_freeframe_sync
+
+    Task.objects.filter(verbose_name="jrc_retry_freeframe_sync").delete()
+    JrcVideoConfig._register_tasks(None)
+    JrcVideoConfig._register_tasks(None)
+    task = Task.objects.get(verbose_name="jrc_retry_freeframe_sync")
+    assert task.repeat == 60
+    settings.JRC_FF_SYNC_ENABLED = True
+    with patch("apps.jrc_video.tasks.call_command") as run:
+        retry_freeframe_sync.now()
+    run.assert_called_once_with("jrc_sync_freeframe", pending=True)
+
+
+def test_recurring_sync_outage_keeps_cadence_and_disabled_sync_does_nothing(settings):
+    from apps.jrc_video.tasks import retry_freeframe_sync
+
+    with patch("apps.jrc_video.tasks.call_command", side_effect=CommandError("Unavailable")) as run:
+        settings.JRC_FF_SYNC_ENABLED = True
+        retry_freeframe_sync.now()
+        run.assert_called_once()
+        run.reset_mock()
+        settings.JRC_FF_SYNC_ENABLED = False
+        retry_freeframe_sync.now()
+        run.assert_not_called()
 
 
 @pytest.mark.parametrize(

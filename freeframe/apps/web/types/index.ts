@@ -51,6 +51,7 @@ export interface User {
   avatar_color: string | null;
   status: UserStatus;
   is_superadmin: boolean;
+  jrc_managed?: boolean;
   email_verified: boolean;
   invite_token?: string | null;
   preferences: Record<string, unknown>;

@@ -40,6 +40,8 @@ def _require_project_owner(db: Session, project_id: uuid.UUID, user: User) -> Pr
 
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 def create_project(body: ProjectCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if not current_user.is_superadmin or current_user.jrc_managed is True:
+        raise HTTPException(status_code=403, detail="Projects are created by the JR Content administrator")
     project = Project(
         name=body.name,
         description=body.description,
@@ -71,7 +73,7 @@ def list_projects(db: Session = Depends(get_db), current_user: User = Depends(ge
         Project.deleted_at.is_(None),
         or_(
             Project.id.in_(member_project_ids) if member_project_ids else False,
-            Project.is_public == True,
+            Project.is_public == True if current_user.jrc_managed is not True else False,
         ),
     ).all()
 

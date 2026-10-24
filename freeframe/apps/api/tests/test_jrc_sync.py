@@ -39,6 +39,7 @@ def test_account_has_stable_id_no_password_or_invite(client, sync_auth, mock_db)
     assert user.password_hash is None
     assert user.invite_token is None
     assert user.is_superadmin is False
+    assert user.jrc_managed is True
 
 
 def test_conflicting_email_cannot_take_over_identity(client, sync_auth, mock_db):
@@ -137,11 +138,12 @@ def test_deactivate_missing_account_does_not_create_it(client, sync_auth, mock_d
 def test_deactivate_existing_account(client, sync_auth, mock_db):
     from apps.api.models.user import UserStatus
 
-    managed = MagicMock(deleted_at=None, is_superadmin=False, status=UserStatus.active)
+    managed = MagicMock(deleted_at=None, is_superadmin=False, status=UserStatus.active, token_version=3)
     mock_db.first.return_value = managed
     response = client.post(f"/jrc-sync/accounts/{uuid.uuid4()}/deactivate", headers=sync_auth)
     assert response.status_code == 200 and response.json()["found"] is True
     assert managed.status == UserStatus.deactivated
+    assert managed.token_version == 4
     mock_db.commit.assert_called_once()
 
 
@@ -156,3 +158,37 @@ def test_deactivate_rejects_regular_user(client, auth_headers, mock_db):
     response = client.post(f"/jrc-sync/accounts/{uuid.uuid4()}/deactivate", headers=auth_headers)
     assert response.status_code == 403
     mock_db.commit.assert_not_called()
+
+
+@pytest.mark.parametrize("email", [
+    "a\u200b@b.cz", "a\u202e@b.cz", "a\u0085@b.cz", "a\ud800@b.cz", "a\x00@b.cz",
+    "a\\b@c.cz", "a@-b.cz", "a@b..cz", "a@b/c.cz", "a..b@c.cz", "İ" * 126 + "@b.cz",
+])
+def test_unicode_and_lowercase_expansion_cannot_bypass_email_validation(email):
+    from pydantic import ValidationError
+    from apps.api.routers.jrc_sync import AccountRequest
+
+    with pytest.raises(ValidationError):
+        AccountRequest(email=email, name="Demo", is_active=True)
+
+
+def test_unicode_email_still_supported():
+    from apps.api.routers.jrc_sync import AccountRequest
+
+    assert AccountRequest(email="Žofie@Příklad.cz", name="Demo", is_active=True).email == "žofie@příklad.cz"
+
+
+def test_sync_block_revokes_session_without_reviving_old_version_on_unblock(client, sync_auth, mock_db):
+    from apps.api.models.user import User, UserStatus
+
+    source_id = uuid.uuid4()
+    managed = User(id=remote_id("account", source_id), jrc_managed=True, is_superadmin=False,
+                   token_version=7, email="person@example.com", name="Person", status=UserStatus.active)
+    for active, expected_version in [(False, 8), (False, 8), (True, 8)]:
+        mock_db.first.side_effect = [managed, None]
+        response = client.put(f"/jrc-sync/accounts/{source_id}", json={
+            "email": "person@example.com", "name": "Person", "is_active": active,
+        }, headers=sync_auth)
+        assert response.status_code == 200
+        assert managed.token_version == expected_version
+        assert managed.password_hash is None and managed.invite_token is None

@@ -58,6 +58,7 @@ def deactivate_user(
         raise HTTPException(status_code=404, detail="User not found")
 
     user.status = UserStatus.deactivated
+    user.token_version += 1
     db.commit()
     db.refresh(user)
     return user
@@ -109,6 +110,8 @@ def update_user_role(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    if user.jrc_managed is True:
+        raise HTTPException(status_code=403, detail="Manage this account in JR Content")
     user.is_superadmin = body.is_admin
     db.commit()
     db.refresh(user)

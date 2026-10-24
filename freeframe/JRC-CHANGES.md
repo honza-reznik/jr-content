@@ -2,6 +2,37 @@
 
 Import upstreamu `3829889` (MIT, původní licence a copyright zachovány).
 
+## 2026-10-24 — F5-B04
+
+- Řízené účty mají neměnitelné `users.jrc_managed` (migrace `jrc_f5b04`). Migrace označí
+  stávající neprivilegované UUIDv5 účty, které zakládá jen synchronizace, odstraní případná
+  hesla/pozvánky a odvolá staré přihlašovací tokeny. Synchronizace označuje i nové účty.
+- Heslo, magický kód, přijetí pozvánky a nastavení/změna hesla u řízených účtů vracejí
+  srozumitelné 403 s odkazem na přihlášení přes JR Content. Obnova platné relace zůstává
+  povolená, bez požadavku na heslo. Projekty zakládá pouze neřízený superadmin.
+- API i volitelné přihlášení kontrolují `token_version`; deaktivace a nastavení hesla ji
+  zvyšují. Odblokování účtu neobnoví staré tokeny. Approve/Reject i změnu stavu videa
+  řízeným účtem API odmítá; společná komponenta schvalování se řízeným účtům nezobrazuje.
+- U řízených účtů rozhoduje o přístupu k videu vždy aktuální členství: autorství vlastního
+  videa, staré přímé sdílení ani veřejný projekt odebrání nepřebijí. Role viewer nemůže
+  zapisovat komentáře, odpovědi, kresby, přílohy ani reakce; zápis vyžaduje reviewer či vyšší.
+  Stejná kontrola platí při úpravě vlastního staršího komentáře po změně role nebo odebrání.
+- HLS řízených účtů je svázané s uživatelem, verzí jeho relace a projektem. Každý požadavek
+  na seznam segmentů i samotný segment znovu ověřuje aktivní účet a členství v živém projektu.
+  Segment se poté přesměruje na S3 adresu platnou nejvýše 180 s. Stejnou mez mají přímé
+  streamy a stahování řízených účtů. Delší videa fungují bez obnovování celého přehrávače;
+  odebrání člena odmítne další požadavek i s platným přehrávacím tokenem. Již stažená data
+  nelze vzít zpět a dříve vydaná přímá adresa platí do vypršení.
+- Nový formát HLS tokenu (`v=2`) jednorázově odmítne staré nevázané tokeny z doby před
+  nasazením této úpravy, které jinak platily 24 hodin. Již otevřený přehrávač je třeba
+  znovu načíst; novou adresu dostane až po kontrole současných oprávnění. Staré přímé S3
+  adresy lze omezit pouze jejich původním vypršením.
+- Přísnější e-mail synchronizace: NFC a malá písmena, kontrola délky po převodu, odmítnutí
+  neviditelných řídicích znaků Unicode, chybných domén a adres; místní ukázkové domény zůstávají.
+- Staré obsluhy v loginu a sdílené složce používají zámek `ff_session_tokens`; obnova cookies
+  načítá aktuální pár až pod zámkem (`restoreSessionCookies`), odhlášení čeká na `removeTokens`.
+  Regrese pokrývají souběh obnovy cookies s odhlášením, API, HLS a odvolání verze relace.
+
 ## 2026-10-24 — F5-B03
 
 - Opravy bezpečnostního review: `auth.ts` drží sdílenou značku relace v localStorage,

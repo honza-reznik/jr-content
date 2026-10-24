@@ -229,7 +229,7 @@ def test_resolve_comment_publishes_the_resulting_state():
     project_id, asset_id, comment_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     comment = SimpleNamespace(id=comment_id, asset_id=asset_id, resolved=False, deleted_at=None)
     asset = SimpleNamespace(id=asset_id, project_id=project_id, deleted_at=None)
-    user = SimpleNamespace(id=uuid.uuid4(), name="Alice")
+    user = SimpleNamespace(id=uuid.uuid4(), name="Alice", jrc_managed=False)
 
     db = MagicMock()
     db.query.return_value = db
@@ -252,7 +252,7 @@ def test_approve_asset_publishes_approval_updated():
     from apps.api.routers import approvals as approvals_router
 
     project_id, asset_id = uuid.uuid4(), uuid.uuid4()
-    user = SimpleNamespace(id=uuid.uuid4(), name="Alice", email="a@example.com")
+    user = SimpleNamespace(id=uuid.uuid4(), name="Alice", email="a@example.com", jrc_managed=False)
     asset = SimpleNamespace(id=asset_id, project_id=project_id, name="clip", created_by=user.id)
     body = SimpleNamespace(version_id=uuid.uuid4(), note=None)
 

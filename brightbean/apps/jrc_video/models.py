@@ -28,3 +28,11 @@ class VideoAccountSyncRequest(models.Model):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, primary_key=True)
     requested_at = models.DateTimeField(auto_now=True)
     last_error = models.CharField(max_length=255, blank=True)
+
+
+class VideoAccountRevocation(models.Model):
+    """Deletion retry independent of the user FK, so it survives the cascade."""
+
+    source_user_id = models.UUIDField(primary_key=True)
+    requested_at = models.DateTimeField(auto_now_add=True)
+    last_error = models.CharField(max_length=255, blank=True)

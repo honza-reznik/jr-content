@@ -18,9 +18,14 @@ def get_current_user(
     payload = decode_token(token)
     if not payload or payload.get("type") != "access":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
-    user = get_user_by_id(db, uuid.UUID(payload["sub"]))
+    try:
+        user = get_user_by_id(db, uuid.UUID(payload["sub"]))
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(status_code=401, detail="Invalid or expired token") from None
     if not user or user.status == UserStatus.deactivated:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or deactivated")
+    if payload.get("ver", 1) != user.token_version:
+        raise HTTPException(status_code=401, detail="Session expired, please log in again")
     return user
 
 def get_optional_user(
@@ -36,6 +41,8 @@ def get_optional_user(
             return None
         user = get_user_by_id(db, uuid.UUID(payload["sub"]))
         if not user or user.status == UserStatus.deactivated:
+            return None
+        if payload.get("ver", 1) != user.token_version:
             return None
         return user
     except Exception:
