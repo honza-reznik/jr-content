@@ -7,6 +7,7 @@ from apps.composer.models import PlatformPost, Post
 from apps.composer.services import sync_post_scheduled_at
 from apps.jrc_channels.models import ChannelProfile
 from apps.members.models import WorkspaceMembership
+from apps.members.note_visibility import note_audience
 
 from .models import PipelineStage, PostProduction, ProductionStage, StageChange
 
@@ -166,5 +167,7 @@ def move_content(post, stage, user, *, expected_stage, scheduled_at=None):
     post.refresh_from_db()
     current = pipeline_stage(post)
     if current != previous:
-        StageChange.objects.create(post=post, from_stage=previous, to_stage=current, user=user)
+        StageChange.objects.create(
+            post=post, from_stage=previous, to_stage=current, user=user, **note_audience(post.workspace, user)
+        )
     return post

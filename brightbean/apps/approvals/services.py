@@ -65,12 +65,15 @@ def _transition_or_skip(pp, target_status):
 
 def _record_action(post, platform_post, user, action, comment=""):
     """Create an ApprovalAction row for either a bundled or per-PP action."""
+    from apps.members.note_visibility import note_audience
+
     return ApprovalAction.objects.create(
         post=post,
         platform_post=platform_post,
         user=user,
         action=action,
         comment=comment,
+        **note_audience(post.workspace, user),
     )
 
 

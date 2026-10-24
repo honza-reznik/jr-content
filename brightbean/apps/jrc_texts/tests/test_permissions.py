@@ -163,6 +163,19 @@ def test_membership_in_another_workspace_does_not_keep_draft_owned(orphan, works
     assert not TextVersion.objects.filter(pk=orphan.pk).exists()
 
 
+@pytest.mark.parametrize("role", ["client", "viewer", "contributor"])
+def test_lost_edit_permission_hides_even_own_draft(document, workspace, user, role):
+    base = document.versions.get(state="final")
+    draft = services.edit(base.pk, user)
+    set_role(workspace, user, role)
+    if role == "contributor":
+        other = User.objects.create_user(email="new-author@example.test")
+        Post.objects.filter(pk=document.post_id).update(author=other)
+    with pytest.raises(PermissionDenied):
+        services.get_version(draft.pk, user)
+    assert services.get_version(base.pk, user).pk == base.pk
+
+
 @pytest.mark.django_db(transaction=True)
 def test_simultaneous_orphan_recovery_creates_one_replacement(document, orphan, user):
     base = document.versions.get(state="final")

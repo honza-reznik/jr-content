@@ -53,6 +53,10 @@ class StageChange(models.Model):
     to_stage = models.CharField(max_length=20, choices=PipelineStage.choices)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     note = models.TextField(blank=True, default="")
+    actor_role = models.CharField(max_length=20, blank=True, default="")
+    note_visibility = models.CharField(
+        max_length=10, choices=[("internal", "Internal"), ("external", "External")], default="internal"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

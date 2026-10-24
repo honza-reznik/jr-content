@@ -3,6 +3,24 @@
 Základ: Brightbean Studio `48801fdcd1009e6ed4863fa9942222a478a297e2`, import F2-B01.
 Licence této odvozené verze: AGPL-3.0; původní licence a autorská práva zůstávají zachována.
 
+## 2026-10-24 · F7-B01
+
+- `StageChange` a `ApprovalAction` ukládají při akci roli autora a viditelnost poznámky.
+  Historie používá uloženou viditelnost i po změně role, odchodu nebo smazání autora.
+  Migrace starých záznamů nastaví bezpečně interní viditelnost a neznámou historickou roli.
+- Formulář popisku i jeho zápis používají stejnou kontrolu jako scénář: owner, manager
+  a editor mohou upravovat všechny texty, contributor jen své; client a viewer jen čtou.
+  Po ztrátě práva upravovat odmítne i textová služba čtení vlastního konceptu.
+  Čtení porovnání a záložky Video je dostupné všem členům klienta. Video zatím nemá zápis
+  (přehrávač je samostatný blok). Vlastní role se u textů řídí svými oprávněními.
+- Pro nástěnku, detail, komentáře a scénář vrací cizí či archivovaný klient 404.
+  Zakázaná akce má stránku 403 s vysvětlením a odkazem na nástěnku, bez textu výjimky.
+  Služba čtení komentářů nevrací žádná data nečlenovi ani neaktivnímu uživateli.
+- Regrese pokrývá všech šest rolí v HTML, scénáři, porovnání a skutečném REST API
+  (včetně dříve vydaného klíče po změně role); interní poznámky, komentáře a odpovědi
+  zůstávají klientovi skryté. Stávající výjimka zakládání místního obsahu pro klienta
+  nemění obecné oprávnění `create_posts` ani práva k interním poznámkám API.
+
 ## 2026-10-22 · F2-B01
 
 - `config/settings/jrc_offline.py`: vypnutí Sentry, Unsplash, Intelligence, Google přihlášení,

@@ -1,6 +1,7 @@
 import socket
 
 import pytest
+from django.db import connection
 from django.test import override_settings
 
 from apps.members.models import WorkspaceMembership
@@ -15,6 +16,10 @@ def _social_provider_test_mode():
 
 @pytest.fixture(autouse=True)
 def _no_network(db, monkeypatch):
+    # Transactional tests can close the previous test's DB connection. Resolve
+    # PostgreSQL before blocking DNS for application code and external clients.
+    connection.ensure_connection()
+
     def blocked(*args, **kwargs):
         raise AssertionError("Production services must not access the network")
 

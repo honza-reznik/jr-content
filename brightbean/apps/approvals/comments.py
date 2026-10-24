@@ -151,6 +151,8 @@ def get_comments_for_post(post, user):
         user=user,
         workspace=workspace,
     ).first()
+    if membership is None or not user.is_active or workspace.is_archived:
+        return PostComment.objects.none()
 
     active_replies = PostComment.objects.filter(
         deleted_at__isnull=True,

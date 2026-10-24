@@ -1,6 +1,7 @@
 """RBAC middleware that resolves org role + workspace role on every request."""
 
 from django.core.exceptions import PermissionDenied
+from django.http import Http404
 
 from .models import OrgMembership, WorkspaceMembership
 
@@ -103,7 +104,12 @@ class RBACMiddleware:
             .first()
         )
         if not ws_membership:
+            if request.resolver_match.namespace in ("jrc_production", "jrc_texts"):
+                raise Http404
             raise PermissionDenied("You do not have access to this workspace.")
+
+        if ws_membership.workspace.is_archived and request.resolver_match.namespace in ("jrc_production", "jrc_texts"):
+            raise Http404
 
         request.workspace = ws_membership.workspace
         request.workspace_membership = ws_membership
