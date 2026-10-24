@@ -544,3 +544,16 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
   `platform_overrides[].caption` a `PATCH /posts/{id}` s `caption` vrací 422 s odkazem na
   `/posts/{id}/captions/{kopie kanálu}`; popisek tak vzniká jen jako verze. Ostatní pole PATCH a běžné
   kanály Brightbean (bez profilu JR) fungují beze změny. Testy: `test_content_api.py`.
+## 2026-10-25 · F5-B08 — záložka Video
+
+- `apps/jrc_video/templates/jrc_video/_upload_tab.html`, `static/jrc_video/video-tab.js` (nový), `upload.js`: záložka Video má
+  přepínač zapnutých kanálů, výběr verze (poslední výchozí), vložený přehrávač FreeFrame (`/video/projects/<p>/assets/<a>?embed=1&version=<id>`)
+  a odznak „Final for publishing“. Přihlášení jde skrytým formulářem POST na `/video-sso/` cíleným do iframe (stejná
+  vstupenka a CSRF jako F5-B03, nikdo nic neklepe); bez synchronizovaného projektu a účtu místo přehrávače zpráva.
+- `apps/jrc_video/models.py`, migrace `0005`: `VideoAsset.final_by`, `final_at` (kdo a kdy označil `final_version`).
+- `apps/jrc_video/player.py` (nový), `upload_views.py`, `urls.py`: `POST .../video/versions/<id>/final/` označí (nebo zruší) finální verzi;
+  smí jen člen s právem schvalovat, který není klient (owner, manager, vlastní role s `approve_posts`), jen hotová verze, jinak 403/409.
+- `apps/jrc_video/uploads.py`, `tasks.py`, `apps.py`: stav převodu se obnovuje i bez karty nahrávání: při otevření záložky
+  a opakovanou úlohou workeru `jrc_refresh_video_statuses` (každých 30 s, servisní účet `jrc-sync`).
+- `apps/jrc_production/views.py`: záložka Video předává příznak `video_player_ready` a před zobrazením obnoví stav verzí.
+- `apps/jrc_video/tests/test_player.py` (21 testů). Živé ověření: `make test-f5-b08-video` (`scripts/F5-B08/`).

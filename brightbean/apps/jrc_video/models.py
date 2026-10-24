@@ -49,6 +49,11 @@ class VideoAsset(models.Model):
     final_version = models.ForeignKey(
         "VideoVersion", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
+    # F5-B08: who marked it and when ("Final for publishing"); not in the ADR table.
+    final_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    final_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
 

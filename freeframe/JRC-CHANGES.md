@@ -274,3 +274,11 @@ Provozní postup je v `docs-arch/F2-B02/freeframe-provoz.md` (doplněk pro PM do
   s `CORS_DEV_ORIGINS=true`; nový test `test_startup_cors_without_dev_origins`.
 - Stránka `/video` má ve společném vstupu vynucenou CSP s přesným původem S3 pro náhledy,
   segmenty HLS a nahrávání po částech (`docker/Caddyfile`).
+
+## 2026-10-25 — F5-B08
+
+- Vložený režim (`?embed=1`): `?version=<id>` otevře zadanou verzi místo nejnovější (`ReviewProvider.preferredVersionId`,
+  `lib/embed-version.ts`; cizí id se ignoruje). Čas v přehrávači, u komentářů a v hlavičce spodního panelu je ve vloženém
+  režimu `m:ss` (výběr formátu v přehrávači zůstává). Mimo vložený režim beze změny.
+- Testy: `lib/__tests__/embed-version.test.ts`, `components/review/__tests__/review-provider-embed-version.test.tsx`,
+  `app/(dashboard)/projects/[id]/assets/[assetId]/__tests__/embed-version.test.tsx`.

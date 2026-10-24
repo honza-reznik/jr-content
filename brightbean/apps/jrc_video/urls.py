@@ -11,4 +11,5 @@ urlpatterns = [
     path(_base + "versions/<uuid:version_id>/part/", views.part, name="upload_part"),
     path(_base + "versions/<uuid:version_id>/complete/", views.complete, name="upload_complete"),
     path(_base + "versions/<uuid:version_id>/abort/", views.abort, name="upload_abort"),
+    path(_base + "versions/<uuid:version_id>/final/", views.final, name="video_final"),
 ]

@@ -130,5 +130,5 @@
 {% block extra_js %}
 {% if active_tab == "script" %}<script type="module" src="{% static 'jrc_texts/dist/script.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
 {% if active_tab == "caption" %}<script src="{% static 'jrc_production/caption-counter.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
-{% if active_tab == "video" %}<script src="{% static 'jrc_video/upload.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
+{% if active_tab == "video" %}<script src="{% static 'jrc_video/upload.js' %}" nonce="{{ request.csp_nonce }}"></script><script src="{% static 'jrc_video/video-tab.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
 {% endblock %}

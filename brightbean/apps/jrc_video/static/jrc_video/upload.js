@@ -63,6 +63,11 @@
     title.textContent = "v" + v.number + " ";
     var name = document.createElement("span"); name.className = "font-normal text-stone-500";
     name.textContent = "· " + v.filename; title.appendChild(name);
+    if (v.is_final) {
+      var mark = document.createElement("span"); mark.setAttribute("data-video-final-mark", "");
+      mark.className = "ml-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800";
+      mark.textContent = "Final for publishing"; title.appendChild(document.createTextNode(" ")); title.appendChild(mark);
+    }
     var meta = document.createElement("p"); meta.className = "text-xs text-stone-500";
     meta.textContent = [v.uploaded_by, v.uploaded_at, v.duration, v.resolution].filter(Boolean).join(" · ");
     left.appendChild(title); left.appendChild(meta);
@@ -98,6 +103,8 @@
       }
       data.versions.forEach(function (v) { list.appendChild(renderRow(card, v)); });
     });
+    // The player toolbar (video-tab.js) follows the same feed.
+    root.dispatchEvent(new CustomEvent("jrc-video:channels", { detail: channels }));
   }
 
   function needsPolling() {
@@ -356,6 +363,9 @@
     if (!file) return;
     if (resumeId) resumeExisting(card, resumeId, file); else startNew(card, file);
   });
+
+  // video-tab.js asks for a fresh feed after marking a final version.
+  root.addEventListener("jrc-video:refresh", function () { refresh().then(schedulePoll); });
 
   refresh().then(schedulePoll);
   schedulePoll();

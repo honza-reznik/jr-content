@@ -41,7 +41,7 @@ import {
   GitCompareArrows,
 } from 'lucide-react'
 import Link from 'next/link'
-import { cn, formatTimecode } from '@/lib/utils'
+import { cn, formatTime, formatTimecode } from '@/lib/utils'
 import { PoweredByBadge } from '@/components/shared/powered-by-badge'
 import { usePageTitle } from '@/hooks/use-page-title'
 import type { Project, AssetResponse, ProjectMember, FolderTreeNode } from '@/types'
@@ -59,7 +59,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   const searchParams = useSearchParams()
   const isEmbed = useEmbedMode()
   const { asset, versions, isLoading, refetchComments, refetchVersions } = useReview()
-  const { currentVersion, isDrawingMode, focusedCommentId, playheadTime, seekTo, setFocusedCommentId, setActiveAnnotation } = useReviewStore()
+  const { currentVersion, isDrawingMode, focusedCommentId, playheadTime, seekTo, setFocusedCommentId, setActiveAnnotation, setTimeFormat } = useReviewStore()
   const { user } = useAuthStore()
   const startVersionUpload = useUploadStore((s) => s.startVersionUpload)
   const versionFileInputRef = useRef<HTMLInputElement>(null)
@@ -71,6 +71,11 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   useEffect(() => {
     if (isEmbed) setActiveTab('comments')
   }, [isEmbed])
+  // Embedded in JR Content the clock reads "0:17", not SMPTE "00:00:17:00": that is what
+  // people type in comments. The player menu still offers timecode and frames (F5-B08).
+  useEffect(() => {
+    if (isEmbed) setTimeFormat('standard')
+  }, [isEmbed, setTimeFormat])
   // Open on a desktop-width viewport, closed on a phone. A 360px sidebar on a
   // 390px screen left roughly 30px for the video (#331). The share screen has
   // always done this; the project page never did.
@@ -732,7 +737,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
           // sheet's mini transport rather than leaving a dead play button.
           currentTime={
             asset.asset_type === 'video' || asset.asset_type === 'audio'
-              ? formatTimecode(playheadTime ?? 0)
+              ? (isEmbed ? formatTime(playheadTime ?? 0) : formatTimecode(playheadTime ?? 0))
               : ''
           }
           lockedToCompose={isDrawingMode}
@@ -755,8 +760,13 @@ export default function ReviewPage({
 }) {
   const { id: projectId, assetId } = params
 
+  // Embedded in JR Content the host page picks the version with ?version=<id> (F5-B08).
+  const isEmbed = useEmbedMode()
+  const searchParams = useSearchParams()
+  const preferredVersionId = isEmbed ? searchParams.get('version') : null
+
   return (
-    <ReviewProvider assetId={assetId}>
+    <ReviewProvider assetId={assetId} preferredVersionId={preferredVersionId}>
       <ReviewScreenInner projectId={projectId} />
     </ReviewProvider>
   )

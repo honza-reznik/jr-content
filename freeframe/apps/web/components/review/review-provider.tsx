@@ -1,6 +1,7 @@
 "use client";
 
 import { shareFetch } from '@/lib/share-fetch'
+import { requestedEmbedVersion } from "@/lib/embed-version";
 import React, {
   createContext,
   useCallback,
@@ -53,6 +54,8 @@ interface ReviewProviderProps {
   assetId: string;
   shareToken?: string; // If set, uses share token API instead of authenticated API
   shareSession?: string | null;
+  /** Version to open instead of the newest ready one (embedded in JR Content: ?version=, F5-B08). */
+  preferredVersionId?: string | null;
   children: React.ReactNode;
 }
 
@@ -60,6 +63,7 @@ export function ReviewProvider({
   assetId,
   shareToken,
   shareSession,
+  preferredVersionId,
   children,
 }: ReviewProviderProps) {
   const [asset, setAsset] = useState<AssetResponse | null>(null);
@@ -150,9 +154,11 @@ export function ReviewProvider({
         if (!mountedRef.current) return;
         setVersions(allVersions ?? []);
 
-        const readyVersion = (allVersions ?? [])
-          .sort((a, b) => b.version_number - a.version_number)
-          .find((v) => v.processing_status === "ready");
+        const readyVersion =
+          requestedEmbedVersion(allVersions ?? [], preferredVersionId) ??
+          (allVersions ?? [])
+            .sort((a, b) => b.version_number - a.version_number)
+            .find((v) => v.processing_status === "ready");
         if (readyVersion) {
           setCurrentVersion(readyVersion);
         } else if (data.latest_version) {
@@ -192,7 +198,7 @@ export function ReviewProvider({
       if (!mountedRef.current) return;
       setError(err instanceof Error ? err.message : "Failed to load asset");
     }
-  }, [assetId, shareToken, shareSessionParam, setCurrentAsset, setCurrentVersion]);
+  }, [assetId, shareToken, shareSessionParam, preferredVersionId, setCurrentAsset, setCurrentVersion]);
 
   const fetchComments = useCallback(async () => {
     const reqId = ++commentsReqRef.current;

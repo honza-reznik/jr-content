@@ -39,8 +39,11 @@ class JrcVideoConfig(AppConfig):
     def _register_tasks(sender, **kwargs):
         from apps.common.background import register_recurring_task
 
-        from .tasks import SYNC_INTERVAL_SECONDS, retry_freeframe_sync
+        from .tasks import REFRESH_INTERVAL_SECONDS, SYNC_INTERVAL_SECONDS, refresh_video_statuses, retry_freeframe_sync
 
         register_recurring_task(
             retry_freeframe_sync, repeat=SYNC_INTERVAL_SECONDS, verbose_name="jrc_retry_freeframe_sync"
+        )
+        register_recurring_task(
+            refresh_video_statuses, repeat=REFRESH_INTERVAL_SECONDS, verbose_name="jrc_refresh_video_statuses"
         )
