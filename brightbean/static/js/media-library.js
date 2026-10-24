@@ -2,10 +2,62 @@
  * Media Library — Alpine.js & HTMX integrations
  *
  * This file is loaded on library pages via {% static 'js/media-library.js' %}.
- * Alpine components (mediaLibrary, imageCropper, videoTrimmer, tagInput)
- * are defined inline in their respective templates so they have access
- * to Django template variables. This file contains shared utilities.
+ * Alpine components that need Django template values receive them through
+ * markup attributes, so this file can also initialize HTMX-loaded fragments.
  */
+
+window.tagInput = function (initialTags, saveUrl, suggestionsUrl) {
+  return {
+    tags: initialTags || [],
+    saveUrl: saveUrl,
+    suggestionsUrl: suggestionsUrl,
+    inputValue: '',
+    suggestions: [],
+
+    addTag(value) {
+      const tag = (value || '').trim();
+      if (tag && !this.tags.includes(tag)) {
+        this.tags.push(tag);
+        this.saveTags();
+      }
+      this.inputValue = '';
+      this.suggestions = [];
+    },
+
+    removeTag(index) {
+      if (index >= 0 && index < this.tags.length) {
+        this.tags.splice(index, 1);
+        this.saveTags();
+      }
+    },
+
+    saveTags() {
+      const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+      fetch(this.saveUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': csrfToken,
+        },
+        body: JSON.stringify(this.tags),
+      });
+    },
+
+    async fetchSuggestions() {
+      if (this.inputValue.length < 1) {
+        this.suggestions = [];
+        return;
+      }
+      try {
+        const resp = await fetch(this.suggestionsUrl + '?q=' + encodeURIComponent(this.inputValue));
+        const data = await resp.json();
+        this.suggestions = data.filter(s => !this.tags.includes(s)).slice(0, 8);
+      } catch {
+        this.suggestions = [];
+      }
+    }
+  };
+};
 
 (function () {
   'use strict';

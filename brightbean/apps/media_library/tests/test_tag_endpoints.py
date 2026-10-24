@@ -59,6 +59,27 @@ class AssetTagEndpointTests(TestCase):
     def _post_json(self, body):
         return self.client.post(self.url, data=json.dumps(body), content_type="application/json")
 
+    def test_htmx_detail_panel_has_no_inline_script(self):
+        url = reverse(
+            "media_library:asset_detail",
+            kwargs={"workspace_id": self.workspace.id, "asset_id": self.asset.id},
+        )
+        response = self.client.get(url, HTTP_HX_REQUEST="true")
+        self.assertEqual(response.status_code, 200)
+        rendered = response.content.decode("utf-8")
+        self.assertNotIn("<script", rendered)
+        self.assertIn("data-save-url=", rendered)
+        self.assertIn("data-suggestions-url=", rendered)
+
+    def test_standalone_detail_loads_tag_component_script(self):
+        url = reverse(
+            "media_library:asset_detail",
+            kwargs={"workspace_id": self.workspace.id, "asset_id": self.asset.id},
+        )
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "/static/js/media-library.js")
+
     def test_happy_path_persists_tags(self):
         response = self._post_json(["alpha", "beta", "gamma"])
         self.assertEqual(response.status_code, 200)

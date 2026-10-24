@@ -120,7 +120,10 @@ class TagInputTemplateTest(SimpleTestCase):
 
     def test_empty_tags_renders_array_literal(self):
         rendered = self._render([])
-        self.assertIn('x-data="tagInput([])"', rendered)
+        self.assertIn(
+            'x-data="tagInput([], $el.dataset.saveUrl, $el.dataset.suggestionsUrl)"',
+            rendered,
+        )
 
 
 class NormalizeTagsTest(SimpleTestCase):
