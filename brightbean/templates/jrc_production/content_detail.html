@@ -113,21 +113,6 @@
                 </article>
                 {% empty %}<div class="rounded-xl border border-dashed border-stone-300 px-4 py-10 text-center text-sm text-stone-500">No channels yet. Add a channel before writing a caption.</div>{% endfor %}
             </div>
-            <script>
-                document.querySelectorAll("[data-caption-counter]").forEach((field) => {
-                    const count = field.closest("form").querySelector("[data-caption-count]");
-                    const limit = Number(field.dataset.limit);
-                    const escaped = new Set(Array.from(field.dataset.escapedChars || ""));
-                    const updateCount = () => {
-                        const length = Array.from(field.value).reduce((total, character) => total + 1 + Number(escaped.has(character)), 0);
-                        count.textContent = String(length);
-                        count.classList.toggle("font-semibold", length > limit);
-                        count.classList.toggle("text-red-700", length > limit);
-                    };
-                    field.addEventListener("input", updateCount);
-                    updateCount();
-                });
-            </script>
         {% else %}
             <h2 class="text-lg font-semibold text-stone-900">Approval</h2><div class="mt-5 rounded-xl border border-dashed border-stone-300 px-4 py-10 text-center text-sm text-stone-500">Approval details will appear here.</div>
         {% endif %}
@@ -137,4 +122,5 @@
 {% endblock %}
 {% block extra_js %}
 {% if active_tab == "script" %}<script type="module" src="{% static 'jrc_texts/dist/script.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
+{% if active_tab == "caption" %}<script src="{% static 'jrc_production/caption-counter.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
 {% endblock %}
