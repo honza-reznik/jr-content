@@ -2,6 +2,7 @@ import { webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { exchangeBrowserTicket, safeVideoDestination } from '../jrc-sso'
 import { setTokens, removeTokens, getAccessToken, getRefreshToken } from '../auth'
+import { mockSessionLocks } from '@/test/session-locks'
 
 let hash = '#ticket=local-test-ticket'
 const replaceState = vi.fn()
@@ -9,6 +10,7 @@ const fetcher = vi.fn()
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockSessionLocks()
   localStorage.clear()
   vi.stubEnv('NEXT_PUBLIC_BASE_PATH', '/video')
   vi.stubGlobal('crypto', webcrypto)
@@ -69,7 +71,7 @@ describe('browser ticket exchange', () => {
     expect(getAccessToken()).toBeNull()
   })
   it.each(['', '#ticket=x&ticket=y', '#other=x'])('rejects missing/duplicate fragments: %s', async fragment => {
-    setTokens('existing-access', 'existing-refresh')
+    await setTokens('existing-access', 'existing-refresh')
     hash = fragment
     await bind()
     await expect(exchangeBrowserTicket()).rejects.toThrow()
@@ -103,12 +105,12 @@ describe('browser ticket exchange', () => {
 
   it('discards a successful exchange delayed until after logout in another tab', async () => {
     await bind()
-    setTokens('old-access', 'old-refresh')
+    await setTokens('old-access', 'old-refresh')
     let respond!: (response: unknown) => void
     fetcher.mockReturnValue(new Promise(resolve => { respond = resolve }))
     const pending = exchangeBrowserTicket()
     await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce())
-    removeTokens() // The other tab changes the shared marker, without a storage event.
+    await removeTokens() // The other tab changes the shared marker, without a storage event.
     respond({ ok: true, json: async () => ({ access_token: 'late', refresh_token: 'late-r', next: '/projects' }) })
     await expect(pending).rejects.toThrow()
     expect(getAccessToken()).toBeNull()
@@ -117,7 +119,7 @@ describe('browser ticket exchange', () => {
   })
 
   it('does not sign out an existing user for an unbound foreign ticket', async () => {
-    setTokens('existing', 'existing-r')
+    await setTokens('existing', 'existing-r')
     await expect(exchangeBrowserTicket()).rejects.toThrow()
     expect(getAccessToken()).toBe('existing')
     expect(getRefreshToken()).toBe('existing-r')

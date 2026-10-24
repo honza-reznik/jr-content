@@ -3,6 +3,7 @@ import { withBasePath } from './base-path'
 const ACCESS_TOKEN_KEY = 'ff_access_token'
 const REFRESH_TOKEN_KEY = 'ff_refresh_token'
 const SESSION_VERSION_KEY = 'ff_session_version'
+const SESSION_LOCK_NAME = 'ff_session_tokens'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -12,10 +13,21 @@ export function getSessionVersion(): string | null {
   return localStorage.getItem(SESSION_VERSION_KEY)
 }
 
-export function setTokensIfSessionCurrent(access: string, refresh: string, version: string | null): boolean {
-  if (getSessionVersion() !== version) return false
-  setTokens(access, refresh)
-  return true
+function withSessionLock<T>(operation: () => T): Promise<T> {
+  // An in-memory mutex or a storage event cannot exclude another tab. Never
+  // fall back to an unlocked write, including in an unsupported browser.
+  if (typeof navigator === 'undefined' || !navigator.locks?.request) {
+    return Promise.reject(new Error('This browser cannot safely update the video session.'))
+  }
+  return navigator.locks.request(SESSION_LOCK_NAME, operation)
+}
+
+export function setTokensIfSessionCurrent(access: string, refresh: string, version: string | null): Promise<boolean> {
+  return withSessionLock(() => {
+    if (getSessionVersion() !== version) return false
+    writeTokens(access, refresh)
+    return true
+  })
 }
 
 export function getAccessToken(): string | null {
@@ -28,8 +40,13 @@ export function getRefreshToken(): string | null {
   return localStorage.getItem(REFRESH_TOKEN_KEY)
 }
 
-export function setTokens(access: string, refresh: string): void {
-  if (typeof window === 'undefined') return
+export function setTokens(access: string, refresh: string): Promise<void> {
+  return withSessionLock(() => writeTokens(access, refresh))
+}
+
+// Only call these storage writers while holding SESSION_LOCK_NAME. The check,
+// marker, localStorage pair and cookies belong to the same critical section.
+function writeTokens(access: string, refresh: string): void {
   localStorage.setItem(SESSION_VERSION_KEY, crypto.randomUUID())
   localStorage.setItem(ACCESS_TOKEN_KEY, access)
   localStorage.setItem(REFRESH_TOKEN_KEY, refresh)
@@ -38,8 +55,11 @@ export function setTokens(access: string, refresh: string): void {
   document.cookie = `${REFRESH_TOKEN_KEY}=${refresh}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`
 }
 
-export function removeTokens(): void {
-  if (typeof window === 'undefined') return
+export function removeTokens(): Promise<void> {
+  return withSessionLock(deleteTokens)
+}
+
+function deleteTokens(): void {
   // Keep the marker after logout, including when there were no stored tokens.
   localStorage.setItem(SESSION_VERSION_KEY, crypto.randomUUID())
   localStorage.removeItem(ACCESS_TOKEN_KEY)
@@ -49,10 +69,13 @@ export function removeTokens(): void {
   document.cookie = `${REFRESH_TOKEN_KEY}=; path=/; max-age=0`
 }
 
-export function clearTokens(): void {
-  if (typeof window === 'undefined') return
-  removeTokens()
-  window.location.href = withBasePath('/login')
+export async function clearTokens(version?: string | null): Promise<void> {
+  const cleared = await withSessionLock(() => {
+    if (version !== undefined && getSessionVersion() !== version) return false
+    deleteTokens()
+    return true
+  })
+  if (cleared) window.location.href = withBasePath('/login')
 }
 
 // Deduplicate concurrent refresh calls — when access token expires, multiple
@@ -71,10 +94,11 @@ export async function refreshAccessToken(): Promise<string | null> {
 }
 
 async function _doRefresh(): Promise<string | null> {
+  if (typeof navigator === 'undefined' || !navigator.locks?.request) return null
   const version = getSessionVersion()
   const refreshToken = getRefreshToken()
   if (!refreshToken) {
-    clearTokens()
+    await clearTokens(version)
     return null
   }
 
@@ -91,8 +115,8 @@ async function _doRefresh(): Promise<string | null> {
       // Anything else -- a 502 from a proxy mid-deploy, a 500, a rate limit --
       // is the server being briefly unavailable, and signing the user out for
       // it loses whatever they had open.
-      if ((response.status === 401 || response.status === 403) && getSessionVersion() === version) {
-        clearTokens()
+      if (response.status === 401 || response.status === 403) {
+        await clearTokens(version)
       }
       return null
     }
@@ -101,18 +125,12 @@ async function _doRefresh(): Promise<string | null> {
     const newAccessToken: string = data.access_token
     const newRefreshToken: string = data.refresh_token ?? refreshToken
 
-    if (!setTokensIfSessionCurrent(newAccessToken, newRefreshToken, version)) return null
+    if (!await setTokensIfSessionCurrent(newAccessToken, newRefreshToken, version)) return null
     return newAccessToken
   } catch {
-    // `fetch` rejects only on a transport failure; an HTTP error status
-    // resolves and is handled above. So reaching here means the request never
-    // got an answer: no network, DNS, a dropped connection. Clearing tokens
-    // here signed people out for going through a tunnel, and took the page
-    // they were on with it, since `clearTokens` navigates to /login.
-    //
-    // Callers treat null as "could not refresh" and let the original failure
-    // surface, so keeping the tokens costs nothing and the session survives
-    // until the network comes back.
+    // Transport failures preserve the session until the network comes back.
+    // Lock/storage failures also fail closed: never retry an unlocked write.
+    // Callers treat null as "could not refresh" and surface the original error.
     return null
   }
 }

@@ -58,3 +58,10 @@ při vydání i při odpovědi výměny; přímá návštěva login s cizím `fr
 projektech. Cizí požadavky prohlížečový skript blokuje a vyhodnotí jako chybu.
 Snímky `05`–`07` zachycují potvrzení odhlášení, odmítnutí opožděné výměny a bezpečný cíl.
 Před spuštěním musí být v `.env` i `JRC_POSTGRES_PORT=15463` a `JRC_BB_PORT=18033`.
+
+Regrese atomického zápisu je ve Vitestu `lib/__tests__/auth-session-lock.test.ts`.
+Pro SSO, obnovu i samotný podmíněný zápis vyvolá odhlášení nezávislé druhé instance
+modulu přímo po přečtení značky relace. Společný zámek zabrání dokončení odhlášení
+uprostřed zápisu; po dokončení odhlášení nezůstanou tokeny ani cookies. Další test
+řadí zápis za odhlášení a vyžaduje jeho odmítnutí. Chybějící i odmítnuté Web Locks
+musí selhat bez zápisu tokenů. Chromium navíc ověří nepřihlášení bez Web Locks.

@@ -134,10 +134,10 @@ export function LoginForm() {
         // Persist the tokens issued by verify-magic-code before moving on:
         // /auth/set-password requires an authenticated user (get_current_user),
         // so without these the set-password call 401s and bounces the user out.
-        setTokens(res.access_token, res.refresh_token)
+        await setTokens(res.access_token, res.refresh_token)
         setStep('password')
       } else {
-        setTokens(res.access_token, res.refresh_token)
+        await setTokens(res.access_token, res.refresh_token)
         await useAuthStore.getState().fetchUser()
         const user = useAuthStore.getState().user
         router.replace('/projects')
@@ -192,7 +192,7 @@ export function LoginForm() {
         code: code.join(''),
         password,
       })
-      setTokens(res.access_token, res.refresh_token)
+      await setTokens(res.access_token, res.refresh_token)
       await useAuthStore.getState().fetchUser()
       const u = useAuthStore.getState().user
       router.replace('/projects')
@@ -228,7 +228,7 @@ export function LoginForm() {
         email: classicEmail,
         password: classicPassword,
       })
-      setTokens(res.access_token, res.refresh_token)
+      await setTokens(res.access_token, res.refresh_token)
       await useAuthStore.getState().fetchUser()
       const u = useAuthStore.getState().user
       router.replace('/projects')

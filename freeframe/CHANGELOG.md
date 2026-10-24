@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - JR Content: časový štítek nad obrazem videa, synchronizovaný s vykresleným snímkem; FPS ze souboru a celá obrazovka se štítkem i na telefonu.
 
 ### Fixed
+- JR Content: společný Web Lock chrání kontrolu relace i zápis a mazání tokenů mezi kartami; prohlížeč bez Web Locks bezpečně odmítne přihlášení.
 - JR Content: odhlášení v jiné kartě zastaví opožděnou výměnu i obnovu tokenů; veřejné odhlášení vyžaduje oprávnění nebo potvrzení a přihlášení odmítá nebezpečné návratové adresy.
 - JR Content: web `/video` a API `/video-api/` používají společný místní vstup; serverový middleware volá API po vnitřní síti.
 - JR Content: písmo DM Sans se načítá místně, bez připojení ke Google Fonts při sestavení a spuštění.

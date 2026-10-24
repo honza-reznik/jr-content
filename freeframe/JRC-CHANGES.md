@@ -8,6 +8,12 @@ Import upstreamu `3829889` (MIT, původní licence a copyright zachovány).
   kterou mění přihlášení i odhlášení. SSO výměna a obnova tokenů si ji uloží před
   požadavkem a před uložením odpovědi znovu ověří; opožděná odpověď po odhlášení
   v jiné kartě už neobnoví relaci. Odmítnutí staré obnovy nesmaže novější relaci.
+- Kontrola značky a celý zápis tokenů/cookies probíhají pod společným Web Lockem
+  `ff_session_tokens`; stejný zámek drží změna značky a mazání při odhlášení.
+  Platí i pro běžné přihlášení a odmítnutí obnovy. Volající čekají na dokončení;
+  přesměrování po odhlášení nastane až po vyčištění. Bez Web Locks nebo při odmítnutí
+  zámku se tokeny nezapíšou a přihlášení selže. Vitest vynucuje proložení přímo
+  po přečtení značky ve dvou instancích modulu i čekající zápis po dokončeném odhlášení.
 - Neověřený vstup na `/jrc-sso` nemaže dosavadní tokeny. Automatické `/jrc-logout`
   vyžaduje jednorázové oprávnění ve fragmentu a odpovídající SHA-256 cookie z POST
   Brightbeanu chráněného CSRF; fragment hned odstraní a cookie spotřebuje. Přímá

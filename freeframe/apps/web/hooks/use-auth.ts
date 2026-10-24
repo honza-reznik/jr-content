@@ -18,7 +18,7 @@ export interface UseAuthReturn {
   /** Log in with email + password and redirect to dashboard */
   login: (email: string, password: string) => Promise<void>
   /** Clear tokens and redirect to /login */
-  logout: () => void
+  logout: () => Promise<void>
 }
 
 export function useAuth(): UseAuthReturn {
@@ -27,7 +27,7 @@ export function useAuth(): UseAuthReturn {
 
   async function login(email: string, password: string): Promise<void> {
     const tokens = await api.post<AuthTokens>('/auth/login', { email, password })
-    setTokens(tokens.access_token, tokens.refresh_token)
+    await setTokens(tokens.access_token, tokens.refresh_token)
 
     // Fetch user profile and populate store
     const me = await api.get<User>('/auth/me')
@@ -36,11 +36,11 @@ export function useAuth(): UseAuthReturn {
     router.push('/projects')
   }
 
-  function logout(): void {
+  async function logout(): Promise<void> {
     // storeLogout() clears tokens, which already performs a full-page
     // navigation to the login screen. Pushing here too would race that with a
     // second, basePath-unaware navigation.
-    storeLogout()
+    await storeLogout()
   }
 
   return {

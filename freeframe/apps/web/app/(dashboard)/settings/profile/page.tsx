@@ -77,7 +77,7 @@ export default function ProfilePage() {
       }) as { access_token: string, refresh_token:string}
 
       if (response.access_token && response.refresh_token) {
-        setTokens(response.access_token, response.refresh_token)
+        await setTokens(response.access_token, response.refresh_token)
       }
 
       setCurrentPassword('')

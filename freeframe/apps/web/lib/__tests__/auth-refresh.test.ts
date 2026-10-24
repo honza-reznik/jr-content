@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mockSessionLocks } from '@/test/session-locks'
 
 /**
  * A failed refresh used to clear both tokens and hard-navigate to /login,
@@ -13,6 +14,7 @@ const store: Record<string, string> = {}
 
 beforeEach(() => {
   vi.resetModules()
+  mockSessionLocks()
   for (const k of Object.keys(store)) delete store[k]
   store['ff_access_token'] = 'old-access'
   store['ff_refresh_token'] = 'the-refresh-token'
@@ -41,7 +43,7 @@ describe('refreshAccessToken', () => {
     vi.stubGlobal('fetch', vi.fn(() => new Promise(resolve => { respond = resolve })))
     const auth = await import('../auth')
     const pending = auth.refreshAccessToken()
-    auth.removeTokens()
+    await auth.removeTokens()
     respond({ ok: true, json: async () => ({ access_token: 'late', refresh_token: 'late-r' }) })
     await expect(pending).resolves.toBeNull()
     expect(auth.getAccessToken()).toBeNull()
@@ -53,8 +55,8 @@ describe('refreshAccessToken', () => {
     vi.stubGlobal('fetch', vi.fn(() => new Promise(resolve => { respond = resolve })))
     const auth = await import('../auth')
     const pending = auth.refreshAccessToken()
-    auth.removeTokens()
-    auth.setTokens('new-user', 'new-refresh')
+    await auth.removeTokens()
+    await auth.setTokens('new-user', 'new-refresh')
     respond({ ok: false, status: 401 })
     await expect(pending).resolves.toBeNull()
     expect(auth.getAccessToken()).toBe('new-user')

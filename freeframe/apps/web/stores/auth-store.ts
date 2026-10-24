@@ -11,7 +11,7 @@ interface AuthState {
   /** True once a fetchUser call has finished, whether it found a user or not. */
   userFetched: boolean
   setUser: (user: User) => void
-  logout: () => void
+  logout: () => Promise<void>
   fetchUser: () => Promise<void>
 }
 
@@ -30,8 +30,8 @@ export const useAuthStore = create<AuthState>()((set) => ({
     })
   },
 
-  logout: () => {
-    clearTokens()
+  logout: async () => {
+    await clearTokens()
     set({
       user: null,
       isAuthenticated: false,

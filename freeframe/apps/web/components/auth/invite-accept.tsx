@@ -85,7 +85,7 @@ export function InviteAccept({ token }: InviteAcceptProps) {
         name,
         password,
       })
-      setTokens(res.access_token, res.refresh_token)
+      await setTokens(res.access_token, res.refresh_token)
       await useAuthStore.getState().fetchUser()
       router.replace('/')
     } catch (err) {

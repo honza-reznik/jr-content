@@ -171,6 +171,27 @@ async function main() {
     console.log('PASS: BB → SSO → login/from bez otevřeného přesměrování; platná cesta funguje');
     await logoutBB(otherTab);
     await context.close();
+
+    const unsupported = await browser.newContext();
+    await unsupported.addInitScript(() => {
+      Object.defineProperty(navigator, 'locks', { value: undefined, configurable: true });
+    });
+    await unsupported.route('**/*', route => {
+      if (new URL(route.request().url()).origin !== origin) {
+        external.push(route.request().url());
+        return route.abort();
+      }
+      return route.continue();
+    });
+    const noLocksPage = await unsupported.newPage();
+    await loginBB(noLocksPage);
+    await noLocksPage.getByRole('button', { name: 'Continue to video' }).click();
+    await noLocksPage.getByRole('heading', { name: 'Video sign-in could not be completed' }).waitFor();
+    assert.deepEqual(await tokens(noLocksPage), [null, null]);
+    assert(!(await unsupported.cookies()).some(c => ['ff_access_token', 'ff_refresh_token'].includes(c.name)));
+    assert.deepEqual(external, []);
+    console.log('PASS: prohlížeč bez Web Locks odmítl SSO bez zápisu tokenů či cookies');
+    await unsupported.close();
   } finally { await browser.close(); }
 }
 main().catch(error => {

@@ -14,6 +14,7 @@ const replace = vi.fn()
 const originalLocation = window.location
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.mocked(removeTokens).mockResolvedValue(undefined)
   Object.defineProperty(window, 'location', {
     value: { replace, search: '?next=//foreign.invalid' }, writable: true, configurable: true,
   })
@@ -58,5 +59,24 @@ it('requires an explicit click for a direct or forged logout link', async () => 
   expect(document.cookie).toContain('ff_setup_done')
   fireEvent.click(button)
   expect(removeTokens).toHaveBeenCalledOnce()
-  expect(replace).toHaveBeenCalledWith('/accounts/login/')
+  await waitFor(() => expect(replace).toHaveBeenCalledWith('/accounts/login/'))
+})
+
+it('waits for token removal before returning to Brightbean', async () => {
+  vi.mocked(consumeLogoutGrant).mockResolvedValue(true)
+  let finish!: () => void
+  vi.mocked(removeTokens).mockReturnValue(new Promise(resolve => { finish = resolve }))
+  render(<JrcLogoutPage />)
+  await waitFor(() => expect(removeTokens).toHaveBeenCalledOnce())
+  expect(replace).not.toHaveBeenCalled()
+  finish()
+  await waitFor(() => expect(replace).toHaveBeenCalledWith('/accounts/login/'))
+})
+
+it('shows a failure without redirecting if the session lock is unavailable', async () => {
+  vi.mocked(consumeLogoutGrant).mockResolvedValue(true)
+  vi.mocked(removeTokens).mockRejectedValue(new Error('Web Locks unavailable'))
+  render(<JrcLogoutPage />)
+  expect(await screen.findByRole('alert')).toHaveTextContent('Video sign-out could not be completed')
+  expect(replace).not.toHaveBeenCalled()
 })

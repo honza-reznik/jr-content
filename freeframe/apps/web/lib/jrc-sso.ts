@@ -44,6 +44,6 @@ export async function exchangeBrowserTicket(): Promise<string> {
   const destination = safeVideoDestination(data.next)
   if (!destination || typeof data.access_token !== 'string' || !data.access_token ||
       typeof data.refresh_token !== 'string' || !data.refresh_token) throw new Error('Sign-in unavailable')
-  if (!setTokensIfSessionCurrent(data.access_token, data.refresh_token, version)) throw new Error('Sign-in unavailable')
+  if (!await setTokensIfSessionCurrent(data.access_token, data.refresh_token, version)) throw new Error('Sign-in unavailable')
   return destination
 }
