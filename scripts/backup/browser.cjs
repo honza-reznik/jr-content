@@ -27,7 +27,7 @@ const errors = [];
     // text (scénář) přes stejnou relaci prohlížeče
     const response = await page.request.get(`${origin}/workspace/${seed.workspace_id}/content/${seed.post_id}/script/`);
     assert.equal(response.status(), 200);
-    assert.ok((await response.text()).includes('žluťoučký kůň'), 'text scénáře po obnově chybí');
+    assert.ok(JSON.stringify(await response.json()).includes('žluťoučký kůň'), 'text scénáře po obnově chybí');
     // obrázek: podepsaná adresa míří na obnovené úložiště a vrací původní bajty
     await page.goto(`${origin}/workspace/${seed.workspace_id}/media/${seed.asset_id}/`, { waitUntil: 'networkidle' });
     const images = await page.evaluate(() => Array.from(document.images).map((i) => ({ src: i.currentSrc || i.src, w: i.naturalWidth })));

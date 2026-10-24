@@ -714,6 +714,9 @@ def main(argv=None):
     except subprocess.CalledProcessError as error:
         print(f"CHYBA: příkaz {error.cmd[0]} selhal (kód {error.returncode}).", file=sys.stderr)
         return 1
+    except Exception as error:  # noqa: BLE001 - např. chyba S3; zpráva bez tajných hodnot
+        print(f"CHYBA: {type(error).__name__}: {error}", file=sys.stderr)
+        return 1
     return 0
 
 
