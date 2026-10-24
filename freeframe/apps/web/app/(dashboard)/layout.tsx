@@ -13,6 +13,7 @@ import { UploadSSEBridge } from "@/components/layout/upload-sse-bridge";
 import { PoweredByBadge } from "@/components/shared/powered-by-badge";
 import { refuseFileDrag } from "@/lib/drag";
 import { cn } from "@/lib/utils";
+import { EmbedModeProvider } from "@/lib/embed-mode";
 
 function DashboardLayoutContent({
   children,
@@ -35,21 +36,16 @@ function DashboardLayoutContent({
   // and the attribution credit, so the shell supplies neither here.
   const isAssetViewer = /\/projects\/[^/]+\/assets\/[^/]+/.test(pathname);
 
-  // Keep the iframe presentation when client navigation moves to another
-  // dashboard page. The iframe has its own sessionStorage, so this marker
-  // cannot affect the Brightbean page that contains it.
+  // Keep the iframe presentation during client navigation in this mounted
+  // window. The URL remains the durable source, including after login/reload.
   React.useEffect(() => {
     if (embedRequested) {
-      setEmbedSession(true);
-      window.sessionStorage.setItem("ff_embed", "1");
-    } else if (window.sessionStorage.getItem("ff_embed") === "1") {
       setEmbedSession(true);
     }
 
     const isDashboardRoute = /^\/(projects|assets|notifications|settings)(\/|$)/.test(pathname);
     if (!isDashboardRoute) {
       setEmbedSession(false);
-      window.sessionStorage.removeItem("ff_embed");
       lastPathname.current = pathname;
       return;
     }
@@ -100,6 +96,7 @@ function DashboardLayoutContent({
       )}
 
       {/* Main content area */}
+      <EmbedModeProvider value={embedActive}>
       <main
         className={cn(
           "flex flex-1 flex-col overflow-hidden transition-[margin] duration-200 ease-spring",
@@ -139,6 +136,7 @@ function DashboardLayoutContent({
           <KeyboardShortcuts standalone />
         </>
       )}
+      </EmbedModeProvider>
     </div>
   );
 }

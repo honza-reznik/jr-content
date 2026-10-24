@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
+import { shouldShowEmbedCommentsPanel, useEmbedMode } from '@/lib/embed-mode'
 import useSWR from 'swr'
 import { ReviewProvider, useReview } from '@/components/review/review-provider'
 import { VideoPlayer } from '@/components/review/video-player'
@@ -56,7 +57,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
-  const isEmbed = searchParams.get('embed') === '1'
+  const isEmbed = useEmbedMode()
   const { asset, versions, isLoading, refetchComments, refetchVersions } = useReview()
   const { currentVersion, isDrawingMode, focusedCommentId, playheadTime, seekTo, setFocusedCommentId, setActiveAnnotation } = useReviewStore()
   const { user } = useAuthStore()
@@ -702,7 +703,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
             the spare room is horizontal, this stays a column beside the media.
             Below that the same nodes go into MobileCommentSheet instead, so the
             panel keeps the video in view rather than covering it. */}
-        {sidebarOpen && !useSheet && (
+        {shouldShowEmbedCommentsPanel(isEmbed, isLandscape, sidebarOpen, useSheet) && (
           <div className="w-full md:w-[360px] absolute inset-y-0 right-0 z-20 md:static md:inset-auto max-md:landscape:static max-md:landscape:inset-auto max-md:landscape:w-[45%] max-md:landscape:max-w-[360px] flex flex-col border-l-0 md:border-l max-md:landscape:border-l border-border bg-bg-secondary shrink-0 animate-in slide-in-from-right-2 duration-150">
             {panelTabs}
             <div className="flex-1 flex flex-col min-h-0 overflow-hidden">

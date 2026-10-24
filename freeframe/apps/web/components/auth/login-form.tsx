@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { api, ApiError } from '@/lib/api'
 import { setTokens } from '@/lib/auth'
 import { useAuthStore } from '@/stores/auth-store'
+import { safeAppDestination } from '@/lib/app-destination'
 import { useBranding } from '@/components/shared/branding-provider'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -28,6 +29,7 @@ export function LoginForm() {
   const [passwordError, setPasswordError] = useState('')
   const [generalError, setGeneralError] = useState('')
   const [loading, setLoading] = useState(false)
+  const loginDestination = () => safeAppDestination(new URLSearchParams(window.location.search).get('from')) || '/projects'
 
   // Classic login fields
   const [classicEmail, setClassicEmail] = useState('')
@@ -140,7 +142,7 @@ export function LoginForm() {
         await setTokens(res.access_token, res.refresh_token)
         await useAuthStore.getState().fetchUser()
         const user = useAuthStore.getState().user
-        router.replace('/projects')
+        router.replace(loginDestination())
       }
     } catch (err) {
       if (err instanceof ApiError) {
@@ -195,7 +197,7 @@ export function LoginForm() {
       await setTokens(res.access_token, res.refresh_token)
       await useAuthStore.getState().fetchUser()
       const u = useAuthStore.getState().user
-      router.replace('/projects')
+      router.replace(loginDestination())
     } catch (err) {
       if (err instanceof ApiError) {
         setGeneralError(err.detail)
@@ -231,7 +233,7 @@ export function LoginForm() {
       await setTokens(res.access_token, res.refresh_token)
       await useAuthStore.getState().fetchUser()
       const u = useAuthStore.getState().user
-      router.replace('/projects')
+      router.replace(loginDestination())
     } catch (err) {
       if (err instanceof ApiError) {
         setClassicError(err.detail)

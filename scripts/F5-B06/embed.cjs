@@ -156,11 +156,54 @@ async function main() {
         assert(frameHref.includes('embed=1'));
         assert.equal(new URL(frameHref, origin).origin, origin, 'Iframe je stejného původu');
       }
+      if (viewport.width === 390) {
+        await page.setViewportSize({ width: 844, height: 390 });
+        await frame.getByText('F5-B06 timecode comment', { exact: true }).waitFor({ state: 'visible' });
+        const landscape = await inspectEmbed(frame, 844);
+        assert(landscape.comment.left >= landscape.video.right - 1, JSON.stringify(landscape));
+        await page.screenshot({ path: path.join(screenshots, 'mobile-landscape-844.png') });
+        report.push({ viewport: 'mobile-landscape-844', geometry: landscape, result: 'OK' });
+        console.log('OK mobile-landscape-844: komentáře vedle přehrávače po otočení telefonu.');
+      }
       assert.deepEqual(foreign, []);
       report.push({ viewport: name, geometry, result: 'OK' });
       console.log(`OK ${name}: vložená stránka, přehrávač, časový štítek, komentář, bez navigace a vodorovného posunu.`);
       await context.close();
     }
+
+    // Exercise the actual anonymous iframe -> login -> validated return path.
+    const loginContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    // The host route redirects to login and hydrates after setContent; without
+    // blocking only host scripts, hydration replaces the iframe fixture.
+    await loginContext.route('**/*', route => {
+      if (route.request().frame().parentFrame() === null && route.request().resourceType() === 'script')
+        return route.abort();
+      return route.continue();
+    });
+    const loginPage = await loginContext.newPage();
+    loginPage.setDefaultTimeout(45000);
+    await loginPage.goto(`${origin}/video/projects`);
+    await loginPage.setContent(`<body style="margin:0;width:100vw;height:100vh"><iframe title="Anonymous review" src="/video/projects/${project.id}/assets/${asset.asset_id}?embed=1" style="width:100%;height:100vh;border:0"></iframe></body>`);
+    const loginFrame = loginPage.frameLocator('iframe[title="Anonymous review"]');
+    await loginFrame.getByLabel('Email address').waitFor({ state: 'visible' });
+    const iframeFrame = () => loginPage.frames().find(frame => frame.parentFrame() === loginPage.mainFrame());
+    const currentLoginUrl = iframeFrame()?.url();
+    assert(currentLoginUrl.includes('/video/login?'));
+    assert.equal(new URL(currentLoginUrl).searchParams.get('from'), `/projects/${project.id}/assets/${asset.asset_id}?embed=1`);
+    if (await loginFrame.getByLabel('Password').count() === 0) {
+      await loginFrame.getByRole('button', { name: /password instead/i }).click();
+    }
+    await loginFrame.getByLabel('Email address').fill(process.env.JRC_FF_SYNC_EMAIL);
+    await loginFrame.getByLabel('Password').fill(process.env.JRC_FF_SYNC_PASSWORD);
+    await loginFrame.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await loginFrame.locator('video').first().waitFor({ state: 'visible' });
+    const returnedUrl = iframeFrame()?.url();
+    assert(returnedUrl.includes('embed=1'), `Login návrat zachoval embed: ${returnedUrl}`);
+    assert.equal(new URL(returnedUrl, origin).origin, origin);
+    await loginPage.screenshot({ path: path.join(screenshots, 'anonymous-login-return.png') });
+    report.push({ viewport: 'anonymous-login-return', result: 'OK' });
+    console.log('OK anonymous-login-return: iframe bez relace se přihlásí a vrátí na ověřenou embed cestu.');
+    await loginContext.close();
     fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
   } finally {
     await browser.close();
