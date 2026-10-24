@@ -214,7 +214,7 @@ def test_no_other_api_path_rewrites_or_deletes_a_versioned_caption(key, content)
     )
 
     patch = api(key, "patch", f"{content.pk}", {"caption": "Upstream overwrite attempt"})
-    assert patch.status_code == 200
+    assert patch.status_code == 422 and "/captions/{channel_copy_id}" in patch.json()["detail"]
     variant.refresh_from_db()
     assert variant.platform_specific_caption == "Versioned"
     assert variant.effective_caption == "Versioned"
@@ -334,8 +334,10 @@ def test_role_matrix_matches_the_ui(workspace, user, org_owner, content, role, o
     move = api(key, "post", f"{content.pk}/stage", {"stage": "script", "expected_stage": "idea"})
     assert move.status_code == (200 if can_move else 403)
     comment = api(key, "post", f"{content.pk}/comments", {"body": "Role comment"})
-    assert comment.status_code == 201
-    assert comment.json()["visibility"] == ("external" if role in ("client", "viewer") else "internal")
+    # Viewer keys hold neither create_posts nor approve_posts, so they are read-only.
+    assert comment.status_code == (403 if role == "viewer" else 201)
+    if role != "viewer":
+        assert comment.json()["visibility"] == ("external" if role == "client" else "internal")
     if not can_write_text:
         assert not TextDocument.objects.filter(post=content).exists()
         variant.refresh_from_db()
@@ -348,11 +350,15 @@ def test_key_permissions_narrow_the_issuer(workspace, user, org_owner, content):
     assert api(read_only, "get", f"{content.pk}/script").status_code == 200
     assert api(read_only, "post", f"{content.pk}/script", {"markdown": "x"}).status_code == 403
     assert api(read_only, "post", f"{content.pk}/captions/{variant.pk}", {"text": "x"}).status_code == 403
+    assert api(read_only, "get", f"{content.pk}/comments").status_code == 200
+    assert api(read_only, "post", f"{content.pk}/comments", {"body": "Analytics key"}).status_code == 403
+    assert not PostComment.objects.filter(body="Analytics key").exists()
     assert (
         api(read_only, "post", f"{content.pk}/stage", {"stage": "script", "expected_stage": "idea"}).status_code == 403
     )
 
     writer = make_key(workspace, user, permissions=["create_posts"])
+    assert api(writer, "post", f"{content.pk}/comments", {"body": "Writer key"}).status_code == 201
     assert api(writer, "post", f"{content.pk}/script", {"markdown": "x"}).status_code == 201
     # The owner could approve in the UI; this key was not granted approve_posts.
     assert api(writer, "post", f"{content.pk}/stage", {"stage": "review", "expected_stage": "idea"}).status_code == 200
@@ -367,6 +373,8 @@ def test_demoted_issuer_shrinks_the_key(workspace, user, org_owner, content):
     key = make_key(workspace, user)
     WorkspaceMembership.objects.filter(workspace=workspace, user=user).update(workspace_role="viewer")
     assert api(key, "post", f"{content.pk}/script", {"markdown": "x"}).status_code == 403
+    # The key's grants shrink with the issuer's current role, comments included.
+    assert api(key, "post", f"{content.pk}/comments", {"body": "Demoted"}).status_code == 403
     assert api(key, "get", f"{content.pk}/script").status_code == 200
 
 
@@ -418,3 +426,58 @@ def test_audit_rows_for_writes_and_failures(key, content):
     api(key, "post", f"{content.pk}/script", {"markdown": "Conflict"})
     actions = set(ApiKeyAuditLog.objects.filter(api_key=key.api_key).values_list("action", flat=True))
     assert {"script.write", "script.write.409"} <= actions
+
+
+# ---------------------------------------------------------------------------
+# Captions through the upstream post routes
+# ---------------------------------------------------------------------------
+
+
+def test_upstream_post_routes_cannot_write_unversioned_captions(key, workspace, user, channel, content):
+    account_id = str(channel.pk)
+    created = api(key, "post", "", {"social_account_id": account_id, "caption": "Base caption", "action": "draft"})
+    assert created.status_code == 201, created.content
+    new_id = created.json()["id"]
+
+    # An override caption would create channel text without a version.
+    override = api(
+        key,
+        "post",
+        "",
+        {
+            "social_account_id": account_id,
+            "caption": "Base",
+            "action": "draft",
+            "platform_overrides": [{"social_account_id": account_id, "caption": "Override"}],
+        },
+    )
+    assert override.status_code == 422 and "/captions/" in override.json()["detail"]
+    assert Post.objects.filter(workspace=workspace).count() == 2  # fixture content + the one created above
+    # Title and first comment overrides are not versioned texts and stay possible.
+    title_only = api(
+        key,
+        "post",
+        "",
+        {
+            "social_account_id": account_id,
+            "caption": "Base",
+            "action": "draft",
+            "platform_overrides": [{"social_account_id": account_id, "title": "Channel title"}],
+        },
+    )
+    assert title_only.status_code == 201
+
+    # PATCH of the caption is refused before the first version and after it.
+    before = api(key, "patch", new_id, {"caption": "Changed before history"})
+    assert before.status_code == 422
+    assert Post.objects.get(pk=new_id).caption == "Base caption"
+    variant = Post.objects.get(pk=new_id).platform_posts.get()
+    assert api(key, "get", f"{new_id}/captions/{variant.pk}").json()["text"] == "Base caption"
+    api(key, "post", f"{new_id}/captions/{variant.pk}", {"text": "Versioned"})
+    after = api(key, "patch", new_id, {"caption": "Changed after history"})
+    assert after.status_code == 422
+    # Other fields of the same PATCH still work.
+    assert api(key, "patch", new_id, {"title": "New title"}).status_code == 200
+    variant.refresh_from_db()
+    assert variant.platform_specific_caption == "Versioned"
+    assert Post.objects.get(pk=new_id).caption == "Base caption"

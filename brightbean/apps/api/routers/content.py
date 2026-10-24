@@ -39,8 +39,8 @@ from apps.jrc_texts.models import TextDocument, TextVersion
 
 router = Router(tags=["content"])
 
-# A key that holds none of these is read-only for texts and stages; it could only ever
-# have been used for analytics. Comments follow the UI instead (every member may comment).
+# A key that holds none of these is read-only (it could only ever have been used for analytics): it may not
+# write texts, stages or comments. Clients hold approve_posts, so their keys can comment; viewer keys cannot.
 _WRITE_PERMISSIONS = ("create_posts", "approve_posts")
 
 
@@ -78,7 +78,7 @@ def _membership(request: HttpRequest, post) -> _KeyMembership:
 def _require_write_key(request: HttpRequest) -> None:
     perms = request.workspace_membership.effective_permissions  # type: ignore[attr-defined]
     if not any(perms.get(key, False) for key in _WRITE_PERMISSIONS):
-        raise HttpError(403, "Permission denied: this key is read-only for texts and stages.")
+        raise HttpError(403, "Permission denied: this key is read-only (it needs create_posts or approve_posts).")
 
 
 def _post(request: HttpRequest, post_id: uuid.UUID):
@@ -536,8 +536,10 @@ def comments_list(request, post_id: uuid.UUID):
     summary="Add a comment or a reply",
 )
 def comment_add(request, post_id: uuid.UUID, payload: CommentWrite):
-    """Every member of the workspace may comment, as in the content detail. Internal comments are team-only."""
+    """Needs a key with `create_posts` or `approve_posts` (a read-only or analytics key cannot comment) and an
+    issuer who is a member of the workspace. Internal comments are team-only; clients always write external ones."""
     enforce_http_rate_limits(request, is_write=True)
+    _require_write_key(request)
     post = _post(request, post_id)
     body = payload.body.strip()
     if not body:

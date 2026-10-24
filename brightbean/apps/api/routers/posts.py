@@ -83,6 +83,19 @@ def _resolve_account(request: HttpRequest, social_account_id: uuid.UUID) -> Soci
     return SocialAccount.objects.get(id=social_account_id)
 
 
+def _is_jrc_channel(account: SocialAccount) -> bool:
+    """JR Content channels (those with a channel profile) keep captions as saved versions (F6, F9-B01)."""
+    return getattr(account, "jrc_channel", None) is not None
+
+
+def _reject_unversioned_caption(post_id: object = "{id}") -> HttpError:
+    return HttpError(
+        422,
+        "Captions of JR Content channels are saved as versions. Use "
+        f"POST /api/v1/posts/{post_id}/captions/{{channel_copy_id}} (see GET /api/v1/posts/{post_id}/captions).",
+    )
+
+
 def _can_view_internal_notes(request: HttpRequest) -> bool:
     """Whether this caller may see a post's team-only ``internal_notes``.
 
@@ -171,6 +184,9 @@ def create(request, payload: CreatePostRequest):
     # front. The plan's [Gap 2] section calls this out explicitly.
     platform_overrides: dict = {}
     for ov in payload.platform_overrides:
+        # A channel caption without a version would bypass the history (F9-B01).
+        if ov.caption is not None and _is_jrc_channel(social_account):
+            raise _reject_unversioned_caption()
         if ov.social_account_id != payload.social_account_id:
             raise HttpError(
                 422,
@@ -301,6 +317,11 @@ def update(request, post_id: uuid.UUID, payload: UpdatePostRequest):
     enforce_http_rate_limits(request, is_write=True)
     _require_perm(request, "create_posts")  # mirrors composer's create-or-edit perm
     post = _get_workspace_post(request, post_id)
+
+    # The post-level caption is the starting text of every channel copy of JR Content; once a copy has
+    # versions it would change nothing, before that it would move the text without a version (F9-B01).
+    if payload.caption is not None and any(_is_jrc_channel(pp.social_account) for pp in post.platform_posts.all()):
+        raise _reject_unversioned_caption(post.id)
 
     # Only allow updates while editable.
     if not post.is_editable:

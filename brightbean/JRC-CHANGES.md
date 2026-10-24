@@ -521,3 +521,9 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
   (trasy mazání neexistují); hlídá to test `test_no_other_api_path_rewrites_or_deletes_a_versioned_caption`.
 - Audit: selhání těchto tras se zapisují jako `script.*`, `caption.*`, `stage.*`, `comment.*`.
 - Testy: `apps/api/tests/test_content_api.py`.
+- Opravy po review F9-B01: komentování přes API vyžaduje klíč s `create_posts` nebo `approve_posts` (klíč jen
+  s `view_analytics` a klíč vieweru jsou jen ke čtení) a platí zúžení právy aktuální role vydavatele.
+  `apps/api/routers/posts.py`: u kanálů JR Content (s profilem kanálu) `POST /posts` s
+  `platform_overrides[].caption` a `PATCH /posts/{id}` s `caption` vrací 422 s odkazem na
+  `/posts/{id}/captions/{kopie kanálu}`; popisek tak vzniká jen jako verze. Ostatní pole PATCH a běžné
+  kanály Brightbean (bez profilu JR) fungují beze změny. Testy: `test_content_api.py`.
