@@ -73,7 +73,7 @@ class ProjectGuards(Base):
                 jb.check_keep(bad)
 
     def test_cli_restore_data_and_precheck_refuse_main_before_anything(self):
-        for command in ("precheck", "restore-data"):
+        for command in ("precheck", "restore-check", "restore-objects"):
             argv = [command, "--project", "jrc", "--backup", str(self.work / "neexistuje")]
             with mock.patch.object(jb, "s3_client", side_effect=AssertionError("nesmí sahat na S3")), \
                     mock.patch.object(jb, "psql", side_effect=AssertionError("nesmí sahat na databázi")), \
@@ -294,44 +294,46 @@ class EnvHandling(Base):
 
 
 class RestoreEmptinessGuards(Base):
-    def run_restore(self, db_empty=True, bucket_empty=True):
-        directory = make_backup(self.root, "20261024-100000")
+    ENV = {
+        "AWS_ACCESS_KEY_ID": "a", "AWS_SECRET_ACCESS_KEY": "b", "JRC_FF_S3_ACCESS_KEY": "c",
+        "JRC_FF_S3_SECRET_KEY": "d", "JRC_BB_S3_ACCESS_KEY": "e", "JRC_BB_S3_SECRET_KEY": "f",
+    }
+
+    def run_command(self, command, db_empty=True, bucket_empty=True):
+        directory = self.root / "20261024-100000"
+        if not directory.exists():
+            make_backup(self.root, "20261024-100000")
         workspace = self.work / "ws"
         workspace.mkdir(exist_ok=True)
-        env = {
-            "AWS_ACCESS_KEY_ID": "a", "AWS_SECRET_ACCESS_KEY": "b", "JRC_FF_S3_ACCESS_KEY": "c",
-            "JRC_FF_S3_SECRET_KEY": "d", "JRC_BB_S3_ACCESS_KEY": "e", "JRC_BB_S3_SECRET_KEY": "f",
-        }
-        calls = []
+        client = mock.Mock()
         patches = [
-            mock.patch.dict(os.environ, env),
-            mock.patch.object(jb, "s3_client", return_value=mock.Mock()),
+            mock.patch.dict(os.environ, self.ENV),
+            mock.patch.object(jb, "s3_client", return_value=client),
             mock.patch.object(jb, "ensure_database"),
             mock.patch.object(jb, "database_is_empty", return_value=db_empty),
             mock.patch.object(jb, "bucket_is_empty", return_value=bucket_empty),
-            mock.patch("subprocess.run", side_effect=lambda *a, **k: calls.append(a)),
             mock.patch.object(jb, "verify_restored_objects"),
         ]
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)
-        code = jb.main(["restore-data", "--project", "jrc-cil", "--backup", str(directory), "--workspace", str(workspace)])
-        return code, calls
+        code = jb.main([command, "--project", "jrc-cil", "--backup", str(directory), "--workspace", str(workspace)])
+        return code, client
 
-    def test_nonempty_database_refused_without_writing(self):
-        code, calls = self.run_restore(db_empty=False)
+    def test_nonempty_database_refused(self):
+        self.assertEqual(self.run_command("restore-check", db_empty=False)[0], 1)
+
+    def test_nonempty_bucket_refused_by_check_and_never_uploaded_into(self):
+        self.assertEqual(self.run_command("restore-check", bucket_empty=False)[0], 1)
+        code, client = self.run_command("restore-objects", bucket_empty=False)
         self.assertEqual(code, 1)
-        self.assertEqual(calls, [])
+        client.upload_file.assert_not_called()
 
-    def test_nonempty_bucket_refused_without_writing(self):
-        code, calls = self.run_restore(bucket_empty=False)
-        self.assertEqual(code, 1)
-        self.assertEqual(calls, [])
-
-    def test_empty_target_restores(self):
-        code, calls = self.run_restore()
+    def test_empty_target_passes_and_uploads(self):
+        self.assertEqual(self.run_command("restore-check")[0], 0)
+        code, client = self.run_command("restore-objects")
         self.assertEqual(code, 0)
-        self.assertEqual(len(calls), 2)  # pg_restore pro obě databáze
+        self.assertEqual(client.upload_file.call_count, 1)
 
 
 if __name__ == "__main__":

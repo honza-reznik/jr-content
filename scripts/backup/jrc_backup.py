@@ -362,7 +362,7 @@ def human(size):
 
 
 def cmd_start(args):
-    """Krok 1: výpisy databází (konzistentní) a kopie bucketů (po databázi)."""
+    """Krok 1: kontroly, odhad místa a rozpracovaný adresář (výpisy databází dělá host, viz backup.sh)."""
     os.umask(0o077)
     project = check_project(args.project)
     keep = check_keep(args.keep)
@@ -396,19 +396,33 @@ def cmd_start(args):
         raise BackupError(f"Málo místa na disku: volno {human(free)}, potřeba asi {human(int(needed * 1.1) + (1 << 30))}.")
 
     partial.mkdir(mode=0o700)
-    print(f"Záloha {project}/{args.stamp}: databáze")
     (partial / "postgres").mkdir(mode=0o700)
-    for database in DATABASES:
-        target = partial / "postgres" / f"{database}.dump"
-        subprocess.run(
-            ["pg_dump", "--format=custom", "--no-password", f"--dbname={database}", f"--file={target}"],
-            check=True,
-        )
-        listing = subprocess.run(["pg_restore", "--list", str(target)], capture_output=True, text=True)
-        if listing.returncode != 0 or "TABLE DATA" not in listing.stdout:
-            raise BackupError(f"Výpis databáze {database} je prázdný nebo poškozený.")
-        print(f"  {database}: {human(target.stat().st_size)}")
+    state = {
+        "project": project,
+        "stamp": args.stamp,
+        "keep": keep,
+        "postgres_version": pg_version(),
+        "started_at": utc_now(),
+    }
+    (partial / "state.json").write_text(json.dumps(state, indent=1), encoding="utf-8")
 
+
+def cmd_copy_objects(args):
+    """Krok 2 (po výpisech databází): kopie všech bucketů Garage do zálohy."""
+    os.umask(0o077)
+    project = check_project(args.project)
+    workspace = Path(args.workspace)
+    env = merged_env(workspace)
+    partial = workspace / "backups" / project / f"{args.stamp}.partial"
+    state_path = partial / "state.json"
+    if not state_path.is_file():
+        raise BackupError("Rozpracovaná záloha neexistuje.")
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    for database in DATABASES:
+        dump = partial / "postgres" / f"{database}.dump"
+        if not dump.is_file() or dump.stat().st_size == 0:
+            raise BackupError(f"Chybí výpis databáze {database}; S3 se nekopíruje.")
+    clients = {bucket: s3_client(env, bucket) for bucket in bucket_credentials(env)}
     print("Záloha: soubory v úložišti S3 (po databázi)")
     summary = {}
     vanished = {}
@@ -445,16 +459,8 @@ def cmd_start(args):
         if missing:
             vanished[bucket] = missing
         print(f"  {bucket}: {len(entries)} objektů, {human(summary[bucket]['bytes'])}")
-    state = {
-        "project": project,
-        "stamp": args.stamp,
-        "keep": keep,
-        "buckets": summary,
-        "vanished": vanished,
-        "postgres_version": pg_version(),
-        "started_at": utc_now(),
-    }
-    (partial / "state.json").write_text(json.dumps(state, indent=1), encoding="utf-8")
+    state.update({"buckets": summary, "vanished": vanished})
+    state_path.write_text(json.dumps(state, indent=1), encoding="utf-8")
 
 
 def cmd_finish(args):
@@ -571,12 +577,11 @@ def _bucket_sets(manifest):
     return list(manifest.get("buckets", {}))
 
 
-def cmd_restore_data(args):
-    """Vloží databáze a soubory S3 do PRÁZDNÉ čerstvé instance; médií ze svazku se týká host."""
+def cmd_restore_check(args):
+    """Před vložením dat: databáze existují a jsou prázdné, buckety jsou prázdné."""
     project = check_restore_project(args.project)
     manifest = validate_backup(args.backup)
-    workspace = Path(args.workspace)
-    env = merged_env(workspace)
+    env = merged_env(Path(args.workspace))
     clients = {bucket: s3_client(env, bucket) for bucket in _bucket_sets(manifest)}
     # Druhá pojistka: ani po prázdných svazcích nic nevkládáme do databáze nebo bucketu s obsahem.
     for database in DATABASES:
@@ -586,16 +591,19 @@ def cmd_restore_data(args):
     for bucket, client in clients.items():
         if not bucket_is_empty(client, bucket):
             raise BackupError(f"Bucket {bucket} v projektu {project} není prázdný; obnovu zastavuji.")
+    print(f"Cíl {project}: databáze a buckety jsou prázdné.")
+
+
+def cmd_restore_objects(args):
+    """Po obnově databází: vloží soubory S3 do prázdných bucketů a ověří je."""
+    project = check_restore_project(args.project)
+    manifest = validate_backup(args.backup)
+    env = merged_env(Path(args.workspace))
+    clients = {bucket: s3_client(env, bucket) for bucket in _bucket_sets(manifest)}
+    for bucket, client in clients.items():
+        if not bucket_is_empty(client, bucket):
+            raise BackupError(f"Bucket {bucket} v projektu {project} není prázdný; obnovu zastavuji.")
     backup = Path(args.backup)
-    for database in DATABASES:
-        print(f"Obnova databáze {database}")
-        subprocess.run(
-            [
-                "pg_restore", "--single-transaction", "--exit-on-error", "--no-owner", "--no-privileges",
-                f"--dbname={database}", str(backup / "postgres" / f"{database}.dump"),
-            ],
-            check=True,
-        )
     for bucket, client in clients.items():
         entries = read_index(backup, bucket)
         print(f"Obnova bucketu {bucket}: {len(entries)} objektů")
@@ -607,7 +615,7 @@ def cmd_restore_data(args):
                 str(backup / "s3" / bucket / "objects" / entry["file"]), bucket, entry["key"], ExtraArgs=extra
             )
     verify_restored_objects(backup, manifest, clients)
-    print("OK: databáze a soubory S3 obnoveny a ověřeny.")
+    print("OK: soubory S3 obnoveny a ověřeny.")
 
 
 def verify_restored_objects(backup, manifest, clients):
@@ -651,6 +659,10 @@ def cmd_inventory(args):
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
+    item = sub.add_parser("copy-objects")
+    item.add_argument("--project", required=True)
+    item.add_argument("--stamp", required=True)
+    item.add_argument("--workspace", default="/workspace")
     for name in ("start", "finish"):
         item = sub.add_parser(name)
         item.add_argument("--project", required=True)
@@ -670,10 +682,11 @@ def build_parser():
     item.add_argument("--project", required=True)
     item.add_argument("--backup", required=True)
     item.add_argument("--workspace", default="/workspace")
-    item = sub.add_parser("restore-data")
-    item.add_argument("--project", required=True)
-    item.add_argument("--backup", required=True)
-    item.add_argument("--workspace", default="/workspace")
+    for name in ("restore-check", "restore-objects"):
+        item = sub.add_parser(name)
+        item.add_argument("--project", required=True)
+        item.add_argument("--backup", required=True)
+        item.add_argument("--workspace", default="/workspace")
     item = sub.add_parser("inventory")
     item.add_argument("--workspace", default="/workspace")
     return parser
@@ -681,10 +694,12 @@ def build_parser():
 
 COMMANDS = {
     "start": cmd_start,
+    "copy-objects": cmd_copy_objects,
     "finish": cmd_finish,
     "verify": cmd_verify,
     "precheck": cmd_precheck,
-    "restore-data": cmd_restore_data,
+    "restore-check": cmd_restore_check,
+    "restore-objects": cmd_restore_objects,
     "inventory": cmd_inventory,
 }
 

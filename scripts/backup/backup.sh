@@ -100,6 +100,17 @@ case "${1:?Chybí operace}" in
         }
         trap cleanup_note EXIT
         compose exec -T jrc-dev python3 "$tool" start --project "$project" --stamp "$stamp" --keep "$keep" --buckets "$buckets"
+        # pg_dump musí mít stejnou hlavní verzi jako server, proto běží v kontejneru PostgreSQL (jen čtení).
+        printf 'Záloha %s/%s: databáze\n' "$project" "$stamp"
+        for database in brightbean freeframe; do
+            compose exec -T jrc-postgres sh -c 'pg_dump --format=custom --no-password --username "$POSTGRES_USER" "$1"' sh "$database" \
+                > "$partial/postgres/$database.dump"
+            compose exec -T jrc-postgres pg_restore --list < "$partial/postgres/$database.dump" | grep -q 'TABLE DATA' \
+                || die "Výpis databáze $database je prázdný nebo poškozený."
+            printf '  %s: %s bajtů\n' "$database" "$(wc -c < "$partial/postgres/$database.dump")"
+        done
+        # Soubory v Garage se kopírují až po databázi (viz omezení v návodu).
+        compose exec -T jrc-dev python3 "$tool" copy-objects --project "$project" --stamp "$stamp"
         media=absent
         if volume_exists "$project-bb-media"; then
             docker run --rm --pull never --network none --user "$(id -u):$(id -g)" \
@@ -161,7 +172,16 @@ case "${1:?Chybí operace}" in
         compose up --detach --build --wait --wait-timeout 120 jrc-postgres jrc-s3 jrc-dev
         sh scripts/workspace.sh check
         compose run --rm --no-deps -T --volume "$abs:/backup:ro" jrc-dev \
-            python3 "$tool" restore-data --project "$project" --backup /backup
+            python3 "$tool" restore-check --project "$project" --backup /backup
+        # pg_restore stejné hlavní verze jako server (v kontejneru PostgreSQL); jedna transakce, při chybě se nic nevloží.
+        for database in brightbean freeframe; do
+            printf 'Obnova databáze %s\n' "$database"
+            compose exec -T jrc-postgres sh -c \
+                'pg_restore --single-transaction --exit-on-error --no-owner --no-privileges --no-password --username "$POSTGRES_USER" --dbname "$1"' \
+                sh "$database" < "$abs/postgres/$database.dump"
+        done
+        compose run --rm --no-deps -T --volume "$abs:/backup:ro" jrc-dev \
+            python3 "$tool" restore-objects --project "$project" --backup /backup
         ;;
     restore-finish)
         restore_guard
