@@ -8,7 +8,9 @@ from datetime import date, datetime, time, timedelta
 
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
+from django.db import transaction
 from django.db.models import QuerySet
+from django.db.models.deletion import RestrictedError
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
@@ -1255,7 +1257,6 @@ def bulk_platform_action(request, workspace_id):
     action would leave parents whose ``scheduled_at`` aggregate points at
     children that no longer exist.
     """
-    from django.db import transaction
     from django.db.models import F
     from django.db.models.functions import Coalesce
     from django.utils import timezone as _tz
@@ -1315,74 +1316,127 @@ def bulk_platform_action(request, workspace_id):
 
     affected = set()
     touched = []  # rows whose queue mirror must follow, as (pp, new_slot_dt|None)
-    with transaction.atomic():
-        if action == "delete":
-            deletable = [pp for pp in pps if pp.status not in PlatformPost.PROTECTED_STATUSES]
-            for pp in deletable:
-                affected.add(pp.post_id)
-                touched.append((pp, None))
-            PlatformPost.objects.filter(id__in=[pp.id for pp in deletable]).delete()
-            count = len(deletable)
-        elif action == "draft":
-            # Unschedule: back to draft and drop the time.
-            changed = []
-            for pp in pps:
-                if pp.status in PlatformPost.PROTECTED_STATUSES or pp.status == "draft":
-                    continue
-                if not pp.can_transition_to("draft"):
-                    continue
-                pp.scheduled_at = None
-                pp.transition_to("draft")
-                changed.append(pp)
-                affected.add(pp.post_id)
-                touched.append((pp, None))
-            _bulk_save_platform_posts(changed)
-            count = len(changed)
-        else:
-            # Publish now. Rows on the same channel are staggered a minute apart
-            # rather than all stamped with the same instant: posting slots exist
-            # to space a channel's output, and firing eight posts at one account
-            # in the same publisher tick invites rate limiting.
-            now = _tz.now()
-            per_channel: dict = {}
-            changed = []
-            for pp in pps:
-                # scheduled → scheduled is not a valid transition (the whole Queue
-                # tab is `scheduled`), so those rows only move in time — the
-                # publisher takes any scheduled row whose effective time passed.
-                if pp.status != "scheduled" and not _promotes_to_scheduled(pp):
-                    continue
-                slot = now + timedelta(minutes=per_channel.get(pp.social_account_id, 0))
-                per_channel[pp.social_account_id] = per_channel.get(pp.social_account_id, 0) + 1
-                pp.scheduled_at = slot
-                if pp.status == "failed":
-                    # Retrying: the previous attempt's failure state must not
-                    # ride along into the fresh one — including its publish
-                    # handle, which the confirmation sweep would otherwise read
-                    # as this attempt's outcome.
-                    pp.publish_error = ""
-                    pp.retry_count = 0
-                    pp.next_retry_at = None
-                    pp.platform_post_id = ""
-                if pp.status != "scheduled":
-                    pp.transition_to("scheduled")
-                changed.append(pp)
-                affected.add(pp.post_id)
-                touched.append((pp, slot))
-            _bulk_save_platform_posts(changed)
-            count = len(changed)
+    if action == "delete":
+        deletable = [pp for pp in pps if pp.status not in PlatformPost.PROTECTED_STATUSES]
+        caption_history = [pp for pp in deletable if pp.jrc_texts.filter(kind="caption").exists()]
+        if caption_history:
+            from django.urls import reverse
 
-        _sync_queue_entries(touched)
+            links = []
+            labels = []
+            for pp in caption_history:
+                labels.append(f"{pp.post.title or 'Untitled post'} — {pp.social_account.account_name}")
+                url = (
+                    reverse(
+                        "jrc_production:content_detail",
+                        kwargs={"workspace_id": workspace.id, "post_id": pp.post_id},
+                    )
+                    + "?tab=caption"
+                )
+                links.append({"label": pp.social_account.account_name, "url": url})
+            items = "; ".join(labels)
+            return JsonResponse(
+                {
+                    "error": f"Nothing was deleted. These channels have caption history: {items}. Review them in the Caption tab.",
+                    "links": links,
+                },
+                status=409,
+            )
 
-        # Reconcile each touched parent Post (aggregate scheduled_at) and drop any
-        # post whose last platform row was just deleted. Fetched in one query with
-        # the children prefetched, so the loop below adds none.
-        posts = Post.objects.filter(id__in=affected, workspace=workspace).prefetch_related("platform_posts")
-        for post in posts:
-            if not post.platform_posts.all():
-                post.delete()
+    try:
+        with transaction.atomic():
+            if action == "delete":
+                for pp in deletable:
+                    affected.add(pp.post_id)
+                    touched.append((pp, None))
+                PlatformPost.objects.filter(id__in=[pp.id for pp in deletable]).delete()
+                count = len(deletable)
+            elif action == "draft":
+                # Unschedule: back to draft and drop the time.
+                changed = []
+                for pp in pps:
+                    if pp.status in PlatformPost.PROTECTED_STATUSES or pp.status == "draft":
+                        continue
+                    if not pp.can_transition_to("draft"):
+                        continue
+                    pp.scheduled_at = None
+                    pp.transition_to("draft")
+                    changed.append(pp)
+                    affected.add(pp.post_id)
+                    touched.append((pp, None))
+                _bulk_save_platform_posts(changed)
+                count = len(changed)
             else:
-                sync_post_scheduled_at(post)
+                # Publish now. Rows on the same channel are staggered a minute apart
+                # rather than all stamped with the same instant: posting slots exist
+                # to space a channel's output, and firing eight posts at one account
+                # in the same publisher tick invites rate limiting.
+                now = _tz.now()
+                per_channel: dict = {}
+                changed = []
+                for pp in pps:
+                    # scheduled → scheduled is not a valid transition (the whole Queue
+                    # tab is `scheduled`), so those rows only move in time — the
+                    # publisher takes any scheduled row whose effective time passed.
+                    if pp.status != "scheduled" and not _promotes_to_scheduled(pp):
+                        continue
+                    slot = now + timedelta(minutes=per_channel.get(pp.social_account_id, 0))
+                    per_channel[pp.social_account_id] = per_channel.get(pp.social_account_id, 0) + 1
+                    pp.scheduled_at = slot
+                    if pp.status == "failed":
+                        # Retrying: the previous attempt's failure state must not
+                        # ride along into the fresh one — including its publish
+                        # handle, which the confirmation sweep would otherwise read
+                        # as this attempt's outcome.
+                        pp.publish_error = ""
+                        pp.retry_count = 0
+                        pp.next_retry_at = None
+                        pp.platform_post_id = ""
+                    if pp.status != "scheduled":
+                        pp.transition_to("scheduled")
+                    changed.append(pp)
+                    affected.add(pp.post_id)
+                    touched.append((pp, slot))
+                _bulk_save_platform_posts(changed)
+                count = len(changed)
+
+            _sync_queue_entries(touched)
+
+            # Reconcile each touched parent Post (aggregate scheduled_at) and drop any
+            # post whose last platform row was just deleted. Fetched in one query with
+            # the children prefetched, so the loop below adds none.
+            posts = Post.objects.filter(id__in=affected, workspace=workspace).prefetch_related("platform_posts")
+            for post in posts:
+                if not post.platform_posts.all():
+                    post.delete()
+                else:
+                    sync_post_scheduled_at(post)
+    except RestrictedError:
+        # A Caption document can appear after the preflight; the transaction
+        # rolls back every deletion so a race never leaves a partial batch.
+        from django.urls import reverse
+
+        links = []
+        labels = []
+        for pp in deletable:
+            if pp.jrc_texts.filter(kind="caption").exists():
+                labels.append(f"{pp.post.title or 'Untitled post'} — {pp.social_account.account_name}")
+                url = (
+                    reverse(
+                        "jrc_production:content_detail",
+                        kwargs={"workspace_id": workspace.id, "post_id": pp.post_id},
+                    )
+                    + "?tab=caption"
+                )
+                links.append({"label": pp.social_account.account_name, "url": url})
+        items = "; ".join(labels) or "a selected channel"
+        return JsonResponse(
+            {
+                "error": f"Nothing was deleted. {items} has caption history. Review it in the Caption tab.",
+                "links": links,
+            },
+            status=409,
+        )
 
     # Plain JSON, not an HX-Trigger header: the selection bar posts with fetch(),
     # not htmx, and fires its own calendar/tab refresh events on success.

@@ -80,27 +80,34 @@
         {% elif active_tab == "video" %}
             <h2 class="text-lg font-semibold text-stone-900">Video</h2><div class="mt-5 rounded-xl border border-dashed border-stone-300 px-4 py-10 text-center text-sm text-stone-500">Video versions will appear here.</div>
         {% elif active_tab == "caption" %}
-            <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">Channel captions</h2><p class="mt-1 text-sm text-stone-500">Each channel has its own plain text caption and saved versions.</p></div>
+            <style>.jrc-caption-preview .preview-card{background:#fff;border:1px solid #e7e5e4;border-radius:14px;overflow:hidden}</style>
+            <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">Channel captions</h2><p class="mt-1 text-sm text-stone-500">Each enabled channel has its own plain text caption and saved versions. The composer shows the latest saved version read-only.</p></div>
             {% if caption_error %}<p role="alert" class="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{{ caption_error }}</p>{% endif %}
             <div class="space-y-5">
                 {% for item in caption_channels %}
-                <article class="rounded-xl border border-stone-200 p-4 sm:p-5" aria-labelledby="caption-title-{{ item.variant.id }}">
+                <article class="rounded-xl border border-stone-200 p-4 sm:p-5" aria-labelledby="caption-title-{{ forloop.counter }}">
                     <div class="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
-                        <h3 id="caption-title-{{ item.variant.id }}" class="font-semibold text-stone-900">{{ item.platform_label }} · {{ item.variant.social_account.account_name }}</h3>
-                        {% if item.latest %}<p class="text-xs text-stone-500">Saved version {{ item.latest.number }}</p>{% endif %}
+                        <h3 id="caption-title-{{ forloop.counter }}" class="font-semibold text-stone-900">{{ item.platform_label }} · {{ item.account.account_name }}</h3>
+                        {% if item.latest %}<p class="text-xs text-stone-500">Saved version {{ item.latest.number }}</p>{% elif not item.variant %}<p class="text-xs text-stone-500">New channel · saving creates its copy of this content</p>{% endif %}
                     </div>
                     <form method="post" class="mt-4">
                         {% csrf_token %}
                         <input type="hidden" name="action" value="save_caption">
-                        <input type="hidden" name="platform_post" value="{{ item.variant.id }}">
+                        <input type="hidden" name="platform_post" value="{{ item.key }}">
                         {% if item.latest %}<input type="hidden" name="base_version" value="{{ item.latest.id }}">{% endif %}
-                        <label for="caption-{{ item.variant.id }}" class="mb-1 block text-sm font-medium text-stone-700">Caption</label>
-                        <textarea id="caption-{{ item.variant.id }}" name="caption" rows="7" class="block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm text-stone-900 shadow-sm focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-200 disabled:bg-stone-50" data-caption-counter data-limit="{{ item.char_limit }}" data-escaped-chars="{{ item.escaped_chars }}" {% if not can_edit_captions %}readonly{% endif %}>{{ item.text }}</textarea>
+                        <label for="caption-{{ forloop.counter }}" class="mb-1 block text-sm font-medium text-stone-700">Caption</label>
+                        <textarea id="caption-{{ forloop.counter }}" name="caption" rows="7" class="block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm text-stone-900 shadow-sm focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-200 disabled:bg-stone-50" data-caption-counter data-limit="{{ item.char_limit }}" data-escaped-chars="{{ item.escaped_chars }}" {% if not can_edit_captions %}readonly{% endif %}>{{ item.text }}</textarea>
                         <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
                             <p class="text-xs text-stone-500">Counted for {{ item.platform_label }}: <span data-caption-count>{{ item.char_count }}</span> / {{ item.char_limit }}</p>
                             {% if can_edit_captions %}<button type="submit" class="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-300">Save version</button>{% endif %}
                         </div>
                     </form>
+                    {% if item.previews %}
+                    <section class="mt-4 border-t border-stone-100 pt-3" aria-label="Instagram preview of the saved caption" data-caption-preview>
+                        <h4 class="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">Instagram preview of the saved caption</h4>
+                        <div class="jrc-caption-preview max-w-sm">{% include "composer/partials/preview_panel.html" with previews=item.previews media_items=caption_media_items %}</div>
+                    </section>
+                    {% endif %}
                     {% if item.previous %}
                     <details class="mt-4 border-t border-stone-100 pt-3">
                         <summary class="cursor-pointer text-sm font-medium text-stone-700">Compare with version {{ item.previous.number }}</summary>

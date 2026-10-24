@@ -127,7 +127,7 @@ Context: previews (list of dicts with account, title, caption, first_comment, ch
             </div>
             <div class="px-3 pb-3">
                 {% if p.caption %}
-                <div class="text-[13px] text-stone-900 leading-relaxed"><span class="font-semibold">{{ p.account.account_name|default:p.account.account_handle }}</span> <span class="whitespace-pre-wrap break-words">{{ p.truncated_caption|truncatechars:150 }}</span></div>
+                <div class="text-[13px] text-stone-900 leading-relaxed"><span class="font-semibold">{{ p.account.account_name|default:p.account.account_handle }}</span> <span class="whitespace-pre-wrap break-words">{{ p.truncated_caption }}</span></div>
                 {% else %}
                 <div class="text-[13px] text-stone-300 italic">Write a caption…</div>
                 {% endif %}

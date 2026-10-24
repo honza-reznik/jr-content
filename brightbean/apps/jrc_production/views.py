@@ -184,13 +184,36 @@ def _word_diff(previous, current):
     return old_fragments, new_fragments
 
 
+def _enabled_caption_accounts(post):
+    """Accounts whose caption belongs on the card: enabled channels of this client (F6-B02).
+
+    Channels switched off in the client profile are hidden in MVP1, but their copies and
+    saved versions stay in the database. An account without a JR Content profile is kept
+    so that content imported from Brightbean does not lose its caption field.
+    """
+    accounts = SocialAccount.objects.filter(workspace_id=post.workspace_id).select_related("jrc_channel")
+    return [
+        account
+        for account in accounts.order_by("account_name")
+        if getattr(getattr(account, "jrc_channel", None), "is_enabled", True)
+    ]
+
+
 def _caption_channels(post, submitted=None):
     from apps.jrc_texts.models import TextVersion
 
     channels = []
-    variants = post.platform_posts.select_related("social_account").order_by("social_account__account_name")
-    for variant in variants:
-        document = TextDocument.objects.filter(platform_post=variant, kind=TextDocument.Kind.CAPTION).first()
+    variants = {variant.social_account_id: variant for variant in post.platform_posts.select_related("social_account")}
+    for account in _enabled_caption_accounts(post):
+        variant = variants.get(account.pk)
+        # A channel enabled after the content was created has no copy yet. The field is
+        # ready; the copy is created by the first save (see _create_missing_copy).
+        key = str(variant.pk) if variant else f"new:{account.pk}"
+        document = (
+            TextDocument.objects.filter(platform_post=variant, kind=TextDocument.Kind.CAPTION).first()
+            if variant
+            else None
+        )
         latest = (
             document.versions.filter(state=TextVersion.State.FINAL).order_by("-number").first() if document else None
         )
@@ -201,19 +224,29 @@ def _caption_channels(post, submitted=None):
             if latest
             else None
         )
-        submitted_caption = (
-            (submitted or {}).get("caption") if (submitted or {}).get("platform_post") == str(variant.pk) else None
-        )
-        current_text = (
-            submitted_caption
-            if submitted_caption is not None
-            else (latest.text if latest else variant.effective_caption)
-        )
+        saved_text = latest.text if latest else (variant.effective_caption if variant else (post.caption or ""))
+        submitted_caption = (submitted or {}).get("caption") if (submitted or {}).get("platform_post") == key else None
+        current_text = submitted_caption if submitted_caption is not None else saved_text
         old_diff, new_diff = _word_diff(previous.text, current_text) if previous else ([], [])
-        account = variant.social_account
+        preview = None
+        if account.platform in ("instagram", "instagram_login"):
+            # The preview always shows the last saved version, never an unsaved edit.
+            count = account.caption_wire_length(saved_text)
+            preview = {
+                "account": account,
+                "title": "",
+                "caption": saved_text,
+                "first_comment": "",
+                "char_count": count,
+                "char_limit": account.char_limit,
+                "is_over_limit": count > account.char_limit,
+                "truncated_caption": saved_text[: account.char_limit],
+            }
         channels.append(
             {
+                "key": key,
                 "variant": variant,
+                "account": account,
                 "platform_label": account.get_platform_display(),
                 "document": document,
                 "latest": latest,
@@ -224,9 +257,30 @@ def _caption_channels(post, submitted=None):
                 "escaped_chars": account.escaped_chars,
                 "old_diff": old_diff,
                 "new_diff": new_diff,
+                "previews": [preview] if preview else [],
             }
         )
     return channels
+
+
+def _create_missing_copy(post, account_id):
+    """Create the draft copy for an enabled channel that was added after the content (F6-B02).
+
+    Only while every existing copy is still a draft, so the new copy cannot change the
+    content's stage. Runs inside the caller's transaction with the post row locked.
+    """
+    account = next((a for a in _enabled_caption_accounts(post) if str(a.pk) == account_id), None)
+    if account is None:
+        raise Http404("This channel is not enabled for this client.")
+    existing = PlatformPost.objects.filter(post=post, social_account=account).first()
+    if existing:
+        return existing
+    if post.platform_posts.exclude(status=PlatformPost.Status.DRAFT).exists():
+        raise ValidationError(
+            f"The {account.get_platform_display()} channel was enabled after this content left drafting, "
+            "so it has no copy of this content yet."
+        )
+    return PlatformPost.objects.create(post=post, social_account=account, status=PlatformPost.Status.DRAFT)
 
 
 @login_required
@@ -257,22 +311,34 @@ def content_detail(request, workspace_id, post_id):
     if request.method == "POST":
         if request.POST.get("action") != "save_caption":
             return HttpResponseBadRequest("Unknown action.")
-        variant = get_object_or_404(
-            PlatformPost.objects.select_related("post", "social_account"),
-            pk=request.POST.get("platform_post"),
-            post=post,
-        )
         if not can_edit_captions:
             raise PermissionDenied("You cannot edit captions for this content.")
+        target = request.POST.get("platform_post", "")
+        variant = None
+        if not target.startswith("new:"):
+            variant = get_object_or_404(
+                PlatformPost.objects.select_related("post", "social_account"),
+                pk=target,
+                post=post,
+            )
         # Textareas can submit Windows-style line endings even though the browser
         # counter treats every newline as one character. Store and count one form.
         caption = request.POST.get("caption", "").replace("\r\n", "\n").replace("\r", "\n")
-        if variant.social_account.caption_wire_length(caption) > variant.social_account.char_limit:
-            caption_error = f"Caption exceeds the {variant.social_account.char_limit}-character limit."
+        if variant is None:
+            new_account = next((a for a in _enabled_caption_accounts(post) if f"new:{a.pk}" == target), None)
+            if new_account is None:
+                raise Http404("This channel is not enabled for this client.")
+            limit_account = new_account
+        else:
+            limit_account = variant.social_account
+        if limit_account.caption_wire_length(caption) > limit_account.char_limit:
+            caption_error = f"Caption exceeds the {limit_account.char_limit}-character limit."
         else:
             try:
                 with transaction.atomic():
                     Post.objects.select_for_update().get(pk=post.pk)
+                    if variant is None:
+                        variant = _create_missing_copy(post, target.removeprefix("new:"))
                     document = TextDocument.objects.filter(
                         platform_post=variant, kind=TextDocument.Kind.CAPTION
                     ).first()
@@ -302,6 +368,15 @@ def content_detail(request, workspace_id, post_id):
             else:
                 messages.success(request, "Caption saved as a new version.")
                 return redirect(f"{request.path}?tab=caption")
+
+    caption_channels = _caption_channels(post, request.POST if request.method == "POST" else None)
+    caption_media_items = []
+    if active_tab == "caption" and any(item["previews"] for item in caption_channels):
+        for attachment in post.media_attachments.select_related("media_asset"):
+            asset = attachment.media_asset
+            caption_media_items.append(
+                {"url": asset.file.url if asset.file else "", "is_video": asset.is_video, "filename": asset.filename}
+            )
 
     can_view_internal_notes = membership.workspace_role not in ("client", "viewer")
     comments = comment_services.get_comments_for_post(post, request.user)
@@ -349,7 +424,8 @@ def content_detail(request, workspace_id, post_id):
             ),
             "is_client": is_client,
             "can_edit_captions": can_edit_captions,
-            "caption_channels": _caption_channels(post, request.POST if request.method == "POST" else None),
+            "caption_channels": caption_channels,
+            "caption_media_items": caption_media_items,
             "caption_error": caption_error,
         },
     )

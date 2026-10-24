@@ -200,6 +200,26 @@ aby ji nadále ověřovaly původní testy; v MVP se vůbec nevykresluje.
 - `apps/jrc_production/tests/test_captions.py`: oprávnění, limit IG včetně emoji,
   vznik verze, kopie do varianty, porovnání slov a odmítnutí zastaralého uložení.
 
+## 2026-10-24 · F6-B02
+
+- `apps/composer/views.py`: kanál s uloženou verzí popisku (karta Caption, F6-B01) zůstává
+  v composeru beze změny. `_sync_platform_posts` pro něj nezapisuje `platform_specific_caption`
+  (ani prázdnou hodnotou) a ukládá kanálovou kopii bez tohoto sloupce, takže souběžně uložená
+  verze se nepřepíše. `compose` předává šabloně `jrc_captions` (text poslední verze, číslo,
+  odkaz `?tab=caption`), `preview` bere u takového kanálu text poslední verze místo odeslaného.
+  Pomocná funkce `_versioned_caption_by_platform_post` je bez `apps.jrc_texts` prázdná.
+- `templates/composer/compose.html`: u takového kanálu pole popisku jen ke čtení a odkaz
+  „Edit in Caption tab“; tlačítko „Customize“ a vlastní pole popisku se pro něj nevykreslí.
+  Vlastní název u kanálů, které ho podporují, zůstává upravitelný a předvyplněný.
+- `templates/composer/partials/preview_panel.html`: náhled Instagramu už popisek nezkracuje
+  na 150 znaků (platí limit kanálu), aby ukazoval stejný text jako uložená verze.
+- `apps/jrc_texts/services.py`: `latest_saved_captions()` jen pro čtení.
+- `apps/jrc_production/views.py`, `templates/jrc_production/content_detail.html`: karta Caption
+  ukazuje jen zapnuté kanály klienta (vypnuté mizí, jejich data zůstávají), pole i pro kanál
+  zapnutý po založení obsahu (první uložení založí koncept kopie, jen dokud jsou všechny kopie
+  koncept) a náhled Instagramu poslední uložené verze.
+- Testy: `apps/jrc_production/tests/test_composer_captions.py`.
+
 ## 2026-10-23 · F2-B12
 
 - `apps/social_accounts/tests/test_youtube_compliance.py`: retenční test používá čtyři pevné
@@ -438,6 +458,18 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
 - `templates/media_library/asset_edit.html`: Cropper s `checkCrossOrigin: false`. Jinak by přidal
   k podepsané adrese `?timestamp=` a S3 by obrázek odmítl (403). Ořez dělá server podle `getData()`.
 - Testy: `apps/jrc_storage/tests/` (podpis pro veřejnou adresu, kopie médií, CORS, nastavení a CSP).
+
+## 2026-10-24 · F6-B02 — opravy po review
+
+- Composer odmítá odebrání kanálu s historií popisku před jakoukoliv změnou, včetně
+  autosave se zastaralým seznamem. Chyba žádá obnovení composeru a je vidět i na mobilu.
+  Samotné mazání navíc kopie s textovým dokumentem vynechává.
+- Běžné uložení a autosave drží zámek příspěvku po celou transakci, stejně jako karta
+  Caption; první uložení popisku se nemůže ztratit kvůli dříve načteným hodnotám composeru.
+- U zamčeného popisku zůstává název kanálu upravitelný a předvyplněný; pokud ho požadavek
+  neposílá, server stávající název zachová. Prázdné pole stále umožňuje název zrušit.
+- Vazba TextDocument → PlatformPost používá RESTRICT místo CASCADE: nelze samostatně
+  smazat kopii s historií, ale výslovné smazání celého příspěvku funguje dál.
 
 ## 2026-10-24 · F4-B03
 

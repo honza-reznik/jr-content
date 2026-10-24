@@ -19,8 +19,10 @@ class TextDocument(models.Model):
     workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, related_name="jrc_texts")
     post = models.ForeignKey("composer.Post", on_delete=models.CASCADE, related_name="jrc_texts")
     kind = models.CharField(max_length=10, choices=Kind.choices)
+    # Reject deleting a channel copy alone; deleting the whole Post may still
+    # collect both the copy and its document (unlike PROTECT).
     platform_post = models.ForeignKey(
-        "composer.PlatformPost", on_delete=models.CASCADE, null=True, blank=True, related_name="jrc_texts"
+        "composer.PlatformPost", on_delete=models.RESTRICT, null=True, blank=True, related_name="jrc_texts"
     )
     format = models.CharField(max_length=10, choices=Format.choices, default=Format.RICH)
     created_at = models.DateTimeField(auto_now_add=True)

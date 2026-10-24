@@ -47,10 +47,14 @@ Expects context: workspace, csrf_token.
                                 fetch('/workspace/{{ workspace.id }}/compose/' + deletePostId + '/delete/' + acctParam, {
                                     method: 'POST',
                                     headers: { 'X-CSRFToken': '{{ csrf_token }}' }
-                                }).then(() => {
-                                    showDeleteModal = false;
+                                }).then(resp => {
+                                    if (resp.ok) {
+                                        showDeleteModal = false;
+                                        window.dispatchEvent(new CustomEvent('post-deleted'));
+                                    } else {
+                                        bbFailureToast(resp, 'Could not delete this channel.');
+                                    }
                                     deleting = false;
-                                    window.dispatchEvent(new CustomEvent('post-deleted'));
                                 }).catch(() => { deleting = false; });
                             "
                             :class="deleting && 'opacity-50 cursor-not-allowed'"
