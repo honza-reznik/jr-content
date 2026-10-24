@@ -26,6 +26,19 @@ test('new bold word, task check, and paragraph-to-heading are visible', () => {
   assert.match(heading.html, /Paragraph → Heading 2/)
 })
 
+test('adding and removing a blockquote are visibly labeled', () => {
+  const quoted = (content) => doc({ type: 'blockquote', content: [para(text(content))] })
+  const plain = doc(para(text('A quoted line')))
+
+  const added = compareDocs(plain, quoted('A quoted line'))
+  assert.match(added.html, /Quote added/)
+  assert.match(added.html, /class="d-block d-changed d-quote"/)
+
+  const removed = compareDocs(quoted('A quoted line'), plain)
+  assert.match(removed.html, /Quote removed/)
+  assert.match(removed.html, /class="d-block d-changed"/)
+})
+
 test('ordered list starting number is compared and moved blocks remain represented', () => {
   const old = doc(list('orderedList', [item('First'), item('Second')], { start: 5 }))
   const next = doc(list('orderedList', [item('First'), item('Second')], { start: 1 }))

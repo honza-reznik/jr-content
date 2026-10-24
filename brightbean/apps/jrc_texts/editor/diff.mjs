@@ -329,6 +329,7 @@ export function renderDiffHtml(result) {
       const newIndex = b.marker?.list === 'ordered' ? b.marker.index : null
       const note = before !== after ? `${before} → ${after}`
         : oldIndex !== null && newIndex !== null && oldIndex !== newIndex ? `number ${oldIndex} → ${newIndex}`
+          : row.oldBlock.quote !== b.quote ? (b.quote ? 'Quote added' : 'Quote removed')
           : row.oldBlock.depth !== b.depth ? 'indentation changed' : ''
       return blockHtml('changed', b, inner, note)
     })
