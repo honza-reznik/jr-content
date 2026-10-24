@@ -22,6 +22,8 @@ fired by the same response doesn't tear down the toast before it's seen.
   .bb-toast { display:flex; align-items:center; gap:.625rem; padding:.625rem 1rem .625rem .75rem; border-radius:.75rem; color:#fff; box-shadow:0 12px 30px rgba(23,20,18,.32); animation:bb-toastPop 240ms cubic-bezier(.16,1,.3,1); pointer-events:auto; }
   .bb-toast-title { font-size:.8125rem; font-weight:600; line-height:1.2; }
   .bb-toast-body { font-size:.75rem; color:#A8A29E; line-height:1.2; }
+  .bb-toast-links { display:flex; flex-wrap:wrap; gap:.5rem; margin-top:.25rem; font-size:.75rem; }
+  .bb-toast-links a { color:#FED7AA; text-decoration:underline; }
 </style>
 <div id="bb-toast-host" aria-live="polite" aria-atomic="true"></div>
 <script nonce="{{ request.csp_nonce }}">
@@ -47,6 +49,21 @@ fired by the same response doesn't tear down the toast before it's seen.
       '<div><div class="bb-toast-title"></div>' + (detail.body ? '<div class="bb-toast-body"></div>' : '') + '</div>';
     el.querySelector('.bb-toast-title').textContent = detail.title;
     if (detail.body) el.querySelector('.bb-toast-body').textContent = detail.body;
+    if (Array.isArray(detail.links) && detail.links.length) {
+      var links = document.createElement('div');
+      links.className = 'bb-toast-links';
+      detail.links.forEach(function (item) {
+        if (!item || typeof item.url !== 'string' || typeof item.label !== 'string') return;
+        var target;
+        try { target = new URL(item.url, window.location.origin); } catch (_) { return; }
+        if (target.origin !== window.location.origin) return;
+        var anchor = document.createElement('a');
+        anchor.href = target.href;
+        anchor.textContent = item.label;
+        links.appendChild(anchor);
+      });
+      if (links.childNodes.length) el.lastElementChild.appendChild(links);
+    }
     host.appendChild(el);
     setTimeout(function () { el.remove(); }, detail.duration || 3400);
   }

@@ -160,6 +160,24 @@ def test_caption_document_restricts_direct_copy_deletion(client, user, content, 
     assert list(document.versions.values()) == before
 
 
+def test_delete_channel_with_caption_history_returns_caption_link(client, user, content):
+    post, variant, instagram = content
+    client.force_login(user)
+    _save_caption(client, variant, LONG_CAPTION)
+    document = TextDocument.objects.get(platform_post=variant)
+    before_versions = list(document.versions.values())
+    url = reverse("composer:post_delete", kwargs={"workspace_id": post.workspace_id, "post_id": post.pk})
+
+    response = client.post(url + f"?account={instagram.pk}")
+
+    assert response.status_code == 409
+    payload = response.json()
+    assert "caption history" in payload["error"]
+    assert payload["links"] == [{"label": "Open Caption", "url": _detail(post)}]
+    assert PlatformPost.objects.filter(pk=variant.pk).exists()
+    assert list(document.versions.values()) == before_versions
+
+
 @pytest.mark.django_db(transaction=True)
 def test_explicit_whole_content_deletion_still_removes_caption_history(client, user, content):
     post, variant, instagram = content

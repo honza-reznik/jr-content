@@ -18,6 +18,7 @@ from django.utils import timezone
 from apps.accounts.models import User
 from apps.calendar.models import Queue, QueueEntry
 from apps.composer.models import PlatformPost, Post
+from apps.jrc_texts.models import TextDocument, TextVersion
 from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.organizations.models import Organization
 from apps.social_accounts.models import SocialAccount
@@ -230,6 +231,37 @@ class BulkPlatformActionDeleteTests(BulkActionBase):
         # Load-bearing invariant: a published row is history and cascades away
         # its PublishLog records if deleted.
         self.assertTrue(PlatformPost.objects.filter(id=published.id).exists())
+
+    def test_caption_history_rejects_the_whole_batch_and_links_caption_tab(self):
+        protected = self._pp("draft")
+        ordinary = self._pp("draft")
+        document = TextDocument.objects.create(
+            workspace=self.workspace,
+            post=protected.post,
+            platform_post=protected,
+            kind=TextDocument.Kind.CAPTION,
+        )
+        TextVersion.objects.create(
+            document=document,
+            number=1,
+            state=TextVersion.State.FINAL,
+            content={"type": "doc", "content": []},
+            text="Saved caption history",
+            finalized_at=timezone.now(),
+            created_by=self.owner,
+        )
+
+        response = self._bulk("delete", protected, ordinary)
+
+        self.assertEqual(response.status_code, 409)
+        payload = response.json()
+        self.assertIn("Nothing was deleted", payload["error"])
+        self.assertIn("bsky", payload["error"])
+        self.assertEqual(len(payload["links"]), 1)
+        self.assertIn("?tab=caption", payload["links"][0]["url"])
+        self.assertTrue(PlatformPost.objects.filter(id=protected.id).exists())
+        self.assertTrue(PlatformPost.objects.filter(id=ordinary.id).exists())
+        self.assertTrue(TextVersion.objects.filter(document=document).exists())
 
     def test_deleting_the_last_row_deletes_the_orphaned_post(self):
         pp = self._pp("draft")

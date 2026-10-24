@@ -2046,6 +2046,11 @@
                                         window.location.href = '{% url "calendar:calendar" workspace_id=workspace.id %}';
                                     } else {
                                         deleting = false;
+                                        resp.json().catch(() => ({})).then(data => {
+                                            document.body.dispatchEvent(new CustomEvent('showToast', {
+                                                detail: { tone: 'error', title: data.error || 'Could not delete this channel.', links: data.links || [] },
+                                            }));
+                                        });
                                     }
                                 }).catch(() => { deleting = false; });
                             "

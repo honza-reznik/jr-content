@@ -17,6 +17,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.cache import cache, caches
 from django.core.exceptions import PermissionDenied, SuspiciousOperation, ValidationError
 from django.db import models, transaction
+from django.db.models.deletion import RestrictedError
 from django.http import FileResponse, Http404, HttpResponse, JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
@@ -2632,10 +2633,29 @@ def post_delete(request, workspace_id, post_id):
     account_id = request.GET.get("account") or request.POST.get("account")
     if account_id:
         pp = get_object_or_404(PlatformPost, post=post, social_account_id=account_id)
-        pp.delete()
-        # If no platform posts remain, clean up the parent post too.
-        if not post.platform_posts.exists():
-            post.delete()
+        try:
+            with transaction.atomic():
+                pp.delete()
+                # If no platform posts remain, clean up the parent post too.
+                if not post.platform_posts.exists():
+                    post.delete()
+        except RestrictedError:
+            from django.urls import reverse
+
+            caption_url = (
+                reverse(
+                    "jrc_production:content_detail",
+                    kwargs={"workspace_id": workspace.id, "post_id": post.id},
+                )
+                + "?tab=caption"
+            )
+            return JsonResponse(
+                {
+                    "error": "This channel has caption history and can't be deleted. Review its caption in the Caption tab.",
+                    "links": [{"label": "Open Caption", "url": caption_url}],
+                },
+                status=409,
+            )
     else:
         post.delete()
 

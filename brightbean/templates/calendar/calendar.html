@@ -409,7 +409,7 @@ ticked (see the `sel` Alpine store).{% endcomment %}
 function bbFailureToast(res, fallback) {
     res.json().catch(() => ({})).then((data) => {
         document.body.dispatchEvent(new CustomEvent('showToast', {
-            detail: { tone: 'error', title: (data && data.error) || fallback },
+            detail: { tone: 'error', title: (data && data.error) || fallback, links: (data && data.links) || [] },
         }));
     });
 }
