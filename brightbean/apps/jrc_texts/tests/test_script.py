@@ -88,6 +88,30 @@ def test_edit_autosave_resume_save_history_and_discard(http, post):
     assert discarded["draft"] is None
 
 
+def test_compare_defaults_to_last_two_versions_and_accepts_two_selected_versions(http, post):
+    first = send(http, post, "edit", base=None).json()
+    saved = send(http, post, "save", **draft_request(first, "First version")).json()
+    first_id = saved["latest"]
+    second = send(http, post, "edit", base=first_id).json()
+    saved = send(http, post, "save", **draft_request(second, "Second version")).json()
+    second_id = saved["latest"]
+    third = send(http, post, "edit", base=second_id).json()
+    saved = send(http, post, "save", **draft_request(third, "Third version")).json()
+
+    default = http.get(url(post)).json()
+    assert default["comparison"]["old"]["id"] == second_id
+    assert default["comparison"]["new"]["id"] == saved["latest"]
+    assert default["comparison"]["old"]["author"]
+    assert default["comparison"]["old"]["saved_at"]
+
+    selected = http.get(url(post), {"compare_old": first_id, "compare_new": saved["latest"]}).json()
+    assert selected["comparison"]["old"]["content"] == content("First version")
+    assert selected["comparison"]["new"]["content"] == content("Third version")
+    same = http.get(url(post), {"compare_old": second_id, "compare_new": second_id}).json()
+    assert same["comparison"]["old"]["content"] == same["comparison"]["new"]["content"]
+    assert http.get(url(post), {"compare_old": first_id}).status_code == 400
+
+
 def test_noop_save_does_not_add_version(http, post):
     state = send(http, post, "edit", base=None).json()
     data = draft_request(state)
@@ -95,6 +119,46 @@ def test_noop_save_does_not_add_version(http, post):
     result = send(http, post, "save", **data).json()
     assert result["draft"] is None
     assert len(result["versions"]) == 1
+
+
+def test_comparison_is_read_only_and_rejects_drafts_and_other_posts(http, post, workspace):
+    state = send(http, post, "edit", base=None).json()
+    first_id = state["latest"]
+    saved = send(http, post, "save", **draft_request(state)).json()
+    draft = send(http, post, "edit", base=saved["latest"]).json()
+    draft = send(http, post, "autosave", **draft_request(draft, "PRIVATE DRAFT")).json()
+    reader = User.objects.create_user(
+        email="compare-reader@example.invalid", name="Reader", tos_accepted_at=timezone.now()
+    )
+    WorkspaceMembership.objects.create(workspace=workspace, user=reader, workspace_role="client")
+    http.force_login(reader)
+    count = TextVersion.objects.count()
+    query = {"compare_old": first_id, "compare_new": saved["latest"]}
+    response = http.get(url(post), query)
+    assert response.status_code == 200
+    assert response.json()["comparison"]["new"]["content"] == content("Updated outline")
+    assert "PRIVATE DRAFT" not in response.content.decode()
+    assert TextVersion.objects.count() == count
+    query["compare_new"] = draft["draft"]["id"]
+    assert http.get(url(post), query).status_code == 404
+    other = Post.objects.create(workspace=workspace, author=post.author, title="Other script")
+    assert http.get(url(other), {"compare_old": first_id, "compare_new": first_id}).status_code == 404
+    WorkspaceMembership.objects.filter(workspace=workspace, user=reader).delete()
+    assert http.get(url(post), query).status_code == 403
+
+
+def test_comparison_size_limit_keeps_version_metadata_and_saved_text_readable(http, post):
+    state = send(http, post, "edit", base=None).json()
+    first_id = state["latest"]
+    saved = send(http, post, "save", **draft_request(state, "x" * 260_000)).json()
+    response = http.get(url(post), {"compare_old": first_id, "compare_new": saved["latest"]})
+    assert response.status_code == 200
+    result = response.json()
+    assert "too large" in result["comparison_error"]
+    assert result["comparison"]["old"]["id"] == first_id
+    assert result["comparison"]["new"]["saved_at"]
+    assert "content" not in result["comparison"]["new"]
+    assert result["shown"]["content"] == content("x" * 260_000)
 
 
 @pytest.mark.parametrize("action", ["save", "autosave", "discard"])

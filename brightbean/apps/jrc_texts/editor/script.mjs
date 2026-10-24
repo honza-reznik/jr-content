@@ -1,10 +1,12 @@
 import { Editor } from '@tiptap/core'
 import { editorExtensions } from './extensions.mjs'
+import { compareDocs } from './diff.mjs'
 
 const panel = document.getElementById('script-panel')
 const $ = name => document.getElementById(`script-${name}`)
 let state, editing = false, finishing = false, fatal = false
 let generation = 0, storedGeneration = 0, timer, pending = null, selected = null
+let comparisonChoice = null
 const empty = { type: 'doc', content: [{ type: 'paragraph' }] }
 const date = value => new Date(value).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })
 const editor = new Editor({
@@ -33,10 +35,15 @@ function message(text, error = false) {
   $('message').classList.toggle('script-error', error)
 }
 
-async function api(data, version = null) {
+async function api(data, version = null, comparison = comparisonChoice) {
   let response
   try {
-    response = await fetch(panel.dataset.url + (version ? `?version=${version}` : ''), {
+    const query = new URLSearchParams()
+    if (version) query.set('version', version)
+    if (comparison?.old) query.set('compare_old', comparison.old)
+    if (comparison?.new) query.set('compare_new', comparison.new)
+    const suffix = query.size ? `?${query}` : ''
+    response = await fetch(panel.dataset.url + suffix, {
       method: data ? 'POST' : 'GET', credentials: 'same-origin', cache: 'no-store',
       headers: data ? { 'Content-Type': 'application/json', 'X-CSRFToken': panel.querySelector('[name=csrfmiddlewaretoken]').value } : {},
       body: data ? JSON.stringify(data) : undefined,
@@ -55,6 +62,70 @@ async function api(data, version = null) {
   return result
 }
 
+function renderComparison(result) {
+  const section = $('compare')
+  const versions = state?.versions || []
+  section.hidden = versions.length < 2
+  const oldSelect = $('compare-old'), newSelect = $('compare-new')
+  const previousOld = result?.old?.id
+  const previousNew = result?.new?.id
+  for (const select of [oldSelect, newSelect]) {
+    select.replaceChildren()
+    for (const version of versions) {
+      const option = document.createElement('option')
+      option.value = version.id
+      option.textContent = `Version ${version.number}`
+      select.append(option)
+    }
+  }
+  if (versions.length < 2) return
+  const oldId = previousOld || versions[1].id
+  const newId = previousNew || versions[0].id
+  oldSelect.value = oldId
+  newSelect.value = newId
+  $('compare-error').hidden = true
+  if (!result) {
+    $('diff').replaceChildren()
+    $('compare-meta').textContent = 'Choose two saved versions to see what changed.'
+    return
+  }
+  if (!result.old || !result.new) {
+    $('diff').replaceChildren()
+    $('compare-error').textContent = state.comparison_error || 'These versions could not be compared.'
+    $('compare-error').hidden = false
+    return
+  }
+  $('compare-meta').textContent = `Version ${result.old.number}: ${result.old.author}, ${date(result.old.saved_at)} → Version ${result.new.number}: ${result.new.author}, ${date(result.new.saved_at)}`
+  if (state.comparison_error) {
+    $('diff').replaceChildren()
+    $('compare-error').textContent = state.comparison_error
+    $('compare-error').hidden = false
+    return
+  }
+  try {
+    const rendered = compareDocs(result.old.content, result.new.content)
+    $('diff').innerHTML = rendered.html
+    $('diff').setAttribute('aria-label', `Added ${rendered.stats.added}, removed ${rendered.stats.removed}, changed ${rendered.stats.changed} blocks`)
+  } catch (error) {
+    $('diff').replaceChildren()
+    $('compare-error').textContent = error instanceof RangeError ? error.message : 'These versions could not be compared.'
+    $('compare-error').hidden = false
+  }
+}
+
+async function loadComparison() {
+  if (finishing || editing) return
+  finishing = true
+  controls()
+  try {
+    const choice = { old: $('compare-old').value, new: $('compare-new').value }
+    const next = await api(null, state.shown?.id, choice)
+    comparisonChoice = choice
+    showState(next)
+  } catch (error) { message(error.message, true) }
+  finally { finishing = false; controls() }
+}
+
 function controls() {
   $('edit').hidden = !state?.can_edit || editing || (!!state?.draft && !state.draft.recoverable) || !!selected
   $('resume').hidden = !state?.draft?.own || editing
@@ -62,6 +133,7 @@ function controls() {
   $('save').disabled = $('discard').disabled = finishing || fatal
   $('edit').disabled = $('resume').disabled = finishing
   $('reload').disabled = finishing
+  $('compare-old').disabled = $('compare-new').disabled = editing || finishing
   for (const button of $('versions').querySelectorAll('button')) button.disabled = editing || finishing
   // Changing control availability is not a document edit (including after an error).
   editor.setEditable(editing && !finishing, false)
@@ -79,6 +151,7 @@ function showState(next) {
   $('version').textContent = state.shown
     ? `Version ${state.shown.number} · ${state.shown.id === state.latest ? 'Latest saved' : 'Older version'} · ${date(state.shown.saved_at)} · ${state.shown.author}`
     : 'No script yet. Add an outline, talking points or a full script.'
+  renderComparison(state.comparison)
   $('lock').hidden = !state.draft
   $('lock').textContent = state.draft ? `${state.draft.owner} is editing since ${date(state.draft.since)}. ${state.draft.own ? 'Your draft is available to resume.' : state.draft.recoverable ? 'This editor has left the workspace. Edit text starts a new draft from the latest saved version.' : 'You can read saved versions while they edit.'}` : ''
   $('versions').replaceChildren()
@@ -169,6 +242,7 @@ async function finish(action) {
     const next = await api({ action, version: state.draft.id, revision: state.draft.revision,
       ...(action === 'save' ? { content: editor.getJSON() } : {}) })
     selected = null
+    comparisonChoice = null
     showState(next)
     message(action === 'save' ? 'Script saved.' : 'Draft discarded. Showing the latest saved version.')
   } catch (error) { failed(error) }
@@ -190,6 +264,8 @@ $('resume').addEventListener('click', startEditing)
 $('save').addEventListener('click', () => finish('save'))
 $('discard').addEventListener('click', () => finish('discard'))
 $('retry').addEventListener('click', autosave)
+$('compare-old').addEventListener('change', loadComparison)
+$('compare-new').addEventListener('change', loadComparison)
 $('reload').addEventListener('click', async () => {
   if (finishing) return
   if (editing && generation !== storedGeneration && !window.confirm('Reload and lose changes that have not reached the server? Copy your text first if needed.')) return

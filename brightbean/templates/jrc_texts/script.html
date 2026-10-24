@@ -35,4 +35,16 @@
         </div>
         <aside class="script-versions" aria-label="Script versions"><h3>Saved versions</h3><p class="script-version-help">Choose a version to read it.</p><ol id="script-versions"></ol></aside>
     </div>
+    <section id="script-compare" class="script-compare" aria-labelledby="script-compare-title" hidden>
+        <h3 id="script-compare-title">Compare versions</h3>
+        <div class="script-compare-controls">
+            <label>Older version<select id="script-compare-old"></select></label>
+            <span aria-hidden="true">→</span>
+            <label>Newer version<select id="script-compare-new"></select></label>
+        </div>
+        <p id="script-compare-meta" class="script-version-help"></p>
+        <p id="script-compare-error" class="script-compare-error" role="status" hidden></p>
+        <div class="script-diff-legend" aria-label="Difference colors"><span><i class="script-diff-added"></i> Added</span><span><i class="script-diff-removed"></i> Removed</span></div>
+        <div id="script-diff" class="script-diff" aria-live="polite"></div>
+    </section>
 </div>
