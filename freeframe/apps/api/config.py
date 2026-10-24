@@ -90,6 +90,10 @@ class Settings(BaseSettings):
     # Note: S3 multipart still caps effective size at ~10,000 parts x chunk size.
     max_upload_bytes: int = 0
 
+    # JR Content (F5-B05): how long the signed address of one upload part is valid, seconds.
+    # Upstream used one hour; the web client and Brightbean sign again for every attempt.
+    upload_part_url_seconds: int = Field(default=900, ge=60, le=3600)
+
     # Reaper: uploads stuck in `uploading`/`failed` longer than this are reclaimed. Hours.
     # A version claimed as `processing` whose transcode never ran is re-dispatched
     # after this long. It must stay comfortably above the transcoder's own 4-hour

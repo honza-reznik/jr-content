@@ -43,7 +43,7 @@ export BUILDX_CONFIG := $(CURDIR)/.cache/docker-buildx
 CMD ?= bash
 export CMD
 
-.PHONY: restore-lock-check backup backup-verify restore test-backup test-backup-guards build build-bb env check-project-ports up down shell test test-fast test-smoke test-proxy test-s3 test-bb test-bb-fast test-ff test-ff-smoke test-isolation test-ff-offline test-ff-vitest test-ff-tsc test-ff-lint test-f5-b06-embed ff-account build-ff reset logs ps
+.PHONY: restore-lock-check backup backup-verify restore test-backup test-backup-guards build build-bb env check-project-ports up down shell test test-fast test-smoke test-proxy test-s3 test-bb test-bb-fast test-ff test-ff-smoke test-isolation test-ff-offline test-ff-vitest test-ff-tsc test-ff-lint test-f5-b06-embed test-f5-b05-upload ff-account build-ff reset logs ps
 build:
 	docker build --tag jrc-dev:$(JRC_PROJECT) --file docker/Dockerfile docker
 
@@ -206,6 +206,12 @@ test-f5-b06-embed:
 	  --env-file .env --env JRC_PROJECT=$(JRC_PROJECT) \
 	  --volume "$(CURDIR):/jrc" --workdir /jrc \
 	  jrc-dev:$(JRC_PROJECT) node scripts/F5-B06/embed.cjs
+
+# F5-B05: nahrání verze videa v Chromiu (video 1080p / 1 min z FFmpegu, přerušení a pokračování, převod).
+# Jen projekt jrc-f5b05 (porty 13333/14053/15583/18153); trvá několik minut, proto není ve `make test`.
+test-f5-b05-upload:
+	@sh scripts/workspace.sh check
+	sh scripts/F5-B05/check-upload.sh
 
 test-ff-lint:
 	@sh scripts/workspace.sh check

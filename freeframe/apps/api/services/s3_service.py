@@ -278,8 +278,14 @@ def create_multipart_upload(s3_key: str, content_type: str) -> str:
     )
     return response["UploadId"]
 
-def presign_upload_part(s3_key: str, upload_id: str, part_number: int, expires_in: int = 3600) -> str:
-    """Return a presigned URL for uploading a single part."""
+def presign_upload_part(s3_key: str, upload_id: str, part_number: int, expires_in: int | None = None) -> str:
+    """Return a presigned URL for uploading a single part.
+
+    JR Content (F5-B05): the signature is short-lived. The client asks for a fresh URL for
+    every attempt, so a part never needs more than ``upload_part_url_seconds``.
+    """
+    if expires_in is None:
+        expires_in = settings.upload_part_url_seconds
     s3 = _get_presign_client()
     return s3.generate_presigned_url(
         "upload_part",

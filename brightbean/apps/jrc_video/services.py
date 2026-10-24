@@ -21,6 +21,11 @@ ROLE_MAP = {
 }
 
 
+def video_role(membership):
+    """FreeFrame project role of a workspace member (unknown or custom roles never upload)."""
+    return "viewer" if membership.custom_role_id else ROLE_MAP.get(membership.workspace_role, "viewer")
+
+
 def error_text(exc):
     # VideoSyncRequest.last_error / VideoAccountSyncRequest.last_error are 255 chars.
     return str(exc)[:255]
@@ -121,9 +126,7 @@ def sync_workspace(workspace_id, *, api=None):
             # membership is still revoked or adjusted below; it is never granted more.
             if membership.user.is_active and not workspace.is_archived:
                 # Unknown/custom roles must not accidentally grant upload permission.
-                desired[str(account.ff_user_id)] = (
-                    "viewer" if membership.custom_role_id else ROLE_MAP.get(membership.workspace_role, "viewer")
-                )
+                desired[str(account.ff_user_id)] = video_role(membership)
         if desired.pop(service_id, None):
             errors.append("The service account cannot be a workspace member.")
         # Revocations first, each independent of the others.

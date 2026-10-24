@@ -3,6 +3,23 @@
 Základ: Brightbean Studio `48801fdcd1009e6ed4863fa9942222a478a297e2`, import F2-B01.
 Licence této odvozené verze: AGPL-3.0; původní licence a autorská práva zůstávají zachována.
 
+## 2026-10-24 · F5-B05
+
+- Nahrání verze videa z karty Video (`templates/jrc_production/content_detail.html`, `apps/jrc_production/views.py`:
+  jen doplnění kontextu karty). Samotná funkce je v naší aplikaci `apps/jrc_video`: `uploads.py` (3 kroky FreeFrame
+  jménem přihlášeného uživatele), `upload_views.py` + `urls.py` (JSON adresy `…/content/<id>/video/…`), `static/jrc_video/upload.js`
+  (části souboru jdou z prohlížeče přímo do úložiště), modely `VideoAsset` a `VideoVersion` (migrace 0004).
+- Zásah do původního kódu: `config/urls.py` (jedna řádka `include("apps.jrc_video.urls")` ve větvi JR Content, s datovanou hlavičkou).
+- Zámek výměny vstupenky v `FreeFrameUserClient` je pro každého uživatele zvlášť (dřív jeden společný zámek držený
+  po dobu volání sítě). Dvě karty jednoho uživatele vymění vstupenku jen jednou, dva lidé se neblokují.
+- Oprávnění je ověřené na serveru při každém kroku: role FreeFrame `editor` (owner, manager, editor, contributor bez vlastní role)
+  a právo upravovat tento obsah; client, viewer a vlastní role nahrát nemohou ani přímým požadavkem.
+- Limit videa `JRC_VIDEO_MAX_UPLOAD_BYTES` (výchozí 4 GiB; stejné číslo dostává FreeFrame jako `MAX_UPLOAD_BYTES`) a povolené
+  přípony `.mp4 .m4v .mov .webm .mkv`; typ se určuje podle přípony, ne podle údaje prohlížeče.
+- Nastavení stránky (CSP) a CORS úložiště beze změny: `connect-src` už obsahuje přesný původ úložiště (F2-B05)
+  a CORS bucketu `jrc-video` dovoluje PUT z původu aplikace.
+- `apps/jrc_video/services.py`: `video_role()` (převod role člena na roli FreeFrame) sdílí synchronizace i nahrávání.
+
 ## 2026-10-24 · F2-B14
 
 - `templates/media_library/_tag_input.html`: odstraněn vložený skript z panelu detailu načítaného přes HTMX.

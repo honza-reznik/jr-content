@@ -118,7 +118,11 @@ class FreeFrameClient:
 
 # On-behalf access tokens (F5-B02), only in this process's memory: user pk -> token, expiry.
 _USER_TOKENS = {}
+# Short-lived lock for the dictionaries only; never held across a network call.
 _USER_TOKEN_LOCK = threading.RLock()
+# One lock per user (F5-B05): a slow ticket exchange of one person must not block the
+# uploads of another, while two tabs of the same person exchange the ticket only once.
+_USER_EXCHANGE_LOCKS = {}
 # Renew this long before FreeFrame's access token expires.
 USER_TOKEN_MARGIN_SECONDS = 60
 
@@ -160,9 +164,11 @@ class FreeFrameUserClient(FreeFrameClient):
             _USER_TOKENS.pop(self.key, None)
         self.token = None
 
-    def _authenticate(self, *, renew=False):
-        from .tickets import TicketError, issue_ticket
+    def _exchange_lock(self):
+        with _USER_TOKEN_LOCK:
+            return _USER_EXCHANGE_LOCKS.setdefault(self.key, threading.Lock())
 
+    def _fresh_cached(self, renew):
         with _USER_TOKEN_LOCK:
             cached = _USER_TOKENS.get(self.key)
             if (
@@ -170,9 +176,24 @@ class FreeFrameUserClient(FreeFrameClient):
                 and cached["expires_at"] > time.monotonic()
                 and not (renew and cached["access_token"] == self.token)
             ):
-                self.token = cached["access_token"]
+                return cached["access_token"]
+        return None
+
+    def _authenticate(self, *, renew=False):
+        from .tickets import TicketError, issue_ticket
+
+        token = self._fresh_cached(renew)
+        if token:
+            self.token = token
+            return
+        # Only this user's callers queue here; whoever gets in second finds the new token.
+        with self._exchange_lock():
+            token = self._fresh_cached(renew)
+            if token:
+                self.token = token
                 return
-            _USER_TOKENS.pop(self.key, None)
+            with _USER_TOKEN_LOCK:
+                _USER_TOKENS.pop(self.key, None)
             self.token = None
             try:
                 ticket = issue_ticket(self.user, audience="api")
@@ -190,8 +211,9 @@ class FreeFrameUserClient(FreeFrameClient):
             ):
                 raise FreeFrameError("FreeFrame API returned an invalid ticket exchange response.")
             lifetime = max(result["expires_in"] - USER_TOKEN_MARGIN_SECONDS, 0)
-            _USER_TOKENS[self.key] = {
-                "access_token": result["access_token"],
-                "expires_at": time.monotonic() + lifetime,
-            }
+            with _USER_TOKEN_LOCK:
+                _USER_TOKENS[self.key] = {
+                    "access_token": result["access_token"],
+                    "expires_at": time.monotonic() + lifetime,
+                }
             self.token = result["access_token"]
