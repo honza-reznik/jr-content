@@ -41,7 +41,9 @@
     });
   }
 
-  function versionUrl(id, action) { return root.dataset.versionsBase + id + "/" + action + "/"; }
+  function versionUrl(id, action) {
+    return root.dataset.statusUrl.replace(/status\/$/, "versions/") + id + "/" + action + "/";
+  }
 
   // ----- rendering of the version list from the server feed -----
 
@@ -237,6 +239,7 @@
     active = { channel: card.dataset.videoChannel, version: info.version, aborted: false, xhr: new Set(), info: info };
     window.addEventListener("beforeunload", warnLeave);
     try {
+      await refresh(); // shows the new version; its own row has no buttons while this tab uploads it
       await transfer(card, file, info);
       await finish(card, info);
       hideProgress(card);
@@ -274,7 +277,6 @@
       setProgress(card, "Preparing…", 0, false);
       var info = await api("POST", root.dataset.startUrl,
         { channel: card.dataset.videoChannel, filename: file.name, size: file.size, type: file.type });
-      await refresh();
       await run(card, file, info);
     } catch (error) {
       hideProgress(card); fail(card, error.message);

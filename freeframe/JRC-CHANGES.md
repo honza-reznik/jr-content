@@ -2,6 +2,14 @@
 
 Import upstreamu `3829889` (MIT, původní licence a copyright zachovány).
 
+## 2026-10-24 — F5-B05
+
+- Podepsaná adresa jedné části nahrávaného videa platí `UPLOAD_PART_URL_SECONDS` (výchozí 900 s, dřív pevně 3600 s;
+  `apps/api/config.py`, `services/s3_service.py`). Klient i Brightbean podepisují znovu pro každý pokus, takže to
+  nahrávání nezpomalí; Brightbean adresu s delší platností odmítne.
+- `docker-compose.yml`: FreeFrame dostává `MAX_UPLOAD_BYTES` (4 GiB, přepis `JRC_VIDEO_MAX_UPLOAD_BYTES`), aby limit
+  platil i pro přímé volání API.
+
 ## 2026-10-24 — F5-B06
 
 - Režim `?embed=1` skryje navigaci, horní lištu a pomocné panely dashboardu; v asset přehrávači zůstávají video, časový štítek a komentáře. Vložený režim se zachová při navigaci uvnitř dashboardu a asset navigace nese query parametry dál.

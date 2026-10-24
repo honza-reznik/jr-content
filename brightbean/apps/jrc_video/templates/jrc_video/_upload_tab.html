@@ -2,7 +2,6 @@
 <div id="jrc-video" data-jrc-video
      data-status-url="{% url 'jrc_video:upload_status' workspace_id=workspace.id post_id=post.id %}"
      data-start-url="{% url 'jrc_video:upload_start' workspace_id=workspace.id post_id=post.id %}"
-     data-versions-base="{% url 'jrc_video:upload_status' workspace_id=workspace.id post_id=post.id %}versions/"
      data-csrf="{{ csrf_token }}" data-max-bytes="{{ video_max_bytes }}">
     <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">Video</h2><p class="mt-1 text-sm text-stone-500">Each channel has its own video and its own versions.</p></div>
     <p data-video-notice role="status" aria-live="polite" class="mb-4 hidden rounded-lg px-3 py-2 text-sm"></p>
