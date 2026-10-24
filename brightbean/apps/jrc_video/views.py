@@ -1,6 +1,7 @@
 """Browser SSO entry points (F5-B03). Never put tickets in query strings or logs."""
 
 import hashlib
+import secrets
 
 from django.contrib.auth import logout
 from django.contrib.auth.decorators import login_required
@@ -54,6 +55,16 @@ def video_logout(request):
     if request.method == "GET":
         return render(request, "jrc_video/logout.html")
     logout(request)
-    response = HttpResponseRedirect("/video/jrc-logout")
+    grant = secrets.token_urlsafe(32)
+    response = HttpResponseRedirect("/video/jrc-logout#grant=" + grant)
+    response.set_cookie(
+        "jrc_logout_binding",
+        hashlib.sha256(grant.encode("ascii")).hexdigest(),
+        max_age=60,
+        path="/video",
+        secure=request.is_secure(),
+        samesite="Strict",
+    )
     response.delete_cookie("jrc_sso_binding", path="/video", samesite="Strict")
+    response["Referrer-Policy"] = "no-referrer"
     return response

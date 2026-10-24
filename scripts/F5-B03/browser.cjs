@@ -6,6 +6,10 @@ const { createHash } = require('node:crypto');
 const { chromium } = require('playwright');
 
 assert.equal(process.env.JRC_PROJECT, 'jrc-f5b03');
+assert.equal(process.env.JRC_APP_PORT, '13213');
+assert.equal(process.env.JRC_S3_PORT, '13933');
+assert.equal(process.env.JRC_POSTGRES_PORT, '15463');
+assert.equal(process.env.JRC_BB_PORT, '18033');
 const origin = `http://127.0.0.1:${process.env.JRC_APP_PORT}`;
 const fixture = JSON.parse(fs.readFileSync('ops/test-output/F5-B03/fixture.json', 'utf8'));
 const shots = path.resolve('ops/screenshoty/F5-B03');
@@ -69,7 +73,7 @@ async function main() {
     await page.waitForURL(`${origin}/accounts/login/`);
     assert.equal(await page.evaluate(() => localStorage.getItem('ff_access_token')), null);
     assert.equal(await page.evaluate(() => localStorage.getItem('ff_refresh_token')), null);
-    assert(!(await context.cookies()).some(cookie => ['ff_access_token', 'ff_refresh_token', 'ff_setup_done', 'jrc_sso_binding'].includes(cookie.name)));
+    assert(!(await context.cookies()).some(cookie => ['ff_access_token', 'ff_refresh_token', 'ff_setup_done', 'jrc_sso_binding', 'jrc_logout_binding'].includes(cookie.name)));
     await page.screenshot({ path: path.join(shots, '03-brightbean-signed-out.png') });
     await page.goto(`${origin}/video/projects/${fixture.project}`);
     await page.waitForURL(/\/video\/login\?/);

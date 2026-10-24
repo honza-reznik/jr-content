@@ -36,6 +36,29 @@ const sessionSurvived = () =>
   store['ff_refresh_token'] === 'the-refresh-token'
 
 describe('refreshAccessToken', () => {
+  it('discards a refresh delayed until after logout in another tab', async () => {
+    let respond!: (response: unknown) => void
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(resolve => { respond = resolve })))
+    const auth = await import('../auth')
+    const pending = auth.refreshAccessToken()
+    auth.removeTokens()
+    respond({ ok: true, json: async () => ({ access_token: 'late', refresh_token: 'late-r' }) })
+    await expect(pending).resolves.toBeNull()
+    expect(auth.getAccessToken()).toBeNull()
+    expect(auth.getRefreshToken()).toBeNull()
+  })
+
+  it('does not clear a newer session when an old refresh is refused', async () => {
+    let respond!: (response: unknown) => void
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(resolve => { respond = resolve })))
+    const auth = await import('../auth')
+    const pending = auth.refreshAccessToken()
+    auth.removeTokens()
+    auth.setTokens('new-user', 'new-refresh')
+    respond({ ok: false, status: 401 })
+    await expect(pending).resolves.toBeNull()
+    expect(auth.getAccessToken()).toBe('new-user')
+  })
   it('keeps the session when the request never gets an answer', async () => {
     // The regression: this is what being offline looks like to fetch.
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }))

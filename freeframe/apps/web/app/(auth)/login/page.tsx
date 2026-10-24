@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { api } from '@/lib/api'
 import { getAccessToken } from '@/lib/auth'
+import { safeAppDestination } from '@/lib/app-destination'
 import { LoginForm } from '@/components/auth/login-form'
 import { PoweredByBadge } from '@/components/shared/powered-by-badge'
 import type { SetupStatus } from '@/types'
@@ -29,7 +30,7 @@ export default function LoginPage() {
       document.cookie = `ff_access_token=${token}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`
       const params = new URLSearchParams(window.location.search)
       const from = params.get('from')
-      router.replace(from || '/projects')
+      router.replace(safeAppDestination(from) || '/projects')
       return
     }
 

@@ -15,6 +15,9 @@ JRC_PROJECT=jrc-f5b03 docker compose exec -T -e JRC_PROJECT=jrc-f5b03 jrc-bb-web
 docker run --rm --pull never --network host --user "$(id -u):$(id -g)" \
   --env-file .env --env JRC_PROJECT=jrc-f5b03 --volume "$PWD:/jrc" --workdir /jrc \
   jrc-dev:local node scripts/F5-B03/browser.cjs
+docker run --rm --pull never --network host --user "$(id -u):$(id -g)" \
+  --env-file .env --env JRC_PROJECT=jrc-f5b03 --volume "$PWD:/jrc" --workdir /jrc \
+  jrc-dev:local node scripts/F5-B03/browser-security.cjs
 JRC_PROJECT=jrc-f5b03 make test
 ```
 
@@ -46,3 +49,12 @@ JRC_PROJECT=jrc-f5b03 docker compose -p jrc-f5b03 -f docker-compose.yml down -v
 docker image rm jrc-bb:jrc-f5b03
 rm -- ops/test-output/F5-B03/fixture.json
 ```
+
+Regrese bezpečnostního review (stejné Docker spuštění jako `browser.cjs`, soubor
+`browser-security.cjs`): přímý vstup SSO/odhlášení zachová relaci; skutečná úspěšná
+odpověď výměny i obnovy tokenů se pozdrží do odhlášení v druhé kartě a nesmí
+obnovit tokeny ani cookies. Řetězec BB → SSO → login s nebezpečným `from` se odmítne
+při vydání i při odpovědi výměny; přímá návštěva login s cizím `from` končí na
+projektech. Cizí požadavky prohlížečový skript blokuje a vyhodnotí jako chybu.
+Snímky `05`–`07` zachycují potvrzení odhlášení, odmítnutí opožděné výměny a bezpečný cíl.
+Před spuštěním musí být v `.env` i `JRC_POSTGRES_PORT=15463` a `JRC_BB_PORT=18033`.

@@ -4,6 +4,22 @@ Import upstreamu `3829889` (MIT, původní licence a copyright zachovány).
 
 ## 2026-10-24 — F5-B03
 
+- Opravy bezpečnostního review: `auth.ts` drží sdílenou značku relace v localStorage,
+  kterou mění přihlášení i odhlášení. SSO výměna a obnova tokenů si ji uloží před
+  požadavkem a před uložením odpovědi znovu ověří; opožděná odpověď po odhlášení
+  v jiné kartě už neobnoví relaci. Odmítnutí staré obnovy nesmaže novější relaci.
+- Neověřený vstup na `/jrc-sso` nemaže dosavadní tokeny. Automatické `/jrc-logout`
+  vyžaduje jednorázové oprávnění ve fragmentu a odpovídající SHA-256 cookie z POST
+  Brightbeanu chráněného CSRF; fragment hned odstraní a cookie spotřebuje. Přímá
+  návštěva nebo neplatné oprávnění nabídne potvrzení, bez změny relace.
+- `lib/app-destination.ts` povolí pouze aplikační cesty `/projects`, `/assets`,
+  `/notifications`, `/settings` a jejich podcesty. SSO ani `app/(auth)/login/page.tsx`
+  tak nepřejdou přes přihlašovací či jinou veřejnou stránku na další přesměrování.
+  Login kontroluje i vlastní parametr `from` a při neplatném cíli použije `/projects`;
+  nepřijímá cizí adresy, kódované obcházení ani tečkové segmenty. Next router dostává
+  cestu bez basePath. API také odmítá vstupenky s cílem mimo uvedené aplikační cesty.
+- Regresní Vitest/pytest a Chromium ověřují všechny tři nálezy, včetně skutečně
+  pozdržené úspěšné výměny i obnovy ve dvou kartách a celého řetězce s `from`.
 - Veřejné `/jrc-sso` a `/jrc-logout`; middleware rozpozná cesty s předponou i bez předpony
   `NEXT_PUBLIC_BASE_PATH`, před kontrolou instalace a přihlášení.
 - `/jrc-sso` okamžitě odstraní fragment i query z aktuální historie, porovná SHA-256 vstupenky
@@ -12,7 +28,7 @@ Import upstreamu `3829889` (MIT, původní licence a copyright zachovány).
   a nahradí položku historie cílem výhradně z odpovědi API, znovu ověřeným a doplněným o basePath.
   Procentní kódování, fragmenty, tečkové segmenty a externí adresy nejsou povolené.
 - Chyba má prostou stránku s návratem do JR Content, bez vstupenky a technického výpisu.
-  `/jrc-logout` smaže tokeny z localStorage a cookies včetně `ff_setup_done`, kontrolní cookie
+  Oprávněné nebo potvrzené `/jrc-logout` smaže tokeny z localStorage a cookies včetně `ff_setup_done`, kontrolní cookie
   a vrátí se na pevnou `/accounts/login/`. Pomocná `removeTokens` nemaže historii navigací
   na původní login; dosavadní `clearTokens` zachovává chování pro upstream.
 - Vitest pokrývá stránky (včetně React StrictMode), middleware, odmítnutí podstrčené vstupenky,

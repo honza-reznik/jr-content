@@ -1,16 +1,14 @@
 import { withBasePath } from './base-path'
-import { removeTokens, setTokens } from './auth'
+import { getSessionVersion, setTokensIfSessionCurrent } from './auth'
+import { safeAppDestination } from './app-destination'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 const BINDING_COOKIE = 'jrc_sso_binding'
 
 export function safeVideoDestination(value: unknown): string | null {
   if (value == null) return withBasePath('/projects')
-  if (typeof value !== 'string' || value.length < 1 || value.length > 512 ||
-      !value.startsWith('/') || /[\\%#\s\u0000-\u001f\u007f]/.test(value)) return null
-  const pathname = value.split('?')[0]
-  if (pathname.includes('//') || pathname.split('/').some(part => part === '.' || part === '..')) return null
-  return withBasePath(value)
+  const destination = safeAppDestination(value)
+  return destination ? withBasePath(destination) : null
 }
 
 export function clearSsoBinding(): void {
@@ -18,13 +16,13 @@ export function clearSsoBinding(): void {
 }
 
 export async function exchangeBrowserTicket(): Promise<string> {
+  const version = getSessionVersion()
   const fragment = window.location.hash
   // Replace this history entry before any await, validation or request. Never
   // read a ticket or a navigation destination from the query string.
   window.history.replaceState(null, '', window.location.pathname)
   const binding = document.cookie.split('; ').find(part => part.startsWith(`${BINDING_COOKIE}=`))?.split('=')[1]
   clearSsoBinding()
-  removeTokens()
   const params = new URLSearchParams(fragment.slice(1))
   const ticket = params.get('ticket')
   if (!ticket || ticket.length > 4096 || params.getAll('ticket').length !== 1 || !binding) throw new Error('Sign-in unavailable')
@@ -46,6 +44,6 @@ export async function exchangeBrowserTicket(): Promise<string> {
   const destination = safeVideoDestination(data.next)
   if (!destination || typeof data.access_token !== 'string' || !data.access_token ||
       typeof data.refresh_token !== 'string' || !data.refresh_token) throw new Error('Sign-in unavailable')
-  setTokens(data.access_token, data.refresh_token)
+  if (!setTokensIfSessionCurrent(data.access_token, data.refresh_token, version)) throw new Error('Sign-in unavailable')
   return destination
 }

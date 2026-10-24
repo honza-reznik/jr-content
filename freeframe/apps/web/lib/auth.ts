@@ -2,8 +2,21 @@ import { withBasePath } from './base-path'
 
 const ACCESS_TOKEN_KEY = 'ff_access_token'
 const REFRESH_TOKEN_KEY = 'ff_refresh_token'
+const SESSION_VERSION_KEY = 'ff_session_version'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+
+// Read shared storage at response time, not an in-memory value or a storage
+// event: another tab may have signed out while this tab awaited the network.
+export function getSessionVersion(): string | null {
+  return localStorage.getItem(SESSION_VERSION_KEY)
+}
+
+export function setTokensIfSessionCurrent(access: string, refresh: string, version: string | null): boolean {
+  if (getSessionVersion() !== version) return false
+  setTokens(access, refresh)
+  return true
+}
 
 export function getAccessToken(): string | null {
   if (typeof window === 'undefined') return null
@@ -17,6 +30,7 @@ export function getRefreshToken(): string | null {
 
 export function setTokens(access: string, refresh: string): void {
   if (typeof window === 'undefined') return
+  localStorage.setItem(SESSION_VERSION_KEY, crypto.randomUUID())
   localStorage.setItem(ACCESS_TOKEN_KEY, access)
   localStorage.setItem(REFRESH_TOKEN_KEY, refresh)
   // Set cookies so middleware can check auth on server side
@@ -26,6 +40,8 @@ export function setTokens(access: string, refresh: string): void {
 
 export function removeTokens(): void {
   if (typeof window === 'undefined') return
+  // Keep the marker after logout, including when there were no stored tokens.
+  localStorage.setItem(SESSION_VERSION_KEY, crypto.randomUUID())
   localStorage.removeItem(ACCESS_TOKEN_KEY)
   localStorage.removeItem(REFRESH_TOKEN_KEY)
   // Clear auth cookies
@@ -55,6 +71,7 @@ export async function refreshAccessToken(): Promise<string | null> {
 }
 
 async function _doRefresh(): Promise<string | null> {
+  const version = getSessionVersion()
   const refreshToken = getRefreshToken()
   if (!refreshToken) {
     clearTokens()
@@ -74,7 +91,7 @@ async function _doRefresh(): Promise<string | null> {
       // Anything else -- a 502 from a proxy mid-deploy, a 500, a rate limit --
       // is the server being briefly unavailable, and signing the user out for
       // it loses whatever they had open.
-      if (response.status === 401 || response.status === 403) {
+      if ((response.status === 401 || response.status === 403) && getSessionVersion() === version) {
         clearTokens()
       }
       return null
@@ -84,7 +101,7 @@ async function _doRefresh(): Promise<string | null> {
     const newAccessToken: string = data.access_token
     const newRefreshToken: string = data.refresh_token ?? refreshToken
 
-    setTokens(newAccessToken, newRefreshToken)
+    if (!setTokensIfSessionCurrent(newAccessToken, newRefreshToken, version)) return null
     return newAccessToken
   } catch {
     // `fetch` rejects only on a transport failure; an HTTP error status

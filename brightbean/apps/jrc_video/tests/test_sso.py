@@ -92,6 +92,13 @@ def test_post_issues_only_fragment_and_sets_browser_binding(browser):
         "/%2e%2e/evil",
         "/projects#ticket=x",
         "/projects?next=%2f%2fevil",
+        "/login?from=https://foreign.invalid",
+        "/login?from=//foreign.invalid",
+        "/setup",
+        "/jrc-logout",
+        "/jrc-sso",
+        "/share/token",
+        "/projects-evil",
         "/a\nb",
         "",
         "/" + "x" * 512,
@@ -127,12 +134,29 @@ def test_missing_account_shows_generic_error(browser, user):
 def test_logout_requires_csrf_and_always_leads_through_freeframe(browser):
     response = browser.get("/accounts/logout/?next=https://foreign.invalid")
     assert response.status_code == 200
+    assert "jrc_logout_binding" not in response.cookies
     assert "_auth_user_id" in browser.session
     assert browser.post("/accounts/logout/").status_code == 403
+    assert (
+        browser.post(
+            "/accounts/logout/",
+            {"csrfmiddlewaretoken": browser.cookies["csrftoken"].value},
+            HTTP_ORIGIN="https://foreign.invalid",
+        ).status_code
+        == 403
+    )
     response = browser.post(
         "/accounts/logout/?next=https://foreign.invalid",
         {"csrfmiddlewaretoken": browser.cookies["csrftoken"].value, "next": "//foreign.invalid"},
     )
-    assert response.url == "/video/jrc-logout"
+    location = urlsplit(response.url)
+    assert location.path == "/video/jrc-logout" and not location.query
+    grant = parse_qs(location.fragment)["grant"][0]
+    cookie = response.cookies["jrc_logout_binding"]
+    assert len(grant) == 43
+    assert cookie.value == hashlib.sha256(grant.encode()).hexdigest()
+    assert cookie["path"] == "/video" and cookie["samesite"] == "Strict" and cookie["max-age"] == 60
+    assert "no-store" in response["Cache-Control"]
+    assert response["Referrer-Policy"] == "no-referrer"
     assert "_auth_user_id" not in browser.session
     assert response.cookies["jrc_sso_binding"]["max-age"] == 0

@@ -5,6 +5,11 @@ Licence této odvozené verze: AGPL-3.0; původní licence a autorská práva z�
 
 ## 2026-10-24 · F5-B03
 
+- Po review: odhlášení POST vydá na 60 s jednorázové oprávnění v `#grant=…` a SHA-256
+  cookie `jrc_logout_binding` (SameSite=Strict, `/video`), aby FreeFrame automaticky
+  odhlásilo pouze tento chráněný průchod. Přímá návštěva FF vyžaduje potvrzení.
+  Cíle vstupenek jsou omezené na `/projects`, `/assets`, `/notifications`, `/settings`
+  a jejich podcesty; např. `/login?from=https://…` se odmítne už před vydáním vstupenky.
 - `apps/jrc_video/views.py`, šablony a cesty v `config/urls.py`: `/video-sso/` zachová návrat
   po přihlášení Brightbean, GET nabídne potvrzení, pouze POST s CSRF vydá webovou vstupenku
   přihlášenému členovi aktivního workspace. Přesměrování ji předá jen ve fragmentu
