@@ -21,7 +21,7 @@ esac
 printf '%s' "$project" | grep -Eqx 'jrc(-[a-z0-9-]+)?' || die "Neplatný název projektu: $project"
 
 compose() {
-    docker compose --project-name "$project" --file docker-compose.yml --env-file .env "$@"
+    JRC_PROJECT="$project" docker compose --project-name "$project" --file docker-compose.yml --env-file .env "$@"
 }
 
 need_image() {
