@@ -20,7 +20,7 @@ from apps.composer.models import PlatformPost
 from apps.jrc_texts import services as text_services
 from apps.members.models import WorkspaceMembership
 
-from .client import FreeFrameError, FreeFrameUserClient
+from .client import FreeFrameClient, FreeFrameError, FreeFrameUserClient
 from .models import VideoAccount, VideoAsset, VideoProject, VideoVersion
 from .services import video_role
 
@@ -463,13 +463,12 @@ def _apply_remote(version, remote):
         VideoVersion.objects.filter(pk=version.pk).update(**changes)
 
 
-def refresh_statuses(user, post):
-    """Update unfinished versions from FreeFrame. Returns False when FreeFrame was unreachable."""
+def _refresh_videos(videos, client_for):
+    """Copy the conversion state of unfinished versions from FreeFrame. False when it was unreachable."""
     fresh = True
-    videos = VideoAsset.objects.filter(platform_post__post=post, versions__status__in=UNFINISHED).distinct()
     for video in videos:
         try:
-            remote = FreeFrameUserClient(user).request("GET", f"/assets/{video.ff_asset_id}/versions")
+            remote = client_for(video).request("GET", f"/assets/{video.ff_asset_id}/versions")
         except FreeFrameError as exc:
             logger.info("Status refresh of video %s failed: %s", video.pk, exc)
             fresh = False
@@ -488,10 +487,38 @@ def refresh_statuses(user, post):
     return fresh
 
 
+def refresh_statuses(user, post):
+    """Update unfinished versions of one content from FreeFrame as ``user``. False when unreachable."""
+    videos = VideoAsset.objects.filter(platform_post__post=post, versions__status__in=UNFINISHED).distinct()
+    client = FreeFrameUserClient(user)
+    return _refresh_videos(videos, lambda _video: client)
+
+
+def refresh_on_open(user, post):
+    """Opening the Video tab brings unfinished versions up to date; a failure never blocks the page."""
+    try:
+        return refresh_statuses(user, post)
+    except Exception:  # noqa: BLE001 - the tab still shows the last known state
+        logger.exception("Status refresh on opening the Video tab failed for content %s", post.pk)
+        return False
+
+
+def refresh_all_unfinished():
+    """Worker job (F5-B08): keep conversion states current even when nobody has the Video tab open."""
+    videos = list(VideoAsset.objects.filter(versions__status__in=UNFINISHED).distinct())
+    if not videos:
+        return 0
+    client = FreeFrameClient()
+    _refresh_videos(videos, lambda _video: client)
+    return len(videos)
+
+
 def _version_row(version, user):
     resolution = f"{version.width}×{version.height}" if version.width and version.height else ""
     return {
         "id": str(version.pk),
+        "ff_version_id": str(version.ff_version_id),
+        "is_final": version.video.final_version_id == version.pk,
         "number": version.number,
         "status": version.status,
         "status_label": _label(version),
@@ -511,22 +538,46 @@ def channel_cards(user, post, membership):
     """Channels of this content with their video versions, for the Video tab and the status feed."""
     from apps.jrc_production.views import _enabled_caption_accounts
 
+    from .player import can_mark_final
+
     editor = can_upload(post, membership)
+    marker = can_mark_final(post, membership)
+    project = VideoProject.objects.filter(workspace=post.workspace).first()
     variants = {v.social_account_id: v for v in post.platform_posts.select_related("social_account")}
     videos = {
         video.platform_post_id: video
-        for video in VideoAsset.objects.filter(platform_post__post=post).prefetch_related("versions__uploaded_by")
+        for video in VideoAsset.objects.filter(platform_post__post=post)
+        .select_related("final_version", "final_by")
+        .prefetch_related("versions__uploaded_by")
     }
     cards = []
     for account in _enabled_caption_accounts(post):
         variant = variants.get(account.pk)
         video = videos.get(variant.pk) if variant else None
         versions = [_version_row(v, user) for v in video.versions.all()] if video else []
+        final = video.final_version if video and video.final_version_id else None
         cards.append(
             {
                 "key": str(variant.pk) if variant else f"new:{account.pk}",
                 "label": f"{account.get_platform_display()} · {account.account_name}",
                 "can_upload": editor,
+                "can_mark_final": marker,
+                # The viewer address inside FreeFrame; the version is added by the page (?version=).
+                "player_path": f"/projects/{project.ff_project_id}/assets/{video.ff_asset_id}"
+                if project and video
+                else "",
+                "final": (
+                    {
+                        "version": str(final.pk),
+                        "number": final.number,
+                        "by": (video.final_by.display_name or video.final_by.email) if video.final_by else "",
+                        "at": timezone.localtime(video.final_at).strftime("%b %-d, %Y · %H:%M")
+                        if video.final_at
+                        else "",
+                    }
+                    if final
+                    else None
+                ),
                 "versions": versions,
                 "unfinished": next((v for v in versions if v["mine"] and v["status"] == "uploading"), None),
             }

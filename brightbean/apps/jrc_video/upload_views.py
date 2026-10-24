@@ -14,7 +14,7 @@ from apps.composer.models import Post
 from apps.members.models import WorkspaceMembership
 from apps.workspaces.models import Workspace
 
-from . import uploads
+from . import player, uploads
 from .uploads import UploadError
 
 MAX_BODY_BYTES = 8192
@@ -131,3 +131,12 @@ def status(request, workspace_id, post_id):
     _workspace, membership, post = _context(request, workspace_id, post_id)
     fresh = uploads.refresh_statuses(request.user, post)
     return {"fresh": fresh, "channels": uploads.channel_cards(request.user, post, membership)}
+
+
+@_secure
+@require_POST
+@_json
+def final(request, workspace_id, post_id, version_id):
+    _workspace, membership, post = _context(request, workspace_id, post_id)
+    data = _body(request)
+    return player.set_final(request.user, post, membership, version_id, final=data.get("final", True) is not False)

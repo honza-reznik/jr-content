@@ -1,13 +1,22 @@
-{% comment %}Karta Video: verze videa po kanálech a tlačítko Upload version (F5-B05).{% endcomment %}
+{% comment %}Záložka Video: přepínač kanálu, vložený přehrávač FreeFrame, verze a Final for publishing (F5-B08); nahrání verze (F5-B05).{% endcomment %}
 <div id="jrc-video" data-jrc-video
      data-status-url="{% url 'jrc_video:upload_status' workspace_id=workspace.id post_id=post.id %}"
      data-start-url="{% url 'jrc_video:upload_start' workspace_id=workspace.id post_id=post.id %}"
-     data-csrf="{{ csrf_token }}" data-max-bytes="{{ video_max_bytes }}">
-    <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">Video</h2><p class="mt-1 text-sm text-stone-500">Each channel has its own video and its own versions.</p></div>
+     data-csrf="{{ csrf_token }}" data-max-bytes="{{ video_max_bytes }}"
+     data-sso-url="{% url 'video_sso' %}" data-player-ready="{{ video_player_ready|yesno:'1,0' }}">
+    <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">Video</h2><p class="mt-1 text-sm text-stone-500">Each channel has its own video and its own versions. Play a version and comment at the exact time.</p></div>
     <p data-video-notice role="status" aria-live="polite" class="mb-4 hidden rounded-lg px-3 py-2 text-sm"></p>
+    {% if video_cards|length > 1 %}
+    <div role="tablist" aria-label="Channels" class="mb-4 flex flex-wrap gap-2" data-video-tabs>
+        {% for card in video_cards %}
+        <button type="button" role="tab" id="jrc-video-tab-{{ forloop.counter }}" aria-controls="jrc-video-panel-{{ forloop.counter }}" aria-selected="{{ forloop.first|yesno:'true,false' }}" data-video-tab="{{ card.key }}"
+                class="max-w-full break-words rounded-lg border px-3 py-2 text-left text-sm font-medium focus:outline-none focus:ring-2 focus:ring-orange-300 {% if forloop.first %}border-orange-500 bg-orange-50 text-orange-800{% else %}border-stone-300 bg-white text-stone-700 hover:bg-stone-50{% endif %}">{{ card.label }}</button>
+        {% endfor %}
+    </div>
+    {% endif %}
     <div class="space-y-5">
         {% for card in video_cards %}
-        <article class="rounded-xl border border-stone-200 p-4 sm:p-5" data-video-channel="{{ card.key }}" data-can-upload="{{ card.can_upload|yesno:'1,0' }}">
+        <article class="rounded-xl border border-stone-200 p-4 sm:p-5{% if not forloop.first %} hidden{% endif %}" role="tabpanel" id="jrc-video-panel-{{ forloop.counter }}" data-video-channel="{{ card.key }}" data-can-upload="{{ card.can_upload|yesno:'1,0' }}">
             <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <h3 class="min-w-0 break-words font-semibold text-stone-900">{{ card.label }}</h3>
                 {% if card.can_upload %}
@@ -17,6 +26,21 @@
                 </div>
                 {% endif %}
             </div>
+            <div class="mt-4" data-video-player>
+                <div class="hidden flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center" data-video-toolbar>
+                    <label class="flex items-center gap-2 text-sm text-stone-700">Version
+                        <select data-video-select class="rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-sm text-stone-900 focus:outline-none focus:ring-2 focus:ring-orange-300"></select>
+                    </label>
+                    <span data-video-final-badge class="hidden items-center w-fit rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-800">Final for publishing</span>
+                    <button type="button" data-video-final-toggle class="hidden w-fit rounded-lg border border-emerald-600 bg-white px-3 py-1.5 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 focus:outline-none focus:ring-2 focus:ring-emerald-300"></button>
+                </div>
+                <p data-video-final-info class="mt-2 hidden text-sm text-stone-600"></p>
+                <p data-video-final-error role="alert" class="mt-2 hidden rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800"></p>
+                <p data-video-player-note class="mt-3 rounded-lg border border-dashed border-stone-300 px-4 py-6 text-center text-sm text-stone-500">{% if not video_player_ready %}The video player is not available yet for this client. Ask an administrator to synchronize video.{% endif %}</p>
+                <form method="post" action="{% url 'video_sso' %}" target="jrc-video-frame-{{ forloop.counter }}" data-video-sso class="hidden">{% csrf_token %}<input type="hidden" name="next" value=""></form>
+                <iframe name="jrc-video-frame-{{ forloop.counter }}" title="Video player for {{ card.label }}" data-video-frame allow="fullscreen" allowfullscreen
+                        class="mt-3 hidden w-full rounded-xl border border-stone-200 bg-stone-900" style="height:clamp(520px,78vh,780px)"></iframe>
+            </div>
             <div data-video-progress class="mt-4 hidden">
                 <div class="flex items-center justify-between gap-3 text-sm text-stone-700"><span data-video-progress-label class="min-w-0 break-words"></span><button type="button" data-video-discard class="hidden rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50">Discard</button></div>
                 <div class="mt-2 h-2 overflow-hidden rounded-full bg-stone-100" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Upload progress"><div data-video-bar class="h-2 rounded-full bg-orange-500" style="width:0%"></div></div>
@@ -25,7 +49,7 @@
             <ol class="mt-4 space-y-2" data-video-versions>
                 {% for v in card.versions %}
                 <li class="flex flex-col gap-1 rounded-lg bg-stone-50 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between" data-version="{{ v.id }}" data-status="{{ v.status }}" data-mine="{{ v.mine|yesno:'1,0' }}" data-name="{{ v.filename }}" data-size="{{ v.size_bytes }}">
-                    <div class="min-w-0"><p class="text-sm font-medium text-stone-800">v{{ v.number }} <span class="font-normal text-stone-500">· {{ v.filename }}</span></p><p class="text-xs text-stone-500">{{ v.uploaded_by }} · {{ v.uploaded_at }}{% if v.duration %} · {{ v.duration }}{% endif %}{% if v.resolution %} · {{ v.resolution }}{% endif %}</p></div>
+                    <div class="min-w-0"><p class="text-sm font-medium text-stone-800">v{{ v.number }} <span class="font-normal text-stone-500">· {{ v.filename }}</span>{% if v.is_final %} <span data-video-final-mark class="ml-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">Final for publishing</span>{% endif %}</p><p class="text-xs text-stone-500">{{ v.uploaded_by }} · {{ v.uploaded_at }}{% if v.duration %} · {{ v.duration }}{% endif %}{% if v.resolution %} · {{ v.resolution }}{% endif %}</p></div>
                     <div class="flex items-center gap-2">
                         {% if v.mine and v.status == 'uploading' and card.can_upload %}<button type="button" data-video-resume class="rounded-lg border border-orange-300 bg-white px-3 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-50">Continue upload</button>{% endif %}
                         <span data-video-status class="rounded-full px-2.5 py-1 text-xs font-medium {% if v.status == 'ready' %}bg-emerald-100 text-emerald-800{% elif v.status == 'failed' %}bg-red-100 text-red-800{% else %}bg-amber-100 text-amber-800{% endif %}">{{ v.status_label }}</span>
@@ -41,3 +65,4 @@
         {% endfor %}
     </div>
 </div>
+{{ video_cards|json_script:"jrc-video-data" }}

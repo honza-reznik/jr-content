@@ -21,3 +21,19 @@ def retry_freeframe_sync():
         # Return normally so the recurring job keeps its minute cadence during
         # an outage instead of exhausting the queue library's retry limit.
         logger.warning("FreeFrame synchronization is pending; retrying on the next worker cycle.")
+
+
+REFRESH_INTERVAL_SECONDS = 30
+
+
+@background(schedule=0)
+def refresh_video_statuses():
+    """F5-B08: conversion states reach Brightbean without anybody keeping the Video tab open."""
+    if not getattr(settings, "JRC_FF_SYNC_ENABLED", False):
+        return
+    from .uploads import refresh_all_unfinished
+
+    try:
+        refresh_all_unfinished()
+    except Exception:  # noqa: BLE001 - keep the recurring job alive during an outage
+        logger.warning("Video status refresh failed; retrying on the next worker cycle.", exc_info=True)

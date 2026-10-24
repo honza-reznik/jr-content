@@ -407,13 +407,18 @@ def content_detail(request, workspace_id, post_id):
 
     video_context = {}
     if active_tab == "video":
-        # F5-B05: video versions per channel (the player and comments are F5-B08).
+        # F5-B05 / F5-B08: video versions and the embedded player per channel.
         from apps.jrc_video import uploads as video_uploads
+        from apps.jrc_video.models import VideoAccount, VideoProject
 
+        video_uploads.refresh_on_open(request.user, post)
         video_context = {
             "video_cards": video_uploads.channel_cards(request.user, post, membership),
             "video_accept": video_uploads.allowed_extensions_attr(),
             "video_max_bytes": video_uploads.max_upload_bytes(),
+            # Without a synchronized project and account the sign-in would fail: say so instead.
+            "video_player_ready": VideoProject.objects.filter(workspace=workspace).exists()
+            and VideoAccount.objects.filter(user=request.user).exists(),
         }
     return render(
         request,
