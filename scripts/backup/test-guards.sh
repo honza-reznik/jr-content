@@ -49,8 +49,14 @@ expect_refused() {  # popis, očekávaný text, příkaz...
     printf 'OK pojistka: %s\n' "$description"
 }
 
-expect_refused 'make restore pro projekt jrc' 'zakázáno' env JRC_PROJECT=jrc make --no-print-directory restore BACKUP="$fixture"
-expect_refused 'make test-backup pro projekt jrc' 'zakázáno' env JRC_PROJECT=jrc make --no-print-directory test-backup
+# I odmítané volání musí přebít projekt a porty z MAKEFLAGS ještě před čtením Makefile.
+guard_make() {
+    make --no-print-directory JRC_PROJECT=jrc JRC_APP_PORT="$(env_port JRC_APP_PORT)" \
+        JRC_S3_PORT="$(env_port JRC_S3_PORT)" JRC_POSTGRES_PORT="$(env_port JRC_POSTGRES_PORT)" \
+        JRC_BB_PORT="$(env_port JRC_BB_PORT)" "$@"
+}
+expect_refused 'make restore pro projekt jrc' 'zakázáno' guard_make restore BACKUP="$fixture"
+expect_refused 'make test-backup pro projekt jrc' 'zakázáno' guard_make test-backup
 expect_refused 'restore-guard pro projekt jrc' 'hlavního projektu jrc' env JRC_PROJECT=jrc sh scripts/backup/backup.sh restore-guard "$fixture"
 expect_refused 'restore-precheck pro projekt jrc' 'hlavního projektu jrc' env JRC_PROJECT=jrc sh scripts/backup/backup.sh restore-precheck "$fixture"
 expect_refused 'restore-data pro projekt jrc' 'hlavního projektu jrc' env JRC_PROJECT=jrc sh scripts/backup/backup.sh restore-data "$fixture"

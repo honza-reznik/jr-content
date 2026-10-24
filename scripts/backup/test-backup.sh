@@ -12,6 +12,10 @@ export JRC_BACKUP_DOCKER_FAILURE_FILE="$run_dir/docker-failed"
 src="${base}-${run_id}"
 dst="${src}r"
 export JRC_PROJECT="$src"
+src_app=$(env_port JRC_APP_PORT)
+src_s3=$(env_port JRC_S3_PORT)
+src_pg=$(env_port JRC_POSTGRES_PORT)
+src_bb=$(env_port JRC_BB_PORT)
 dst_app=${JRC_RESTORE_APP_PORT:-13313}
 dst_s3=${JRC_RESTORE_S3_PORT:-14033}
 dst_pg=${JRC_RESTORE_POSTGRES_PORT:-15563}
@@ -23,6 +27,11 @@ uid=$(id -u)
 gid=$(id -g)
 fail() { printf 'CHYBA TESTU: %s\n' "$*" >&2; exit 1; }
 step() { printf '\n== %s ==\n' "$*"; }
+# Argumenty příkazové řádky mají přednost i před zděděnými hodnotami v MAKEFLAGS.
+source_make() {
+    make --no-print-directory JRC_PROJECT="$src" JRC_APP_PORT="$src_app" JRC_S3_PORT="$src_s3" \
+        JRC_POSTGRES_PORT="$src_pg" JRC_BB_PORT="$src_bb" "$@"
+}
 
 for name in "$src" "$dst"; do
     case "$name" in jrc) fail 'Test záloh nesmí používat hlavní projekt jrc.' ;; esac
@@ -74,7 +83,7 @@ mkdir -p "$out" "$shots"
 
 step "Zdrojový projekt $src"
 src_created=1
-if make --no-print-directory up; then record_images "$src"; else
+if source_make up; then record_images "$src"; else
     : > "$run_dir/docker-failed"
     exit 1
 fi
@@ -111,13 +120,13 @@ keep=1
 mkdir -p backups
 mkdir "backups/$src"
 backups_owned=1
-JRC_BACKUP_KEEP=1000 make --no-print-directory backup
+source_make JRC_BACKUP_KEEP=1000 backup
 first=$(ls -1 "backups/$src" | grep -E '^[0-9]{8}-[0-9]{6}$' | tail -n 1)
 foreign=$(new_foreign_fixture "$src")
 
 step "Záloha (druhá, JRC_BACKUP_KEEP=$keep) a rotace"
 sleep 1
-JRC_BACKUP_KEEP=$keep make --no-print-directory backup
+source_make JRC_BACKUP_KEEP="$keep" backup
 latest=$(ls -1 "backups/$src" | grep -E '^[0-9]{8}-[0-9]{6}$' | tail -n 1)
 [ "$latest" != "$first" ] || fail 'Druhá záloha nevznikla.'
 [ -f "$foreign/poznamka.txt" ] || fail 'Rotace smazala adresář bez manifestu.'
@@ -128,7 +137,7 @@ fi
 inventory "$src" > "$out/inv-after.json"
 
 step 'Kontrola zálohy'
-make --no-print-directory backup-verify BACKUP="backups/$src/$latest"
+source_make backup-verify BACKUP="backups/$src/$latest"
 [ "$(stat -c %a "backups/$src/$latest")" = 700 ] && [ "$(stat -c %a "backups/$src/$latest/env.backup")" = 600 ] \
     || fail 'Práva zálohy nejsou 700/600.'
 git check-ignore -q "backups/$src/$latest/env.backup" || fail 'backups/ není v .gitignore.'
@@ -137,8 +146,8 @@ printf 'OK práva 700/600, backups/ mimo git\n'
 
 step "Obnova do prázdného projektu $dst"
 restore() {
-    env JRC_PROJECT="$dst" JRC_APP_PORT="$dst_app" JRC_S3_PORT="$dst_s3" JRC_POSTGRES_PORT="$dst_pg" JRC_BB_PORT="$dst_bb" \
-        make --no-print-directory restore BACKUP="backups/$src/$latest"
+    make --no-print-directory JRC_PROJECT="$dst" JRC_APP_PORT="$dst_app" JRC_S3_PORT="$dst_s3" \
+        JRC_POSTGRES_PORT="$dst_pg" JRC_BB_PORT="$dst_bb" restore BACKUP="backups/$src/$latest"
 }
 dst_started=1
 if restore; then :; else

@@ -1,4 +1,4 @@
-"""Regrese všech deseti nálezů review; falešný Docker zde nikdy neovládá stroj."""
+"""Regrese nálezů review; falešný Docker zde nikdy neovládá stroj."""
 import io
 import json
 import os
@@ -354,6 +354,118 @@ class ShellRegressions(Base):
         self.assertNotIn('MUST-NOT-RUN', result.stdout)
         self.assertNotIn('run ', self.calls())
         self.assertNotIn('down', self.calls())
+
+    def makeflags_fixture(self):
+        # GNU Make je skutečný; jen Docker a data aplikace jsou nahrazené.
+        # Existující projekt má jiný název i porty než prostředí shellového testu.
+        for name in ('test-backup.sh', 'test-guards.sh', 'test-lib.sh'):
+            shutil.copy(SCRIPTS / name, self.work / 'scripts/backup' / name)
+        (self.work / 'scripts/backup/seed-bb.py').touch()
+        ports = dict(JRC_APP_PORT='13303', JRC_S3_PORT='14023',
+                     JRC_POSTGRES_PORT='15553', JRC_BB_PORT='18123')
+        self.env.update(ports, MAKEFLAGS='-- JRC_PROJECT=jrc-inherited-existing '
+                        'JRC_APP_PORT=13313 JRC_S3_PORT=14033 '
+                        'JRC_POSTGRES_PORT=15563 JRC_BB_PORT=18133 JRC_BACKUP_KEEP=99')
+        (self.work / '.env').write_text(''.join(f'{key}={value}\n' for key, value in ports.items()))
+        sentinel = self.work / 'existing-project'
+        sentinel.mkdir()
+        (sentinel / 'data').write_text('existující vlastní projekt: beze změny')
+        self.docker(r'''case "$*" in
+            "volume ls"*) echo jrc-inherited-existing-s3-data
+                test ! -f guard-volume || cat guard-volume;;
+            "network ls"*) case "$*" in *--filter*) ;; *) echo jrc-inherited-existing_default;; esac;;
+            "ps -a "*) echo jrc-inherited-existing-jrc-dev-1;;
+            "image ls"*) echo 'jrc-dev:jrc-inherited-existing sentinel-id';;
+            "image inspect"*) echo image-id;;
+            "volume create"*)
+                printf '%s' "$4" > guard-label
+                for arg do volume=$arg; done; echo "$volume" > guard-volume;;
+            "volume inspect"*) sed 's/^jrc.backup-test=//' guard-label;;
+            "volume rm"*) rm guard-volume;;
+            "compose "*"ps -q jrc-proxy") echo proxy-id;;
+            *Config.Labels*) echo "$JRC_PROJECT";;
+            *HostPort*) echo "$JRC_APP_PORT";;
+            *HostIp*) echo 127.0.0.1;;
+            *"manage.py shell"*) echo '{"workspace_id": "test"}';;
+            *"seed-ff.py"*) echo '{"source_sha256": "test"}';;
+            *" inventory") echo '{}';;
+            *'echo data > /v/neco'*) echo data > guard-data;;
+            *'find /v -mindepth'*) cat guard-data;;
+            *'rm /v/neco;'*) : > guard-data;;
+        esac
+        exit 0''')
+        return sentinel
+
+    def test_makeflags_integration_pins_every_project_port_and_rotation_limit(self):
+        sentinel = self.makeflags_fixture()
+        git = self.bin / 'git'
+        git.write_text('#!/bin/sh\nexit 0\n')
+        git.chmod(0o700)
+        (self.work / 'Makefile').write_text(
+            'export JRC_PROJECT JRC_APP_PORT JRC_S3_PORT JRC_POSTGRES_PORT JRC_BB_PORT JRC_BACKUP_KEEP\n'
+            '.PHONY: up backup backup-verify restore\n'
+            'up backup backup-verify restore:\n\t@python3 make-fixture.py $@\n')
+        (self.work / 'make-fixture.py').write_text('''import json, os, shutil, sys
+from pathlib import Path
+target = sys.argv[1]
+project = os.environ['JRC_PROJECT']
+with open('make-calls', 'a') as log:
+    values = {key: value for key, value in os.environ.items()
+              if key in ('JRC_PROJECT', 'JRC_APP_PORT', 'JRC_S3_PORT',
+                         'JRC_POSTGRES_PORT', 'JRC_BB_PORT', 'JRC_BACKUP_KEEP')}
+    log.write(json.dumps(dict(values, target=target)) + '\\n')
+if project == 'jrc-inherited-existing':
+    Path('existing-project/data').write_text('CHANGED')
+    sys.exit(91)
+if target == 'backup':
+    root = Path('backups') / project
+    for previous in root.glob('20261024-*'):
+        shutil.rmtree(previous)
+    counter = Path('backup-counter')
+    number = int(counter.read_text()) + 1 if counter.exists() else 1
+    counter.write_text(str(number))
+    backup = root / f'20261024-10000{number}'
+    backup.mkdir(mode=0o700)
+    (backup / 'env.backup').touch(mode=0o600)
+if target == 'restore':
+    marker = Path(project + '.restored')
+    if marker.exists():
+        print('už obsahuje data', file=sys.stderr)
+        sys.exit(1)
+    marker.touch()
+''')
+        result = self.shell('sh scripts/backup/test-backup.sh')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = [json.loads(line) for line in (self.work / 'make-calls').read_text().splitlines()]
+        self.assertEqual([call['target'] for call in calls],
+                         ['up', 'backup', 'backup', 'backup-verify', 'restore', 'restore'])
+        src = calls[0]['JRC_PROJECT']
+        self.assertTrue(src.startswith(self.env['JRC_PROJECT'] + '-f2b09-'))
+        for index, call in enumerate(calls):
+            self.assertEqual(call['JRC_PROJECT'], src if index < 4 else src + 'r')
+            self.assertEqual([call[key] for key in ('JRC_APP_PORT', 'JRC_S3_PORT',
+                                                   'JRC_POSTGRES_PORT', 'JRC_BB_PORT')],
+                             ['13303', '14023', '15553', '18123'] if index < 4
+                             else ['13313', '14033', '15563', '18133'])
+        self.assertEqual([calls[i]['JRC_BACKUP_KEEP'] for i in (1, 2)], ['1000', '1'])
+        self.assertEqual((sentinel / 'data').read_text(), 'existující vlastní projekt: beze změny')
+        self.assertNotIn('--project-name jrc-inherited-existing ', self.calls())
+
+    def test_makeflags_guard_refusals_happen_before_any_main_project_docker_call(self):
+        sentinel = self.makeflags_fixture()
+        # Stejná pojistka při čtení jako v projektovém Makefile; při jejím obejití
+        # se označí změna existujícího projektu a test musí selhat.
+        (self.work / 'Makefile').write_text(
+            'ifeq ($(JRC_PROJECT),jrc)\n'
+            '$(error zakázáno pro hlavní projekt jrc)\n'
+            'endif\n'
+            'restore test-backup:\n\t@echo CHANGED > existing-project/data; exit 91\n')
+        result = self.shell('sh scripts/backup/test-guards.sh')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.count('OK pojistka:'), 13)
+        self.assertNotIn('compose ', self.calls())
+        self.assertNotIn('build ', self.calls())
+        self.assertEqual((sentinel / 'data').read_text(), 'existující vlastní projekt: beze změny')
 
     def test_4_proxy_project_port_and_loopback_required(self):
         self.docker('case "$*" in "compose "*) echo proxy-id;; *Config.Labels*) echo "$MOCK_PROJECT";; *HostPort*) echo "$MOCK_PORT";; *HostIp*) echo "$MOCK_IP";; esac')
