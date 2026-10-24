@@ -2,6 +2,11 @@
 
 Import upstreamu `3829889` (MIT, původní licence a copyright zachovány).
 
+## 2026-10-24 — F5-B06
+
+- Režim `?embed=1` skryje navigaci, horní lištu a pomocné panely dashboardu; v asset přehrávači zůstávají video, časový štítek a komentáře. Vložený režim se zachová při navigaci uvnitř dashboardu a asset navigace nese query parametry dál.
+- Přidaný Vitest a živý Chromium průchod v iframe stejného původu při 1440 a 390 px. Snímky zůstávají v ignorované složce `ops/screenshoty/F5-B06/`; testovací video se vytváří místním FFmpegem.
+
 ## 2026-10-24 — F5-B03
 
 - Opravy bezpečnostního review: `auth.ts` drží sdílenou značku relace v localStorage,

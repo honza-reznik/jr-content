@@ -12,7 +12,11 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 
-vi.mock('next/navigation', () => ({ usePathname: () => '/projects/p1' }))
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/projects/p1',
+  useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ replace: vi.fn() }),
+}))
 vi.mock('@/stores/auth-store', () => ({
   useAuthStore: () => ({ fetchUser: vi.fn() }),
 }))

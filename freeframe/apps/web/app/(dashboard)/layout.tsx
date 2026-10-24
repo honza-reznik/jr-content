@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useAuthStore } from "@/stores/auth-store";
 import { useUploadStore } from "@/stores/upload-store";
 import { Sidebar } from "@/components/layout/sidebar";
@@ -14,12 +14,18 @@ import { PoweredByBadge } from "@/components/shared/powered-by-badge";
 import { refuseFileDrag } from "@/lib/drag";
 import { cn } from "@/lib/utils";
 
-export default function DashboardLayout({
+function DashboardLayoutContent({
   children,
 }: {
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const embedRequested = searchParams.get("embed") === "1";
+  const [embedSession, setEmbedSession] = React.useState(embedRequested);
+  const embedActive = embedRequested || embedSession;
+  const lastPathname = React.useRef(pathname);
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(true);
   const [commandOpen, setCommandOpen] = React.useState(false);
   const { fetchUser } = useAuthStore();
@@ -28,6 +34,33 @@ export default function DashboardLayout({
   // The asset viewer renders its own top bar, carrying both the header's role
   // and the attribution credit, so the shell supplies neither here.
   const isAssetViewer = /\/projects\/[^/]+\/assets\/[^/]+/.test(pathname);
+
+  // Keep the iframe presentation when client navigation moves to another
+  // dashboard page. The iframe has its own sessionStorage, so this marker
+  // cannot affect the Brightbean page that contains it.
+  React.useEffect(() => {
+    if (embedRequested) {
+      setEmbedSession(true);
+      window.sessionStorage.setItem("ff_embed", "1");
+    } else if (window.sessionStorage.getItem("ff_embed") === "1") {
+      setEmbedSession(true);
+    }
+
+    const isDashboardRoute = /^\/(projects|assets|notifications|settings)(\/|$)/.test(pathname);
+    if (!isDashboardRoute) {
+      setEmbedSession(false);
+      window.sessionStorage.removeItem("ff_embed");
+      lastPathname.current = pathname;
+      return;
+    }
+
+    if (embedActive && !embedRequested && lastPathname.current !== pathname) {
+      const query = new URLSearchParams(window.location.search);
+      query.set("embed", "1");
+      router.replace(`${pathname}?${query.toString()}`, { scroll: false });
+    }
+    lastPathname.current = pathname;
+  }, [embedActive, embedRequested, pathname, router]);
 
   React.useEffect(() => {
     fetchUser();
@@ -59,19 +92,21 @@ export default function DashboardLayout({
       onDragOver={refuseFileDrag}
       onDrop={refuseFileDrag}
     >
-      <Sidebar
-        collapsed={sidebarCollapsed}
-        onToggle={() => setSidebarCollapsed((c) => !c)}
-      />
+      {!embedActive && (
+        <Sidebar
+          collapsed={sidebarCollapsed}
+          onToggle={() => setSidebarCollapsed((c) => !c)}
+        />
+      )}
 
       {/* Main content area */}
       <main
         className={cn(
           "flex flex-1 flex-col overflow-hidden transition-[margin] duration-200 ease-spring",
-          sidebarCollapsed ? "ml-[52px]" : "ml-[220px]",
+          embedActive ? "ml-0" : sidebarCollapsed ? "ml-[52px]" : "ml-[220px]",
         )}
       >
-        {!isAssetViewer && <Header onSearchOpen={() => setCommandOpen(true)} />}
+        {!embedActive && !isAssetViewer && <Header onSearchOpen={() => setCommandOpen(true)} />}
 
         <div className="relative flex-1 overflow-y-auto">{children}</div>
       </main>
@@ -92,14 +127,26 @@ export default function DashboardLayout({
           bar's controls off the screen. Nothing takes its place there: bringing
           this one back would restore the send-button collision on exactly the
           widths where the composer is hardest to hit. */}
-      {!isAssetViewer && (
+      {!embedActive && !isAssetViewer && (
         <PoweredByBadge className="fixed bottom-safe right-safe [--ff-bottom:1rem] [--ff-right:1rem] z-20 rounded-full border border-border bg-bg-elevated/90 px-3 py-1.5 shadow-lg backdrop-blur-sm" />
       )}
 
-      <UploadsPanel railCollapsed={sidebarCollapsed} />
-      <UploadSSEBridge />
-      <CommandPalette open={commandOpen} onOpenChange={setCommandOpen} />
-      <KeyboardShortcuts standalone />
+      {!embedActive && (
+        <>
+          <UploadsPanel railCollapsed={sidebarCollapsed} />
+          <UploadSSEBridge />
+          <CommandPalette open={commandOpen} onOpenChange={setCommandOpen} />
+          <KeyboardShortcuts standalone />
+        </>
+      )}
     </div>
+  );
+}
+
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <React.Suspense fallback={<div className="h-dvh bg-bg-primary" />}>
+      <DashboardLayoutContent>{children}</DashboardLayoutContent>
+    </React.Suspense>
   );
 }
