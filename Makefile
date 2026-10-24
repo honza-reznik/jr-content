@@ -43,7 +43,7 @@ export BUILDX_CONFIG := $(CURDIR)/.cache/docker-buildx
 CMD ?= bash
 export CMD
 
-.PHONY: backup backup-verify restore test-backup test-backup-guards build build-bb env check-project-ports up down shell test test-fast test-smoke test-proxy test-s3 test-bb test-bb-fast test-ff test-ff-smoke test-isolation test-ff-offline test-ff-vitest test-ff-tsc test-ff-lint test-f5-b06-embed ff-account build-ff reset logs ps
+.PHONY: restore-lock-check backup backup-verify restore test-backup test-backup-guards build build-bb env check-project-ports up down shell test test-fast test-smoke test-proxy test-s3 test-bb test-bb-fast test-ff test-ff-smoke test-isolation test-ff-offline test-ff-vitest test-ff-tsc test-ff-lint test-f5-b06-embed ff-account build-ff reset logs ps
 build:
 	docker build --tag jrc-dev:$(JRC_PROJECT) --file docker/Dockerfile docker
 
@@ -67,10 +67,14 @@ build-ff:
 	docker build --tag jrc-ff-api:$(JRC_PROJECT) --build-arg JRC_PROJECT=$(JRC_PROJECT) --file docker/Dockerfile.ff-api .
 	docker build --tag jrc-ff-web:$(JRC_PROJECT) --build-arg JRC_PROJECT=$(JRC_PROJECT) --file docker/Dockerfile.ff-web .
 
+# F2-B09a: během obnovy hlavního projektu se up/reset/down odmítají (zámek .jrc-restore.lock).
+restore-lock-check:
+	@sh scripts/restore-lock.sh check
+
 check-project-ports:
 	@sh scripts/check-project-ports.sh
 
-up: env check-project-ports
+up: restore-lock-check env check-project-ports
 	$(MAKE) build
 	$(MAKE) build-bb
 	$(MAKE) build-ff
@@ -78,6 +82,7 @@ up: env check-project-ports
 	@sh scripts/workspace.sh remember
 
 down:
+	@sh scripts/restore-lock.sh check
 	@sh scripts/workspace.sh remember
 	$(ADMIN_COMPOSE) down
 
@@ -215,6 +220,7 @@ ff-account:
 	$(COMPOSE) exec -T -e PYTHONPATH=/workspace jrc-ff-api python /jrc-scripts/init-freeframe-account.py
 
 reset:
+	@sh scripts/restore-lock.sh check
 	$(ADMIN_COMPOSE) down --volumes
 	$(MAKE) up
 
@@ -236,14 +242,7 @@ backup-verify:
 # Obnova jen do PRÁZDNÉHO projektu. jrc jen s JRC_RESTORE_MAIN=yes-empty (nic z jrc neexistuje či je prázdné);
 # neprázdné svazky odmítne vždy.
 restore:
-	@sh scripts/backup/backup.sh restore-guard "$(BACKUP)"
-	@$(MAKE) --no-print-directory check-project-ports
-	@$(MAKE) --no-print-directory build
-	@sh scripts/backup/backup.sh restore-precheck "$(BACKUP)"
-	@$(MAKE) --no-print-directory env build-bb build-ff
-	@sh scripts/backup/backup.sh restore-data "$(BACKUP)"
-	@$(MAKE) --no-print-directory up
-	@sh scripts/backup/backup.sh restore-finish
+	@sh scripts/backup/backup.sh restore-run "$(BACKUP)"
 
 # Pojistky záloh bez běžících služeb: jednotkové testy a odmítnutí obnovy do projektu jrc.
 test-backup-guards:

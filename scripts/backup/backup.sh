@@ -217,6 +217,26 @@ case "${1:?Chybí operace}" in
         abs=$(backup_path "${2:-}")
         run_tool_isolated "$abs" verify --backup /backup
         ;;
+    restore-run)
+        # Celá obnova v jednom procesu pod výhradním zámkem (hlavní projekt): make up/reset/down i druhá obnova
+        # se odmítnou, dokud zámek držíme. Zděděný deskriptor 9 vlastním krokům (make up) zámek "propůjčuje".
+        if is_main; then
+            lock="$workdir/.jrc-restore.lock"
+            if [ "$project" != jrc ] && [ -n "${JRC_TEST_RESTORE_LOCK:-}" ]; then lock=$JRC_TEST_RESTORE_LOCK; fi
+            [ ! -L "$lock" ] || die "Zámek obnovy nesmí být symbolický odkaz: $lock"
+            exec 9>> "$lock" || die "Nelze otevřít zámek obnovy $lock."
+            flock -n 9 || die "Probíhá jiná obnova projektu $project (zámek $lock); tuto nespouštím."
+        fi
+        backup_arg=${2:-}
+        sh scripts/backup/backup.sh restore-guard "$backup_arg"
+        make --no-print-directory check-project-ports
+        make --no-print-directory build
+        sh scripts/backup/backup.sh restore-precheck "$backup_arg"
+        make --no-print-directory env build-bb build-ff
+        sh scripts/backup/backup.sh restore-data "$backup_arg"
+        make --no-print-directory up
+        sh scripts/backup/backup.sh restore-finish
+        ;;
     restore-guard)
         restore_guard_idle
         backup_path "${2:-}" >/dev/null
@@ -263,6 +283,11 @@ case "${1:?Chybí operace}" in
                 sh "$(id -u)" "$(id -g)"
             printf 'Svazek %s-bb-media obnoven\n' "$project"
         fi
+        # Těsně před vytvořením služeb a svazků znovu: nic nevzniklo a svazky jsou stále prázdné.
+        if is_main; then require_main_idle; fi
+        for name in postgres-data s3-data redis-data; do
+            require_empty_volume "$project-$name"
+        done
         # Jen databáze a úložiště: aplikace se spustí až nad obnovenými daty.
         compose up --detach --build --wait --wait-timeout 120 jrc-postgres jrc-s3 jrc-dev
         sh scripts/workspace.sh check
@@ -270,6 +295,9 @@ case "${1:?Chybí operace}" in
             python3 "$tool" restore-check --project "$project" --backup /backup $allow_main_flag
         # pg_restore stejné hlavní verze jako server (v kontejneru PostgreSQL); jedna transakce, při chybě se nic nevloží.
         for database in brightbean freeframe; do
+            # Těsně před zápisem znovu: databáze musí být pořád prázdná (jinak se nezapíše nic).
+            compose run --rm --no-deps -T --volume "$abs:/backup:ro" jrc-dev \
+                python3 "$tool" restore-check --project "$project" --backup /backup --only "$database" $allow_main_flag
             printf 'Obnova databáze %s\n' "$database"
             compose exec -T jrc-postgres sh -c \
                 'pg_restore --single-transaction --exit-on-error --no-owner --no-privileges --no-password --username "$POSTGRES_USER" --dbname "$1"' \

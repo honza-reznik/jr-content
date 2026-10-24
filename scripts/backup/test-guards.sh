@@ -166,4 +166,47 @@ fi
 printf 'OK pojistka: pojistky obnovy hlavního projektu jen čtou\n'
 rm "$fake_bin/docker" "$FAKE_DOCKER_LOG"
 rmdir "$fake_bin"
+
+# --- F2-B09a: zámek obnovy hlavního projektu (flock). Soubor zámku je testovací; pro jrc se dělá zkouška v prázdné složce. ---
+test_lock="$run_dir/restore.lock"
+lock_args="JRC_TEST_MAIN_PROJECT=$test_main JRC_PROJECT=$test_main JRC_TEST_RESTORE_LOCK=$test_lock"
+# shellcheck disable=SC2086
+env $lock_args sh scripts/restore-lock.sh check
+printf 'OK pojistka: bez zámku se up/reset/down neodmítají\n'
+: > "$test_lock"
+# shellcheck disable=SC2086
+env $lock_args sh scripts/restore-lock.sh check
+printf 'OK pojistka: existující, ale nedržený zámek nevadí\n'
+# Držitel zámku (deskriptor 9). Jeho vlastní kroky zámek zdědí; cizí proces (s uzavřeným deskriptorem 9) je odmítnut.
+# Podshell musí zůstat naživu (žádné exec posledního příkazu), jinak by se deskriptor se zámkem zavřel.
+holder() { ( exec 9>> "$test_lock"; flock -n 9 || exit 70; status=0; "$@" || status=$?; exit "$status" ); }
+# shellcheck disable=SC2086
+holder env $lock_args sh scripts/restore-lock.sh check
+printf 'OK pojistka: vlastní kroky obnovy zámek zdědí\n'
+# shellcheck disable=SC2086
+expect_refused 'cizí proces při drženém zámku (check)' 'Probíhá obnova' \
+    holder sh -c 'exec 9>&-; exec "$@"' sh env $lock_args sh scripts/restore-lock.sh check
+# shellcheck disable=SC2086
+expect_refused 'druhá obnova při drženém zámku' 'Probíhá jiná obnova' \
+    holder sh -c 'exec 9>&-; exec "$@"' sh env $lock_args JRC_RESTORE_MAIN=yes-empty sh scripts/backup/backup.sh restore-run "$fixture"
+for target in up down reset; do
+    # shellcheck disable=SC2086
+    expect_refused "make $target při drženém zámku obnovy" 'Probíhá obnova' \
+        holder sh -c 'exec 9>&-; exec "$@"' sh env $lock_args make --no-print-directory JRC_PROJECT="$test_main" "$target"
+done
+# Skutečné jméno jrc: vlastní zámek v kořeni složky (zde prázdná dočasná složka), testovací náhrada souboru se ignoruje.
+lock_dir="$run_dir/lockdir"
+mkdir "$lock_dir"
+repo_scripts="$PWD/scripts"
+(cd "$lock_dir" && env JRC_PROJECT=jrc JRC_TEST_RESTORE_LOCK=/nonexistent/nikdy sh "$repo_scripts/restore-lock.sh" check)
+jrc_lock_probe() {
+    ( cd "$lock_dir"; exec 9>> .jrc-restore.lock; flock -n 9 || exit 70
+      status=0
+      sh -c 'exec 9>&-; exec env JRC_PROJECT=jrc JRC_TEST_RESTORE_LOCK=/nonexistent/nikdy sh "$1/restore-lock.sh" check' sh "$repo_scripts" || status=$?
+      exit "$status" )
+}
+expect_refused 'jrc: zámek v kořeni složky se drží i při podvržené cestě' 'Probíhá obnova' jrc_lock_probe
+rm "$lock_dir/.jrc-restore.lock"
+rmdir "$lock_dir"
+rm "$test_lock"
 echo 'Všechny pojistky obnovy fungují.'

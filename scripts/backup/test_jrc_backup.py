@@ -337,7 +337,7 @@ class RestoreEmptinessGuards(Base):
         "JRC_FF_S3_SECRET_KEY": "d", "JRC_BB_S3_ACCESS_KEY": "e", "JRC_BB_S3_SECRET_KEY": "f",
     }
 
-    def run_command(self, command, db_empty=True, bucket_empty=True):
+    def run_command(self, command, db_empty=True, bucket_empty=True, extra=(), ensure=None):
         directory = self.root / "20261024-100000"
         if not directory.exists():
             make_backup(self.root, "20261024-100000")
@@ -347,15 +347,16 @@ class RestoreEmptinessGuards(Base):
         patches = [
             mock.patch.dict(os.environ, self.ENV),
             mock.patch.object(jb, "s3_client", return_value=client),
-            mock.patch.object(jb, "ensure_database"),
+            mock.patch.object(jb, "ensure_database", side_effect=ensure),
             mock.patch.object(jb, "database_is_empty", return_value=db_empty),
-            mock.patch.object(jb, "bucket_is_empty", return_value=bucket_empty),
+            mock.patch.object(jb, "bucket_is_empty", **(
+                {"side_effect": bucket_empty} if isinstance(bucket_empty, list) else {"return_value": bucket_empty})),
             mock.patch.object(jb, "verify_restored_objects"),
         ]
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)
-        code = jb.main([command, "--project", "jrc-cil", "--backup", str(directory), "--workspace", str(workspace)])
+        code = jb.main([command, "--project", "jrc-cil", "--backup", str(directory), "--workspace", str(workspace), *extra])
         return code, client
 
     def test_nonempty_database_refused(self):
@@ -366,6 +367,30 @@ class RestoreEmptinessGuards(Base):
         code, client = self.run_command("restore-objects", bucket_empty=False)
         self.assertEqual(code, 1)
         client.upload_file.assert_not_called()
+
+    def test_check_only_one_database_before_its_write(self):
+        checked = []
+        code, _ = self.run_command("restore-check", extra=("--only", "freeframe"), ensure=checked.append)
+        self.assertEqual(code, 0)
+        self.assertEqual(checked, ["freeframe"])
+        code, _ = self.run_command("restore-check", db_empty=False, extra=("--only", "brightbean"))
+        self.assertEqual(code, 1)
+
+    def test_check_only_buckets_does_not_touch_databases(self):
+        checked = []
+        code, _ = self.run_command("restore-check", db_empty=False, extra=("--only", "buckets"), ensure=checked.append)
+        self.assertEqual(code, 0)
+        self.assertEqual(checked, [])
+
+    def test_bucket_filled_between_check_and_write_is_never_written_into(self):
+        # Tři buckety: úvodní kontrola projde, těsně před zápisem do prvního už je plný.
+        code, client = self.run_command("restore-objects", bucket_empty=[True, True, True, False])
+        self.assertEqual(code, 1)
+        client.upload_file.assert_not_called()
+        # Plný se stane až druhý bucket: do něj se nezapíše nic.
+        code, client = self.run_command("restore-objects", bucket_empty=[True, True, True, True, False])
+        self.assertEqual(code, 1)
+        self.assertLessEqual(client.upload_file.call_count, 1)
 
     def test_empty_target_passes_and_uploads(self):
         self.assertEqual(self.run_command("restore-check")[0], 0)
