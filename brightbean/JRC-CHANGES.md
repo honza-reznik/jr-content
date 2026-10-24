@@ -363,3 +363,19 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
 - `templates/media_library/asset_edit.html`: Cropper s `checkCrossOrigin: false`. Jinak by přidal
   k podepsané adrese `?timestamp=` a S3 by obrázek odmítl (403). Ořez dělá server podle `getData()`.
 - Testy: `apps/jrc_storage/tests/` (podpis pro veřejnou adresu, kopie médií, CORS, nastavení a CSP).
+
+## 2026-10-24 · F4-B03
+
+- Karta Script porovnává dvě uložené verze; výchozí jsou předposlední a poslední.
+  U obou uvádí autora a čas uložení. Výběr zůstává zachovaný při pravidelném obnovení.
+  Porovnání používá stejná oprávnění jako čtení scénáře a nepřijímá koncept ani cizí dokument.
+- `apps/jrc_texts/editor/diff.mjs`: převzatý prototyp porovnání bloků a slov, včetně
+  formátování, zaškrtnutí úkolu a změny počátku číslovaného seznamu. Výstup escapuje text
+  i atributy; odkazy povoluje pouze http(s) a mailto. Přidané části jsou zelené,
+  smazané červené a přeškrtnuté; panel obsahuje legendu a funguje i na mobilu.
+- Přesně uzamčený `diff@9.0.0` se instaluje stávajícím `npm ci --ignore-scripts`
+  pouze při sestavení obrazu. Porovnání má limit 250 000 B pro oba dokumenty dohromady
+  a společný časový rozpočet 1 s; příliš složité změny zobrazí vysvětlení.
+- Node regrese běží přes pytest v obrazu aplikace; HTTP testy ověřují volbu verzí,
+  metadata, oprávnění a velikost. Snímky porovnání při 1440 a 390 px jsou
+  `ops/screenshoty/F4-B03/compare-1440.png` a `compare-390.png`.
