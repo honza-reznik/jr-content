@@ -145,12 +145,17 @@ git check-ignore -q "backups/$src/$latest/env.backup" || fail 'backups/ není v 
 printf 'OK práva 700/600, backups/ mimo git\n'
 
 step "Obnova do prázdného projektu $dst"
+# F2-B09a: první obnova prochází cestou obnovy do hlavního projektu (JRC_TEST_MAIN_PROJECT = náš cíl, přepínač yes-empty),
+# takže se skutečným Dockerem ověří kontrola "žádný kontejner projektu". Skutečný jrc se nikdy nevolá.
+restore_main_mode() {
+    ( export JRC_TEST_MAIN_PROJECT="$dst" JRC_RESTORE_MAIN=yes-empty; restore )
+}
 restore() {
     make --no-print-directory JRC_PROJECT="$dst" JRC_APP_PORT="$dst_app" JRC_S3_PORT="$dst_s3" \
         JRC_POSTGRES_PORT="$dst_pg" JRC_BB_PORT="$dst_bb" restore BACKUP="backups/$src/$latest"
 }
 dst_started=1
-if restore; then :; else
+if restore_main_mode; then :; else
     : > "$run_dir/docker-failed"
     exit 1
 fi
@@ -158,6 +163,12 @@ step 'Druhá obnova do téhož (už neprázdného) projektu se musí odmítnout'
 if output=$(restore 2>&1); then fail 'Obnova do neprázdného projektu proběhla.'; fi
 printf '%s' "$output" | grep -q 'už obsahuje data' || { printf '%s\n' "$output" | tail -5 >&2; fail 'Odmítnutí neprázdného cíle má jiný důvod.'; }
 printf 'OK odmítnuto: cíl už obsahuje data\n'
+# Cesta "hlavní projekt" odmítne běžící projekt ještě před jakoukoli kontrolou svazků.
+if output=$(JRC_TEST_MAIN_PROJECT="$dst" JRC_RESTORE_MAIN=yes-empty JRC_PROJECT="$dst" sh scripts/backup/backup.sh restore-guard "backups/$src/$latest" 2>&1); then
+    fail 'Obnova do běžícího "hlavního" projektu proběhla.'
+fi
+printf '%s' "$output" | grep -q 'má kontejnery' || { printf '%s\n' "$output" | tail -5 >&2; fail 'Odmítnutí běžícího projektu má jiný důvod.'; }
+printf 'OK odmítnuto: projekt s kontejnery (cesta pro hlavní projekt)\n'
 # I odmítnuté make restore sestaví náš vývojový obraz; evidujeme ID až po posledním sestavení.
 record_images "$dst"
 

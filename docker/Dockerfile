@@ -16,6 +16,21 @@ RUN /opt/jrc-tools/node_modules/.bin/playwright install --with-deps chromium \
 # Playwright MCP pro vizuální testery (F0-B04): prohlížeč běží jen tady v kontejneru.
 RUN npm install --prefix /opt/jrc-mcp --no-audit --no-fund @playwright/mcp@0.0.83 \
     && rm -rf /root/.npm
+# F2-B09a: klient PostgreSQL 18 (shodný se serverem 18) z oficiálního repozitáře PGDG. Klíč se ověří pevným otiskem
+# ještě před přidáním repozitáře (B97B 0AFC AA1A 47F0 44F2 44A0 7FCC 7D46 ACCC 4CF8) a balíčky ověřuje apt podpisem.
+# Vrstva je až za těžkými vrstvami (Chromium), aby se ty nestahovaly znovu; klient 15 z Debianu se odstraní.
+RUN set -eu; \
+    apt-get update && apt-get install -y --no-install-recommends curl gnupg; \
+    curl -fsSL --retry 3 -o /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc; \
+    fingerprint=$(gpg --show-keys --with-colons /tmp/pgdg.asc | awk -F: '$1 == "fpr" {print $10; exit}'); \
+    [ "$fingerprint" = B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8 ] || { echo "Neplatný otisk klíče PGDG: $fingerprint" >&2; exit 1; }; \
+    gpg --dearmor < /tmp/pgdg.asc > /usr/share/keyrings/pgdg.gpg; rm /tmp/pgdg.asc; \
+    echo 'deb [signed-by=/usr/share/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main' > /etc/apt/sources.list.d/pgdg.list; \
+    apt-get update; \
+    apt-get purge -y postgresql-client postgresql-client-15; \
+    apt-get install -y --no-install-recommends postgresql-client-18; \
+    psql --version | grep -q 'psql (PostgreSQL) 18\.'; \
+    rm -rf /var/lib/apt/lists/*
 COPY jrc-playwright-mcp /usr/local/bin/jrc-playwright-mcp
 WORKDIR /workspace
 CMD ["sleep", "infinity"]

@@ -1,5 +1,6 @@
 """Regrese nálezů review; falešný Docker zde nikdy neovládá stroj."""
 import io
+import re
 import json
 import os
 import shutil
@@ -462,10 +463,27 @@ if target == 'restore':
             'restore test-backup:\n\t@echo CHANGED > existing-project/data; exit 91\n')
         result = self.shell('sh scripts/backup/test-guards.sh')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(result.stdout.count('OK pojistka:'), 13)
+        self.assertEqual(result.stdout.count('OK pojistka:'), 34)
         self.assertNotIn('compose ', self.calls())
         self.assertNotIn('build ', self.calls())
+        # F2-B09a: ani náhodou se nesmí objevit skutečný hlavní projekt a jeho svazky.
+        for line in self.calls().splitlines():
+            self.assertNotRegex(line, r'--project-name jrc( |$)')
+            self.assertNotRegex(line, r'(src=|\b)jrc-(postgres|s3|redis)-data|jrc-bb-media')
         self.assertEqual((sentinel / 'data').read_text(), 'existující vlastní projekt: beze změny')
+
+    def test_f2b09a_test_scripts_never_name_real_main_project_resources(self):
+        # Testovací skripty nesmí obsahovat příkazy na skutečný jrc ani jeho svazky (jména skládáme, aby je nenašel ani tento test).
+        main = 'jrc'
+        forbidden = [re.compile(r'--project-name ' + main + r'(\s|"|$)'),
+                     re.compile(r'(?<![\w-])' + main + r'-(postgres|s3|redis)-data'),
+                     re.compile(r'(?<![\w-])' + main + r'-bb-media')]
+        for name in ('test-guards.sh', 'test-lib.sh', 'test-backup.sh'):
+            for number, line in enumerate((SCRIPTS / name).read_text().splitlines(), 1):
+                if line.lstrip().startswith('#'):
+                    continue
+                for pattern in forbidden:
+                    self.assertIsNone(pattern.search(line), f'{name}:{number}: {line}')
 
     def test_4_proxy_project_port_and_loopback_required(self):
         self.docker('case "$*" in "compose "*) echo proxy-id;; *Config.Labels*) echo "$MOCK_PROJECT";; *HostPort*) echo "$MOCK_PORT";; *HostIp*) echo "$MOCK_IP";; esac')

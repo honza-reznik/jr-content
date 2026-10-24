@@ -72,6 +72,25 @@ class ProjectGuards(Base):
             jb.check_restore_project("jrc")
         self.assertIn("hlavního projektu jrc", str(raised.exception))
 
+    def test_restore_main_only_with_explicit_allowance(self):
+        # Souhlas předává jen backup.sh po JRC_RESTORE_MAIN=yes-empty; bez něj je jrc vždy odmítnut.
+        self.assertEqual(jb.check_restore_project("jrc", allow_main=True), "jrc")
+        for falsy in (False, None, 0, ""):
+            with self.assertRaises(jb.BackupError, msg=repr(falsy)):
+                jb.check_restore_project("jrc", allow_main=falsy)
+
+    def test_allowance_does_not_widen_other_names(self):
+        for bad in ("", "jrcx", "JRC", "jrc-", "jrc ", "jrc;x", None):
+            with self.assertRaises(jb.BackupError, msg=repr(bad)):
+                jb.check_restore_project(bad, allow_main=True)
+
+    def test_allow_main_is_off_by_default_on_all_restore_commands(self):
+        parser = jb.build_parser()
+        for command in ("precheck", "restore-check", "restore-objects"):
+            base = [command, "--project", "jrc", "--backup", "/backup"]
+            self.assertFalse(parser.parse_args(base).allow_main, command)
+            self.assertTrue(parser.parse_args(base + ["--allow-main"]).allow_main, command)
+
     def test_restore_accepts_only_verification_projects(self):
         self.assertEqual(jb.check_restore_project("jrc-f2b09r"), "jrc-f2b09r")
         for bad in ("", "jrcx", "JRC-x", "jrc-", "jrc_x", "jrc-x y", "jrc-x;rm", "../jrc", "jrc-X", None):

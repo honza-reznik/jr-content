@@ -3,11 +3,16 @@
 # Každý běh má vlastní jedinečný projekt a svazek; uklízí se jen po úspěšném dokončení.
 set -eu
 base=${JRC_PROJECT:-jrc}
+# Test se nikdy nesmí dostat k hlavnímu projektu: souhlas a náhradní jméno z okolí zahodíme
+# a "hlavní" projekt s přepínačem je výhradně náš testovací (JRC_TEST_MAIN_PROJECT).
+unset JRC_RESTORE_MAIN JRC_TEST_MAIN_PROJECT
 . scripts/backup/test-lib.sh
 new_run
 export JRC_BACKUP_DOCKER_FAILURE_FILE="$run_dir/docker-failed"
 guard_project="jrc-${run_id}-guard"
+test_main="jrc-${run_id}-main"
 require_unused_project "$guard_project"
+require_unused_project "$test_main"
 [ ! -L backups ] || fail 'backups nesmí být odkaz.'
 mkdir -p backups
 fixture_root="backups/$guard_project"
@@ -51,11 +56,12 @@ expect_refused() {  # popis, očekávaný text, příkaz...
 
 # I odmítané volání musí přebít projekt a porty z MAKEFLAGS ještě před čtením Makefile.
 guard_make() {
-    make --no-print-directory JRC_PROJECT=jrc JRC_APP_PORT="$(env_port JRC_APP_PORT)" \
+    make --no-print-directory JRC_PROJECT=jrc JRC_RESTORE_MAIN= JRC_APP_PORT="$(env_port JRC_APP_PORT)" \
         JRC_S3_PORT="$(env_port JRC_S3_PORT)" JRC_POSTGRES_PORT="$(env_port JRC_POSTGRES_PORT)" \
         JRC_BB_PORT="$(env_port JRC_BB_PORT)" "$@"
 }
 expect_refused 'make restore pro projekt jrc' 'zakázáno' guard_make restore BACKUP="$fixture"
+expect_refused 'make restore pro projekt jrc s chybným přepínačem' 'zakázáno' guard_make restore JRC_RESTORE_MAIN=yes BACKUP="$fixture"
 expect_refused 'make test-backup pro projekt jrc' 'zakázáno' guard_make test-backup
 expect_refused 'restore-guard pro projekt jrc' 'hlavního projektu jrc' env JRC_PROJECT=jrc sh scripts/backup/backup.sh restore-guard "$fixture"
 expect_refused 'restore-precheck pro projekt jrc' 'hlavního projektu jrc' env JRC_PROJECT=jrc sh scripts/backup/backup.sh restore-precheck "$fixture"
@@ -80,4 +86,84 @@ expect_refused 'neprázdný svazek cíle' 'už obsahuje data' env JRC_PROJECT=$g
 checked_docker run --rm --pull never --network none --user 0:0 --mount "type=volume,src=$guard_volume,dst=/v" "$guard_image" sh -c 'rm /v/neco; echo /x > /v/.jrc-working-dir'
 env JRC_PROJECT="$guard_project" sh scripts/backup/backup.sh restore-volume-check
 printf 'OK pojistka: svazek jen s .jrc-working-dir je prázdný, kontrola nic nespouští ani nezapisuje\n'
+
+# --- F2-B09a: obnova do hlavního projektu po havárii. Skutečný jrc se nevolá: za "hlavní" slouží $test_main
+# (JRC_TEST_MAIN_PROJECT přidá chráněné jméno, `jrc` zůstává chráněný vždy). ---
+main_sh() { env JRC_TEST_MAIN_PROJECT="$test_main" JRC_PROJECT="$test_main" "$@"; }
+for operation in restore-guard restore-volume-check restore-precheck restore-data; do
+    expect_refused "hlavní projekt bez přepínače ($operation)" 'hlavního projektu jrc' \
+        main_sh sh scripts/backup/backup.sh "$operation" "$fixture"
+    expect_refused "hlavní projekt se špatným přepínačem ($operation)" 'hlavního projektu jrc' \
+        main_sh JRC_RESTORE_MAIN=yes sh scripts/backup/backup.sh "$operation" "$fixture"
+done
+expect_refused 'restore-finish pro hlavní projekt bez přepínače' 'hlavního projektu jrc' main_sh sh scripts/backup/backup.sh restore-finish
+expect_refused 'neplatné JRC_TEST_MAIN_PROJECT' 'Neplatné' env JRC_TEST_MAIN_PROJECT=jrc JRC_PROJECT="$guard_project" sh scripts/backup/backup.sh restore-guard "$fixture"
+# Podvržený Docker (žádné skutečné volání Dockeru): výpisy kontejnerů a svazků hlavního projektu jsou vymyšlené.
+fake_bin="$run_dir/fake-bin"
+mkdir "$fake_bin"
+cat > "$fake_bin/docker" <<'FAKE'
+#!/bin/sh
+printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+case "$1 $2" in
+    "ps -a") [ "$FAKE_DOCKER_FAIL" = 1 ] && exit 1; printf '%s' "$FAKE_DOCKER_CONTAINERS"; exit 0 ;;
+    "volume ls") printf '%s' "$FAKE_DOCKER_VOLUMES"; exit 0 ;;
+    "image inspect") exit 0 ;;
+    "run --rm") printf '%s' "$FAKE_DOCKER_CONTENT"; exit 0 ;;
+esac
+exit 99
+FAKE
+chmod 700 "$fake_bin/docker"
+FAKE_DOCKER_LOG="$run_dir/fake-docker.log"
+: > "$FAKE_DOCKER_LOG"
+fake_containers=
+fake_fail=0
+fake_volumes=
+fake_content=
+fake_main() {
+    env -u JRC_BACKUP_DOCKER_FAILURE_FILE PATH="$fake_bin:$PATH" FAKE_DOCKER_LOG="$FAKE_DOCKER_LOG" \
+        DOCKER_HOST=unix:///nonexistent/jrc-test-no-docker.sock \
+        FAKE_DOCKER_CONTAINERS="$fake_containers" FAKE_DOCKER_FAIL="$fake_fail" \
+        FAKE_DOCKER_VOLUMES="$fake_volumes" FAKE_DOCKER_CONTENT="$fake_content" \
+        JRC_TEST_MAIN_PROJECT="$test_main" JRC_PROJECT="$test_main" JRC_RESTORE_MAIN=yes-empty "$@"
+}
+fake_containers="$test_main-dev"
+expect_refused 'hlavní projekt s běžícím kontejnerem' 'má kontejnery' fake_main sh scripts/backup/backup.sh restore-guard "$fixture"
+expect_refused 'hlavní projekt s kontejnerem (restore-precheck)' 'má kontejnery' fake_main sh scripts/backup/backup.sh restore-precheck "$fixture"
+expect_refused 'hlavní projekt s kontejnerem (restore-data)' 'má kontejnery' fake_main sh scripts/backup/backup.sh restore-data "$fixture"
+fake_containers=; fake_fail=1
+expect_refused 'selhání Dockeru při zjišťování kontejnerů hlavního projektu' 'Nelze zjistit kontejnery' \
+    fake_main sh scripts/backup/backup.sh restore-guard "$fixture"
+fake_fail=0
+# Totéž se skutečným jménem hlavního projektu: Docker je podvržený a navíc DOCKER_HOST ukazuje na neexistující soket,
+# takže ani při chybě v PATH by se k Dockeru nic nedostalo.
+fake_containers="x-dev"
+expect_refused 'jrc s přepínačem a s kontejnerem je odmítnut až kontrolou kontejnerů' 'má kontejnery' \
+    fake_main env -u JRC_TEST_MAIN_PROJECT JRC_PROJECT=jrc sh scripts/backup/backup.sh restore-guard "$fixture"
+fake_containers=
+# Neprázdný svazek: odmítnuto i s přepínačem a bez rady na mazání.
+fake_volumes="$test_main-s3-data"; fake_content=neco
+expect_refused 'hlavní projekt s neprázdným svazkem i s přepínačem (restore-precheck)' 'už obsahuje data' \
+    fake_main sh scripts/backup/backup.sh restore-precheck "$fixture"
+expect_refused 'hlavní projekt s neprázdným svazkem i s přepínačem (restore-volume-check)' 'nikdy nemaže' \
+    fake_main sh scripts/backup/backup.sh restore-volume-check
+if fake_main sh scripts/backup/backup.sh restore-volume-check 2>&1 | grep -q 'down --volumes'; then
+    fail 'U hlavního projektu se nesmí radit down --volumes'
+fi
+printf 'OK pojistka: u hlavního projektu se nikdy neradí mazání svazků\n'
+# Přepínač, žádný kontejner, svazky neexistují nebo jsou prázdné: pojistky projdou (nic se nespouští).
+fake_main sh scripts/backup/backup.sh restore-guard "$fixture"
+fake_volumes=; fake_content=
+fake_main sh scripts/backup/backup.sh restore-volume-check
+fake_volumes=$(printf '%s\n%s\n' "$test_main-s3-data" "$test_main-postgres-data")
+fake_main sh scripts/backup/backup.sh restore-volume-check
+printf 'OK pojistka: hlavní projekt bez kontejnerů s neexistujícími či prázdnými svazky projde pojistkami\n'
+# Pojistky smějí zavolat jen výpisy a čtení; žádné up, rm, volume rm, compose.
+[ -s "$FAKE_DOCKER_LOG" ] || fail 'Podvržený Docker nebyl zavolán'
+if grep -Ev '^(ps -a |volume ls|image inspect |run --rm --pull never --network none )' "$FAKE_DOCKER_LOG" >/dev/null; then
+    grep -Ev '^(ps -a |volume ls|image inspect |run --rm --pull never --network none )' "$FAKE_DOCKER_LOG" >&2 || true
+    fail 'Pojistka zavolala Docker k něčemu jinému než k čtení.'
+fi
+printf 'OK pojistka: pojistky obnovy hlavního projektu jen čtou\n'
+rm "$fake_bin/docker" "$FAKE_DOCKER_LOG"
+rmdir "$fake_bin"
 echo 'Všechny pojistky obnovy fungují.'

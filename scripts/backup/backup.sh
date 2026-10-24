@@ -30,6 +30,19 @@ case "$project" in
 esac
 printf '%s' "$project" | grep -Eqx 'jrc(-[a-z0-9-]+)?' || die "Neplatný název projektu: $project"
 
+# Hlavní projekt je `jrc`. JRC_TEST_MAIN_PROJECT smí jen přidat DALŠÍ chráněné jméno (test pojistek bez
+# sahání na skutečný jrc); `jrc` samotný zůstává chráněný vždy.
+test_main=${JRC_TEST_MAIN_PROJECT:-}
+if [ -n "$test_main" ]; then
+    printf '%s' "$test_main" | grep -Eqx 'jrc-[a-z0-9-]+' || die "Neplatné JRC_TEST_MAIN_PROJECT: $test_main"
+fi
+is_main() {
+    [ "$project" = jrc ] || { [ -n "$test_main" ] && [ "$project" = "$test_main" ]; }
+}
+# Příznak pro nástroj v kontejneru: obnova do hlavního projektu byla povolena (a zkontrolována) tady.
+allow_main_flag=
+if is_main && [ "${JRC_RESTORE_MAIN:-}" = yes-empty ]; then allow_main_flag=--allow-main; fi
+
 compose() {
     JRC_PROJECT="$project" docker compose --project-name "$project" --file docker-compose.yml --env-file .env "$@"
 }
@@ -72,6 +85,11 @@ run_tool_isolated() {
         --volume "$workdir:/workspace" --volume "$abs:/backup:ro" --workdir /workspace \
         "$dev_image" python3 "$tool" "$@"
 }
+# Kontrola zálohy bez sítě; u hlavního projektu nástroj dostane souhlas jen z tohoto skriptu.
+run_precheck() {
+    # shellcheck disable=SC2086
+    run_tool_isolated "$1" precheck --project "$project" --backup /backup $allow_main_flag
+}
 
 volume_exists() {
     volumes=$(docker volume ls --format '{{.Name}}') || { printf 'CHYBA: Nelze zjistit svazky Dockeru.\n' >&2; return 2; }
@@ -91,18 +109,42 @@ require_empty_volume() {
         sh -c 'if [ -L /v/.jrc-working-dir ] || { [ -e /v/.jrc-working-dir ] && [ ! -f /v/.jrc-working-dir ]; }; then printf invalid-marker; else find /v -mindepth 1 -maxdepth 1 -not -name .jrc-working-dir -print -quit; fi') || die "Nelze zkontrolovat svazek $volume."
     if [ -n "$content" ]; then
         printf 'CHYBA: Svazek %s už obsahuje data. Obnova se provádí jen do PRÁZDNÉHO projektu.\n' "$volume" >&2
-        printf 'Chceš-li ověřovací projekt %s začít znovu (smaže JEN jeho data):\n' "$project" >&2
-        printf '  JRC_PROJECT=%s docker compose --project-name %s --file docker-compose.yml --env-file .env down --volumes\n' "$project" "$project" >&2
+        if is_main; then
+            printf 'Hlavní projekt %s se nikdy nemaže ani nepřepisuje. Nic se neobnovilo; data v něm zůstala beze změny.\n' "$project" >&2
+        else
+            printf 'Chceš-li ověřovací projekt %s začít znovu (smaže JEN jeho data):\n' "$project" >&2
+            printf '  JRC_PROJECT=%s docker compose --project-name %s --file docker-compose.yml --env-file .env down --volumes\n' "$project" "$project" >&2
+        fi
+        exit 1
+    fi
+}
+
+# Obnova do hlavního projektu (jen po skutečné havárii): žádný kontejner projektu, ani zastavený.
+# Selhání Dockeru znamená odmítnutí. Prázdnotu svazků kontroluje require_empty_volume.
+require_main_idle() {
+    containers=$(docker ps -a --filter "label=com.docker.compose.project=$project" --format '{{.Names}}') \
+        || die "Nelze zjistit kontejnery projektu $project; obnova se nekoná."
+    if [ -n "$containers" ]; then
+        printf 'CHYBA: Projekt %s má kontejnery (běžící nebo zastavené): %s\n' "$project" "$(printf '%s' "$containers" | tr '\n' ' ')" >&2
+        printf 'Obnova do hlavního projektu je možná jen když nic z něj neexistuje. Nic se nezměnilo.\n' >&2
         exit 1
     fi
 }
 
 restore_guard() {
+    if is_main; then
+        [ "${JRC_RESTORE_MAIN:-}" = yes-empty ] || die 'Obnova do hlavního projektu jrc je zakázaná (pojistka proti přepsání hlavních dat). Použij prázdný ověřovací projekt, např. JRC_PROJECT=jrc-obnova. Po skutečné havárii, kdy jrc nemá žádná data, viz návod (JRC_RESTORE_MAIN=yes-empty).'
+        return 0
+    fi
     case "$project" in
-        jrc) die 'Obnova do hlavního projektu jrc je zakázaná (pojistka proti přepsání hlavních dat). Použij prázdný ověřovací projekt, např. JRC_PROJECT=jrc-obnova.' ;;
         jrc-?*) ;;
         *) die 'Cílem obnovy musí být ověřovací projekt jrc-<název>.' ;;
     esac
+}
+# Pojistka před čímkoli, co obnovu začíná: jméno/souhlas a u hlavního projektu navíc "nic neběží ani neexistuje".
+restore_guard_idle() {
+    restore_guard
+    if is_main; then require_main_idle; fi
 }
 
 case "${1:?Chybí operace}" in
@@ -176,32 +218,32 @@ case "${1:?Chybí operace}" in
         run_tool_isolated "$abs" verify --backup /backup
         ;;
     restore-guard)
-        restore_guard
+        restore_guard_idle
         backup_path "${2:-}" >/dev/null
         ;;
     restore-volume-check)
         # Samostatná kontrola bez zápisu, také pro test prázdného svazku bez startu služeb.
-        restore_guard
+        restore_guard_idle
         need_image
         for name in postgres-data s3-data bb-media redis-data; do
             require_empty_volume "$project-$name"
         done
         ;;
     restore-precheck)
-        restore_guard
+        restore_guard_idle
         need_image
         abs=$(backup_path "${2:-}")
         for name in postgres-data s3-data bb-media redis-data; do
             require_empty_volume "$project-$name"
         done
-        run_tool_isolated "$abs" precheck --project "$project" --backup /backup
+        run_precheck "$abs"
         ;;
     restore-data)
-        restore_guard
+        restore_guard_idle
         need_image
         abs=$(backup_path "${2:-}")
         # Úplná kontrola zálohy znovu těsně před zápisem (nic se zatím nespustilo).
-        run_tool_isolated "$abs" precheck --project "$project" --backup /backup
+        run_precheck "$abs"
         for name in postgres-data s3-data bb-media redis-data; do
             require_empty_volume "$project-$name"
         done
@@ -225,7 +267,7 @@ case "${1:?Chybí operace}" in
         compose up --detach --build --wait --wait-timeout 120 jrc-postgres jrc-s3 jrc-dev
         sh scripts/workspace.sh check
         compose run --rm --no-deps -T --volume "$abs:/backup:ro" jrc-dev \
-            python3 "$tool" restore-check --project "$project" --backup /backup
+            python3 "$tool" restore-check --project "$project" --backup /backup $allow_main_flag
         # pg_restore stejné hlavní verze jako server (v kontejneru PostgreSQL); jedna transakce, při chybě se nic nevloží.
         for database in brightbean freeframe; do
             printf 'Obnova databáze %s\n' "$database"
@@ -234,7 +276,7 @@ case "${1:?Chybí operace}" in
                 sh "$database" < "$abs/postgres/$database.dump"
         done
         compose run --rm --no-deps -T --volume "$abs:/backup:ro" jrc-dev \
-            python3 "$tool" restore-objects --project "$project" --backup /backup
+            python3 "$tool" restore-objects --project "$project" --backup /backup $allow_main_flag
         ;;
     restore-finish)
         restore_guard
