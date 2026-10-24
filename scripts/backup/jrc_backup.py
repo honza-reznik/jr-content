@@ -14,9 +14,11 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
+import posixpath
 from pathlib import Path
 
-FORMAT = "jrc-backup/1"
+FORMAT = "jrc-backup/2"
 MANIFEST = "manifest.json"
 MAIN_PROJECT = "jrc"
 PROJECT_RE = re.compile(r"jrc(-[a-z0-9-]+)?")
@@ -82,92 +84,269 @@ def _safe_relative(name):
     return path
 
 
-def load_manifest(directory):
-    directory = Path(directory)
-    if directory.is_symlink() or not directory.is_dir():
-        raise BackupError(f"{directory} není adresář zálohy.")
-    manifest_path = directory / MANIFEST
-    if manifest_path.is_symlink() or not manifest_path.is_file():
-        raise BackupError(f"V {directory} chybí {MANIFEST}.")
+def safe_path(path, root=None):
+    """Lexikální ukotvení a zákaz odkazů ve všech komponentách, i u dosud neexistující cesty."""
+    path = Path(path)
+    if ".." in path.parts:
+        raise BackupError("Cesta nesmí obsahovat ..")
+    path = Path(os.path.abspath(path))
+    if root is not None:
+        root = safe_path(root)
+        if not path.is_relative_to(root):
+            raise BackupError(f"Cesta neleží v povoleném kořeni {root}.")
+    for component in [*reversed(path.parents), path]:
+        if component.is_symlink():
+            raise BackupError(f"Symbolický odkaz není povolen: {component}")
+    return path
+
+
+def backup_root(workspace, project):
+    workspace = safe_path(workspace)
+    return safe_path(workspace / "backups" / check_project(project), workspace)
+
+
+def read_json(path):
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        return json.loads(safe_path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
-        raise BackupError(f"Manifest {manifest_path} nelze přečíst: {error}") from None
+        raise BackupError(f"Neplatný JSON: {path}: {error}") from None
+
+
+def load_manifest(directory, *, pending=False):
+    directory = safe_path(directory)
+    if not directory.is_dir():
+        raise BackupError(f"{directory} není adresář zálohy.")
+    manifest = read_json(directory / MANIFEST)
     if not isinstance(manifest, dict) or manifest.get("format") != FORMAT:
         raise BackupError("Manifest má neznámý formát.")
-    if manifest.get("complete") is not True:
+    if manifest.get("complete") is not (False if pending else True):
         raise BackupError("Záloha není dokončená (manifest nemá complete=true).")
     return manifest
 
 
-def validate_backup(directory, *, hashes=True):
-    """Ověří manifest a soubory zálohy; vrací manifest, jinak BackupError.
+def file_info(info):
+    if (not isinstance(info, dict) or type(info.get("size")) is not int or info["size"] < 0
+            or not isinstance(info.get("sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", info["sha256"])):
+        raise BackupError("Neplatná velikost nebo SHA-256 v manifestu/indexu.")
 
-    hashes=False kontroluje jen existenci a velikost (rychlá varianta, např. pro rotaci).
-    Objekty S3 se kontrolují zvlášť (verify_objects), protože jich může být mnoho.
-    """
-    directory = Path(directory)
-    manifest = load_manifest(directory)
+
+def validate_backup(directory, *, pending=False):
+    """Jediná úplná kontrola pro dokončení, rotaci i obnovu; součty se nikdy nevynechávají."""
+    directory = safe_path(directory)
+    manifest = load_manifest(directory, pending=pending)
+    check_project(manifest.get("project"))
+    if not isinstance(manifest.get("stamp"), str) or not STAMP_RE.fullmatch(manifest["stamp"]):
+        raise BackupError("Manifest nemá platné časové razítko.")
+    if (not isinstance(manifest.get("created_at"), str) or not manifest["created_at"]
+            or not isinstance(manifest.get("code"), dict)
+            or not isinstance(manifest["code"].get("git_rev"), str)
+            or type(manifest["code"].get("dirty")) is not bool):
+        raise BackupError("Manifest nemá údaje o vytvoření a kódu.")
+    postgres = manifest.get("postgres")
+    if (not isinstance(postgres, dict) or not isinstance(postgres.get("server_version"), str)
+            or not isinstance(postgres.get("databases"), dict) or set(postgres["databases"]) != set(DATABASES)):
+        raise BackupError("Manifest musí obsahovat obě databáze.")
+    buckets = manifest.get("buckets")
+    if not isinstance(buckets, dict) or set(buckets) != {"jrc-app", "jrc-video", "jrc-local"}:
+        raise BackupError("Manifest musí obsahovat všechny tři buckety.")
+    if manifest.get("vanished_during_backup") != {}:
+        raise BackupError("Záloha obsahuje chybějící objekty S3.")
+    media = manifest.get("bb_media")
+    if (not isinstance(media, dict) or type(media.get("included")) is not bool
+            or type(media.get("bytes")) is not int or media["bytes"] < 0
+            or type(manifest.get("env_included")) is not bool):
+        raise BackupError("Manifest nemá platné údaje o médiích/prostředí.")
+    expected = {f"postgres/{db}.{suffix}" for db in DATABASES for suffix in ("dump", "references.json")}
+    expected.update(f"s3/{bucket}/index.json" for bucket in buckets)
+    if media["included"]:
+        expected.add("bb-media.tar")
+    if manifest["env_included"]:
+        expected.add("env.backup")
     files = manifest.get("files")
-    if not isinstance(files, dict) or not files:
-        raise BackupError("Manifest neobsahuje seznam souborů.")
+    if not isinstance(files, dict) or set(files) != expected:
+        raise BackupError("Seznam souborů neodpovídá povinným částem zálohy.")
     for name, info in files.items():
-        relative = _safe_relative(name)
-        target = directory.joinpath(relative)
-        if target.is_symlink() or not target.is_file():
-            raise BackupError(f"V záloze chybí soubor {name}.")
-        if target.stat().st_size != info.get("size"):
-            raise BackupError(f"Soubor {name} má jinou velikost, než uvádí manifest.")
-        if hashes:
-            digest, _ = sha256_file(target)
-            if digest != info.get("sha256"):
-                raise BackupError(f"Kontrolní součet souboru {name} nesedí (poškozená záloha).")
+        file_info(info)
+        target = safe_path(directory / _safe_relative(name), directory)
+        if not target.is_file() or target.stat().st_size != info["size"]:
+            raise BackupError(f"V záloze chybí soubor {name} nebo má jinou velikost.")
+        digest, _ = sha256_file(target)
+        if digest != info["sha256"]:
+            raise BackupError(f"Kontrolní součet souboru {name} nesedí (poškozená záloha).")
+    for db in DATABASES:
+        size = files[f"postgres/{db}.dump"]["size"]
+        if size <= 0 or type(postgres["databases"][db]) is not int or postgres["databases"][db] != size:
+            raise BackupError("Velikost databáze nesouhlasí s výpisem.")
+    if media["bytes"] != (files["bb-media.tar"]["size"] if media["included"] else 0):
+        raise BackupError("Velikost médií nesouhlasí s archivem.")
+    # Odmítnout i odkazy v nadbytečných souborech; rotace by jinak mazala neověřený strom.
+    for path in directory.rglob("*"):
+        safe_path(path, directory)
+        if not path.is_dir() and not path.is_file():
+            raise BackupError("Záloha obsahuje zvláštní soubor.")
+    actual = {p.relative_to(directory).as_posix() for p in directory.rglob("*") if p.is_file()}
+    allowed = set(files) | {MANIFEST}
+    allowed.update(f"s3/{b}/objects/{e['file']}" for b in buckets for e in read_index(directory, b))
+    if pending:
+        allowed.add("state.json")
+    if actual != allowed:
+        raise BackupError("Obsah zálohy neodpovídá manifestu a indexům.")
+    verify_objects(directory, manifest, log=lambda *_: None)
+    verify_references(directory, manifest)
+    if media["included"]:
+        validate_media(directory / "bb-media.tar")
     return manifest
+
+
+def validate_media(path):
+    try:
+        with tarfile.open(path) as archive:
+            for member in archive:
+                if (member.name.startswith("/") or ".." in Path(member.name).parts
+                        or not (member.isfile() or member.isdir())):
+                    raise BackupError("Archiv médií obsahuje nebezpečnou cestu nebo odkaz.")
+    except tarfile.TarError as error:
+        raise BackupError(f"Poškozený archiv médií: {error}") from None
 
 
 def is_valid_backup(directory):
     try:
-        validate_backup(directory, hashes=False)
-    except BackupError:
+        validate_backup(directory)
+    except (BackupError, OSError):
         return False
     return True
 
 
 def read_index(directory, bucket):
-    path = Path(directory) / "s3" / bucket / "index.json"
-    return json.loads(path.read_text(encoding="utf-8"))
+    if bucket not in {"jrc-app", "jrc-video", "jrc-local"}:
+        raise BackupError("Neznámý bucket v indexu.")
+    entries = read_json(Path(directory) / "s3" / bucket / "index.json")
+    if not isinstance(entries, list):
+        raise BackupError("Index bucketu musí být seznam.")
+    keys, names = set(), set()
+    for entry in entries:
+        file_info(entry)
+        if (not isinstance(entry.get("key"), str) or not entry["key"] or entry["key"] in keys
+                or not isinstance(entry.get("file"), str) or not re.fullmatch(r"[0-9]{8}", entry["file"])
+                or entry["file"] in names):
+            raise BackupError("Neplatný nebo duplicitní klíč/soubor v indexu S3.")
+        if "Metadata" in entry and (not isinstance(entry["Metadata"], dict)
+                or any(not isinstance(k, str) or not isinstance(v, str) for k, v in entry["Metadata"].items())):
+            raise BackupError("Neplatná metadata S3.")
+        if any(field in entry and not isinstance(entry[field], str) for field in EXTRA_ARGS):
+            raise BackupError("Neplatné hlavičky S3.")
+        keys.add(entry["key"])
+        names.add(entry["file"])
+    return entries
 
 
 def verify_objects(directory, manifest, log=print):
-    """Přepočítá součty všech uložených objektů S3 a porovná je s indexy."""
-    directory = Path(directory)
+    directory = safe_path(directory)
     total = 0
-    for bucket in manifest.get("buckets", {}):
+    for bucket, declared in manifest["buckets"].items():
         entries = read_index(directory, bucket)
-        folder = directory / "s3" / bucket / "objects"
+        folder = safe_path(directory / "s3" / bucket / "objects", directory)
         expected = {entry["file"] for entry in entries}
-        present = {item.name for item in folder.iterdir()} if folder.is_dir() else set()
+        if not folder.is_dir():
+            raise BackupError(f"Bucket {bucket}: chybí adresář objektů.")
+        present = {item.name for item in folder.iterdir()}
         if present != expected:
             raise BackupError(f"Bucket {bucket}: soubory objektů nesedí s indexem.")
         for entry in entries:
-            digest, size = sha256_file(folder / entry["file"])
+            path = safe_path(folder / entry["file"], directory)
+            if not path.is_file():
+                raise BackupError("Objekt S3 není běžný soubor.")
+            digest, size = sha256_file(path)
             if digest != entry["sha256"] or size != entry["size"]:
                 raise BackupError(f"Bucket {bucket}: objekt {entry['key']!r} je poškozený.")
             total += 1
-        declared = manifest["buckets"][bucket]
-        if declared.get("objects") != len(entries):
-            raise BackupError(f"Bucket {bucket}: počet objektů nesedí s manifestem.")
+        if (not isinstance(declared, dict) or type(declared.get("objects")) is not int
+                or type(declared.get("bytes")) is not int or declared["objects"] != len(entries)
+                or declared["bytes"] != sum(e["size"] for e in entries)):
+            raise BackupError(f"Bucket {bucket}: počet nebo velikost objektů nesedí s manifestem.")
         log(f"  bucket {bucket}: {len(entries)} objektů, součty sedí")
     return total
 
 
-def rotate(project_root, keep, log=print):
+def verify_references(directory, manifest):
+    """Odkazy pocházejí ze stejného dumpu, ne z pozdějšího živého dotazu do DB."""
+    keys = {b: {e["key"] for e in read_index(directory, b)} for b in manifest["buckets"]}
+    for db in DATABASES:
+        checkpoint = read_json(Path(directory) / "postgres" / f"{db}.references.json")
+        if (not isinstance(checkpoint, dict) or set(checkpoint) != {"dump", "buckets"}
+                or checkpoint["dump"] != manifest["files"][f"postgres/{db}.dump"]):
+            raise BackupError("Výpis databáze se změnil po úplném ověření pg_restore.")
+        references = checkpoint["buckets"]
+        if not isinstance(references, dict) or set(references) != {"jrc-app" if db == "brightbean" else "jrc-video"}:
+            raise BackupError("Neplatný seznam odkazů databáze na S3.")
+        for bucket, names in references.items():
+            if not isinstance(names, list) or any(not isinstance(key, str) or not key for key in names):
+                raise BackupError("Neplatné odkazy databáze na S3.")
+            for key in names:
+                if key not in keys[bucket] and key.rstrip("/") + "/master.m3u8" not in keys[bucket]:
+                    raise BackupError(f"Databáze {db} odkazuje na chybějící objekt {bucket}/{key}.")
+    # HLS seznamy mohou odkazovat na další seznamy a segmenty; musí existovat všechny.
+    for entry in read_index(directory, "jrc-video"):
+        if not entry["key"].endswith(".m3u8"):
+            continue
+        playlist = Path(directory) / "s3/jrc-video/objects" / entry["file"]
+        for line in playlist.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            targets = re.findall(r'URI="([^"]+)"', line) if line.startswith("#") else ([line] if line else [])
+            for target in targets:
+                resolved = posixpath.normpath(posixpath.join(posixpath.dirname(entry["key"]), target))
+                if ":" in target or target.startswith("/") or resolved not in keys["jrc-video"]:
+                    raise BackupError(f"HLS odkazuje na chybějící segment: {target}")
+
+
+def cmd_references(args):
+    """Zpracuje COPY z pg_restore --data-only daného dumpu. Žádný dotaz do živé DB."""
+    directory = backup_root(args.workspace, args.project) / f"{args.stamp}.partial" / "postgres"
+    source = safe_path(directory / f"{args.database}.data.sql", directory)
+    references = set()
+    columns = None
+    seen_copy = False
+    with source.open(encoding="utf-8") as stream:
+        for line in stream:
+            match = re.match(r'COPY public\.([^ ]+) \((.+)\) FROM stdin;', line)
+            if match:
+                seen_copy = True
+                table = match[1].strip('"')
+                names = [name.strip(' "') for name in match[2].split(",")]
+                columns = [i for i, name in enumerate(names) if (
+                    (args.database == "brightbean" and name in {"file", "thumbnail", "avatar", "icon", "attachment"})
+                    or (args.database == "freeframe" and ("s3_key" in name or (table == "instance_branding" and name.endswith("_key")))))]
+                continue
+            if line.rstrip("\n") == "\\.":
+                columns = None
+            elif columns is not None:
+                values = line.rstrip("\n").split("\t")
+                for i in columns:
+                    value = values[i]
+                    if value and value != r"\N":
+                        value = re.sub(r"\\([0-7]{1,3}|.)", lambda m: chr(int(m[1], 8)) if m[1].isdigit()
+                                       else {"t": "\t", "n": "\n", "r": "\r", "b": "\b", "f": "\f", "v": "\v"}.get(m[1], m[1]), value)
+                        references.add(value)
+    if not seen_copy or columns is not None:
+        raise BackupError("Neúplný nebo neznámý výpis COPY; odkazy nelze bezpečně ověřit.")
+    bucket = "jrc-app" if args.database == "brightbean" else "jrc-video"
+    target = safe_path(directory / f"{args.database}.references.json", directory)
+    digest, size = sha256_file(safe_path(directory / f"{args.database}.dump", directory))
+    checkpoint = {"dump": {"size": size, "sha256": digest}, "buckets": {bucket: sorted(references)}}
+    target.write_text(json.dumps(checkpoint, ensure_ascii=False), encoding="utf-8")
+    source.unlink()
+
+
+def rotate(project_root, keep, log=print, *, workspace=None):
     """Ponechá `keep` nejnovějších platných záloh; maže jen platné adresy přímo v projektu."""
     keep = check_keep(keep)
-    root = Path(project_root)
+    root = safe_path(project_root)
     if root.is_symlink() or not root.is_dir():
         raise BackupError(f"{root} není adresář záloh projektu.")
-    resolved = root.resolve()
+    resolved = root
+    allowed = backup_root(workspace or Path.cwd(), root.name)
+    if root != allowed:
+        raise BackupError("Rotace je mimo povolený kořen.")
     if resolved.parent.name != "backups" or not PROJECT_RE.fullmatch(resolved.name):
         raise BackupError("Rotace smí pracovat jen v backups/<projekt>/.")
     candidates = []
@@ -219,7 +398,8 @@ def compare_env(current, saved):
 
 def install_env(saved_path, target, overrides):
     """Vytvoří .env ze zálohy (práva 600, porty z přepínačů); existující soubor nikdy nepřepíše."""
-    target = Path(target)
+    target = safe_path(target)
+    safe_path(saved_path)
     if target.exists():
         raise BackupError(".env už existuje; nepřepisuji ho.")
     lines = []
@@ -269,7 +449,7 @@ def bucket_credentials(env):
 
 def merged_env(workspace):
     env = {}
-    path = Path(workspace) / ".env"
+    path = safe_path(Path(workspace) / ".env", workspace)
     if path.is_file():
         env.update(load_env_file(path))
     env.update({k: v for k, v in os.environ.items() if v != ""})
@@ -368,17 +548,17 @@ def cmd_start(args):
     keep = check_keep(args.keep)
     if not STAMP_RE.fullmatch(args.stamp):
         raise BackupError("Neplatné časové razítko zálohy.")
-    workspace = Path(args.workspace)
+    workspace = safe_path(args.workspace)
     env = merged_env(workspace)
     credentials = bucket_credentials(env)
-    unknown = sorted(set(args.buckets.split()) - set(credentials)) if args.buckets else []
+    unknown = sorted(set(args.buckets.split()) ^ set(credentials))
     if unknown:
         raise BackupError(
             f"Garage obsahuje bucket(y), které záloha nezná: {', '.join(unknown)}. "
             "Nic by se nezálohovalo, proto zálohu zastavuji."
         )
-    root = workspace / "backups"
-    project_root = root / project
+    project_root = backup_root(workspace, project)
+    root = project_root.parent
     for folder in (root, project_root):
         folder.mkdir(mode=0o700, exist_ok=True)
         os.chmod(folder, 0o700)
@@ -408,39 +588,38 @@ def cmd_start(args):
 
 
 def cmd_copy_objects(args):
-    """Krok 2 (po výpisech databází): kopie všech bucketů Garage do zálohy."""
+    """Kopie bucketů před i po dumpech; první kopie zůstává zachována."""
     os.umask(0o077)
     project = check_project(args.project)
-    workspace = Path(args.workspace)
+    workspace = safe_path(args.workspace)
     env = merged_env(workspace)
-    partial = workspace / "backups" / project / f"{args.stamp}.partial"
-    state_path = partial / "state.json"
+    partial = safe_path(backup_root(workspace, project) / f"{args.stamp}.partial", workspace)
+    state_path = safe_path(partial / "state.json", partial)
     if not state_path.is_file():
         raise BackupError("Rozpracovaná záloha neexistuje.")
     state = json.loads(state_path.read_text(encoding="utf-8"))
-    for database in DATABASES:
-        dump = partial / "postgres" / f"{database}.dump"
-        if not dump.is_file() or dump.stat().st_size == 0:
-            raise BackupError(f"Chybí výpis databáze {database}; S3 se nekopíruje.")
     clients = {bucket: s3_client(env, bucket) for bucket in bucket_credentials(env)}
-    print("Záloha: soubory v úložišti S3 (po databázi)")
+    print("Záloha: soubory v úložišti S3")
     summary = {}
     vanished = {}
     for bucket, client in clients.items():
         folder = partial / "s3" / bucket
-        (folder / "objects").mkdir(mode=0o700, parents=True)
-        entries, missing = [], []
-        for number, item in enumerate(list_objects(client, bucket), start=1):
+        safe_path(folder, partial)
+        (folder / "objects").mkdir(mode=0o700, parents=True, exist_ok=True)
+        entries = read_index(partial, bucket) if (folder / "index.json").exists() else []
+        previous = {e["key"]: e for e in entries}
+        for item in list_objects(client, bucket):
             key = item["Key"]
-            name = f"{number:08d}"
+            name = f"{len(entries) + 1:08d}"
             try:
                 response = client.get_object(Bucket=bucket, Key=key)
             except client.exceptions.NoSuchKey:
-                missing.append(key)  # smazáno během zálohy; databáze je starší, viz omezení
-                continue
+                raise BackupError(f"Objekt {bucket}/{key} zmizel během zálohy; záloha zůstane neúplná.") from None
             digest = hashlib.sha256()
             size = 0
-            with open(folder / "objects" / name, "wb") as stream:
+            # Předchozí kopii zachováme i po smazání ve zdroji; přepsání stejného klíče odmítneme.
+            target = safe_path(folder / "objects" / name, partial)
+            with open(target, "xb") as stream:
                 for chunk in response["Body"].iter_chunks(CHUNK):
                     stream.write(chunk)
                     digest.update(chunk)
@@ -453,11 +632,14 @@ def cmd_copy_objects(args):
                     entry[field] = response[field]
             if response.get("Metadata"):
                 entry["Metadata"] = response["Metadata"]
-            entries.append(entry)
+            if key in previous:
+                target.unlink()
+                if any(entry.get(k) != previous[key].get(k) for k in ("size", "sha256", *EXTRA_ARGS, "Metadata")):
+                    raise BackupError(f"Objekt {bucket}/{key} se během zálohy změnil.")
+            else:
+                entries.append(entry)
         (folder / "index.json").write_text(json.dumps(entries, ensure_ascii=False, indent=1), encoding="utf-8")
         summary[bucket] = {"objects": len(entries), "bytes": sum(e["size"] for e in entries)}
-        if missing:
-            vanished[bucket] = missing
         print(f"  {bucket}: {len(entries)} objektů, {human(summary[bucket]['bytes'])}")
     state.update({"buckets": summary, "vanished": vanished})
     state_path.write_text(json.dumps(state, indent=1), encoding="utf-8")
@@ -468,32 +650,38 @@ def cmd_finish(args):
     os.umask(0o077)
     project = check_project(args.project)
     keep = check_keep(args.keep)
-    workspace = Path(args.workspace)
-    project_root = workspace / "backups" / project
-    partial = project_root / f"{args.stamp}.partial"
+    workspace = safe_path(args.workspace)
+    project_root = backup_root(workspace, project)
+    partial = safe_path(project_root / f"{args.stamp}.partial", workspace)
     if not partial.is_dir():
         raise BackupError("Rozpracovaná záloha neexistuje.")
-    state = json.loads((partial / "state.json").read_text(encoding="utf-8"))
+    state = read_json(partial / "state.json")
+    if state.get("vanished") != {}:
+        raise BackupError("Chybějící objekty: záloha se nedokončí a rotace se nespustí.")
     if state["project"] != project or state["stamp"] != args.stamp:
         raise BackupError("Rozpracovaná záloha patří jinému projektu.")
-    media = partial / "bb-media.tar"
+    for path in [partial, *partial.rglob("*")]:
+        safe_path(path, workspace)
+    media = safe_path(partial / "bb-media.tar", partial)
     if args.media == "present" and not media.is_file():
         raise BackupError("Chybí archiv svazku jrc-bb-media.")
     if args.media == "absent" and media.exists():
         raise BackupError("Archiv médií existuje, i když svazek nebyl nalezen.")
     env_included = False
     if not args.no_env:
-        source = workspace / ".env"
+        source = safe_path(workspace / ".env", workspace)
         if not source.is_file():
             raise BackupError("Chybí .env; bez něj by nešlo záložní data obnovit. (JRC_BACKUP_NO_ENV=1 jej vynechá.)")
-        shutil.copyfile(source, partial / "env.backup")
+        shutil.copyfile(source, safe_path(partial / "env.backup", partial))
         os.chmod(partial / "env.backup", 0o600)
         env_included = True
     files = {}
     # Zálohy obsahují tajemství i data: jen vlastník (adresáře 700, soubory 600).
-    for path in [partial, *partial.rglob("*")]:
-        if not path.is_symlink():
-            os.chmod(path, 0o700 if path.is_dir() else 0o600)
+    paths = [partial, *partial.rglob("*")]
+    for path in paths:
+        safe_path(path, workspace)
+    for path in paths:
+        os.chmod(path, 0o700 if path.is_dir() else 0o600)
     for path in sorted(partial.rglob("*")):
         relative = path.relative_to(partial).as_posix()
         if not path.is_file() or relative in (MANIFEST, "state.json") or relative.startswith("s3/") and "/objects/" in relative:
@@ -502,7 +690,7 @@ def cmd_finish(args):
         files[relative] = {"size": size, "sha256": digest}
     manifest = {
         "format": FORMAT,
-        "complete": True,
+        "complete": False,
         "project": project,
         "stamp": args.stamp,
         "created_at": utc_now(),
@@ -520,20 +708,22 @@ def cmd_finish(args):
         "files": files,
         "notes": "Redis (použité vstupenky) se nezálohuje. Postup obnovy: aplikace/provoz/zalohy.md.",
     }
-    temporary = partial / "manifest.json.tmp"
+    temporary = safe_path(partial / "manifest.json.tmp", partial)
+    temporary.write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.rename(temporary, partial / MANIFEST)
+    validate_backup(partial, pending=True)
+    manifest["complete"] = True
     temporary.write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
     os.rename(temporary, partial / MANIFEST)
     (partial / "state.json").unlink()
-    final = project_root / args.stamp
+    final = safe_path(project_root / args.stamp, workspace)
+    if final.exists():
+        raise BackupError("Cílová záloha už existuje.")
     os.rename(partial, final)
-    # Poslední pojistka: hotová záloha musí projít vlastní kontrolou (bez objektů, ty mají součty z čtení).
-    validate_backup(final)
     total_objects = sum(b["objects"] for b in manifest["buckets"].values())
     total_bytes = sum(f["size"] for f in files.values()) + sum(b["bytes"] for b in manifest["buckets"].values())
     print(f"Záloha hotová: {final.relative_to(workspace)} ({total_objects} objektů S3, celkem {human(total_bytes)})")
-    if manifest["vanished_during_backup"]:
-        print("POZOR: některé objekty zmizely během zálohy (smazány aplikací); viz manifest.", file=sys.stderr)
-    rotate(project_root, keep)
+    rotate(project_root, keep, workspace=workspace)
 
 
 def cmd_verify(args):
@@ -549,7 +739,7 @@ def cmd_precheck(args):
     manifest = validate_backup(args.backup)
     print(f"Záloha {manifest['project']}/{manifest['stamp']} je platná (soubory a součty sedí).")
     saved = Path(args.backup) / "env.backup"
-    target = Path(args.workspace) / ".env"
+    target = safe_path(Path(args.workspace) / ".env", args.workspace)
     if not manifest.get("env_included") or not saved.is_file():
         if not target.is_file():
             raise BackupError(
@@ -659,6 +849,11 @@ def cmd_inventory(args):
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
+    item = sub.add_parser("references")
+    item.add_argument("--project", required=True)
+    item.add_argument("--stamp", required=True)
+    item.add_argument("--workspace", default="/workspace")
+    item.add_argument("--database", choices=DATABASES, required=True)
     item = sub.add_parser("copy-objects")
     item.add_argument("--project", required=True)
     item.add_argument("--stamp", required=True)
@@ -693,6 +888,7 @@ def build_parser():
 
 
 COMMANDS = {
+    "references": cmd_references,
     "start": cmd_start,
     "copy-objects": cmd_copy_objects,
     "finish": cmd_finish,
@@ -707,6 +903,8 @@ COMMANDS = {
 def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
+        if hasattr(args, "stamp") and not STAMP_RE.fullmatch(args.stamp):
+            raise BackupError("Neplatné časové razítko zálohy.")
         COMMANDS[args.command](args)
     except BackupError as error:
         print(f"CHYBA: {error}", file=sys.stderr)

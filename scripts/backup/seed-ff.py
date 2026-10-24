@@ -6,7 +6,14 @@ import subprocess
 import tempfile
 import time
 import urllib.request
+import urllib.parse
 from pathlib import Path
+
+if (not os.environ.get("JRC_TEST_PROJECT", "").startswith("jrc-")
+        or os.environ.get("JRC_TEST_ORIGIN_VERIFIED") != "1"
+        or os.environ.get("JRC_APP_PORT") in (None, "", "13000")
+        or os.environ.get("JRC_S3_PORT") in (None, "", "13900")):
+    raise SystemExit("Cíl zápisu nebyl ověřen jako vlastní testovací projekt.")
 
 origin = f"http://127.0.0.1:{os.environ['JRC_APP_PORT']}"
 base = origin + "/video-api"
@@ -41,6 +48,10 @@ with video.open("rb") as stream:
         number = len(parts) + 1
         signed = request("POST", "/upload/presign-part", {
             "s3_key": upload["s3_key"], "upload_id": upload["upload_id"], "part_number": number})
+        destination = urllib.parse.urlsplit(signed["presigned_url"])
+        if (destination.scheme != "http" or destination.hostname != "127.0.0.1"
+                or destination.port != int(os.environ["JRC_S3_PORT"]) or destination.username or destination.password):
+            raise SystemExit("Podepsaná adresa nepatří ověřovacímu úložišti.")
         put = urllib.request.Request(signed["presigned_url"], data=chunk, method="PUT")
         with urllib.request.urlopen(put, timeout=60) as response:
             parts.append({"PartNumber": number, "ETag": response.headers["ETag"]})

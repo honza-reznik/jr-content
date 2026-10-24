@@ -11,26 +11,42 @@ import jrc_backup as jb
 
 
 def make_backup(project_root, stamp, project=None, payload=b"data", complete=True, tamper_manifest=None):
-    """Vytvoří minimální platnou zálohu (jeden soubor, jeden bucket s jedním objektem)."""
+    """Úplná testovací záloha obou DB a všech tří bucketů."""
     project_root = Path(project_root)
     project = project or project_root.name
     directory = project_root / stamp
     (directory / "postgres").mkdir(parents=True)
-    (directory / "s3" / "jrc-app" / "objects").mkdir(parents=True)
-    dump = directory / "postgres" / "brightbean.dump"
-    dump.write_bytes(payload)
-    object_data = b"obsah-objektu"
-    (directory / "s3" / "jrc-app" / "objects" / "00000001").write_bytes(object_data)
-    entry = {"key": "a/b.txt", "file": "00000001", "size": len(object_data), "sha256": jb.hashlib.sha256(object_data).hexdigest()}
-    index = directory / "s3" / "jrc-app" / "index.json"
-    index.write_text(json.dumps([entry]))
     files = {}
-    for path in (dump, index):
-        digest, size = jb.sha256_file(path)
-        files[path.relative_to(directory).as_posix()] = {"size": size, "sha256": digest}
+    buckets = {}
+    for db in jb.DATABASES:
+        (directory / "postgres" / f"{db}.dump").write_bytes(payload)
+        bucket = "jrc-app" if db == "brightbean" else "jrc-video"
+        (directory / "postgres" / f"{db}.references.json").write_text(json.dumps({
+            "dump": {"size": len(payload), "sha256": jb.hashlib.sha256(payload).hexdigest()}, "buckets": {bucket: []}}))
+    object_data = b"obsah-objektu"
+    for bucket in ("jrc-app", "jrc-video", "jrc-local"):
+        folder = directory / "s3" / bucket
+        (folder / "objects").mkdir(parents=True)
+        entries = []
+        if bucket == "jrc-app":
+            (folder / "objects" / "00000001").write_bytes(object_data)
+            entries = [{"key": "a/b.txt", "file": "00000001", "size": len(object_data),
+                        "sha256": jb.hashlib.sha256(object_data).hexdigest()}]
+        (folder / "index.json").write_text(json.dumps(entries))
+        buckets[bucket] = {"objects": len(entries), "bytes": sum(e["size"] for e in entries)}
+    env_included = bool(tamper_manifest and tamper_manifest.get("env_included"))
+    if env_included:
+        (directory / "env.backup").write_text(EnvHandling.SAVED)
+    for path in directory.rglob("*"):
+        if path.is_file() and "/objects/" not in str(path):
+            digest, size = jb.sha256_file(path)
+            files[path.relative_to(directory).as_posix()] = {"size": size, "sha256": digest}
     manifest = {
         "format": jb.FORMAT, "complete": complete, "project": project, "stamp": stamp,
-        "buckets": {"jrc-app": {"objects": 1, "bytes": len(object_data)}}, "files": files,
+        "created_at": jb.utc_now(), "code": {"git_rev": "test", "dirty": False},
+        "postgres": {"server_version": "18.6", "databases": {db: len(payload) for db in jb.DATABASES}},
+        "buckets": buckets, "files": files, "vanished_during_backup": {},
+        "bb_media": {"included": False, "bytes": 0}, "env_included": env_included,
     }
     if tamper_manifest:
         manifest.update(tamper_manifest)
@@ -45,6 +61,9 @@ class Base(unittest.TestCase):
         self.work = Path(self.tmp.name)
         self.root = self.work / "backups" / "jrc-test"
         self.root.mkdir(parents=True)
+        self.rotation = mock.patch.object(jb.Path, "cwd", return_value=self.work)
+        self.rotation.start()
+        self.addCleanup(self.rotation.stop)
 
 
 class ProjectGuards(Base):
@@ -108,7 +127,7 @@ class Validation(Base):
     def test_corrupted_file_is_detected_by_checksum_not_by_size(self):
         directory = make_backup(self.root, "20261024-100004", payload=b"abcd")
         (directory / "postgres" / "brightbean.dump").write_bytes(b"abce")  # stejná velikost
-        self.assertTrue(jb.is_valid_backup(directory))  # rychlá kontrola velikost nepozná
+        self.assertFalse(jb.is_valid_backup(directory))  # rotace musí zkontrolovat i součty
         with self.assertRaises(jb.BackupError):
             jb.validate_backup(directory)
 
