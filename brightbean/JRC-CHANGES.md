@@ -572,3 +572,4 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
 - `templates/jrc_production/_approval_tab.html` (nový), `content_detail.html`, `board.html`: karta Approval s tlačítky
   Approve / Request changes a panel „Waiting for you“ na nástěnce (jen obsah klienta, kde je člen a kde je na řadě).
 - Testy: `apps/jrc_production/tests/test_approval.py` (18).
+- Živé ověření: `make test-f7-b02-approval` (`scripts/F7-B02/`), jen projekt `jrc-f7b02`; snímky `ops/screenshoty/F7-B02/`.

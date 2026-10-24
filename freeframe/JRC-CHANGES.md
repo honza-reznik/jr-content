@@ -292,5 +292,5 @@ Provozní postup je v `docs-arch/F2-B02/freeframe-provoz.md` (doplněk pro PM do
   vlákna 404; úprava, mazání, vyřešení, přílohy, reakce, odkaz a export komentáře interního vlákna dávají 404 (export je vynechá);
   zmínka a upozornění na interní komentář klient nedostane, `routers/notifications.py` staré takové řádky přeskočí.
   Běžné účty FreeFrame a tým (`owner`, `editor`) beze změny.
-- Web: přepínač Public / Internal se klientovi neukazuje (`lib/comment-visibility.ts`, `allowInternal` v detailu a v porovnání verzí).
+- Web: přepínač Public / Internal a filtr „Internal comments“ se klientovi neukazuje (`lib/comment-visibility.ts`, `allowInternal` v detailu a v porovnání verzí, `showInternalFilter` v `comment-panel.tsx`).
 - Testy: `apps/api/tests/test_jrc_comment_privacy.py` (12), `lib/__tests__/comment-visibility.test.ts`.
