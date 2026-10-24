@@ -247,7 +247,7 @@ restore:
 # Pojistky záloh bez běžících služeb: jednotkové testy a odmítnutí obnovy do projektu jrc.
 test-backup-guards:
 	docker run --rm --pull never --network none --user "$(JRC_UID):$(JRC_GID)" \
-	  --env PYTHONDONTWRITEBYTECODE=1 --volume "$(CURDIR)/scripts/backup:/t:ro" --workdir /t \
+	  --env PYTHONDONTWRITEBYTECODE=1 --volume "$(CURDIR):/w:ro" --workdir /w/scripts/backup \
 	  jrc-dev:$(JRC_PROJECT) python3 -m unittest -b -q
 	sh scripts/backup/test-guards.sh
 
