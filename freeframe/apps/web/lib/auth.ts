@@ -24,13 +24,18 @@ export function setTokens(access: string, refresh: string): void {
   document.cookie = `${REFRESH_TOKEN_KEY}=${refresh}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`
 }
 
-export function clearTokens(): void {
+export function removeTokens(): void {
   if (typeof window === 'undefined') return
   localStorage.removeItem(ACCESS_TOKEN_KEY)
   localStorage.removeItem(REFRESH_TOKEN_KEY)
   // Clear auth cookies
   document.cookie = `${ACCESS_TOKEN_KEY}=; path=/; max-age=0`
   document.cookie = `${REFRESH_TOKEN_KEY}=; path=/; max-age=0`
+}
+
+export function clearTokens(): void {
+  if (typeof window === 'undefined') return
+  removeTokens()
   window.location.href = withBasePath('/login')
 }
 

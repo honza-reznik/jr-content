@@ -60,6 +60,10 @@ def is_safe_next(value):
         and value.startswith("/")
         and not value.startswith(("//", "/\\"))
         and "\\" not in value
+        and "%" not in value
+        and "#" not in value
+        and "//" not in value.split("?", 1)[0]
+        and not any(part in {".", ".."} for part in value.split("?", 1)[0].split("/"))
         and not any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in value)
     )
 

@@ -2,6 +2,23 @@
 
 Import upstreamu `3829889` (MIT, původní licence a copyright zachovány).
 
+## 2026-10-24 — F5-B03
+
+- Veřejné `/jrc-sso` a `/jrc-logout`; middleware rozpozná cesty s předponou i bez předpony
+  `NEXT_PUBLIC_BASE_PATH`, před kontrolou instalace a přihlášení.
+- `/jrc-sso` okamžitě odstraní fragment i query z aktuální historie, porovná SHA-256 vstupenky
+  s jednorázovou cookie nastavenou po CSRF POST v Brightbean a cookie smaže. Výměnu zavolá
+  jednou přímo bez starých tokenů/cookies a bez opakování při 401. Úspěch uloží přes `setTokens`
+  a nahradí položku historie cílem výhradně z odpovědi API, znovu ověřeným a doplněným o basePath.
+  Procentní kódování, fragmenty, tečkové segmenty a externí adresy nejsou povolené.
+- Chyba má prostou stránku s návratem do JR Content, bez vstupenky a technického výpisu.
+  `/jrc-logout` smaže tokeny z localStorage a cookies včetně `ff_setup_done`, kontrolní cookie
+  a vrátí se na pevnou `/accounts/login/`. Pomocná `removeTokens` nemaže historii navigací
+  na původní login; dosavadní `clearTokens` zachovává chování pro upstream.
+- Vitest pokrývá stránky (včetně React StrictMode), middleware, odmítnutí podstrčené vstupenky,
+  jednorázové volání výměny a nezávislou kontrolu cíle. Živý Chromium scénář a data jsou
+  v `scripts/F5-B03/`; snímky v ignorované složce `ops/screenshoty/F5-B03/`.
+
 ## 2026-10-23 — F2-B11
 
 - Společný Compose vypíná telemetrii i hlášení npm/pip. Také `jrc-dev` běží jen

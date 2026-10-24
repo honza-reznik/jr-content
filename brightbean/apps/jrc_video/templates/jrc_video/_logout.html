@@ -1,0 +1,9 @@
+<div class="max-w-md mx-auto p-8">
+    <h1 class="text-2xl font-bold mb-4">Sign out</h1>
+    <p class="mb-4">Sign out of JR Content and video?</p>
+    <form method="post" action="/accounts/logout/">
+        {% csrf_token %}
+        <button class="btn-brand" type="submit">Sign out</button>
+        <a class="btn-outline" href="/">Cancel</a>
+    </form>
+</div>

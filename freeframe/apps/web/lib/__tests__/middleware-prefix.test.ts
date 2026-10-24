@@ -11,6 +11,36 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs() })
 
 describe('prefixed server middleware', () => {
+  for (const basePath of ['', '/video']) {
+    for (const prefix of ['', '/video']) {
+      for (const route of ['/jrc-sso', '/jrc-logout']) {
+        for (const cookie of ['', 'ff_setup_done=1']) {
+          // /video is an app prefix only when configured as such.
+          if (prefix && !basePath) continue
+          it(`allows ${prefix}${route} with base ${basePath} and cookie ${cookie}`, async () => {
+            vi.stubEnv('NEXT_PUBLIC_BASE_PATH', basePath)
+            const fetcher = vi.fn()
+            vi.stubGlobal('fetch', fetcher)
+            const { middleware } = await import('../../middleware')
+            const response = await middleware(new NextRequest(`http://jrc.test${prefix}${route}`, {
+              headers: { cookie },
+            }))
+            expect(response.headers.get('x-middleware-next')).toBe('1')
+            expect(fetcher).not.toHaveBeenCalled()
+          })
+        }
+      }
+    }
+  }
+
+  it('does not treat SSO-like prefixes as public routes', async () => {
+    const { middleware } = await import('../../middleware')
+    const response = await middleware(new NextRequest('http://jrc.test/video/jrc-sso-elsewhere', {
+      headers: { cookie: 'ff_setup_done=1' },
+    }))
+    expect(response.status).toBe(307)
+  })
+
   it('checks the internal API and still redirects an anonymous first visit to the prefixed login', async () => {
     const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ needs_setup: false }) })
     vi.stubGlobal('fetch', fetcher)

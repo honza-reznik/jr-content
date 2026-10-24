@@ -72,7 +72,9 @@
         {% url 'account_login' as login_url %}
         <form method="post" action="{{ login_url }}">
             {% csrf_token %}
-            {{ redirect_field }}
+            {% if redirect_field_value %}
+            <input type="hidden" name="{{ redirect_field_name }}" value="{{ redirect_field_value }}">
+            {% endif %}
 
             {% for field in form %}
             {% if field.field.widget.input_type == "checkbox" %}
