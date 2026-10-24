@@ -132,7 +132,7 @@ def test_approval_and_stage_audience_survives_role_change_and_departure(
 
 def test_nonmember_comment_service_returns_no_internal_data(workspace, user, content):
     WorkspaceMembership.objects.filter(workspace=workspace, user=user).delete()
-    assert not comments.get_comments_for_post(content, user).exists()
+    assert not comments.get_comments_for_post(content, user)
 
 
 def test_history_default_is_internal_even_if_author_is_now_client(client, workspace, user, content):

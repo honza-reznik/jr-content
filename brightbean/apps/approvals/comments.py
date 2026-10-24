@@ -4,8 +4,8 @@ Handles creation, updating, deletion, and @mention parsing for post comments.
 """
 
 import re
+from collections import defaultdict
 
-from django.db.models import Prefetch
 from django.utils import timezone
 
 from apps.members.models import WorkspaceMembership
@@ -131,15 +131,19 @@ def update_comment(comment_id, user, body, *, workspace=None):
     return comment
 
 
-def delete_comment(comment_id, user, workspace):
+def delete_comment(comment_id, user, workspace, *, post):
     """Soft-delete a comment. Authors and managers can delete."""
     comment = PostComment.objects.filter(
         id=comment_id,
+        post=post,
+        post__workspace=workspace,
         deleted_at__isnull=True,
     ).first()
 
     if not comment:
         raise ValueError("Comment not found.")
+    if not can_view_comment(comment, user):
+        raise PermissionError("You don't have permission to delete this comment.")
 
     # Check permission: author or user with approve_posts (manager+)
     membership = (
@@ -162,44 +166,57 @@ def delete_comment(comment_id, user, workspace):
     return comment
 
 
-def get_comments_for_post(post, user):
-    """Get comments for a post, filtered by user's visibility access.
+def get_visible_comments(posts, user, workspace):
+    """Select visible roots and their full reply trees in one batch.
 
-    Clients only see external comments. Team members see all.
+    Each node exposes only authorized children in ``visible_replies``. A hidden,
+    deleted, missing or cross-post parent hides its entire subtree; disconnected
+    cycles cannot be reached from a root. Never traverse the unfiltered manager
+    in a display template.
     """
-    workspace = post.workspace
     membership = WorkspaceMembership.objects.filter(
         user=user,
         workspace=workspace,
     ).first()
     if membership is None or not user.is_active or workspace.is_archived:
-        return PostComment.objects.none()
-
-    active_replies = PostComment.objects.filter(
-        deleted_at__isnull=True,
-    ).select_related("author")
+        return []
 
     qs = (
         PostComment.objects.filter(
-            post=post,
+            post_id__in=[post.pk for post in posts],
+            post__workspace=workspace,
             deleted_at__isnull=True,
-            parent_comment__isnull=True,  # Top-level only; replies are prefetched
         )
         .select_related("author")
-        .prefetch_related(Prefetch("replies", queryset=active_replies))
         .order_by("created_at")
     )
 
-    # Clients only see external comments
-    if membership and membership.workspace_role in (
+    if membership.workspace_role in (
         WorkspaceMembership.WorkspaceRole.CLIENT,
         WorkspaceMembership.WorkspaceRole.VIEWER,
     ):
         qs = qs.filter(visibility=PostComment.Visibility.EXTERNAL)
-        active_replies = active_replies.filter(visibility=PostComment.Visibility.EXTERNAL)
-        qs = qs.prefetch_related(None).prefetch_related(Prefetch("replies", queryset=active_replies))
 
-    return qs
+    children = defaultdict(list)
+    roots = []
+    for comment in qs:
+        comment.visible_replies = []
+        if comment.parent_comment_id is None:
+            roots.append(comment)
+        else:
+            children[comment.parent_comment_id].append(comment)
+
+    pending = list(roots)
+    while pending:
+        parent = pending.pop()
+        parent.visible_replies = [child for child in children.pop(parent.pk, []) if child.post_id == parent.post_id]
+        pending.extend(parent.visible_replies)
+    return roots
+
+
+def get_comments_for_post(post, user):
+    """Single-post adapter for the shared visible comment tree selector."""
+    return get_visible_comments([post], user, post.workspace)
 
 
 def resolve_comment(comment_id, user, workspace, *, resolved=True):

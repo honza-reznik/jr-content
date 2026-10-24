@@ -539,10 +539,10 @@ def _get_tab_context(request, workspace, tab: str) -> dict:
     # to the team under "All".
     from collections import defaultdict
 
-    from django.db.models import Count, Exists, OuterRef, Prefetch, Q
+    from django.db.models import Count, Exists, OuterRef, Q
     from django.utils.http import urlencode
 
-    from apps.approvals.models import PostComment
+    from apps.approvals.comments import get_visible_comments
 
     approval_statuses = ["pending_review", "pending_client", "approved", "rejected", "changes_requested", "on_hold"]
     status_filter = request.GET.get("approval_status", "all")
@@ -579,24 +579,8 @@ def _get_tab_context(request, workspace, tab: str) -> dict:
     membership = getattr(request, "workspace_membership", None)
     perms = membership.effective_permissions if membership else {}
     can_approve = perms.get("approve_posts", False)
-    is_client = bool(membership and membership.workspace_role == "client")
-
-    # Batch the expandable-panel comments in one query (avoid a per-post N+1).
-    active_replies = PostComment.objects.filter(deleted_at__isnull=True).select_related("author")
-    comment_qs = (
-        PostComment.objects.filter(
-            post_id__in=[p.id for p in posts],
-            deleted_at__isnull=True,
-            parent_comment__isnull=True,
-        )
-        .select_related("author")
-        .prefetch_related(Prefetch("replies", queryset=active_replies))
-        .order_by("created_at")
-    )
-    if is_client:
-        comment_qs = comment_qs.filter(visibility=PostComment.Visibility.EXTERNAL)
     comments_by_post = defaultdict(list)
-    for comment in comment_qs:
+    for comment in get_visible_comments(posts, request.user, workspace):
         comments_by_post[comment.post_id].append(comment)
     for post in posts:
         post.visible_comments = comments_by_post.get(post.id, [])

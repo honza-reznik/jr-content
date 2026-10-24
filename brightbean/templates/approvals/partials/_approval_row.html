@@ -79,6 +79,7 @@ can_approve, display_timezone, and the parent Alpine scope (selectedPosts, diffO
                                 <span class="text-[0.625rem] text-stone-400">{{ c.created_at|timesince }} ago</span>
                             </div>
                             <p class="text-[0.8125rem] text-stone-600">{{ c.body }}</p>
+                            {% include "approvals/partials/comment_replies.html" with replies=c.visible_replies only %}
                         </div>
                     </div>
                     {% endfor %}

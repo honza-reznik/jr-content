@@ -54,6 +54,7 @@ already-approved posts get "Put on hold"; held posts show their state.
                 <span class="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold text-white flex-shrink-0" style="background: var(--primary);">{{ c.author.display_name|default:"?"|make_list|first|upper }}</span>
                 <div class="min-w-0"><span class="text-[0.75rem] font-semibold text-stone-700">{{ c.author.display_name|default:"Team" }}</span><p class="text-[0.8125rem] text-stone-600">{{ c.body }}</p></div>
             </div>
+            {% include "approvals/partials/comment_replies.html" with replies=c.visible_replies only %}
             {% endfor %}
         </div>
         {% endif %}

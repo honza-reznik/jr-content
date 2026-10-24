@@ -5,6 +5,11 @@ Licence této odvozené verze: AGPL-3.0; původní licence a autorská práva z�
 
 ## 2026-10-24 · F7-B01 — opravy bezpečnostního review
 
+- Detail obsahu, editor, kalendář, portál a odpovědi po změně komentáře používají
+  společný výběr viditelných vláken včetně libovolně vnořených odpovědí. Client
+  i viewer čtou pouze externí komentáře; skrytý či smazaný předek skryje celé vlákno.
+  Šablony čtou pouze vybrané odpovědi. Mazání kontroluje viditelnost i vazbu
+  komentáře na obsah a klienta z URL, také při přímém volání služby.
 - Upozornění na změny, odmítnutí a zmínku ověřují viditelnost poznámky a aktuální
   přístup příjemce při vytvoření, čtení i doručení (také opakovaném a souhrnném).
   Nepřístupnou citaci nahradí obecný text; stará upozornění bez uložené viditelnosti

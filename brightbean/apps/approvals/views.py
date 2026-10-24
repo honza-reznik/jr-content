@@ -258,13 +258,16 @@ def edit_comment(request, workspace_id, post_id, comment_id):
 def delete_comment(request, workspace_id, post_id, comment_id):
     """Soft-delete a comment."""
     workspace = _get_workspace(request, workspace_id)
+    post = get_object_or_404(Post, id=post_id, workspace=workspace)
+    comment = get_object_or_404(PostComment, id=comment_id, post=post, deleted_at__isnull=True)
+    if not comment_service.can_view_comment(comment, request.user):
+        raise Http404("Comment not found.")
 
     try:
-        comment_service.delete_comment(comment_id, request.user, workspace)
+        comment_service.delete_comment(comment_id, request.user, workspace, post=post)
     except (ValueError, PermissionError) as e:
         return HttpResponse(str(e), status=400 if isinstance(e, ValueError) else 403)
 
-    post = get_object_or_404(Post, id=post_id, workspace=workspace)
     comments = comment_service.get_comments_for_post(post, request.user)
     return render(
         request,
