@@ -111,12 +111,9 @@ def test_version_change_revokes_access_in_both_auth_paths(test_user, mock_db, op
     with patch("apps.api.middleware.auth.get_user_by_id", return_value=test_user):
         assert resolver(credentials, mock_db) is test_user
         test_user.token_version = 2
-        if optional:
-            assert resolver(credentials, mock_db) is None
-        else:
-            with pytest.raises(HTTPException) as exc:
-                resolver(credentials, mock_db)
-            assert exc.value.status_code == 401
+        with pytest.raises(HTTPException) as exc:
+            resolver(credentials, mock_db)
+        assert exc.value.status_code == 401
 
 
 def test_deactivation_and_reactivation_do_not_restore_old_token(client, test_user, mock_db):

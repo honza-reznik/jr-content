@@ -16,7 +16,7 @@ from ..models.comment import Comment, COMMENT_TREE_MAX_DEPTH
 from ..schemas.asset import AssetResponse, AssetVersionResponse, AssetUpdate, StreamUrlResponse, MediaFileResponse, DownloadOption
 from ..schemas.notification import AssignmentUpdate
 from ..services.permissions import require_project_role, require_project_visible, require_asset_access
-from ..services.s3_service import generate_presigned_get_url, build_download_filename
+from ..services.s3_service import generate_presigned_get_url, build_download_filename, PREVIEW_URL_SECONDS
 from ..services.downloads import (
     describe_choices, download_choices, download_filename, may_download_original,
     original_allowed_for_download, pick_or_refuse,
@@ -129,7 +129,7 @@ def _build_asset_response(asset: Asset, db: Session) -> AssetResponse:
         if asset.asset_type != AssetType.audio:
             for f in files:
                 if f.s3_key_thumbnail:
-                    thumbnail_url = generate_presigned_get_url(f.s3_key_thumbnail)
+                    thumbnail_url = generate_presigned_get_url(f.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS)
                     break
 
     resp = AssetResponse.model_validate(asset)
@@ -194,7 +194,7 @@ def _build_asset_responses_bulk(assets: list[Asset], db: Session) -> list[AssetR
             if asset.asset_type != AssetType.audio:
                 for f in files:
                     if f.s3_key_thumbnail:
-                        thumbnail_url = generate_presigned_get_url(f.s3_key_thumbnail)
+                        thumbnail_url = generate_presigned_get_url(f.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS)
                         break
 
         asset_resp = AssetResponse.model_validate(asset)

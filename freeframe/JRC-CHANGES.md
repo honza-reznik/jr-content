@@ -4,6 +4,11 @@ Import upstreamu `3829889` (MIT, původní licence a copyright zachovány).
 
 ## 2026-10-24 — F5-B04
 
+- Vypršený nebo odvolaný token také na share cestách vrací 401, takže web obnoví relaci
+  a zopakuje požadavek. Bez tokenu dál fungují běžné veřejné odkazy pro hosty.
+- Všechny podpisy příloh komentářů a náhledů obsahu (včetně složek, přehledů a posterů)
+  platí 180 s; po odebrání členství nelze vydat nové. Již vydaná adresa doběhne do vypršení.
+
 - Řízené účty mají neměnitelné `users.jrc_managed` (migrace `jrc_f5b04`). Migrace označí
   stávající neprivilegované UUIDv5 účty, které zakládá jen synchronizace, odstraní případná
   hesla/pozvánky a odvolá staré přihlašovací tokeny. Synchronizace označuje i nové účty.

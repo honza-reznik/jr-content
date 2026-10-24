@@ -45,7 +45,7 @@ from ..services.redis_service import create_share_session
 from ..services.search import escape_like
 from ..services.owned_keys import is_project_logo_key
 from ..services.avatar_keys import sign_avatar
-from ..services.s3_service import generate_presigned_get_url, build_download_filename
+from ..services.s3_service import generate_presigned_get_url, build_download_filename, PREVIEW_URL_SECONDS
 from ..schemas.asset import DownloadOption
 from ..services.downloads import (
     describe_choices, download_choices, download_filename, may_download_original,
@@ -293,7 +293,7 @@ def _build_share_validate_response(
         media_file = _get_latest_media_file(db, asset.id)
         thumbnail_url = None
         if media_file and media_file.s3_key_thumbnail:
-            thumbnail_url = generate_presigned_get_url(media_file.s3_key_thumbnail)
+            thumbnail_url = generate_presigned_get_url(media_file.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS)
         # Get stream URL
         stream_url = None
         if media_file:
@@ -1324,7 +1324,7 @@ def get_folder_share_assets(
                 for pa in preview_assets:
                     mf = _get_latest_media_file(db, pa.id)
                     if mf and mf.s3_key_thumbnail:
-                        thumb_urls.append(generate_presigned_get_url(mf.s3_key_thumbnail))
+                        thumb_urls.append(generate_presigned_get_url(mf.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS))
                 subfolder_items.append(FolderShareSubfolder(
                     id=sf.id, name=sf.name, item_count=asset_count + child_folder_count, thumbnail_urls=thumb_urls,
                 ))
@@ -1339,7 +1339,7 @@ def get_folder_share_assets(
             ).order_by(Asset.created_at.desc()).offset(offset).limit(per_page).all()
             for a in shared_assets:
                 mf = _get_latest_media_file(db, a.id)
-                thumbnail_url = generate_presigned_get_url(mf.s3_key_thumbnail) if mf and mf.s3_key_thumbnail else None
+                thumbnail_url = generate_presigned_get_url(mf.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS) if mf and mf.s3_key_thumbnail else None
                 comment_count = _latest_version_comment_count(db, a.id)
                 asset_items.append(FolderShareAssetItem(
                     id=a.id, name=a.name, asset_type=a.asset_type.value if hasattr(a.asset_type, 'value') else str(a.asset_type),
@@ -1410,7 +1410,7 @@ def get_folder_share_assets(
         for pa in preview_assets:
             mf = _get_latest_media_file(db, pa.id)
             if mf and mf.s3_key_thumbnail:
-                thumb_urls.append(generate_presigned_get_url(mf.s3_key_thumbnail))
+                thumb_urls.append(generate_presigned_get_url(mf.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS))
             if len(thumb_urls) >= 4:
                 break
 
@@ -1449,7 +1449,7 @@ def get_folder_share_assets(
         media_file = _get_latest_media_file(db, asset.id)
         if media_file:
             if media_file.s3_key_thumbnail:
-                thumbnail_url = generate_presigned_get_url(media_file.s3_key_thumbnail)
+                thumbnail_url = generate_presigned_get_url(media_file.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS)
             file_size = media_file.file_size_bytes
             duration_seconds = media_file.duration_seconds
 
@@ -1609,7 +1609,7 @@ def get_share_stream_url(
     # Get thumbnail URL
     thumb_url = None
     if media_file.s3_key_thumbnail:
-        thumb_url = generate_presigned_get_url(media_file.s3_key_thumbnail)
+        thumb_url = generate_presigned_get_url(media_file.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS)
 
     return {
         "url": url,
@@ -1644,7 +1644,7 @@ def get_share_thumbnail_url(
     if not media_file or not media_file.s3_key_thumbnail:
         raise HTTPException(status_code=404, detail="Thumbnail not found")
 
-    url = generate_presigned_get_url(media_file.s3_key_thumbnail)
+    url = generate_presigned_get_url(media_file.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS)
     return {"url": url}
 
 

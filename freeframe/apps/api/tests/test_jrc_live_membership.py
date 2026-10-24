@@ -3,6 +3,7 @@
 import importlib.util
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 from types import SimpleNamespace
 from unittest.mock import patch
 import uuid
@@ -16,12 +17,12 @@ from apps.api.database import get_db
 from apps.api.main import app
 from apps.api.models.activity import Mention, Notification, NotificationType
 from apps.api.models.asset import Asset, AssetType, AssetVersion, FileType, MediaFile, ProcessingStatus
-from apps.api.models.comment import Comment
+from apps.api.models.comment import Comment, CommentAttachment
 from apps.api.models.folder import Folder
 from apps.api.models.project import Project, ProjectMember, ProjectRole
 from apps.api.models.share import AssetShare, ShareLink, ShareLinkItem, SharePermission
 from apps.api.models.user import User, UserStatus
-from apps.api.services.auth_service import create_access_token
+from apps.api.services.auth_service import create_access_token, create_refresh_token
 from apps.api.services.permissions import project_events_denial, EVENTS_ACCESS_REVOKED
 
 
@@ -193,7 +194,75 @@ def test_blocked_account_cannot_fall_back_to_anonymous_share(client, live_projec
     ctx.user.status = UserStatus.deactivated
     ctx.db.flush()
     for method, path, body in _share_requests(ctx, link):
-        assert _request(client, method, path, body, ctx.headers).status_code == 403
+        assert _request(client, method, path, body, ctx.headers).status_code == 401
+
+
+@pytest.mark.parametrize("scope", ["asset", "folder", "project", "multi"])
+def test_expired_share_session_returns_401_and_real_refresh_restores_access(client, live_project, scope):
+    ctx = live_project
+    link = _link(ctx, scope)
+    expired = jwt.encode({"sub": str(ctx.user.id), "type": "access", "ver": 1,
+                          "exp": datetime.now(timezone.utc) - timedelta(seconds=1)},
+                         settings.jwt_secret, algorithm=settings.jwt_algorithm)
+    for method, path, body in _share_requests(ctx, link):
+        response = _request(client, method, path, body, {"Authorization": f"Bearer {expired}"})
+        assert response.status_code == 401, (method, path, response.text)
+    refreshed = client.post("/auth/refresh", json={"refresh_token": create_refresh_token(str(ctx.user.id))})
+    assert refreshed.status_code == 200, refreshed.text
+    headers = {"Authorization": f"Bearer {refreshed.json()['access_token']}"}
+    assert client.get(f"/share/{link.token}", headers=headers).status_code == 200
+    _remove(ctx)
+    assert client.get(f"/share/{link.token}", headers=headers).status_code == 403
+    assert client.get(f"/share/{link.token}").status_code == 403
+
+
+def _signed_urls(value):
+    if isinstance(value, dict):
+        for child in value.values():
+            yield from _signed_urls(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _signed_urls(child)
+    elif isinstance(value, str) and "X-Amz-Signature=" in value:
+        yield value
+
+
+@pytest.mark.parametrize("scope", ["asset", "folder", "project", "multi"])
+def test_previews_and_attachments_have_short_real_signatures_and_cannot_be_renewed_after_removal(
+    client, live_project, scope,
+):
+    ctx = live_project
+    link = _link(ctx, scope)
+    comment = Comment(asset_id=ctx.asset.id, version_id=ctx.version.id, author_id=ctx.user.id, body="Private")
+    ctx.db.add(comment)
+    ctx.db.flush()
+    ctx.db.add(CommentAttachment(comment_id=comment.id, file_type="text/plain", s3_key=f"attachment/{comment.id}",
+                                 original_filename="private.txt", file_size_bytes=7))
+    ctx.project.poster_s3_key = ctx.media.s3_key_thumbnail
+    ctx.db.flush()
+    root = f"/share/{link.token}"
+    paths = [root + f"/thumbnail/{ctx.asset.id}", root + f"/stream/{ctx.asset.id}",
+             root + f"/comments?asset_id={ctx.asset.id}&version_id={ctx.version.id}",
+             f"/assets/{ctx.asset.id}/comments", f"/projects/{ctx.project.id}/assets",
+             f"/assets/{ctx.asset.id}", "/me/assets", f"/projects/{ctx.project.id}"]
+    paths.append(root if scope == "asset" else root + "/assets")
+    # The fixture stores a video with processed/raw keys; HLS is separate and
+    # checked elsewhere. Every S3 URL returned here is a preview or attachment.
+    for path in paths:
+        response = client.get(path, headers=ctx.headers)
+        assert response.status_code == 200, (path, response.text)
+        urls = list(_signed_urls(response.json()))
+        assert urls, (path, response.text)
+        for url in urls:
+            query = parse_qs(urlparse(url).query)
+            assert query["X-Amz-Expires"] == ["180"], (path, urlparse(url).path)
+    _remove(ctx)
+    # Removal happens while those addresses are still valid. Already issued
+    # S3 capabilities expire within 180 s; the API cannot issue replacements.
+    for path in paths:
+        response = client.get(path, headers=ctx.headers)
+        assert response.status_code == 403 or response.json() == [], (path, response.text)
+        assert list(_signed_urls(response.json())) == []
 
 
 @pytest.mark.parametrize("change", ["viewer", "removed"])

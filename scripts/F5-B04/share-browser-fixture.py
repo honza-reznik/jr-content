@@ -7,6 +7,8 @@ import json
 import subprocess
 import tempfile
 import uuid
+from datetime import datetime, timedelta, timezone
+import jwt
 from pathlib import Path
 
 from apps.api.config import settings
@@ -15,9 +17,9 @@ from apps.api.models.user import User, UserStatus
 from apps.api.models.project import Project, ProjectMember, ProjectRole
 from apps.api.models.folder import Folder
 from apps.api.models.asset import Asset, AssetType, AssetVersion, ProcessingStatus, MediaFile, FileType
-from apps.api.models.comment import Comment
+from apps.api.models.comment import Comment, CommentAttachment
 from apps.api.models.share import ShareLink, SharePermission
-from apps.api.services.auth_service import create_access_token
+from apps.api.services.auth_service import create_access_token, create_refresh_token
 from apps.api.services.s3_service import get_s3_client
 
 assert settings.frontend_url == 'http://127.0.0.1:13243/video', 'Pouze vlastní ověřovací projekt'
@@ -60,12 +62,19 @@ with SessionLocal() as db, tempfile.TemporaryDirectory() as tmp:
                                  mime_type=mime, file_size_bytes=len(content), s3_key_raw=key, s3_key_processed=key,
                                  s3_key_thumbnail=key if kind == 'image' else None,
                                  duration_seconds=2 if kind == 'audio' else None, width=320, height=180))
-            db.add(Comment(asset_id=asset.id, version_id=version.id, author_id=user.id, body='Existing member comment'))
+            comment = Comment(asset_id=asset.id, version_id=version.id, author_id=user.id, body='Existing member comment')
+            db.add(comment); db.flush()
+            db.add(CommentAttachment(comment_id=comment.id, file_type=mime, s3_key=key,
+                                     original_filename=filename, file_size_bytes=len(content)))
             if kind == 'image': images.append(str(asset.id))
     link = ShareLink(folder_id=root.id, token=uuid.uuid4().hex, created_by=user.id,
                      title='F5-B04 Share regression', permission=SharePermission.comment, allow_download=True,
                      show_versions=True, appearance={'layout': 'grid', 'theme': 'dark', 'open_in_viewer': True})
     db.add(link); db.commit()
     print(json.dumps({'access': create_access_token(str(user.id), token_version=1),
+                      'refresh': create_refresh_token(str(user.id), token_version=1),
+                      'expired': jwt.encode({'sub': str(user.id), 'type': 'access', 'ver': 1,
+                                             'exp': datetime.now(timezone.utc) - timedelta(seconds=1)},
+                                            settings.jwt_secret, algorithm=settings.jwt_algorithm),
                       'admin': create_access_token(str(admin.id), token_version=1),
                       'project': str(project.id), 'user': str(user.id), 'share': link.token, 'images': images}))

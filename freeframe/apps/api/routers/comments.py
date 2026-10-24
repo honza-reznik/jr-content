@@ -178,7 +178,7 @@ def _build_attachment_response(attachment: CommentAttachment) -> AttachmentRespo
     # origin.
     url = s3_service.generate_presigned_get_url(
         attachment.s3_key,
-        expires_in=3600,
+        expires_in=s3_service.PREVIEW_URL_SECONDS,
         download_filename=attachment.original_filename or "attachment",
     )
     return AttachmentResponse(
