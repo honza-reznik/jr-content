@@ -1,4 +1,5 @@
-FROM jrc-dev:local
+ARG JRC_PROJECT=jrc
+FROM jrc-dev:${JRC_PROJECT}
 USER root
 RUN npm install --global --no-audit --no-fund pnpm@10.15.0
 WORKDIR /app

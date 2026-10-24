@@ -50,7 +50,9 @@ x-ff: &ff
   build:
     context: .
     dockerfile: docker/Dockerfile.ff-api
-  image: jrc-ff-api:local
+    args:
+      JRC_PROJECT: ${JRC_PROJECT:?Spusťte s JRC_PROJECT}
+  image: jrc-ff-api:${JRC_PROJECT:?Spusťte s JRC_PROJECT}
   restart: unless-stopped
   init: true
   user: "${JRC_UID:-1000}:${JRC_GID:-1000}"
@@ -104,7 +106,9 @@ services:
     build:
       context: docker
       dockerfile: Dockerfile.ingress
-    image: jrc-ingress:local
+      args:
+        JRC_PROJECT: ${JRC_PROJECT:?Spusťte s JRC_PROJECT}
+    image: jrc-ingress:${JRC_PROJECT:?Spusťte s JRC_PROJECT}
     restart: unless-stopped
     # Vstupní proces nejprve odstraní trasy a pak exec jako UID/GID bez capabilities.
     user: "0:0"
@@ -150,7 +154,9 @@ services:
     build:
       context: docker
       dockerfile: Dockerfile.ingress
-    image: jrc-ingress:local
+      args:
+        JRC_PROJECT: ${JRC_PROJECT:?Spusťte s JRC_PROJECT}
+    image: jrc-ingress:${JRC_PROJECT:?Spusťte s JRC_PROJECT}
     restart: unless-stopped
     user: "0:0"
     command: ["node", "/gate.cjs"]
@@ -233,7 +239,9 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.ff-web
-    image: jrc-ff-web:local
+      args:
+        JRC_PROJECT: ${JRC_PROJECT:?Spusťte s JRC_PROJECT}
+    image: jrc-ff-web:${JRC_PROJECT:?Spusťte s JRC_PROJECT}
     restart: unless-stopped
     init: true
     user: "${JRC_UID:-1000}:${JRC_GID:-1000}"
@@ -318,7 +326,7 @@ services:
     <<: *bb
     command: ["python", "manage.py", "run_studio_worker"]
   jrc-dev:
-    image: jrc-dev:local
+    image: jrc-dev:${JRC_PROJECT:?Spusťte s JRC_PROJECT}
     container_name: ${JRC_PROJECT:?JRC_PROJECT není nastavený, použij make (výchozí jrc) nebo JRC_PROJECT=jrc-<blok>}-dev
     restart: unless-stopped
     init: true
@@ -371,7 +379,7 @@ services:
     build:
       context: docker
       dockerfile: Dockerfile.s3
-    image: jrc-s3:local
+    image: jrc-s3:${JRC_PROJECT:?Spusťte s JRC_PROJECT}
     container_name: ${JRC_PROJECT:?JRC_PROJECT není nastavený, použij make (výchozí jrc) nebo JRC_PROJECT=jrc-<blok>}-s3
     restart: unless-stopped
     environment:

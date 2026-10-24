@@ -1,5 +1,6 @@
+ARG JRC_PROJECT=jrc
 FROM caddy:2.10.2-alpine AS caddy
-FROM jrc-dev:local
+FROM jrc-dev:${JRC_PROJECT}
 # Statická binárka; sdílený základ poskytuje Node.js, Python a setpriv bez instalace.
 COPY --from=caddy /usr/bin/caddy /usr/local/bin/caddy
 RUN python3 -c "import os; p='/usr/local/bin/caddy'; os.removexattr(p, 'security.capability') if 'security.capability' in os.listxattr(p) else None"
