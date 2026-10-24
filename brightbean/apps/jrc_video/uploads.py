@@ -204,17 +204,56 @@ def start_upload(user, workspace, post, membership, *, channel, filename, size, 
             raise UploadError("The video service returned an unexpected answer.", 502)
         if video is not None and str(video.ff_asset_id) != ff_asset:
             raise UploadError("The video service returned an unexpected answer.", 502)
-        number = _remote_number(user, ff_asset, ff_version)
+        try:
+            number = _remote_number(user, ff_asset, ff_version)
+        except Exception:
+            # If FreeFrame created the version but its listing could not be read,
+            # discard it. If discard is also unavailable, create a local mirror
+            # with the next number so the remote upload remains resumable instead
+            # of becoming invisible. A later status refresh copies its real state.
+            try:
+                _call(
+                    user,
+                    "POST",
+                    "/upload/abort",
+                    {"s3_key": s3_key, "upload_id": upload_id, "version_id": ff_version, "discard": True},
+                )
+            except Exception as exc:
+                logger.error(
+                    "Could not discard FreeFrame upload %s after number lookup failed; mirroring it: %s",
+                    ff_version,
+                    exc,
+                )
+                last_number = (
+                    video.versions.order_by("-number").values_list("number", flat=True).first() if video else None
+                )
+                number = (last_number or 0) + 1
+            else:
+                raise
         if video is None:
             video = VideoAsset.objects.create(platform_post=locked, ff_asset_id=ff_asset)
-        version = VideoVersion.objects.create(
-            video=video,
-            number=number,
-            ff_version_id=ff_version,
-            uploaded_by=user,
-            original_filename=name,
-            size_bytes=size,
-        )
+        try:
+            version = VideoVersion.objects.create(
+                video=video,
+                number=number,
+                ff_version_id=ff_version,
+                uploaded_by=user,
+                original_filename=name,
+                size_bytes=size,
+            )
+        except Exception:
+            # A failed local write still needs to release the just-created remote
+            # upload. If FreeFrame refuses, log enough context to reconcile later.
+            try:
+                _call(
+                    user,
+                    "POST",
+                    "/upload/abort",
+                    {"s3_key": s3_key, "upload_id": upload_id, "version_id": ff_version, "discard": True},
+                )
+            except Exception as exc:
+                logger.error("Could not compensate FreeFrame upload %s after local write failed: %s", ff_version, exc)
+            raise
     return {
         "version": str(version.pk),
         "number": version.number,
@@ -365,9 +404,38 @@ def abort_upload(user, workspace, post, version_id, *, s3_key, upload_id):
         # Already removed in FreeFrame (cleaned up as stale): drop our row too.
         if exc.status != 404:
             raise
-    # The FreeFrame asset stays for the next attempt.
-    version.delete()
-    return {"discarded": True}
+
+    # A 204 from /abort means the request was handled, not necessarily that the
+    # version was discarded: FreeFrame can discover that completion won a race
+    # with this request and leave the assembled version in place. Only remove our
+    # mirror after the authoritative version list confirms it is gone.
+    remote_asset_missing = False
+    try:
+        remote_versions = _call(user, "GET", f"/assets/{version.video.ff_asset_id}/versions")
+    except UploadError as exc:
+        if exc.status != 404:
+            raise UploadError(
+                "Could not confirm whether the upload was discarded. Refresh and try again.", 503
+            ) from None
+        # FreeFrame removes an empty asset when its first upload is discarded.
+        remote_asset_missing = True
+        remote_versions = []
+    if not isinstance(remote_versions, list):
+        raise UploadError("The video service returned an unexpected answer.", 502)
+    remote = next(
+        (item for item in remote_versions if isinstance(item, dict) and item.get("id") == str(version.ff_version_id)),
+        None,
+    )
+    if remote is None:
+        video = version.video
+        version.delete()
+        if remote_asset_missing and not video.versions.exists():
+            video.delete()
+        return {"discarded": True}
+
+    _apply_remote(version, remote)
+    version.refresh_from_db()
+    return {"discarded": False, "status": version.status}
 
 
 def _apply_remote(version, remote):
@@ -388,6 +456,9 @@ def _apply_remote(version, remote):
         "width": number("width", int),
         "height": number("height", int),
     }
+    remote_number = remote.get("version_number")
+    if isinstance(remote_number, int) and not isinstance(remote_number, bool) and remote_number > 0:
+        changes["number"] = remote_number
     if any(getattr(version, key) != value for key, value in changes.items()):
         VideoVersion.objects.filter(pk=version.pk).update(**changes)
 

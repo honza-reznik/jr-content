@@ -38,6 +38,7 @@ class FakeFreeFrame:
         self.url_origin = S3
         self.held = [1]
         self.state = "resumable"
+        self.abort_keeps_version = False
 
     def __call__(self, user):
         fake = self
@@ -61,6 +62,16 @@ class FakeFreeFrame:
             return self._new_version(asset, payload, project=payload["project_id"])
         if path.startswith("/assets/") and path.endswith("/versions") and method == "GET":
             return self.versions.get(path.split("/")[2], [])
+        if path == "/upload/abort":
+            version = payload["version_id"]
+            asset = self.asset_of[version]
+            if self.abort_keeps_version:
+                for item in self.versions[asset]:
+                    if item["id"] == version:
+                        item["processing_status"] = "processing"
+            else:
+                self.versions[asset] = [item for item in self.versions[asset] if item["id"] != version]
+            return None  # FreeFrame's endpoint answers 204.
         if path.startswith("/upload/") and path.endswith("/parts"):
             version = path.split("/")[2]
             return {
@@ -336,6 +347,42 @@ def test_not_synchronized_client_has_clear_error(client, ff, workspace, user, se
     assert ff.calls == []
 
 
+def test_failed_local_start_compensates_the_remote_upload(client, ff, workspace, user, setup, monkeypatch):
+    client.force_login(user)
+
+    def fail_number(*_args):
+        raise uploads.UploadError("forged incomplete version listing", 502)
+
+    monkeypatch.setattr(uploads, "_remote_number", fail_number)
+    response = start(client, workspace, setup)
+    assert response.status_code == 502
+    aborts = [call for call in ff.calls if call[2] == "/upload/abort"]
+    assert len(aborts) == 1 and aborts[0][3]["discard"] is True
+    assert not VideoAsset.objects.exists() and not VideoVersion.objects.exists()
+    assert ff.versions and all(not versions for versions in ff.versions.values())
+
+
+def test_failed_compensation_keeps_a_local_mirror_of_the_remote_upload(client, ff, workspace, user, setup, monkeypatch):
+    client.force_login(user)
+
+    def fail_number(*_args):
+        raise uploads.UploadError("forged unavailable listing", 502)
+
+    monkeypatch.setattr(uploads, "_remote_number", fail_number)
+    ff.fail[("POST", "/upload/abort")] = 503
+
+    response = start(client, workspace, setup)
+    assert response.status_code == 200, response.content
+    version = VideoVersion.objects.get()
+    assert response.json()["version"] == str(version.pk)
+    assert version.status == "uploading" and version.number == 1
+    assert str(version.ff_version_id) in [item["id"] for item in ff.versions[str(version.video.ff_asset_id)]]
+    ff.versions[str(version.video.ff_asset_id)][0]["version_number"] = 4
+    client.get(url("upload_status", workspace, setup))
+    version.refresh_from_db()
+    assert version.number == 4  # Status reconciliation also replaces the provisional number.
+
+
 def test_enabled_channel_without_copy_gets_one(client, ff, workspace, user, setup):
     from apps.social_accounts.models import SocialAccount
 
@@ -458,6 +505,49 @@ def test_discard_removes_the_unfinished_version(client, ff, workspace, user, set
     assert abort["discard"] is True
     assert not VideoVersion.objects.exists() and VideoAsset.objects.count() == 1
     assert start(client, workspace, setup).status_code == 200  # the channel is free again
+
+
+def test_discard_keeps_and_syncs_version_when_freeframe_reports_it_completed(client, ff, workspace, user, setup):
+    client.force_login(user)
+    info = started(client, workspace, setup)
+    ff.abort_keeps_version = True
+    response = post_json(
+        client,
+        url("upload_abort", workspace, setup, ("version_id", info["version"])),
+        {"s3_key": info["s3_key"], "upload_id": info["upload_id"]},
+    )
+    assert response.status_code == 200, response.content
+    assert response.json() == {"discarded": False, "status": "processing"}
+    version = VideoVersion.objects.get()
+    assert version.status == "processing" and str(version.ff_version_id) in [
+        item["id"] for item in ff.versions[str(version.video.ff_asset_id)]
+    ]
+
+
+def test_discard_keeps_local_version_when_remote_state_cannot_be_confirmed(client, ff, workspace, user, setup):
+    client.force_login(user)
+    info = started(client, workspace, setup)
+    ff.fail[("GET", "/assets/")] = 503
+    response = post_json(
+        client,
+        url("upload_abort", workspace, setup, ("version_id", info["version"])),
+        {"s3_key": info["s3_key"], "upload_id": info["upload_id"]},
+    )
+    assert response.status_code == 503
+    assert VideoVersion.objects.get().status == "uploading"
+
+
+def test_discard_accepts_missing_remote_asset_as_confirmation(client, ff, workspace, user, setup):
+    client.force_login(user)
+    info = started(client, workspace, setup)
+    ff.fail[("GET", "/assets/")] = 404  # FreeFrame removed the empty asset on discard.
+    response = post_json(
+        client,
+        url("upload_abort", workspace, setup, ("version_id", info["version"])),
+        {"s3_key": info["s3_key"], "upload_id": info["upload_id"]},
+    )
+    assert response.status_code == 200 and response.json() == {"discarded": True}
+    assert not VideoVersion.objects.exists() and not VideoAsset.objects.exists()
 
 
 # --- status ------------------------------------------------------------------------
