@@ -124,7 +124,7 @@ def _get_filtered_posts(workspace, request):
     """Apply calendar filters from query params."""
     qs = (
         Post.objects.for_workspace(workspace.id)
-        .select_related("author")
+        .select_related("author", "jrc_production")
         .prefetch_related(
             Prefetch(
                 "platform_posts",
@@ -133,10 +133,7 @@ def _get_filtered_posts(workspace, request):
             "media_attachments__media_asset",
         )
     )
-    qs = qs.filter(
-        Q(platform_posts__social_account__jrc_channel__is_enabled=True)
-        | Q(platform_posts__social_account__jrc_channel__isnull=True)
-    ).distinct()
+    qs = qs.filter(platform_posts__social_account__jrc_channel__is_enabled=True).distinct()
 
     # Status filter — editorial status now lives on PlatformPost, so match
     # posts that have at least one child carrying the target state.
@@ -148,6 +145,13 @@ def _get_filtered_posts(workspace, request):
     platforms = request.GET.getlist("platform")
     if platforms:
         qs = qs.filter(platform_posts__social_account__platform__in=platforms).distinct()
+
+    channels = _get_channel_filters(request)
+    if channels:
+        qs = qs.filter(
+            platform_posts__social_account__jrc_channel__is_enabled=True,
+            platform_posts__social_account_id__in=channels,
+        ).distinct()
 
     # Author filter
     authors = request.GET.getlist("author")
@@ -238,9 +242,9 @@ def _get_filtered_platform_posts(workspace, request):
 
 
 def _enabled_platform_posts():
-    """Visible variants, including upstream accounts not managed as JRC channels."""
-    return PlatformPost.objects.filter(
-        Q(social_account__jrc_channel__is_enabled=True) | Q(social_account__jrc_channel__isnull=True)
+    """Visible variants from explicitly enabled workspace channels."""
+    return PlatformPost.objects.filter(social_account__jrc_channel__is_enabled=True).select_related(
+        "post", "post__jrc_production", "social_account"
     )
 
 
@@ -266,14 +270,11 @@ def _waiting_for_me(workspace, user):
     is_client = membership.workspace_role == WorkspaceMembership.WorkspaceRole.CLIENT
     if is_client:
         statuses = [PlatformPost.Status.PENDING_CLIENT]
-        posts = (
-            Post.objects.filter(workspace=workspace, platform_posts__status__in=statuses)
-            .filter(
-                Q(platform_posts__social_account__jrc_channel__is_enabled=True)
-                | Q(platform_posts__social_account__jrc_channel__isnull=True)
-            )
-            .distinct()
-        )
+        posts = Post.objects.filter(
+            workspace=workspace,
+            platform_posts__status__in=statuses,
+            platform_posts__social_account__jrc_channel__is_enabled=True,
+        ).distinct()
     elif membership.effective_permissions.get("approve_posts", False):
         client_change_ids = ApprovalAction.objects.filter(
             post__workspace=workspace,
@@ -291,10 +292,7 @@ def _waiting_for_me(workspace, user):
                         id__in=client_change_ids,
                     )
                 )
-                & (
-                    Q(platform_posts__social_account__jrc_channel__is_enabled=True)
-                    | Q(platform_posts__social_account__jrc_channel__isnull=True)
-                )
+                & Q(platform_posts__social_account__jrc_channel__is_enabled=True)
             )
             .distinct()
         )
@@ -339,6 +337,7 @@ def _get_calendar_slot_occurrences(workspace, request, display_tz, visible_dates
     slots = PostingSlot.objects.filter(
         social_account__workspace=workspace,
         social_account__connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        social_account__jrc_channel__is_enabled=True,
         is_active=True,
     )
     channels = _get_channel_filters(request)
@@ -477,6 +476,7 @@ def _get_publish_context(workspace, request):
     channels_with_posts = (
         SocialAccount.objects.filter(
             platform_posts__post__workspace=workspace,
+            jrc_channel__is_enabled=True,
         )
         .distinct()
         .order_by("platform", "account_name")
@@ -722,7 +722,7 @@ def calendar_view(request, workspace_id):
             workspace=workspace,
             connection_status=SocialAccount.ConnectionStatus.CONNECTED,
         )
-        .filter(Q(jrc_channel__is_enabled=True) | Q(jrc_channel__isnull=True))
+        .filter(jrc_channel__is_enabled=True)
         .exists()
     )
     default_mode = "calendar" if has_connected_accounts else "list"
@@ -737,7 +737,7 @@ def calendar_view(request, workspace_id):
         .filter(
             connection_status=SocialAccount.ConnectionStatus.CONNECTED,
         )
-        .filter(Q(jrc_channel__is_enabled=True) | Q(jrc_channel__isnull=True))
+        .filter(jrc_channel__is_enabled=True)
         .order_by("platform")
     )
 
@@ -1128,7 +1128,7 @@ def _list_view(request, workspace, target_date, context):
             workspace=workspace,
             connection_status=SocialAccount.ConnectionStatus.CONNECTED,
         )
-        .filter(Q(jrc_channel__is_enabled=True) | Q(jrc_channel__isnull=True))
+        .filter(jrc_channel__is_enabled=True)
         .exists()
     )
 

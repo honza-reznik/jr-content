@@ -25,6 +25,7 @@ from apps.calendar.services import (
 from apps.calendar.tasks import generate_recurring_posts
 from apps.calendar.views import _day_view_data
 from apps.composer.models import PlatformPost, Post
+from apps.jrc_channels.services import create_manual_channel
 from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.organizations.models import Organization
 from apps.social_accounts.models import SocialAccount
@@ -601,20 +602,8 @@ class CalendarChannelSlotViewTests(TestCase):
         self.factory = RequestFactory()
         self.org = Organization.objects.create(name="Calendar Slots Org", default_timezone="America/New_York")
         self.workspace = Workspace.objects.create(organization=self.org, name="Calendar Slots WS")
-        self.account = SocialAccount.objects.create(
-            workspace=self.workspace,
-            platform="instagram",
-            account_platform_id="ig-calendar-slots",
-            account_name="Instagram",
-            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
-        )
-        self.other_account = SocialAccount.objects.create(
-            workspace=self.workspace,
-            platform="linkedin_company",
-            account_platform_id="li-calendar-slots",
-            account_name="LinkedIn",
-            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
-        )
+        self.account = create_manual_channel(self.workspace, "instagram", "Instagram")
+        self.other_account = create_manual_channel(self.workspace, "linkedin_company", "LinkedIn")
 
     def test_day_view_marks_exact_channel_slot_taken(self):
         target = date(2026, 6, 15)  # Monday
