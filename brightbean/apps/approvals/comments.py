@@ -19,6 +19,25 @@ MENTION_REGEX = re.compile(r"(?:^|(?<=\s))@(\w[\w.]*)")
 MAX_ATTACHMENT_SIZE = 5 * 1024 * 1024  # 5MB
 
 
+def can_view_comment(comment, user):
+    """Require access to both the comment and every enclosing thread."""
+    workspace = comment.post.workspace
+    membership = WorkspaceMembership.objects.filter(user=user, workspace=workspace).first()
+    if membership is None or not user.is_active or workspace.is_archived:
+        return False
+    external_only = membership.workspace_role in ("client", "viewer")
+    seen = set()
+    current = comment
+    while current is not None:
+        if current.pk in seen or current.post_id != comment.post_id or current.is_deleted:
+            return False
+        seen.add(current.pk)
+        if external_only and current.visibility != PostComment.Visibility.EXTERNAL:
+            return False
+        current = current.parent_comment
+    return True
+
+
 def create_comment(post, author, body, visibility=None, parent_id=None, attachment=None):
     """Create a comment on a post and notify @mentioned users.
 
@@ -104,6 +123,8 @@ def update_comment(comment_id, user, body, *, workspace=None):
         raise ValueError("Comment not found.")
     if comment.author_id != user.id:
         raise PermissionError("Only the comment author can edit.")
+    if not can_view_comment(comment, user):
+        raise PermissionError("You don't have permission to edit this comment.")
 
     comment.body = body
     comment.save(update_fields=["body", "updated_at"])
@@ -245,6 +266,7 @@ def _notify_mentions(mentions, post, author, workspace, body, visibility):
                 title=f"{author.display_name} mentioned you",
                 body=f'In a comment on a post: "{body[:100]}"',
                 data={
+                    "note_visibility": visibility,
                     "post_id": str(post.id),
                     "workspace_id": str(workspace.id),
                 },

@@ -3,6 +3,18 @@
 Základ: Brightbean Studio `48801fdcd1009e6ed4863fa9942222a478a297e2`, import F2-B01.
 Licence této odvozené verze: AGPL-3.0; původní licence a autorská práva zůstávají zachována.
 
+## 2026-10-24 · F7-B01 — opravy bezpečnostního review
+
+- Upozornění na změny, odmítnutí a zmínku ověřují viditelnost poznámky a aktuální
+  přístup příjemce při vytvoření, čtení i doručení (také opakovaném a souhrnném).
+  Nepřístupnou citaci nahradí obecný text; stará upozornění bez uložené viditelnosti
+  se bezpečně posuzují jako interní. Změna role autora viditelnost poznámky nemění.
+- Přílohy komentářů ověřují i viditelnost celého nadřazeného vlákna; nepřístupné
+  vracejí 404 před otevřením souboru. Odpověď zakazuje uložení do mezipaměti.
+  Autor po změně role na client/viewer nemůže upravovat interní komentář.
+- `apps/approvals/test_note_privacy.py`: regrese pro client/viewer, autora obsahu,
+  interní odpovědi i změny rolí, historii a zásuvku upozornění, e-mail, webhook a souhrn.
+
 ## 2026-10-24 · F7-B01
 
 - `StageChange` a `ApprovalAction` ukládají při akci roli autora a viditelnost poznámky.
