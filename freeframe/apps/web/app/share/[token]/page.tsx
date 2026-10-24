@@ -1,5 +1,6 @@
 'use client'
 
+import { shareFetch } from '@/lib/share-fetch'
 import * as React from 'react'
 import {
   Lock,
@@ -62,17 +63,7 @@ async function fetchShareInfo(
   password?: string,
   logOpen?: boolean,
 ): Promise<ShareValidateResponse> {
-  // Include auth token if user is already logged in (for secure links)
   const headers: Record<string, string> = {}
-  let accessToken: string | null = null
-  try {
-    if (typeof window !== 'undefined') {
-      accessToken = localStorage.getItem('ff_access_token')
-    }
-  } catch {}
-  if (accessToken) {
-    headers['Authorization'] = `Bearer ${accessToken}`
-  }
 
   // When a password is supplied, use POST /share/{token}/verify so the
   // password travels in the request body — not as a query string, which
@@ -81,7 +72,7 @@ async function fetchShareInfo(
   if (password) {
     headers['Content-Type'] = 'application/json'
     const body = JSON.stringify({ password, log_open: !!logOpen })
-    const resp = await fetch(`${API_URL}/share/${token}/verify`, {
+    const resp = await shareFetch(`${API_URL}/share/${token}/verify`, {
       method: 'POST',
       headers,
       body,
@@ -113,7 +104,7 @@ async function fetchShareInfo(
   const params = new URLSearchParams()
   if (logOpen) params.set('log_open', 'true')
   const qs = params.toString() ? `?${params.toString()}` : ''
-  const response = await fetch(`${API_URL}/share/${token}${qs}`, { headers })
+  const response = await shareFetch(`${API_URL}/share/${token}${qs}`, { headers })
   if (!response.ok) {
     if (response.status === 410) return { expired: true }
     return {}

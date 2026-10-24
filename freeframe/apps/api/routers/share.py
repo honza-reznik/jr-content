@@ -37,7 +37,7 @@ from ..schemas.share import (
     ShareVerifyRequest,
 )
 from ..services.permissions import (
-    require_project_role, validate_share_link, validate_share_link_with_session,
+    require_share_project_access, require_project_role, validate_share_link, validate_share_link_with_session,
     validate_asset_in_share, enforce_share_link_visibility, _is_descendant_of, folder_chain_is_live,
 )
 from ..services.auth_service import bcrypt_password_bytes
@@ -45,14 +45,14 @@ from ..services.redis_service import create_share_session
 from ..services.search import escape_like
 from ..services.owned_keys import is_project_logo_key
 from ..services.avatar_keys import sign_avatar
-from ..services.s3_service import generate_presigned_get_url, build_download_filename
+from ..services.s3_service import generate_presigned_get_url, build_download_filename, PREVIEW_URL_SECONDS
 from ..schemas.asset import DownloadOption
 from ..services.downloads import (
     describe_choices, download_choices, download_filename, may_download_original,
     original_allowed_for_download, pick_or_refuse,
 )
 from ..services.crypto_service import encrypt_password, decrypt_password
-from .hls_proxy import create_hls_token
+from .hls_proxy import create_hls_token, managed_hls_identity, MANAGED_MEDIA_SECONDS
 from ..models.project import Project, ProjectRole
 from ..tasks.email_tasks import send_share_email
 from ..tasks.celery_app import send_task_safe
@@ -87,6 +87,11 @@ def _get_project_id_from_link(db: Session, link: ShareLink) -> uuid.UUID:
             raise HTTPException(status_code=404, detail="Shared folder not found")
         return folder.project_id
     raise HTTPException(status_code=400, detail="Invalid share link")
+
+
+def _share_media_expiry(db: Session, link: ShareLink, user: Optional[User]) -> dict:
+    identity = managed_hls_identity(user, _get_project_id_from_link(db, link), db=db)
+    return {"expires_in": MANAGED_MEDIA_SECONDS} if identity else {}
 
 
 def _log_share_activity(
@@ -282,24 +287,25 @@ def _build_share_validate_response(
     asset_data = None
     branding_data = None
     if link.asset_id:
+        media_expiry = _share_media_expiry(db, link, current_user)
         asset = _get_asset(db, link.asset_id)
         # Get thumbnail URL
         media_file = _get_latest_media_file(db, asset.id)
         thumbnail_url = None
         if media_file and media_file.s3_key_thumbnail:
-            thumbnail_url = generate_presigned_get_url(media_file.s3_key_thumbnail)
+            thumbnail_url = generate_presigned_get_url(media_file.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS)
         # Get stream URL
         stream_url = None
         if media_file:
             if media_file.s3_key_processed:
                 if asset.asset_type == AssetType.video:
                     # Route through /stream/hls so S3 can stay private (#51)
-                    hls_token = create_hls_token(media_file.s3_key_processed)
+                    hls_token = create_hls_token(media_file.s3_key_processed, **managed_hls_identity(current_user, asset.project_id, db=db))
                     stream_url = f"/stream/hls/master.m3u8?token={hls_token}"
                 else:
-                    stream_url = generate_presigned_get_url(media_file.s3_key_processed)
+                    stream_url = generate_presigned_get_url(media_file.s3_key_processed, **media_expiry)
             elif media_file.s3_key_raw:
-                stream_url = generate_presigned_get_url(media_file.s3_key_raw)
+                stream_url = generate_presigned_get_url(media_file.s3_key_raw, **media_expiry)
 
         asset_data = {
             "id": str(asset.id),
@@ -373,6 +379,7 @@ def validate_share_link_endpoint(
     browser history, Referer headers, and Cloudflare Tunnel logs.
     """
     link = validate_share_link(db, token)
+    require_share_project_access(db, link, current_user)
 
     # Check secure visibility — requires authenticated user. This is the one
     # place that answers with requires_auth instead of raising, so the client
@@ -421,6 +428,7 @@ def verify_share_link_password(
     logs. See SECURITY_AUDIT H3.
     """
     link = validate_share_link(db, token)
+    require_share_project_access(db, link, current_user)
 
     # Check secure visibility — requires authenticated user (same gate as
     # the GET endpoint). Without this, an anonymous caller who knows the
@@ -1316,7 +1324,7 @@ def get_folder_share_assets(
                 for pa in preview_assets:
                     mf = _get_latest_media_file(db, pa.id)
                     if mf and mf.s3_key_thumbnail:
-                        thumb_urls.append(generate_presigned_get_url(mf.s3_key_thumbnail))
+                        thumb_urls.append(generate_presigned_get_url(mf.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS))
                 subfolder_items.append(FolderShareSubfolder(
                     id=sf.id, name=sf.name, item_count=asset_count + child_folder_count, thumbnail_urls=thumb_urls,
                 ))
@@ -1331,7 +1339,7 @@ def get_folder_share_assets(
             ).order_by(Asset.created_at.desc()).offset(offset).limit(per_page).all()
             for a in shared_assets:
                 mf = _get_latest_media_file(db, a.id)
-                thumbnail_url = generate_presigned_get_url(mf.s3_key_thumbnail) if mf and mf.s3_key_thumbnail else None
+                thumbnail_url = generate_presigned_get_url(mf.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS) if mf and mf.s3_key_thumbnail else None
                 comment_count = _latest_version_comment_count(db, a.id)
                 asset_items.append(FolderShareAssetItem(
                     id=a.id, name=a.name, asset_type=a.asset_type.value if hasattr(a.asset_type, 'value') else str(a.asset_type),
@@ -1402,7 +1410,7 @@ def get_folder_share_assets(
         for pa in preview_assets:
             mf = _get_latest_media_file(db, pa.id)
             if mf and mf.s3_key_thumbnail:
-                thumb_urls.append(generate_presigned_get_url(mf.s3_key_thumbnail))
+                thumb_urls.append(generate_presigned_get_url(mf.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS))
             if len(thumb_urls) >= 4:
                 break
 
@@ -1441,7 +1449,7 @@ def get_folder_share_assets(
         media_file = _get_latest_media_file(db, asset.id)
         if media_file:
             if media_file.s3_key_thumbnail:
-                thumbnail_url = generate_presigned_get_url(media_file.s3_key_thumbnail)
+                thumbnail_url = generate_presigned_get_url(media_file.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS)
             file_size = media_file.file_size_bytes
             duration_seconds = media_file.duration_seconds
 
@@ -1563,6 +1571,7 @@ def get_share_stream_url(
     media_file = _share_media_file(db, link, asset, version_id)
 
     choice = None
+    media_expiry = _share_media_expiry(db, link, current_user)
     if download:
         # The MP4 remuxed from the top rung unless another file was chosen,
         # falling back to the camera master for versions that predate it (see
@@ -1577,13 +1586,14 @@ def get_share_stream_url(
         )
         url = generate_presigned_get_url(
             choice.s3_key, download_filename=download_filename(asset, media_file, choice),
+            **media_expiry,
         )
     elif asset.asset_type == AssetType.video and media_file.s3_key_processed:
         # Route through /stream/hls so S3 can stay private (#51)
-        hls_token = create_hls_token(media_file.s3_key_processed)
+        hls_token = create_hls_token(media_file.s3_key_processed, **managed_hls_identity(current_user, asset.project_id, db=db))
         url = f"/stream/hls/master.m3u8?token={hls_token}"
     else:
-        url = generate_presigned_get_url(media_file.s3_key_processed or media_file.s3_key_raw)
+        url = generate_presigned_get_url(media_file.s3_key_processed or media_file.s3_key_raw, **media_expiry)
 
     # Log activity
     activity_action = ShareActivityAction.downloaded if download else ShareActivityAction.viewed_asset
@@ -1599,7 +1609,7 @@ def get_share_stream_url(
     # Get thumbnail URL
     thumb_url = None
     if media_file.s3_key_thumbnail:
-        thumb_url = generate_presigned_get_url(media_file.s3_key_thumbnail)
+        thumb_url = generate_presigned_get_url(media_file.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS)
 
     return {
         "url": url,
@@ -1634,7 +1644,7 @@ def get_share_thumbnail_url(
     if not media_file or not media_file.s3_key_thumbnail:
         raise HTTPException(status_code=404, detail="Thumbnail not found")
 
-    url = generate_presigned_get_url(media_file.s3_key_thumbnail)
+    url = generate_presigned_get_url(media_file.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS)
     return {"url": url}
 
 

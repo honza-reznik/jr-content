@@ -11,6 +11,17 @@ Licence této odvozené verze: AGPL-3.0; původní licence a autorská práva z�
   přímého detailu načítá stejný soubor jako hlavní knihovna médií.
 - `apps/media_library/tests/test_tag_endpoints.py`: regrese ověřuje panel bez vloženého skriptu a načtení
   komponenty na přímé stránce detailu.
+## 2026-10-24 · F5-B04
+
+- `jrc_video`: smazání uživatele ukládá ve stejné transakci trvalý požadavek deaktivace
+  bez cizího klíče na uživatele (`VideoAccountRevocation`, migrace 0003). Po uložení se
+  účet FreeFrame deaktivuje ihned; při výpadku požadavek přežije smazání lokálního účtu.
+  Vrácení transakce neodvolá přístup dosud existujícímu uživateli.
+- Existující worker každou minutu volá `jrc_sync_freeframe --pending`: přednostně deaktivuje
+  osiřelé účty, pak opakuje změny účtů, rolí a členství. Úloha se zakládá idempotentně po
+  migraci; při výpadku se dál opakuje a nemaže neúspěšné značky. Worker nepotřebuje klíč SSO.
+- Regresní testy v `apps/jrc_video/tests/test_sync.py`; živý průchod obou aplikací
+  `scripts/F5-B04/check-permissions.py` běží jen v ověřovacím projektu se správným portem.
 
 ## 2026-10-24 · F5-B03
 

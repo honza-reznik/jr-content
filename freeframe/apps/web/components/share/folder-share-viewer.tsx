@@ -1,5 +1,6 @@
 'use client'
 
+import { shareFetch } from '@/lib/share-fetch'
 import * as React from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import {
@@ -22,6 +23,7 @@ import {
 import { cn } from '@/lib/utils'
 import { useShareAppearance } from '@/hooks/use-share-appearance'
 import { withBasePath } from '@/lib/base-path'
+import { removeTokens, restoreSessionCookies } from '@/lib/auth'
 import { useReview, type CreateCommentPayload } from '@/components/review/review-provider'
 import { useReviewStore } from '@/stores/review-store'
 import { fetchDownloadUrl, fetchShareDownloadOptions, handleDownload, triggerDownload } from './share-download'
@@ -135,7 +137,7 @@ async function collectAllAssetsRecursive(
   const sp = shareSession ? `&share_session=${encodeURIComponent(shareSession)}` : ''
   const folderParam = folderId ? `folder_id=${folderId}&` : ''
   try {
-    const res = await fetch(`${API_URL}/share/${token}/assets?${folderParam}page=1&per_page=500${sp}`)
+    const res = await shareFetch(`${API_URL}/share/${token}/assets?${folderParam}page=1&per_page=500${sp}`)
     if (!res.ok) return []
     const data = await res.json() as { assets?: { id: string; name: string }[]; subfolders?: { id: string }[] }
     const items: { id: string; name: string }[] = (data.assets ?? []).map((a) => ({ id: a.id, name: a.name }))
@@ -380,6 +382,7 @@ function SectionHeader({ label, count, totalSize, expanded, onToggle }: SectionH
 // ─── Right Panel: Asset Details + Comments ───────────────────────────────────
 
 interface RightPanelProps {
+  shareSession?: string | null
   selectedAsset: FolderShareAssetItem | null
   token: string
   permission: SharePermission
@@ -400,7 +403,7 @@ export interface GuestComment {
   replies?: GuestComment[]
 }
 
-function RightPanel({ selectedAsset, token, permission, allowDownload, onOpenAsset }: RightPanelProps) {
+function RightPanel({ shareSession, selectedAsset, token, permission, allowDownload, onOpenAsset }: RightPanelProps) {
   const [comments, setComments] = React.useState<GuestComment[]>([])
   const [loadingComments, setLoadingComments] = React.useState(false)
   const [commentRefresh, setCommentRefresh] = React.useState(0)
@@ -414,12 +417,12 @@ function RightPanel({ selectedAsset, token, permission, allowDownload, onOpenAss
     setLoadingComments(true)
     // The grid preview has no version switcher — scope to the latest ready version
     // so it doesn't mix comments from every version.
-    fetch(`${API_URL}/share/${token}/comments?asset_id=${selectedAsset.id}&latest_only=true`)
+    shareFetch(`${API_URL}/share/${token}/comments?asset_id=${selectedAsset.id}&latest_only=true${shareSession ? `&share_session=${encodeURIComponent(shareSession)}` : ''}`)
       .then((r) => (r.ok ? r.json() : Promise.resolve([])))
       .then((data) => setComments(Array.isArray(data) ? data : (data.comments ?? [])))
       .catch(() => setComments([]))
       .finally(() => setLoadingComments(false))
-  }, [selectedAsset?.id, token, commentRefresh])
+  }, [selectedAsset?.id, token, commentRefresh, shareSession])
 
   if (!selectedAsset) {
     return (
@@ -728,7 +731,7 @@ export function FolderShareViewer({
     setSubfolders([])
     setSelectedAsset(null)
 
-    fetch(
+    shareFetch(
       `${API_URL}/share/${token}/assets?${currentSubfolderId ? `folder_id=${currentSubfolderId}&` : ''}page=1&per_page=${perPage}${sessionParam}`,
     )
       .then((r) => {
@@ -756,7 +759,7 @@ export function FolderShareViewer({
     const nextPage = page + 1
     setLoadingMore(true)
     try {
-      const r = await fetch(
+      const r = await shareFetch(
         `${API_URL}/share/${token}/assets?${currentSubfolderId ? `folder_id=${currentSubfolderId}&` : ''}page=${nextPage}&per_page=${perPage}${sessionParam}`,
       )
       if (!r.ok) throw new Error('Failed to load more')
@@ -869,14 +872,14 @@ export function FolderShareViewer({
                     <p className="text-sm font-medium text-text-primary">{viewerName}</p>
                   </div>
                   <DropdownMenu.Item
-                    onSelect={() => {
-                      // Ensure cookie is set from localStorage before navigating
+                    onSelect={async () => {
                       if (typeof window !== 'undefined') {
-                        const token = localStorage.getItem('ff_access_token')
-                        if (token) {
-                          document.cookie = `ff_access_token=${token}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`
+                        try {
+                          await restoreSessionCookies()
+                          window.location.href = withBasePath('/projects')
+                        } catch {
+                          // Fail closed if the session lock is unavailable.
                         }
-                        window.location.href = withBasePath('/projects')
                       }
                     }}
                     className="flex items-center gap-2 px-3 py-2 text-sm text-text-primary hover:bg-bg-tertiary cursor-pointer outline-none transition-colors"
@@ -884,12 +887,14 @@ export function FolderShareViewer({
                     Back to Dashboard
                   </DropdownMenu.Item>
                   <DropdownMenu.Item
-                    onSelect={() => {
+                    onSelect={async () => {
                       if (typeof window !== 'undefined') {
-                        localStorage.removeItem('ff_access_token')
-                        localStorage.removeItem('ff_refresh_token')
-                        document.cookie = 'ff_access_token=; path=/; max-age=0'
-                        window.location.href = withBasePath('/login')
+                        try {
+                          await removeTokens()
+                          window.location.href = withBasePath('/login')
+                        } catch {
+                          // Fail closed if the session lock is unavailable.
+                        }
                       }
                     }}
                     className="flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10 cursor-pointer outline-none transition-colors"
@@ -1177,6 +1182,7 @@ export function FolderShareViewer({
         {panelOpen && (
           <div className="w-full md:w-[320px] absolute inset-y-0 right-0 z-20 md:static md:inset-auto flex flex-col border-l-0 md:border-l border-border bg-bg-secondary shrink-0 overflow-hidden">
             <RightPanel
+              shareSession={shareSession}
               selectedAsset={selectedAsset}
               token={token}
               permission={permission}

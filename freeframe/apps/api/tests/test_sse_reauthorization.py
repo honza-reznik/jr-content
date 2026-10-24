@@ -569,3 +569,25 @@ def test_the_age_of_the_first_check_counts_from_the_connect_check(world, broker,
 
     asyncio.run(scenario())
     assert len(calls) == 2  # connect, then again before the first event
+
+
+def test_managed_public_project_stream_revokes_after_membership_removal(world, broker, timing):
+    """Public visibility must not keep an already-open managed stream alive."""
+    _write(lambda s: s.query(User).filter(User.id == world["member"]).update({User.jrc_managed: True}))
+    _write(lambda s: s.query(Project).filter(Project.id == world["P"]).update({Project.is_public: True}))
+    token = _token(world["member"])
+
+    async def scenario():
+        gen = await _open(world["P"], token)
+        before = await _deliver(gen, broker, world["P"], "new_comment", {"id": "before"})
+        assert _event(before) == ("new_comment", {"id": "before"})
+        _remove_member(world)
+        after = await _deliver(gen, broker, world["P"], "new_comment", {"id": "after"})
+        assert _event(after) == ("revoked", {"reason": "access_revoked"})
+        await _assert_ended(gen)
+        with pytest.raises(HTTPException) as exc:
+            await _open(world["P"], token)
+        assert exc.value.status_code == 403
+
+    asyncio.run(scenario())
+    assert broker.closed == 1

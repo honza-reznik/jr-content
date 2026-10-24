@@ -43,6 +43,11 @@ MAGIC_CODE_FAILURE_DETAIL = (
 MAGIC_CODE_EXPIRY_MINUTES = MAGIC_CODE_EXPIRY_SECONDS // 60
 
 
+def require_local_account(user):
+    if user is not None and user.jrc_managed is True:
+        raise HTTPException(status_code=403, detail="Sign in through JR Content. Manage your password there.")
+
+
 def _generate_invite_token() -> str:
     """Generate a secure invite token."""
     return secrets.token_urlsafe(48)
@@ -59,6 +64,7 @@ def send_magic_code(body: SendMagicCodeRequest, db: Session = Depends(get_db)):
     enumerate registered emails.
     """
     user = get_user_by_email(db, body.email)
+    require_local_account(user)
 
     if not user:
         return SendMagicCodeResponse(
@@ -91,6 +97,7 @@ def verify_magic_code(body: VerifyMagicCodeRequest, db: Session = Depends(get_db
     Returns needs_password=True if user hasn't set a password yet.
     """
     user = get_user_by_email(db, body.email)
+    require_local_account(user)
 
     # "No such user" and "deactivated" get the same generic failure as a wrong/expired code —
     # distinguishing them would let a caller enumerate registered or deactivated emails.
@@ -121,17 +128,23 @@ def verify_magic_code(body: VerifyMagicCodeRequest, db: Session = Depends(get_db
     )
 
 
-@router.post("/set-password", response_model=UserResponse)
+@router.post("/set-password", response_model=TokenResponse)
 def set_password(
     body: SetPasswordRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Set password for authenticated user (after magic code verification)."""
+    require_local_account(current_user)
     current_user.password_hash = hash_password(body.password)
+    current_user.token_version += 1
     db.commit()
     db.refresh(current_user)
-    return current_user
+    return TokenResponse(
+        access_token=create_access_token(str(current_user.id), token_version=current_user.token_version),
+        refresh_token=create_refresh_token(str(current_user.id), token_version=current_user.token_version),
+        needs_password=False,
+    )
 
 
 @router.get("/invite/{token}", response_model=InviteInfoResponse)
@@ -144,6 +157,7 @@ def get_invite_info(token: str, db: Session = Depends(get_db)):
     
     if not user:
         raise HTTPException(status_code=404, detail="Invalid invite link")
+    require_local_account(user)
     
     if user.invite_token_expires_at and user.invite_token_expires_at < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="Invite link expired")
@@ -164,6 +178,7 @@ def accept_invite(body: AcceptInviteRequest, db: Session = Depends(get_db)):
     
     if not user:
         raise HTTPException(status_code=404, detail="Invalid invite link")
+    require_local_account(user)
     
     if user.invite_token_expires_at and user.invite_token_expires_at < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="Invite link expired")
@@ -174,6 +189,7 @@ def accept_invite(body: AcceptInviteRequest, db: Session = Depends(get_db)):
     # checked non-blank by DisplayName.
     user.name = body.name
     user.password_hash = hash_password(body.password)
+    user.token_version += 1
     user.email_verified = True  # Invited users are pre-verified
     user.status = UserStatus.active
     user.invite_token = None
@@ -191,6 +207,7 @@ def accept_invite(body: AcceptInviteRequest, db: Session = Depends(get_db)):
 def login(body: LoginRequest, db: Session = Depends(get_db)):
     """Login with email + password."""
     user = get_user_by_email(db, body.email)
+    require_local_account(user)
     if (
         not user
         or not user.password_hash
@@ -218,7 +235,7 @@ def refresh_token(body: RefreshRequest, db: Session = Depends(get_db)):
     return TokenResponse(
         access_token=create_access_token(str(user.id), token_version=user.token_version),
         refresh_token=create_refresh_token(str(user.id), token_version=user.token_version),
-        needs_password=user.password_hash is None,
+        needs_password=user.password_hash is None and user.jrc_managed is not True,
     )
 
 
@@ -254,6 +271,7 @@ def change_password(
     current_user: User = Depends(get_current_user),
 ):
     """Change password for authenticated user."""
+    require_local_account(current_user)
     if current_user.password_hash is None:
         raise HTTPException(status_code=400, detail="No password set for this account; use set-password instead")
     if not verify_password(body.current_password, current_user.password_hash):

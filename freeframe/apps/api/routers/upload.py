@@ -21,7 +21,7 @@ from ..services.s3_service import (
     MultipartUploadGone, MultipartListingUnsupported,
 )
 from ..services.permissions import (
-    asset_project_is_live, get_project_member, require_asset_project_live, require_project_role,
+    require_managed_project_role, asset_project_is_live, get_project_member, require_asset_project_live, require_project_role,
 )
 from ..models.project import ProjectRole
 from ..schemas.upload import (
@@ -148,13 +148,18 @@ def initiate_upload(
     )
 
 
-def _require_upload_project_live(db: Session, version: AssetVersion) -> None:
+def _require_upload_project_live(db: Session, version: AssetVersion, user: User) -> None:
     """404 "Project not found" once the upload's project is deleted, so no more
     bytes go into it and nothing in it is transcoded. Abort is left open: it is what
     the client's Cancel sends, and it disposes of the upload's bytes now instead of
     leaving them to the reaper. Abort never promotes an upload into a deleted
     project either: it records it failed even when the object is assembled."""
     require_asset_project_live(db, version.asset_id)
+    if user.jrc_managed is True:
+        asset = db.query(Asset).filter(Asset.id == version.asset_id, Asset.deleted_at.is_(None)).first()
+        if asset is None:
+            raise HTTPException(status_code=404, detail="Asset not found")
+        require_managed_project_role(db, asset.project_id, user, ProjectRole.editor)
 
 
 @router.post("/presign-part", response_model=PresignPartResponse)
@@ -187,7 +192,7 @@ def presign_part(
     # already in flight across the upgrade.
     if version.upload_id is not None and version.upload_id != body.upload_id:
         raise HTTPException(status_code=403, detail="Not authorized for this upload")
-    _require_upload_project_live(db, version)
+    _require_upload_project_live(db, version, current_user)
 
     url = presign_upload_part(body.s3_key, body.upload_id, body.part_number)
 
@@ -335,7 +340,7 @@ def list_held_parts(
         raise HTTPException(status_code=404, detail="Version not found")
     if version.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized for this upload")
-    _require_upload_project_live(db, version)
+    _require_upload_project_live(db, version, current_user)
     if version.processing_status != ProcessingStatus.uploading:
         # Nothing to resume: the version has either finished, been resolved as
         # failed, or been completed by another tab. The client shows the real
@@ -511,7 +516,7 @@ def complete_upload(
         raise HTTPException(status_code=404, detail="Version not found")
     if version.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized for this upload")
-    _require_upload_project_live(db, version)
+    _require_upload_project_live(db, version, current_user)
 
     # Same reasoning as the key below, for the id nothing downstream questions:
     # `_trigger_processing` hands this straight to `process_asset`, which resolves
@@ -967,6 +972,10 @@ def abort_upload(
             )
             assembled = False
         if assembled:
+            # Recovering a completed object publishes it just like /complete.
+            # Ownership still permits cleanup, but cannot replace a live role.
+            if current_user.jrc_managed is True:
+                _require_upload_project_live(db, version, current_user)
             logger.warning(
                 "abort called for upload %s but the object is already complete; "
                 "recording it as processing instead of failed", version.id,

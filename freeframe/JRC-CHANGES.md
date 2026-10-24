@@ -6,6 +6,54 @@ Import upstreamu `3829889` (MIT, původní licence a copyright zachovány).
 
 - Režim `?embed=1` skryje navigaci, horní lištu a pomocné panely dashboardu; v asset přehrávači zůstávají video, časový štítek a komentáře. Vložený režim se zachová při navigaci uvnitř dashboardu a asset navigace nese query parametry dál.
 - Přidaný Vitest a živý Chromium průchod v iframe stejného původu při 1440 a 390 px. Snímky zůstávají v ignorované složce `ops/screenshoty/F5-B06/`; testovací video se vytváří místním FFmpegem.
+## 2026-10-24 — F5-B04
+
+- Vypršený nebo odvolaný token také na share cestách vrací 401, takže web obnoví relaci
+  a zopakuje požadavek. Bez tokenu dál fungují běžné veřejné odkazy pro hosty.
+- Všechny podpisy příloh komentářů a náhledů obsahu (včetně složek, přehledů a posterů)
+  platí 180 s; po odebrání členství nelze vydat nové. Již vydaná adresa doběhne do vypršení.
+
+- Řízené účty mají neměnitelné `users.jrc_managed` (migrace `jrc_f5b04`). Migrace označí
+  stávající neprivilegované UUIDv5 účty, které zakládá jen synchronizace, odstraní případná
+  hesla/pozvánky a odvolá staré přihlašovací tokeny. Synchronizace označuje i nové účty.
+- Heslo, magický kód, přijetí pozvánky a nastavení/změna hesla u řízených účtů vracejí
+  srozumitelné 403 s odkazem na přihlášení přes JR Content. Obnova platné relace zůstává
+  povolená, bez požadavku na heslo. Projekty zakládá pouze neřízený superadmin.
+- API i volitelné přihlášení kontrolují `token_version`; deaktivace a nastavení hesla ji
+  zvyšují. Odblokování účtu neobnoví staré tokeny. Approve/Reject i změnu stavu videa
+  řízeným účtem API odmítá; společná komponenta schvalování se řízeným účtům nezobrazuje.
+- U řízených účtů rozhoduje o přístupu k videu vždy aktuální členství: autorství vlastního
+  videa, staré přímé sdílení ani veřejný projekt odebrání nepřebijí. Role viewer nemůže
+  zapisovat komentáře, odpovědi, kresby, přílohy ani reakce; zápis vyžaduje reviewer či vyšší.
+  Stejná kontrola platí při úpravě vlastního staršího komentáře po změně role nebo odebrání.
+- HLS řízených účtů je svázané s uživatelem, verzí jeho relace a projektem. Každý požadavek
+  na seznam segmentů i samotný segment znovu ověřuje aktivní účet a členství v živém projektu.
+  Segment se poté přesměruje na S3 adresu platnou nejvýše 180 s. Stejnou mez mají přímé
+  streamy a stahování řízených účtů. Delší videa fungují bez obnovování celého přehrávače;
+  odebrání člena odmítne další požadavek i s platným přehrávacím tokenem. Již stažená data
+  nelze vzít zpět a dříve vydaná přímá adresa platí do vypršení.
+- Nový formát HLS tokenu (`v=3`) jednorázově odmítne staré nevázané tokeny z doby před
+  nasazením této úpravy, které jinak platily 24 hodin. Již otevřený přehrávač je třeba
+  znovu načíst; novou adresu dostane až po kontrole současných oprávnění. Staré přímé S3
+  adresy lze omezit pouze jejich původním vypršením.
+- Opravy review: `projects.jrc_managed` (migrace `jrc_f5b04_projects`) označuje nové i starší
+  synchronizované projekty. Jejich veřejné share odkazy vyžadují aktuální přihlášení a členství
+  na všech cestách k obsahu, komentář navíc roli reviewer. Heslo odkazu ani autorství tuto
+  kontrolu nenahrazují; vztahuje se i na místní účet v řízeném projektu. HLS ze share odkazu
+  proto vždy nese uživatele a projekt, přímý stream/stažení má nejvýše 180 s.
+- Web posílá aktuální přihlašovací token u všech share požadavků, včetně obsahu složek,
+  stránkování, komentářů, verzí obrazu/zvuku a jednotlivého i hromadného stahování.
+  Obnova sestaveného uploadu přes `/upload/abort` před spuštěním převodu ověřuje živou roli
+  editor; pouhý úklid nedokončeného uploadu zůstává dostupný jeho autorovi.
+- Již rozpracovaný upload řízeného účtu vyžaduje aktuální roli editor před podpisem další části,
+  obnovením i dokončením. Osobní přehledy a upozornění filtrují aktuální členství už v SQL před
+  stránkováním a podepisováním adres. Veřejnost projektu neobchází členství řízeného účtu ani
+  v detailu projektu a otevřeném proudu událostí SSE (průběžné zprávy ze serveru).
+- Přísnější e-mail synchronizace: NFC a malá písmena, kontrola délky po převodu, odmítnutí
+  neviditelných řídicích znaků Unicode, chybných domén a adres; místní ukázkové domény zůstávají.
+- Staré obsluhy v loginu a sdílené složce používají zámek `ff_session_tokens`; obnova cookies
+  načítá aktuální pár až pod zámkem (`restoreSessionCookies`), odhlášení čeká na `removeTokens`.
+  Regrese pokrývají souběh obnovy cookies s odhlášením, API, HLS a odvolání verze relace.
 
 ## 2026-10-24 — F5-B03
 

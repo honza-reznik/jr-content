@@ -126,7 +126,7 @@ class TestSegmentUrlLifetime:
         from apps.api.config import settings
         from datetime import datetime, timedelta, timezone
         return jwt.encode(
-            {"sub": "hls", "pfx": "hls/proj/ver",
+            {"sub": "hls", "v": 3, "pfx": "hls/proj/ver",
              "exp": datetime.now(timezone.utc) + timedelta(seconds=seconds_left)},
             settings.jwt_secret, algorithm=settings.jwt_algorithm,
         )

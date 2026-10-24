@@ -1,7 +1,6 @@
-import logging
-
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from django.db.models.signals import post_delete, post_save, pre_delete, pre_save
 from django.dispatch import receiver
 
@@ -9,11 +8,9 @@ from apps.members.models import WorkspaceMembership
 from apps.organizations.models import Organization
 from apps.workspaces.models import Workspace
 
-from .client import FreeFrameClient, FreeFrameError
-from .models import VideoAccount, VideoProject
-from .services import queue_account, queue_workspace
-
-logger = logging.getLogger(__name__)
+from .client import FreeFrameClient
+from .models import VideoAccount, VideoAccountRevocation, VideoProject
+from .services import queue_account, queue_workspace, try_revoke_account
 
 
 @receiver(pre_save, sender=WorkspaceMembership)
@@ -75,18 +72,11 @@ def user_deleted(sender, instance, using, **kwargs):
     # The collector invokes pre_delete inside a transaction. Wait for any
     # in-flight sync before revoking, so it cannot reactivate a deleted user.
     sender.objects.using(using).select_for_update(no_key=True).get(pk=instance.pk)
-    mapped = VideoAccount.objects.using(using).filter(user=instance).exists()
-    try:
-        # Deactivates the remote account found by its derived identity, even when the
-        # local mapping was lost. Never creates an account.
-        FreeFrameClient().request("POST", f"/jrc-sync/accounts/{instance.pk}/deactivate")
-    except FreeFrameError:
-        if mapped:
-            # Revoke before losing the local identity. Failure aborts the deletion.
-            raise
-        # Without a mapping the remote account most likely does not exist; project
-        # memberships are revoked by the queued workspace retry after the cascade.
-        logger.warning("FreeFrame deactivation of deleted user %s without mapping failed.", instance.pk)
+    # The marker commits atomically with deletion and survives the user's cascade.
+    # A rollback must neither leave a marker nor deactivate a still-existing user.
+    user_id = instance.pk
+    VideoAccountRevocation.objects.using(using).get_or_create(source_user_id=user_id)
+    transaction.on_commit(lambda: try_revoke_account(user_id), using=using)
 
 
 @receiver(pre_delete, sender=Workspace)

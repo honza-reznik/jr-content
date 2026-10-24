@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Avatar } from '@/components/shared/avatar'
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth-store'
 import type { Approval, User, ApprovalStatus } from '@/types'
 
 // ─── Extended approval type ───────────────────────────────────────────────────
@@ -106,6 +107,7 @@ function RejectNoteDialog({ onConfirm, onCancel }: RejectNoteProps) {
 // ─── Approval bar ─────────────────────────────────────────────────────────────
 
 export function ApprovalBar({ assetId, versionId, currentUserId, className }: ApprovalBarProps) {
+  const managed = useAuthStore((state) => state.user?.jrc_managed)
   const swrKey = assetId ? `/assets/${assetId}/approvals?version_id=${versionId}` : null
 
   const { data, isLoading, mutate } = useSWR<ApprovalsResponse>(
@@ -151,6 +153,8 @@ export function ApprovalBar({ assetId, versionId, currentUserId, className }: Ap
   const approvedCount = approvals.filter((a) => a.status === 'approved').length
   const rejectedCount = approvals.filter((a) => a.status === 'rejected').length
   const pendingCount = approvals.filter((a) => a.status === 'pending').length
+
+  if (managed) return null
 
   return (
     <>

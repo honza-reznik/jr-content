@@ -45,6 +45,18 @@ export function setTokens(access: string, refresh: string): Promise<void> {
   return withSessionLock(() => writeTokens(access, refresh))
 }
 
+// Re-read the pair under the same lock as logout; never restore a cookie
+// from a token captured before another tab ended the session.
+export function restoreSessionCookies(): Promise<boolean> {
+  return withSessionLock(() => {
+    const access = getAccessToken()
+    const refresh = getRefreshToken()
+    if (!access || !refresh) return false
+    writeTokens(access, refresh)
+    return true
+  })
+}
+
 // Only call these storage writers while holding SESSION_LOCK_NAME. The check,
 // marker, localStorage pair and cookies belong to the same critical section.
 function writeTokens(access: string, refresh: string): void {

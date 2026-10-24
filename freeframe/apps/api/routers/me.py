@@ -4,6 +4,7 @@ from sqlalchemy import or_
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional
+from ..services.permissions import live_project_membership
 from ..database import get_db
 from ..middleware.auth import get_current_user
 from ..models.user import User
@@ -98,6 +99,9 @@ def list_my_assets(
 
     # Nothing from a project in the trash, whichever filter found it.
     query = query.join(Project, Project.id == Asset.project_id).filter(Project.deleted_at.is_(None))
+
+    if current_user.jrc_managed is True:
+        query = query.filter(live_project_membership(Asset.project_id, current_user.id))
 
     # Apply search filter
     if q and q.strip():

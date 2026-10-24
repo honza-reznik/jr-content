@@ -70,6 +70,8 @@ def approve_asset(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    if current_user.jrc_managed is True:
+        raise HTTPException(status_code=403, detail="Approve or reject content in JR Content")
     asset = _get_asset(db, asset_id)
     # reviewer or above can approve
     require_project_role(db, asset.project_id, current_user, ProjectRole.reviewer)
@@ -111,6 +113,8 @@ def reject_asset(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    if current_user.jrc_managed is True:
+        raise HTTPException(status_code=403, detail="Approve or reject content in JR Content")
     asset = _get_asset(db, asset_id)
     require_project_role(db, asset.project_id, current_user, ProjectRole.reviewer)
 

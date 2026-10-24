@@ -5,6 +5,7 @@
  * (#117, #123); importing them back from there would make the two modules
  * circular, so they live here instead.
  */
+import { shareFetch } from '@/lib/share-fetch'
 import type { DownloadOption } from '@/types'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
@@ -33,7 +34,7 @@ export async function fetchDownloadUrl(
   if (rendition) sp += `&rendition=${encodeURIComponent(rendition)}`
   if (preferOriginal) sp += '&prefer_original=true'
   try {
-    const response = await fetch(`${API_URL}/share/${token}/stream/${assetId}?download=true${sp}`)
+    const response = await shareFetch(`${API_URL}/share/${token}/stream/${assetId}?download=true${sp}`)
     if (!response.ok) return null
     const data = await response.json()
     return data?.url ?? null
@@ -55,7 +56,7 @@ export async function fetchShareDownloadOptions(
 ): Promise<DownloadOption[] | null> {
   const sp = shareSession ? `?share_session=${encodeURIComponent(shareSession)}` : ''
   try {
-    const response = await fetch(`${API_URL}/share/${token}/downloads/${assetId}${sp}`)
+    const response = await shareFetch(`${API_URL}/share/${token}/downloads/${assetId}${sp}`)
     if (!response.ok) return null
     return (await response.json()) as DownloadOption[]
   } catch {

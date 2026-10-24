@@ -54,6 +54,8 @@ def _make_user(
     u.created_at = datetime.now(timezone.utc)
     u.deleted_at = None
     u.is_superadmin = False
+    u.jrc_managed = False
+    u.token_version = 1
     u.email_verified = False
     u.preferences = {}
     u.invite_token = None

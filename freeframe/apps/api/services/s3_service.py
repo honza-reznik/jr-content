@@ -10,6 +10,9 @@ from ..config import settings
 
 logger = logging.getLogger(__name__)
 
+# Previews and comment attachments remain reachable only briefly after removal.
+PREVIEW_URL_SECONDS = 180
+
 # Short timeouts for the one-off startup bucket check, so a slow or unreachable
 # store can't hang app startup for boto3's default ~60s (deploy-test finding #6).
 _STARTUP_S3_CONFIG = Config(connect_timeout=5, read_timeout=10, retries={"max_attempts": 2})

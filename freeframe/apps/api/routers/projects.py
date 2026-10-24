@@ -11,7 +11,7 @@ from ..models.asset import Asset, AssetVersion, MediaFile, ProcessingStatus
 from ..schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse, ProjectMemberResponse, AddProjectMemberRequest, UpdateProjectMemberRequest
 from ..tasks.email_tasks import send_project_added_email
 from ..tasks.celery_app import send_task_safe
-from ..services.s3_service import put_object, generate_presigned_get_url, delete_object
+from ..services.s3_service import put_object, generate_presigned_get_url, delete_object, PREVIEW_URL_SECONDS
 from ..services.storage import project_storage_used_bytes
 from ..config import settings
 
@@ -25,7 +25,7 @@ def _get_project(db: Session, project_id: uuid.UUID) -> Project:
 
 def _resolve_poster_url(project: Project) -> str | None:
     if project.poster_s3_key:
-        return generate_presigned_get_url(project.poster_s3_key)
+        return generate_presigned_get_url(project.poster_s3_key, expires_in=PREVIEW_URL_SECONDS)
     return None
 
 def _require_project_owner(db: Session, project_id: uuid.UUID, user: User) -> ProjectMember:
@@ -40,6 +40,8 @@ def _require_project_owner(db: Session, project_id: uuid.UUID, user: User) -> Pr
 
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 def create_project(body: ProjectCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if not current_user.is_superadmin or current_user.jrc_managed is True:
+        raise HTTPException(status_code=403, detail="Projects are created by the JR Content administrator")
     project = Project(
         name=body.name,
         description=body.description,
@@ -71,7 +73,7 @@ def list_projects(db: Session = Depends(get_db), current_user: User = Depends(ge
         Project.deleted_at.is_(None),
         or_(
             Project.id.in_(member_project_ids) if member_project_ids else False,
-            Project.is_public == True,
+            Project.is_public == True if current_user.jrc_managed is not True else False,
         ),
     ).all()
 
@@ -131,7 +133,7 @@ def get_project(project_id: uuid.UUID, db: Session = Depends(get_db), current_us
         ProjectMember.user_id == current_user.id,
         ProjectMember.deleted_at.is_(None),
     ).first()
-    if not member and not project.is_public:
+    if not member and (current_user.jrc_managed is True or not project.is_public):
         raise HTTPException(status_code=403, detail="Not a project member")
     resp = ProjectResponse.model_validate(project)
     resp.poster_url = _resolve_poster_url(project)

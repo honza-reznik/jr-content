@@ -1,5 +1,6 @@
 'use client'
 
+import { shareFetch } from '@/lib/share-fetch'
 import * as React from 'react'
 import WaveSurfer from 'wavesurfer.js'
 import {
@@ -86,7 +87,7 @@ export function AudioPlayer({ asset, version, comments = [], className }: AudioP
       setError(null)
       const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
       const sp = shareSession ? `&share_session=${encodeURIComponent(shareSession)}` : ''
-      fetch(`${API_URL}/share/${shareToken}/stream/${asset.id}?version_id=${version.id}${sp}`)
+      shareFetch(`${API_URL}/share/${shareToken}/stream/${asset.id}?version_id=${version.id}${sp}`)
         .then(res => res.ok ? res.json() : Promise.reject(new Error('Failed to load audio')))
         .then(data => { if (!cancelled) setAudioUrl(data.url) })
         .catch(err => { if (!cancelled) { setError(err.message); setIsLoading(false) } })

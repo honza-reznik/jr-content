@@ -2,6 +2,7 @@
 
 import os
 import uuid
+import unicodedata
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -38,21 +39,30 @@ def lock_identity(db, identity):
     db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": key})
 
 
-FORBIDDEN_EMAIL_CHARS = set(',;<>"')
+FORBIDDEN_EMAIL_CHARS = set(',;<>"\\()[]:')
 
 
 def _require_plain_email(value: str) -> str:
-    # Brightbean already validated the address. EmailStr would reject the
-    # reserved test domains (example.invalid, .test, .local) used by local demo data,
-    # so only the basic shape is checked here. Lower case prevents Ella@ vs ella@ duplicates.
+    # Keep local demo domains, but reject Unicode controls/formatting/surrogates
+    # and enforce the database bound after case conversion (İ expands on lower()).
+    value = unicodedata.normalize("NFC", value).lower()
+    if len(value) > 255:
+        raise ValueError("Invalid email address")
     if value.count("@") != 1 or any(
-        c.isspace() or ord(c) < 32 or ord(c) == 127 or c in FORBIDDEN_EMAIL_CHARS for c in value
+        c.isspace() or unicodedata.category(c).startswith("C") or c in FORBIDDEN_EMAIL_CHARS for c in value
     ):
         raise ValueError("Invalid email address")
     local, domain = value.split("@")
-    if not local or not domain:
+    if not local or not domain or local.startswith(".") or local.endswith(".") or ".." in local:
         raise ValueError("Invalid email address")
-    return value.lower()
+    try:
+        labels = domain.encode("idna").decode("ascii").split(".")
+    except UnicodeError:
+        raise ValueError("Invalid email address") from None
+    if any(not label or len(label) > 63 or label.startswith("-") or label.endswith("-")
+           or any(not (c.isascii() and (c.isalnum() or c == "-")) for c in label) for label in labels):
+        raise ValueError("Invalid email address")
+    return value
 
 
 SyncEmail = Annotated[str, Field(min_length=3, max_length=255), AfterValidator(_require_plain_email)]
@@ -84,8 +94,14 @@ def sync_account(
     if db.query(User).filter(func.lower(User.email) == body.email, User.id != identity).first():
         raise HTTPException(status_code=409, detail="Email belongs to another account")
     if user is None:
-        user = User(id=identity, is_superadmin=False, password_hash=None)
+        user = User(id=identity, is_superadmin=False, password_hash=None, token_version=1)
         db.add(user)
+    if user.jrc_managed is not True or (not body.is_active and user.status != UserStatus.deactivated):
+        user.token_version += 1
+    user.jrc_managed = True
+    user.password_hash = None
+    user.invite_token = None
+    user.invite_token_expires_at = None
     user.email = body.email
     user.name = body.name
     user.email_verified = True
@@ -114,6 +130,7 @@ def deactivate_account(
     if user.is_superadmin:
         raise HTTPException(status_code=409, detail="Managed account is privileged")
     user.status = UserStatus.deactivated
+    user.token_version += 1
     db.commit()
     return {"id": str(identity), "found": True}
 
@@ -134,6 +151,7 @@ def sync_project(
         project = Project(id=identity, name=body.name, created_by=service_user.id, project_type=ProjectType.team)
         db.add(project)
         db.flush()
+    project.jrc_managed = True
     project.name = body.name
     project.is_public = False
     owner = db.query(ProjectMember).filter(
