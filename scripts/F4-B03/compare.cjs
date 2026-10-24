@@ -40,9 +40,12 @@ const fs = require('node:fs/promises');
       assert(await page.locator('#script-diff ins').count() > 0);
       assert(await page.locator('#script-diff del').count() > 0);
       assert.match(await page.locator('#script-compare-meta').textContent(), /Jamie/);
+      assert(await page.locator('.script-diff-legend').isVisible());
       await page.evaluate(() => document.fonts.ready);
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Přetečení při ${width} px`);
-      await page.screenshot({ path: `${root}/screenshoty/F4-B03/compare-${width}.png`, fullPage: true });
+      await page.locator('#script-compare').scrollIntoViewIfNeeded();
+      assert(await page.locator('#script-compare-title').isVisible());
+      await page.screenshot({ path: `${root}/screenshoty/F4-B03/compare-${width}.png` });
       if (width === 390) {
         // Skutečný patnáctisekundový obnovovací cyklus nesmí zahodit zvolenou verzi 1.
         await page.waitForResponse(response => response.url().includes('/script/?') && response.request().method() === 'GET', { timeout: 20000 });
