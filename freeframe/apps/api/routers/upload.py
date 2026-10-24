@@ -972,6 +972,10 @@ def abort_upload(
             )
             assembled = False
         if assembled:
+            # Recovering a completed object publishes it just like /complete.
+            # Ownership still permits cleanup, but cannot replace a live role.
+            if current_user.jrc_managed is True:
+                _require_upload_project_live(db, version, current_user)
             logger.warning(
                 "abort called for upload %s but the object is already complete; "
                 "recording it as processing instead of failed", version.id,

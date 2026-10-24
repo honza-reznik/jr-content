@@ -1,5 +1,6 @@
 "use client";
 
+import { shareFetch } from '@/lib/share-fetch'
 import React, {
   createContext,
   useCallback,
@@ -96,14 +97,8 @@ export function ReviewProvider({
         // Share mode: fetch stream info to build a pseudo asset
         const API_URL =
           process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-        const headers: Record<string, string> = {};
-        try {
-          const t = localStorage.getItem("ff_access_token");
-          if (t) headers["Authorization"] = `Bearer ${t}`;
-        } catch {}
-        const streamRes = await fetch(
+        const streamRes = await shareFetch(
           `${API_URL}/share/${shareToken}/stream/${assetId}?_=1${shareSessionParam}`,
-          { headers },
         );
         const streamData = streamRes.ok ? await streamRes.json() : null;
         // Build pseudo asset from available data
@@ -170,15 +165,9 @@ export function ReviewProvider({
         streamedVersionRef.current = data.latest_version?.id ?? null;
         const API_URL =
           process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-        const headers: Record<string, string> = {};
         try {
-          const t = localStorage.getItem("ff_access_token");
-          if (t) headers["Authorization"] = `Bearer ${t}`;
-        } catch {}
-        try {
-          const vres = await fetch(
+          const vres = await shareFetch(
             `${API_URL}/share/${shareToken}/assets/${assetId}/versions?_=1${shareSessionParam}`,
-            { headers },
           );
           const vlist = vres.ok ? await vres.json() : [];
           if (!mountedRef.current) return;
@@ -216,7 +205,7 @@ export function ReviewProvider({
         // this callback stays stable; a dedicated effect re-runs it when the version changes).
         const versionId = useReviewStore.getState().currentVersion?.id;
         const vParam = versionId ? `&version_id=${versionId}` : "";
-        const res = await fetch(
+        const res = await shareFetch(
           `${API_URL}/share/${shareToken}/comments?asset_id=${assetId}${vParam}${shareSessionParam}`,
         );
         if (res.ok) {
@@ -234,7 +223,7 @@ export function ReviewProvider({
     } catch {
       // Comments failing silently — asset is still viewable
     }
-  }, [assetId, shareToken]);
+  }, [assetId, shareToken, shareSessionParam]);
 
   const refetchComments = useCallback(async () => {
     await fetchComments();
@@ -280,14 +269,8 @@ export function ReviewProvider({
     if (currentVersionId === streamedVersionRef.current) return; // already showing this version
     let cancelled = false;
     const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-    const headers: Record<string, string> = {};
-    try {
-      const t = localStorage.getItem("ff_access_token");
-      if (t) headers["Authorization"] = `Bearer ${t}`;
-    } catch {}
-    fetch(
+    shareFetch(
       `${API_URL}/share/${shareToken}/stream/${assetId}?version_id=${currentVersionId}${shareSessionParam}`,
-      { headers },
     )
       .then((r) => (r.ok ? r.json() : null))
       .then((streamData) => {
@@ -312,10 +295,6 @@ export function ReviewProvider({
         const headers: Record<string, string> = {
           "Content-Type": "application/json",
         };
-        try {
-          const t = localStorage.getItem("ff_access_token");
-          if (t) headers["Authorization"] = `Bearer ${t}`;
-        } catch {}
         // Include guest identity if available (for non-authenticated users)
         const guestFields: Record<string, string> = {};
         try {
@@ -326,7 +305,7 @@ export function ReviewProvider({
             guestFields.guest_email = guest.email;
           }
         } catch {}
-        const res = await fetch(`${API_URL}/share/${shareToken}/comment?_=1${shareSessionParam}`, {
+        const res = await shareFetch(`${API_URL}/share/${shareToken}/comment?_=1${shareSessionParam}`, {
           method: "POST",
           headers,
           body: JSON.stringify({ ...payload, ...guestFields, asset_id: assetId }),

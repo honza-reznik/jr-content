@@ -32,6 +32,10 @@ Import upstreamu `3829889` (MIT, původní licence a copyright zachovány).
   na všech cestách k obsahu, komentář navíc roli reviewer. Heslo odkazu ani autorství tuto
   kontrolu nenahrazují; vztahuje se i na místní účet v řízeném projektu. HLS ze share odkazu
   proto vždy nese uživatele a projekt, přímý stream/stažení má nejvýše 180 s.
+- Web posílá aktuální přihlašovací token u všech share požadavků, včetně obsahu složek,
+  stránkování, komentářů, verzí obrazu/zvuku a jednotlivého i hromadného stahování.
+  Obnova sestaveného uploadu přes `/upload/abort` před spuštěním převodu ověřuje živou roli
+  editor; pouhý úklid nedokončeného uploadu zůstává dostupný jeho autorovi.
 - Již rozpracovaný upload řízeného účtu vyžaduje aktuální roli editor před podpisem další části,
   obnovením i dokončením. Osobní přehledy a upozornění filtrují aktuální členství už v SQL před
   stránkováním a podepisováním adres. Veřejnost projektu neobchází členství řízeného účtu ani

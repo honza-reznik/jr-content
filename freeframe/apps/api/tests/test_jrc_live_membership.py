@@ -237,6 +237,37 @@ def test_inflight_upload_requires_current_editor_role(client, live_project, chan
         assert client.get("/auth/me", headers=ctx.headers).status_code == 200
 
 
+@pytest.mark.parametrize("change", ["editor", "viewer", "removed"])
+@pytest.mark.parametrize("assembled", [True, False])
+def test_abort_recovery_requires_live_editor_but_cleanup_remains_available(
+    client, live_project, change, assembled,
+):
+    ctx = live_project
+    ctx.version.processing_status = ProcessingStatus.uploading
+    if change == "viewer":
+        ctx.member.role = ProjectRole.viewer
+    elif change == "removed":
+        _remove(ctx)
+    ctx.db.flush()
+    body = {"s3_key": ctx.media.s3_key_raw, "upload_id": ctx.version.upload_id,
+            "version_id": str(ctx.version.id)}
+    with (patch("apps.api.routers.upload.abort_multipart_upload") as abort,
+          patch("apps.api.routers.upload._already_assembled", return_value=assembled),
+          patch("apps.api.routers.upload._trigger_processing") as process):
+        response = client.post("/upload/abort", headers=ctx.headers, json=body)
+        abort.assert_called_once()
+        if assembled and change != "editor":
+            assert response.status_code == 403, response.text
+            assert ctx.version.processing_status == ProcessingStatus.uploading
+            process.assert_not_called()
+        else:
+            assert response.status_code == 204, response.text
+            expected = ProcessingStatus.processing if assembled else ProcessingStatus.failed
+            assert ctx.version.processing_status == expected
+            assert process.call_count == int(assembled)
+        assert client.get("/auth/me", headers=ctx.headers).status_code == 200
+
+
 @pytest.mark.parametrize("asset_filter", [None, "owned", "shared", "mentioned", "assigned", "due_soon"])
 def test_personal_feeds_require_membership_before_pagination_and_signing(client, live_project, asset_filter):
     ctx = live_project
