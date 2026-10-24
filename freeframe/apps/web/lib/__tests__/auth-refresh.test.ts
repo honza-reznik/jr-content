@@ -15,6 +15,7 @@ const store: Record<string, string> = {}
 beforeEach(() => {
   vi.resetModules()
   mockSessionLocks()
+  vi.stubEnv('NEXT_PUBLIC_BASE_PATH', '/video')
   for (const k of Object.keys(store)) delete store[k]
   store['ff_access_token'] = 'old-access'
   store['ff_refresh_token'] = 'the-refresh-token'
@@ -25,9 +26,11 @@ beforeEach(() => {
   })
   // `clearTokens` navigates; jsdom would warn and the assertion we care about
   // is whether the tokens survived.
-  vi.stubGlobal('location', { href: '' })
+  vi.stubGlobal('location', {
+    href: '', origin: 'http://jrc.test', pathname: '/video/projects/p/assets/a', search: '?embed=1',
+  })
 })
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs() })
 
 async function refresh() {
   const mod = await import('../auth')
@@ -89,6 +92,14 @@ describe('refreshAccessToken', () => {
 
     await expect(refresh()).resolves.toBeNull()
     expect(sessionSurvived()).toBe(false)
+  })
+
+  it('returns to the expired embed asset after the refresh token is refused', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 401 })))
+
+    await expect(refresh()).resolves.toBeNull()
+
+    expect(location.href).toBe('/video/login?from=%2Fprojects%2Fp%2Fassets%2Fa%3Fembed%3D1')
   })
 
   it('stores the new pair on success', async () => {

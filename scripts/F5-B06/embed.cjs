@@ -204,6 +204,42 @@ async function main() {
     report.push({ viewport: 'anonymous-login-return', result: 'OK' });
     console.log('OK anonymous-login-return: iframe bez relace se přihlásí a vrátí na ověřenou embed cestu.');
     await loginContext.close();
+
+    // Expired refresh tokens must send a previously authenticated iframe back
+    // to the same asset, retaining embed=1. Keep the server's API response
+    // local and deterministically refuse just the refresh request.
+    const expiredContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    await expiredContext.route('**/*', route => {
+      if (route.request().frame().parentFrame() === null && route.request().resourceType() === 'script')
+        return route.abort();
+      return route.continue();
+    });
+    await expiredContext.route('**/video-api/auth/refresh', route =>
+      route.fulfill({ status: 401, contentType: 'application/json', body: '{"detail":"Invalid refresh token"}' }));
+    await expiredContext.addCookies([
+      { name: 'ff_access_token', value: 'expired-access', url: origin },
+      { name: 'ff_refresh_token', value: 'expired-refresh', url: origin },
+      { name: 'ff_setup_done', value: '1', url: origin },
+    ]);
+    await expiredContext.addInitScript(() => {
+      localStorage.setItem('ff_access_token', 'expired-access');
+      localStorage.setItem('ff_refresh_token', 'expired-refresh');
+    });
+    const expiredPage = await expiredContext.newPage();
+    expiredPage.setDefaultTimeout(45000);
+    await expiredPage.goto(`${origin}/video/projects`);
+    await expiredPage.setContent(`<body style="margin:0;width:100vw;height:100vh"><iframe title="Expired session review" src="/video/projects/${project.id}/assets/${asset.asset_id}?embed=1" style="width:100%;height:100vh;border:0"></iframe></body>`);
+    const expiredFrame = expiredPage.frameLocator('iframe[title="Expired session review"]');
+    await expiredFrame.getByLabel('Email address').waitFor({ state: 'visible' });
+    const expiredFrameWindow = () => expiredPage.frames().find(frame => frame.parentFrame() === expiredPage.mainFrame());
+    const expiredLoginUrl = expiredFrameWindow()?.url();
+    assert(expiredLoginUrl.includes('/video/login?'), `Vypršelá relace otevřela login: ${expiredLoginUrl}`);
+    assert.equal(new URL(expiredLoginUrl).searchParams.get('from'), `/projects/${project.id}/assets/${asset.asset_id}?embed=1`);
+    await expiredPage.screenshot({ path: path.join(screenshots, 'expired-session-return.png') });
+    report.push({ viewport: 'expired-session-return', result: 'OK' });
+    console.log('OK expired-session-return: iframe po odmítnutí refresh tokenu zachoval asset i embed=1 v návratové cestě.');
+    await expiredContext.close();
+
     fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
   } finally {
     await browser.close();

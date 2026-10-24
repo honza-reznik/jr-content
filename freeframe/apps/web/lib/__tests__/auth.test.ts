@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setTokens, getAccessToken, getRefreshToken, clearTokens } from '../auth'
 import { mockSessionLocks } from '@/test/session-locks'
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs() })
 
 describe('Token management', () => {
   beforeEach(() => {
@@ -40,11 +40,10 @@ describe('Token management', () => {
     localStorage.setItem('ff_refresh_token', 'refresh-456')
 
     // Mock window.location.href setter to avoid navigation errors
-    const locationMock = { href: '' }
-    Object.defineProperty(window, 'location', {
-      value: locationMock,
-      writable: true,
-    })
+    const locationMock = {
+      href: '', origin: 'http://jrc.test', pathname: '/projects', search: '',
+    }
+    vi.stubGlobal('location', locationMock)
 
     await clearTokens()
 
@@ -53,14 +52,37 @@ describe('Token management', () => {
   })
 
   it('clearTokens redirects to /login', async () => {
-    const locationMock = { href: '' }
-    Object.defineProperty(window, 'location', {
-      value: locationMock,
-      writable: true,
-    })
+    const locationMock = {
+      href: '', origin: 'http://jrc.test', pathname: '/projects', search: '',
+    }
+    vi.stubGlobal('location', locationMock)
 
     await clearTokens()
 
-    expect(window.location.href).toBe('/login')
+    expect(window.location.href).toBe('/login?from=%2Fprojects')
+  })
+
+  it('keeps the current embed asset as the safe return destination after session expiry', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BASE_PATH', '/video')
+    const locationMock = {
+      href: '', origin: 'http://jrc.test', pathname: '/video/projects/p/assets/a', search: '?embed=1',
+    }
+    vi.stubGlobal('location', locationMock)
+
+    await clearTokens()
+
+    expect(window.location.href).toBe('/video/login?from=%2Fprojects%2Fp%2Fassets%2Fa%3Fembed%3D1')
+  })
+
+  it('uses the projects fallback when the current route is not a safe login destination', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BASE_PATH', '/video')
+    const locationMock = {
+      href: '', origin: 'http://jrc.test', pathname: '/video/login', search: '?from=%2F%2Fevil.test',
+    }
+    vi.stubGlobal('location', locationMock)
+
+    await clearTokens()
+
+    expect(window.location.href).toBe('/video/login?from=%2Fprojects')
   })
 })

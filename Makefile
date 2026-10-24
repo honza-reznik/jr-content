@@ -27,7 +27,7 @@ export BUILDX_CONFIG := $(CURDIR)/.cache/docker-buildx
 CMD ?= bash
 export CMD
 
-.PHONY: build build-bb env check-project-ports up down shell test test-fast test-smoke test-proxy test-s3 test-bb test-bb-fast test-ff test-ff-smoke test-isolation test-ff-offline test-ff-vitest test-ff-tsc test-ff-lint ff-account build-ff reset logs ps
+.PHONY: build build-bb env check-project-ports up down shell test test-fast test-smoke test-proxy test-s3 test-bb test-bb-fast test-ff test-ff-smoke test-isolation test-ff-offline test-ff-vitest test-ff-tsc test-ff-lint test-f5-b06-embed ff-account build-ff reset logs ps
 build:
 	docker build --tag jrc-dev:$(JRC_PROJECT) --file docker/Dockerfile docker
 
@@ -177,6 +177,14 @@ test-ff-smoke:
 	  --env-file .env \
 	  --volume "$(CURDIR):/jrc" --workdir /jrc \
 	  jrc-ff-api:$(JRC_PROJECT) python scripts/smoke-ff.py
+
+# F5-B06 embedded viewer regression; Chromium and the app stay on the local host network.
+test-f5-b06-embed:
+	@sh scripts/workspace.sh check
+	docker run --rm --network host --pull never --user "$(JRC_UID):$(JRC_GID)" \
+	  --env-file .env --env JRC_PROJECT=$(JRC_PROJECT) \
+	  --volume "$(CURDIR):/jrc" --workdir /jrc \
+	  jrc-dev:$(JRC_PROJECT) node scripts/F5-B06/embed.cjs
 
 test-ff-lint:
 	@sh scripts/workspace.sh check
