@@ -24,8 +24,16 @@ from apps.members.models import WorkspaceMembership
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 
+from .approval import approval_context, is_waiting_for
 from .models import PipelineStage
-from .services import available_moves, can_create_content, create_content, move_content, pipeline_stage
+from .services import (
+    available_moves,
+    can_create_content,
+    create_content,
+    move_content,
+    pipeline_stage,
+    request_content_changes,
+)
 
 
 def _memberships(user):
@@ -65,9 +73,13 @@ def _board_context(request, *, error="", title="", selected_client=None):
     )
     columns = {value: {"value": value, "label": label, "cards": []} for value, label in PipelineStage.choices}
     total = 0
+    waiting = []
     for post in posts:
         stage = pipeline_stage(post)
-        moves = available_moves(post, by_workspace[str(post.workspace_id)])
+        membership = by_workspace[str(post.workspace_id)]
+        moves = available_moves(post, membership)
+        if is_waiting_for(post, membership):
+            waiting.append(post)
         columns[stage]["cards"].append(
             {
                 "post": post,
@@ -81,6 +93,7 @@ def _board_context(request, *, error="", title="", selected_client=None):
     creatable = [m.workspace for m in memberships if can_create_content(m)]
     return {
         "columns": list(columns.values()),
+        "waiting_for_you": waiting,
         "clients": [m.workspace for m in memberships],
         "creatable_clients": creatable,
         "selected_client": selected,
@@ -420,11 +433,20 @@ def content_detail(request, workspace_id, post_id):
             "video_player_ready": VideoProject.objects.filter(workspace=workspace).exists()
             and VideoAccount.objects.filter(user=request.user).exists(),
         }
+    approval_ctx = {}
+    if active_tab == "approval":
+        approval_ctx = approval_context(
+            post,
+            membership,
+            _enabled_caption_accounts(post),
+            can_view_internal_notes=can_view_internal_notes,
+        )
     return render(
         request,
         "jrc_production/content_detail.html",
         {
             **video_context,
+            **approval_ctx,
             "workspace": workspace,
             "post": post,
             "pipeline_stage": pipeline_stage(post),
@@ -525,3 +547,34 @@ def resolve_content_comment(request, workspace_id, post_id, comment_id):
     else:
         messages.success(request, "Comment thread updated.")
     return _comments_redirect(workspace, post)
+
+
+@login_required
+@require_POST
+def approval_decision(request, workspace_id, post_id):
+    """Approve the content or ask for changes from the Approval tab (F7-B02).
+
+    Both decisions authorize on the server (``move_content`` / ``request_content_changes``);
+    the buttons on the page only mirror ``can_decide``.
+    """
+    workspace, post = _comment_post_for_member(request, workspace_id, post_id)
+    decision = request.POST.get("decision", "")
+    expected_stage = request.POST.get("expected_stage", "")
+    try:
+        if decision == "approve":
+            moved = move_content(post, PipelineStage.APPROVED, request.user, expected_stage=expected_stage)
+            if pipeline_stage(moved) == PipelineStage.APPROVED:
+                messages.success(request, "Approved. Thank you.")
+            else:
+                messages.success(request, "Approved by the team. It now waits for the client's approval.")
+        elif decision == "request_changes":
+            request_content_changes(post, request.user, request.POST.get("comment", ""), expected_stage=expected_stage)
+            messages.success(request, "Changes requested. The team can see your comment.")
+        else:
+            return HttpResponseBadRequest("Unknown decision.")
+    except ValidationError as exc:
+        messages.error(request, " ".join(exc.messages))
+    return redirect(
+        reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.id, "post_id": post.id})
+        + "?tab=approval"
+    )

@@ -91,6 +91,28 @@ def can_create_content(membership):
     return is_client(membership) or membership.effective_permissions.get("create_posts", False)
 
 
+def can_decide(post, membership, statuses=None):
+    """May this member approve or request changes right now (F7-B02)?
+
+    One rule for both decisions, used by ``available_moves`` and the Approval card. Single-stage
+    workspaces let anyone with ``approve_posts`` decide on content in review. In the two-stage
+    mode (internal, then client) the team decides while the content waits for the team and the
+    client only after the team has approved it.
+    """
+    if statuses is None:
+        statuses = {pp.status for pp in post.platform_posts.all()}
+    if not membership.effective_permissions.get("approve_posts", False):
+        return False
+    if not statuses or not statuses <= {"pending_review", "pending_client", "approved"}:
+        return False
+    pending = statuses - {"approved"}
+    if not pending:
+        return False
+    if post.workspace.approval_workflow_mode != "required_internal_and_client":
+        return True
+    return pending == ({"pending_client"} if is_client(membership) else {"pending_review"})
+
+
 def available_moves(post, membership):
     """Offer exactly the transitions the service will authorize for this snapshot."""
     children = list(post.platform_posts.all())
@@ -109,16 +131,41 @@ def available_moves(post, membership):
             moves.append(PipelineStage.REVIEW)
         else:
             moves.append(ProductionStage.EDITING)
-    two_stage = post.workspace.approval_workflow_mode == "required_internal_and_client"
-    if permissions.get("approve_posts", False) and statuses <= {"pending_review", "pending_client", "approved"}:
-        pending = statuses - {"approved"}
-        if pending and (
-            not two_stage or pending == ({"pending_client"} if is_client(membership) else {"pending_review"})
-        ):
-            moves.append(PipelineStage.APPROVED)
+    if can_decide(post, membership, statuses):
+        moves.append(PipelineStage.APPROVED)
     if permissions.get("publish_directly", False) and statuses <= {"approved"}:
         moves.append(PipelineStage.READY)
     return moves
+
+
+@transaction.atomic
+def request_content_changes(post, user, comment, *, expected_stage):
+    """Send content in review back to the team with a required comment (F7-B02).
+
+    Same authorization as approving (``can_decide``). The decision itself, its history record
+    and the notification to the author come from Brightbean's ``request_changes``; the pipeline
+    stage stays Review until the team resubmits.
+    """
+    post = Post.objects.select_for_update(of=("self",)).select_related("workspace").get(pk=post.pk)
+    membership = content_membership(post.workspace, user)
+    children = list(post.platform_posts.select_for_update(of=("self",)))
+    if pipeline_stage(post) != expected_stage:
+        raise ValidationError("This content changed. Refresh the page and try again.")
+    if not membership.effective_permissions.get("approve_posts", False):
+        raise PermissionDenied("You cannot request changes for this content.")
+    statuses = {pp.status for pp in children}
+    if not statuses & {"pending_review", "pending_client"}:
+        raise ValidationError("This content is not waiting for a decision.")
+    if not can_decide(post, membership, statuses):
+        raise PermissionDenied("You cannot request changes at this step.")
+    comment = (comment or "").strip()
+    if not comment:
+        raise ValidationError("Tell the team what to change before sending the request.")
+    if len(comment) > 5000:
+        raise ValidationError("Keep the request under 5,000 characters.")
+    approvals.request_changes(post, user, post.workspace, comment)
+    post.refresh_from_db()
+    return post
 
 
 @transaction.atomic
