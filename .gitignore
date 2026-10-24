@@ -22,3 +22,4 @@ ops/pm-interaktivni
 
 # F2-B09: zálohy obsahují data i tajemství, nikdy do gitu
 backups/
+.jrc-restore.lock

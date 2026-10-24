@@ -1,5 +1,6 @@
 """Regrese nálezů review; falešný Docker zde nikdy neovládá stroj."""
 import io
+import re
 import json
 import os
 import shutil
@@ -260,6 +261,7 @@ class ShellRegressions(Base):
         scripts = self.work / 'scripts/backup'
         scripts.mkdir(parents=True)
         shutil.copy(SCRIPTS / 'backup.sh', scripts)
+        shutil.copy(SCRIPTS.parent / 'restore-lock.sh', self.work / 'scripts')
         (self.work / 'scripts/workspace.sh').write_text('exit 0\n')
         self.docker('exit 0')
 
@@ -459,13 +461,38 @@ if target == 'restore':
             'ifeq ($(JRC_PROJECT),jrc)\n'
             '$(error zakázáno pro hlavní projekt jrc)\n'
             'endif\n'
-            'restore test-backup:\n\t@echo CHANGED > existing-project/data; exit 91\n')
+            'restore test-backup:\n\t@echo CHANGED > existing-project/data; exit 91\n'
+            'up down reset:\n\t@sh scripts/restore-lock.sh check\n')
         result = self.shell('sh scripts/backup/test-guards.sh')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(result.stdout.count('OK pojistka:'), 13)
+        self.assertEqual(result.stdout.count('OK pojistka:'), 43)
         self.assertNotIn('compose ', self.calls())
         self.assertNotIn('build ', self.calls())
+        # F2-B09a: ani náhodou se nesmí objevit skutečný hlavní projekt a jeho svazky.
+        for line in self.calls().splitlines():
+            self.assertNotRegex(line, r'--project-name jrc( |$)')
+            self.assertNotRegex(line, r'(src=|\b)jrc-(postgres|s3|redis)-data|jrc-bb-media')
         self.assertEqual((sentinel / 'data').read_text(), 'existující vlastní projekt: beze změny')
+
+    def test_f2b09a_makefile_lock_check_guards_up_down_reset_and_restore_runs_locked(self):
+        text = (SCRIPTS.parent.parent / 'Makefile').read_text()
+        self.assertRegex(text, r'(?m)^up: restore-lock-check ')
+        for target in ('down', 'reset'):
+            self.assertRegex(text, r'(?m)^' + target + r':\n\t@sh scripts/restore-lock\.sh check\n')
+        self.assertRegex(text, r'(?m)^restore:\n\t@sh scripts/backup/backup\.sh restore-run ')
+
+    def test_f2b09a_test_scripts_never_name_real_main_project_resources(self):
+        # Testovací skripty nesmí obsahovat příkazy na skutečný jrc ani jeho svazky (jména skládáme, aby je nenašel ani tento test).
+        main = 'jrc'
+        forbidden = [re.compile(r'--project-name ' + main + r'(\s|"|$)'),
+                     re.compile(r'(?<![\w-])' + main + r'-(postgres|s3|redis)-data'),
+                     re.compile(r'(?<![\w-])' + main + r'-bb-media')]
+        for name in ('test-guards.sh', 'test-lib.sh', 'test-backup.sh'):
+            for number, line in enumerate((SCRIPTS / name).read_text().splitlines(), 1):
+                if line.lstrip().startswith('#'):
+                    continue
+                for pattern in forbidden:
+                    self.assertIsNone(pattern.search(line), f'{name}:{number}: {line}')
 
     def test_4_proxy_project_port_and_loopback_required(self):
         self.docker('case "$*" in "compose "*) echo proxy-id;; *Config.Labels*) echo "$MOCK_PROJECT";; *HostPort*) echo "$MOCK_PORT";; *HostIp*) echo "$MOCK_IP";; esac')

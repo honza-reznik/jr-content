@@ -45,12 +45,18 @@ def check_project(project):
     return project
 
 
-def check_restore_project(project):
-    """Obnova smí cílit jen na oddělený ověřovací projekt, nikdy na hlavní `jrc`."""
+def check_restore_project(project, allow_main=False):
+    """Obnova smí cílit na oddělený ověřovací projekt; na hlavní `jrc` jen s výslovným souhlasem.
+
+    `allow_main` předává jen `backup.sh` po JRC_RESTORE_MAIN=yes-empty a po kontrole, že v jrc nic neběží;
+    prázdnotu svazků, databází i bucketů pak ověřují stejné kontroly jako u každého cíle."""
+    if project == MAIN_PROJECT and allow_main:
+        return project
     if project == MAIN_PROJECT:
         raise BackupError(
             "Obnova do hlavního projektu jrc je zakázaná (pojistka proti přepsání hlavních dat). "
-            "Použij prázdný ověřovací projekt, např. JRC_PROJECT=jrc-obnova."
+            "Použij prázdný ověřovací projekt, např. JRC_PROJECT=jrc-obnova. Po skutečné havárii, když jrc nemá "
+            "žádná data, viz návod (JRC_RESTORE_MAIN=yes-empty)."
         )
     if not isinstance(project, str) or not RESTORE_PROJECT_RE.fullmatch(project):
         raise BackupError("Cílový projekt obnovy musí mít tvar jrc-<malá písmena, číslice, pomlčky>.")
@@ -735,7 +741,7 @@ def cmd_verify(args):
 
 def cmd_precheck(args):
     """Před spuštěním čehokoli: projekt, platnost zálohy, shoda tajemství v .env."""
-    check_restore_project(args.project)
+    check_restore_project(args.project, args.allow_main)
     manifest = validate_backup(args.backup)
     print(f"Záloha {manifest['project']}/{manifest['stamp']} je platná (soubory a součty sedí).")
     saved = Path(args.backup) / "env.backup"
@@ -769,24 +775,30 @@ def _bucket_sets(manifest):
 
 def cmd_restore_check(args):
     """Před vložením dat: databáze existují a jsou prázdné, buckety jsou prázdné."""
-    project = check_restore_project(args.project)
+    project = check_restore_project(args.project, args.allow_main)
     manifest = validate_backup(args.backup)
     env = merged_env(Path(args.workspace))
     clients = {bucket: s3_client(env, bucket) for bucket in _bucket_sets(manifest)}
     # Druhá pojistka: ani po prázdných svazcích nic nevkládáme do databáze nebo bucketu s obsahem.
+    # --only: opakovaná kontrola těsně před zápisem jedné databáze (nebo všech bucketů), viz backup.sh.
+    only = getattr(args, "only", None)
     for database in DATABASES:
+        if only not in (None, database):
+            continue
         ensure_database(database)
         if not database_is_empty(database):
             raise BackupError(f"Databáze {database} v projektu {project} není prázdná; obnovu zastavuji.")
     for bucket, client in clients.items():
+        if only not in (None, "buckets"):
+            continue
         if not bucket_is_empty(client, bucket):
             raise BackupError(f"Bucket {bucket} v projektu {project} není prázdný; obnovu zastavuji.")
-    print(f"Cíl {project}: databáze a buckety jsou prázdné.")
+    print(f"Cíl {project}: " + (f"{only}: prázdné." if only else "databáze a buckety jsou prázdné."))
 
 
 def cmd_restore_objects(args):
     """Po obnově databází: vloží soubory S3 do prázdných bucketů a ověří je."""
-    project = check_restore_project(args.project)
+    project = check_restore_project(args.project, args.allow_main)
     manifest = validate_backup(args.backup)
     env = merged_env(Path(args.workspace))
     clients = {bucket: s3_client(env, bucket) for bucket in _bucket_sets(manifest)}
@@ -795,6 +807,9 @@ def cmd_restore_objects(args):
             raise BackupError(f"Bucket {bucket} v projektu {project} není prázdný; obnovu zastavuji.")
     backup = Path(args.backup)
     for bucket, client in clients.items():
+        # Těsně před zápisem do bucketu znovu: mezitím do něj nikdo nic nevložil.
+        if not bucket_is_empty(client, bucket):
+            raise BackupError(f"Bucket {bucket} v projektu {project} už není prázdný; zapisovat nebudu.")
         entries = read_index(backup, bucket)
         print(f"Obnova bucketu {bucket}: {len(entries)} objektů")
         for entry in entries:
@@ -873,15 +888,15 @@ def build_parser():
             item.add_argument("--no-env", action="store_true")
     item = sub.add_parser("verify")
     item.add_argument("--backup", required=True)
-    item = sub.add_parser("precheck")
-    item.add_argument("--project", required=True)
-    item.add_argument("--backup", required=True)
-    item.add_argument("--workspace", default="/workspace")
-    for name in ("restore-check", "restore-objects"):
+    for name in ("precheck", "restore-check", "restore-objects"):
         item = sub.add_parser(name)
+        if name == "restore-check":
+            item.add_argument("--only", choices=(*DATABASES, "buckets"))
         item.add_argument("--project", required=True)
         item.add_argument("--backup", required=True)
         item.add_argument("--workspace", default="/workspace")
+        # Nastavuje jen backup.sh po JRC_RESTORE_MAIN=yes-empty (obnova do prázdného hlavního projektu).
+        item.add_argument("--allow-main", action="store_true")
     item = sub.add_parser("inventory")
     item.add_argument("--workspace", default="/workspace")
     return parser
