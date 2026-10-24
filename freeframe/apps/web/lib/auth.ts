@@ -1,4 +1,5 @@
 import { withBasePath } from './base-path'
+import { safeAppDestination } from './app-destination'
 
 const ACCESS_TOKEN_KEY = 'ff_access_token'
 const REFRESH_TOKEN_KEY = 'ff_refresh_token'
@@ -75,7 +76,17 @@ export async function clearTokens(version?: string | null): Promise<void> {
     deleteTokens()
     return true
   })
-  if (cleared) window.location.href = withBasePath('/login')
+  if (cleared) {
+    const basePath = process.env.NEXT_PUBLIC_BASE_PATH || ''
+    const pathname = window.location.pathname
+    const appPath = basePath && (pathname === basePath || pathname.startsWith(`${basePath}/`))
+      ? pathname.slice(basePath.length) || '/'
+      : pathname
+    const destination = safeAppDestination(`${appPath}${window.location.search}`) || '/projects'
+    const loginUrl = new URL(withBasePath('/login'), window.location.origin)
+    loginUrl.searchParams.set('from', destination)
+    window.location.href = `${loginUrl.pathname}${loginUrl.search}`
+  }
 }
 
 // Deduplicate concurrent refresh calls — when access token expires, multiple

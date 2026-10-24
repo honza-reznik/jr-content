@@ -21,7 +21,11 @@ import { render, screen } from '@testing-library/react'
 
 let pathname = '/projects/p1'
 
-vi.mock('next/navigation', () => ({ usePathname: () => pathname }))
+vi.mock('next/navigation', () => ({
+  usePathname: () => pathname,
+  useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ replace: vi.fn() }),
+}))
 vi.mock('@/stores/auth-store', () => ({ useAuthStore: () => ({ fetchUser: vi.fn() }) }))
 vi.mock('@/stores/upload-store', () => ({
   useUploadStore: (select?: (s: object) => unknown) => {

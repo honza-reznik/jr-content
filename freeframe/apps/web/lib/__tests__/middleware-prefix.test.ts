@@ -52,6 +52,23 @@ describe('prefixed server middleware', () => {
     expect(response.cookies.get('ff_setup_done')?.value).toBe('1')
   })
 
+  it('preserves a validated embed query through the login redirect', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ needs_setup: false }) }))
+    const { middleware } = await import('../../middleware')
+    const response = await middleware(new NextRequest('http://jrc.test/video/projects/p/assets/a?embed=1'))
+    const location = new URL(response.headers.get('location')!)
+    expect(location.searchParams.get('from')).toBe('/projects/p/assets/a?embed=1')
+  })
+
+  it('drops a query rejected by the existing destination validation', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ needs_setup: false }) }))
+    const { middleware } = await import('../../middleware')
+    const response = await middleware(new NextRequest('http://jrc.test/video/projects/p?next=%2F%2Fevil.invalid'))
+    const location = new URL(response.headers.get('location')!)
+    expect(location.searchParams.get('from')).toBe('/projects/p')
+    expect(location.origin).toBe('http://jrc.test')
+  })
+
   it('allows an existing session and caches completed setup', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ needs_setup: false }) }))
     const { middleware } = await import('../../middleware')

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
+import { shouldShowEmbedCommentsPanel, useEmbedMode } from '@/lib/embed-mode'
 import useSWR from 'swr'
 import { ReviewProvider, useReview } from '@/components/review/review-provider'
 import { VideoPlayer } from '@/components/review/video-player'
@@ -56,6 +57,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
+  const isEmbed = useEmbedMode()
   const { asset, versions, isLoading, refetchComments, refetchVersions } = useReview()
   const { currentVersion, isDrawingMode, focusedCommentId, playheadTime, seekTo, setFocusedCommentId, setActiveAnnotation } = useReviewStore()
   const { user } = useAuthStore()
@@ -66,6 +68,9 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   usePageTitle(asset?.name ?? null)
   const [annotationData, setAnnotationData] = useState<Record<string, unknown> | null>(null)
   const [activeTab, setActiveTab] = useState<'comments' | 'fields'>('comments')
+  useEffect(() => {
+    if (isEmbed) setActiveTab('comments')
+  }, [isEmbed])
   // Open on a desktop-width viewport, closed on a phone. A 360px sidebar on a
   // 390px screen left roughly 30px for the video (#331). The share screen has
   // always done this; the project page never did.
@@ -80,7 +85,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   const isWide = useMediaQuery('(min-width: 768px)')
   const isLandscape = useMediaQuery('(orientation: landscape)')
   const useSheet = !isWide && !isLandscape
-  const [sheetState, setSheetState] = useState<SheetState>('peek')
+  const [sheetState, setSheetState] = useState<SheetState>(() => isEmbed ? 'half' : 'peek')
   const [sheetHeight, setSheetHeight] = useState(PEEK_PX)
   const { isPlaying, togglePlay } = useMediaTransport()
   const reviewRootRef = useRef<HTMLDivElement>(null)
@@ -97,8 +102,8 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   // media is never left half covered by a sheet the user did not reopen.
   useEffect(() => {
     if (!useSheet) return
-    setSheetState(isDrawingMode ? 'compose' : 'peek')
-  }, [isDrawingMode, useSheet])
+    setSheetState(isDrawingMode ? 'compose' : isEmbed ? 'half' : 'peek')
+  }, [isDrawingMode, isEmbed, useSheet])
 
   // The sheet OVERLAYS the media, so the media has to fit in what is left above
   // it or the picture gets cropped: the stage is sized from the media's own
@@ -265,7 +270,8 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   const nextAsset = currentIndex < totalAssets - 1 ? navAssets?.[currentIndex + 1] : null
 
   const navigateAsset = (assetId: string) => {
-    router.push(`/projects/${projectId}/assets/${assetId}`)
+    const query = new URLSearchParams(searchParams.toString())
+    router.push(`/projects/${projectId}/assets/${assetId}${query.size ? `?${query}` : ''}`)
   }
 
   // Keyboard navigation for prev/next asset
@@ -447,17 +453,19 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
           >
             Comments
           </button>
-          <button
-            onClick={() => setActiveTab('fields')}
-            className={cn(
-              'flex-1 py-1.5 text-[13px] font-medium rounded-md transition-all',
-              activeTab === 'fields'
-                ? 'bg-bg-hover text-text-primary shadow-sm'
-                : 'text-text-tertiary hover:text-text-secondary',
-            )}
-          >
-            Fields
-          </button>
+          {!isEmbed && (
+            <button
+              onClick={() => setActiveTab('fields')}
+              className={cn(
+                'flex-1 py-1.5 text-[13px] font-medium rounded-md transition-all',
+                activeTab === 'fields'
+                  ? 'bg-bg-hover text-text-primary shadow-sm'
+                  : 'text-text-tertiary hover:text-text-secondary',
+              )}
+            >
+              Fields
+            </button>
+          )}
         </div>
       </div>
     </>
@@ -524,6 +532,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
 
   return (
     <div className="absolute inset-0 flex flex-col overflow-hidden">
+      {!isEmbed && <>
       {/* ─── Top bar (Frame.io style) ──────────────────────────────────── */}
       <div className="flex items-center justify-between border-b border-border px-3 h-12 bg-bg-secondary shrink-0">
         {/* Left: back + breadcrumb */}
@@ -667,6 +676,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
           </button>
         </div>
       </div>
+      </>}
 
       {/* ─── Main content: viewer + sidebar ────────────────────────────── */}
       {compareOpen && asset && currentVersion && canCompare(asset.asset_type, versions) ? (
@@ -693,7 +703,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
             the spare room is horizontal, this stays a column beside the media.
             Below that the same nodes go into MobileCommentSheet instead, so the
             panel keeps the video in view rather than covering it. */}
-        {sidebarOpen && !useSheet && (
+        {shouldShowEmbedCommentsPanel(isEmbed, isLandscape, sidebarOpen, useSheet) && (
           <div className="w-full md:w-[360px] absolute inset-y-0 right-0 z-20 md:static md:inset-auto max-md:landscape:static max-md:landscape:inset-auto max-md:landscape:w-[45%] max-md:landscape:max-w-[360px] flex flex-col border-l-0 md:border-l max-md:landscape:border-l border-border bg-bg-secondary shrink-0 animate-in slide-in-from-right-2 duration-150">
             {panelTabs}
             <div className="flex-1 flex flex-col min-h-0 overflow-hidden">

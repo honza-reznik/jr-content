@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { withBasePath } from './lib/base-path'
+import { safeAppDestination } from './lib/app-destination'
 
 const PUBLIC_ROUTES = ['/login', '/setup', '/jrc-sso', '/jrc-logout']
 const PUBLIC_PREFIXES = ['/invite/', '/share/']
@@ -55,7 +56,8 @@ export async function middleware(request: NextRequest) {
   let response: NextResponse
   if (!accessToken && !refreshToken) {
     const loginUrl = new URL(withBasePath('/login'), request.url)
-    loginUrl.searchParams.set('from', pathname)
+    const candidate = `${pathname}${request.nextUrl.search}`
+    loginUrl.searchParams.set('from', safeAppDestination(candidate) ?? safeAppDestination(pathname) ?? '/projects')
     response = NextResponse.redirect(loginUrl)
   } else {
     response = NextResponse.next()
