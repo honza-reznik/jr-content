@@ -282,3 +282,15 @@ Provozní postup je v `docs-arch/F2-B02/freeframe-provoz.md` (doplněk pro PM do
   režimu `m:ss` (výběr formátu v přehrávači zůstává). Mimo vložený režim beze změny.
 - Testy: `lib/__tests__/embed-version.test.ts`, `components/review/__tests__/review-provider-embed-version.test.tsx`,
   `app/(dashboard)/projects/[id]/assets/[assetId]/__tests__/embed-version.test.tsx`.
+
+## 2026-10-25 — F7-B02
+
+- Viditelnost komentářů sladěná s Brightbeanem: pro řízené účty JR Content (`jrc_managed`) s rolí v projektu `reviewer`
+  (klient) a `viewer` jsou komentáře „Internal“ tým-only. Nový `apps/api/services/comment_privacy.py`
+  (`hides_internal_comments`, `thread_is_internal`, `internal_comment_ids`) a použití v `routers/comments.py`: výpis
+  (i odpovědi pod interním komentářem) je nevidí; vytvoření a odpověď s `visibility=internal` vrací 403, odpověď do interního
+  vlákna 404; úprava, mazání, vyřešení, přílohy, reakce, odkaz a export komentáře interního vlákna dávají 404 (export je vynechá);
+  zmínka a upozornění na interní komentář klient nedostane, `routers/notifications.py` staré takové řádky přeskočí.
+  Běžné účty FreeFrame a tým (`owner`, `editor`) beze změny.
+- Web: přepínač Public / Internal se klientovi neukazuje (`lib/comment-visibility.ts`, `allowInternal` v detailu a v porovnání verzí).
+- Testy: `apps/api/tests/test_jrc_comment_privacy.py` (12), `lib/__tests__/comment-visibility.test.ts`.

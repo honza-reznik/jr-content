@@ -10,6 +10,7 @@ from ..models.project import Project
 from ..models.activity import Notification
 from ..models.comment import Comment
 from ..schemas.asset import NotificationResponse
+from ..services.comment_privacy import hides_internal_comments, thread_is_internal
 import uuid
 
 router = APIRouter(tags=["notifications"])
@@ -65,6 +66,10 @@ def list_notifications(
 
         if n.comment_id:
             comment = db.query(Comment).filter(Comment.id == n.comment_id).first()
+            if comment and project_id and hides_internal_comments(db, project_id, current_user) \
+                    and thread_is_internal(db, comment):
+                # A team-only comment is not announced to a client or viewer (F7-B02).
+                continue
             if comment:
                 comment_preview = comment.body[:100] if comment.body else None
                 # Get actor from comment author

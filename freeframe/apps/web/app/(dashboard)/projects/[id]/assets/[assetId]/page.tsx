@@ -15,6 +15,7 @@ import { AnnotationCanvas } from '@/components/review/annotation-canvas'
 import { AnnotationOverlay } from '@/components/review/annotation-overlay'
 import { CommentPanel } from '@/components/review/comment-panel'
 import { CommentInput } from '@/components/review/comment-input'
+import { canPostInternalComments } from '@/lib/comment-visibility'
 // ApprovalBar removed for now
 import { VersionSwitcher } from '@/components/review/version-switcher'
 import { ShareDialog } from '@/components/review/share-dialog'
@@ -185,6 +186,9 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   const currentMember = members?.find((m) => m.user_id === user?.id)
   const currentRole = currentMember?.role ?? 'viewer'
   const canComment = currentRole !== 'viewer'
+  // JR Content: a client (reviewer) comments in public only; internal comments are the team's (F7-B02).
+  // The API enforces the same rule, this only keeps the switch out of the client's way.
+  const canPostInternal = canPostInternalComments(user?.jrc_managed, currentRole)
 
   // Prev/next walks the asset's own folder in the order the project view shows
   // it, not the whole project. Same key as the project page, so the list is
@@ -496,6 +500,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
       assetType={asset.asset_type}
       onSubmit={handleSubmitComment}
       annotationData={annotationData}
+      allowInternal={canPostInternal}
     />
   ) : null
 
@@ -685,7 +690,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
 
       {/* ─── Main content: viewer + sidebar ────────────────────────────── */}
       {compareOpen && asset && currentVersion && canCompare(asset.asset_type, versions) ? (
-        <CompareOverlay asset={asset} versions={versions} rightVersion={currentVersion} onClose={closeCompare} canComment={canComment} />
+        <CompareOverlay asset={asset} versions={versions} rightVersion={currentVersion} onClose={closeCompare} canComment={canComment} allowInternal={canPostInternal} />
       ) : (
       <>
       {/* pb-14 (3.5rem = PEEK_PX) reserves the sheet's peek band so the

@@ -557,3 +557,18 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
   a opakovanou úlohou workeru `jrc_refresh_video_statuses` (každých 30 s, servisní účet `jrc-sync`).
 - `apps/jrc_production/views.py`: záložka Video předává příznak `video_player_ready` a před zobrazením obnoví stav verzí.
 - `apps/jrc_video/tests/test_player.py` (21 testů). Živé ověření: `make test-f5-b08-video` (`scripts/F5-B08/`).
+
+## 2026-10-25 · F7-B02 — schválení klientem na detailu obsahu
+
+- `apps/jrc_production/services.py`: nové `can_decide(post, membership)` je jediné pravidlo, kdo smí rozhodnout (schválit i
+  požádat o změny): oprávnění `approve_posts` a obsah ve stavu `pending_review`/`pending_client`; v dvoustupňovém režimu
+  (`required_internal_and_client`) tým rozhoduje při `pending_review`, klient až při `pending_client`. `available_moves()` ho
+  používá pro přesun do Approved. Nová služba `request_content_changes()` (povinný komentář, zámek, kontrola očekávané fáze)
+  volá `approvals.request_changes`; fáze zůstává Review, záznam historie a upozornění autorovi dělá Brightbean.
+- `apps/jrc_production/approval.py` (nový): shrnutí pro kartu Approval (poslední uložená verze scénáře, popisky kanálů,
+  finální verze videa nebo poslední hotová), stavová věta, poslední rozhodnutí podle viditelnosti poznámky, seznam „Waiting for you“.
+- `apps/jrc_production/views.py`, `urls.py`: `POST .../content/<obsah>/approval/` (`decision=approve|request_changes`, komentář,
+  `expected_stage`); schválení jde přes `move_content`. Nástěnka předává klientovi `waiting_for_you`.
+- `templates/jrc_production/_approval_tab.html` (nový), `content_detail.html`, `board.html`: karta Approval s tlačítky
+  Approve / Request changes a panel „Waiting for you“ na nástěnce (jen obsah klienta, kde je člen a kde je na řadě).
+- Testy: `apps/jrc_production/tests/test_approval.py` (18).

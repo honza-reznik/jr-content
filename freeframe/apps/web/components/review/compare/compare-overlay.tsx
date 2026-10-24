@@ -29,6 +29,8 @@ interface CompareOverlayProps {
   onClose(): void
   /** Mirror of the page's role gate — comment inputs render only when true. */
   canComment?: boolean
+  /** Show the Public / Internal switch in the comment inputs (false for JR Content clients). */
+  allowInternal?: boolean
 }
 
 function mediaOf(v: AssetVersion | null | undefined): { fps?: number | null; duration_seconds?: number | null } {
@@ -38,7 +40,7 @@ function mediaOf(v: AssetVersion | null | undefined): { fps?: number | null; dur
 }
 
 /** Fullscreen two-version compare. Chrome: select A, (image mode toggle), select B, close. */
-export function CompareOverlay({ asset, versions, rightVersion, onClose, canComment = true }: CompareOverlayProps) {
+export function CompareOverlay({ asset, versions, rightVersion, onClose, canComment = true, allowInternal = true }: CompareOverlayProps) {
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
@@ -430,6 +432,7 @@ export function CompareOverlay({ asset, versions, rightVersion, onClose, canComm
                 assetType={asset.asset_type}
                 playheadTimeOverride={isVideo ? localTime(transport.t, timingA) : undefined}
                 disableAnnotations={!canAuthor}
+                allowInternal={allowInternal}
                 annotationActive={drawingSide === 'a'}
                 onToggleAnnotation={() => toggleDrawing('a')}
                 onPauseVideo={() => { if (transport.isPlaying) transport.toggle() }}
@@ -644,6 +647,7 @@ export function CompareOverlay({ asset, versions, rightVersion, onClose, canComm
                 assetType={asset.asset_type}
                 playheadTimeOverride={isVideo ? localTime(transport.t, timingB) : undefined}
                 disableAnnotations={!canAuthor}
+                allowInternal={allowInternal}
                 annotationActive={drawingSide === 'b'}
                 onToggleAnnotation={() => toggleDrawing('b')}
                 onPauseVideo={() => { if (transport.isPlaying) transport.toggle() }}
