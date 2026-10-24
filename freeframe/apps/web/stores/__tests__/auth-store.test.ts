@@ -63,9 +63,9 @@ describe('Auth store', () => {
     expect(useAuthStore.getState().isSuperAdmin).toBe(true)
   })
 
-  it('logout clears state and calls clearTokens', () => {
+  it('logout clears state and calls clearTokens', async () => {
     useAuthStore.setState({ user: mockUser, isAuthenticated: true, isSuperAdmin: false })
-    useAuthStore.getState().logout()
+    await useAuthStore.getState().logout()
 
     const state = useAuthStore.getState()
     expect(state.user).toBeNull()

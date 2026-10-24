@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { withBasePath } from './lib/base-path'
 
-const PUBLIC_ROUTES = ['/login', '/setup']
+const PUBLIC_ROUTES = ['/login', '/setup', '/jrc-sso', '/jrc-logout']
 const PUBLIC_PREFIXES = ['/invite/', '/share/']
 
 // Server reaches the API over the private container network.
@@ -15,7 +15,11 @@ function isPublicRoute(pathname: string): boolean {
 }
 
 export async function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl
+  const basePath = process.env.NEXT_PUBLIC_BASE_PATH || ''
+  const rawPathname = request.nextUrl.pathname
+  const pathname = basePath && (rawPathname === basePath || rawPathname.startsWith(`${basePath}/`))
+    ? rawPathname.slice(basePath.length) || '/'
+    : rawPathname
 
   // Always allow public routes
   if (isPublicRoute(pathname)) {

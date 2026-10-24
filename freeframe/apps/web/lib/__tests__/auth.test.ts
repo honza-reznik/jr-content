@@ -1,14 +1,18 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setTokens, getAccessToken, getRefreshToken, clearTokens } from '../auth'
+import { mockSessionLocks } from '@/test/session-locks'
+
+afterEach(() => vi.unstubAllGlobals())
 
 describe('Token management', () => {
   beforeEach(() => {
     localStorage.clear()
     vi.clearAllMocks()
+    mockSessionLocks()
   })
 
-  it('setTokens stores access and refresh tokens in localStorage', () => {
-    setTokens('access-123', 'refresh-456')
+  it('setTokens stores access and refresh tokens in localStorage', async () => {
+    await setTokens('access-123', 'refresh-456')
     expect(localStorage.getItem('ff_access_token')).toBe('access-123')
     expect(localStorage.getItem('ff_refresh_token')).toBe('refresh-456')
   })
@@ -31,7 +35,7 @@ describe('Token management', () => {
     expect(getRefreshToken()).toBeNull()
   })
 
-  it('clearTokens removes both tokens from localStorage', () => {
+  it('clearTokens removes both tokens from localStorage', async () => {
     localStorage.setItem('ff_access_token', 'access-123')
     localStorage.setItem('ff_refresh_token', 'refresh-456')
 
@@ -42,20 +46,20 @@ describe('Token management', () => {
       writable: true,
     })
 
-    clearTokens()
+    await clearTokens()
 
     expect(localStorage.getItem('ff_access_token')).toBeNull()
     expect(localStorage.getItem('ff_refresh_token')).toBeNull()
   })
 
-  it('clearTokens redirects to /login', () => {
+  it('clearTokens redirects to /login', async () => {
     const locationMock = { href: '' }
     Object.defineProperty(window, 'location', {
       value: locationMock,
       writable: true,
     })
 
-    clearTokens()
+    await clearTokens()
 
     expect(window.location.href).toBe('/login')
   })

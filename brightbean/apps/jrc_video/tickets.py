@@ -58,8 +58,13 @@ def is_safe_next(value):
         isinstance(value, str)
         and 1 <= len(value) <= MAX_NEXT_LENGTH
         and value.startswith("/")
+        and value.split("?", 1)[0].split("/")[1] in {"projects", "assets", "notifications", "settings"}
         and not value.startswith(("//", "/\\"))
         and "\\" not in value
+        and "%" not in value
+        and "#" not in value
+        and "//" not in value.split("?", 1)[0]
+        and not any(part in {".", ".."} for part in value.split("?", 1)[0].split("/"))
         and not any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in value)
     )
 

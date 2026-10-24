@@ -82,6 +82,14 @@ urlpatterns = [
 ]
 
 if getattr(settings, "JRC_UI_ENABLED", False):
+    from apps.jrc_video.views import video_logout, video_sso
+
+    # Before both accounts URL includes: namespaced and allauth logout resolve
+    # to the same CSRF-protected endpoint and fixed cross-app logout chain.
+    urlpatterns = [
+        path("video-sso/", video_sso, name="video_sso"),
+        path("accounts/logout/", video_logout),
+    ] + urlpatterns
     # JR Content: upraveno 2026-10-23 (bloky F3-B02, F2-B08), AGPL-3.0.
     urlpatterns += [
         path("about/", include("apps.jrc_ui.urls")),

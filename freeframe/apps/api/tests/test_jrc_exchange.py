@@ -418,6 +418,7 @@ def test_server_ticket_cannot_carry_next(client, redis, managed_user):
 @pytest.mark.parametrize("next_path", [
     "//evil.example/x", "/\\evil.example", "https://evil.example/", "javascript:alert(1)",
     "projects/x", "/a b", "/a\nb", "/a\\b", "", "/" + "a" * 512, 7,
+    "/login?from=https://evil.example", "/login?from=//evil.example", "/setup", "/jrc-logout", "/jrc-sso",
 ])
 def test_unsafe_next_rejected(client, redis, managed_user, next_path):
     assert_rejected(exchange(client, make_ticket(next=next_path)), redis)

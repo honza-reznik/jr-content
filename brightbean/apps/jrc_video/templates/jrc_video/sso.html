@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% comment %}JR Content: přidáno 2026-10-24 (F5-B03), AGPL-3.0.{% endcomment %}
+{% block title %}Open video - JR Content{% endblock %}
+{% block content %}
+<div class="max-w-md mx-auto p-8">
+    {% if unavailable %}
+    <h1 class="text-2xl font-bold mb-4">Video is temporarily unavailable</h1>
+    <p>Please try again in a moment.</p>
+    <a class="btn-outline mt-4" href="/">Back to JR Content</a>
+    {% else %}
+    <h1 class="text-2xl font-bold mb-4">Open video</h1>
+    <p class="mb-4">Continue to video with your JR Content account.</p>
+    <form method="post" action="{% url 'video_sso' %}">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ next_path }}">
+        <button class="btn-brand" type="submit">Continue to video</button>
+    </form>
+    {% endif %}
+</div>
+{% endblock %}
