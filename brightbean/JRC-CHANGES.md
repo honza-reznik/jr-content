@@ -310,7 +310,11 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
   pro import základu zůstává, aby base.py nedoplnil do CSP `https://` bez portu.
 - `apps/jrc_storage/`: `JrcS3Storage` (podpis pro adresu prohlížeče, provoz přes vnitřní adresu),
   příkazy `jrc_configure_s3` (CORS bucketu jen pro původ aplikace, GET/HEAD) a
-  `jrc_migrate_media_to_s3` (idempotentní kopie místního svazku do S3; místní soubory se nemažou).
+  `jrc_migrate_media_to_s3` (jednorázová kopie místního svazku do S3; místní soubory se nemažou).
+  Oprava po review: existující objekt v S3 se nikdy nepřepisuje; dokončení se zapíše značkou
+  `.jrc/media-migration-complete.json` v bucketu až po úplném bezchybném průchodu a pak už příkaz nic
+  nekopíruje (stará záloha neobnoví vyměněná ani smazaná média). Přerušená migrace pokračuje,
+  nečitelný adresář je chyba s cestou, vynechá se jen provozní `.jrc-working-dir` (média s tečkou ne).
   Oba spouští `jrc-bb-migrate` při každém `make up`.
 - `apps/media_library/storage.py`: `is_s3_backend()` uznává i podtřídy S3 backendu (kontrola MRO).
 - `templates/media_library/asset_edit.html`: Cropper s `checkCrossOrigin: false`. Jinak by přidal

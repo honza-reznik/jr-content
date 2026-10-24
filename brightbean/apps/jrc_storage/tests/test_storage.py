@@ -9,10 +9,12 @@ import pytest
 from botocore.exceptions import ClientError
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import override_settings
 
 from apps.jrc_storage import s3 as jrc_s3
 from apps.jrc_storage.backends import JrcS3Storage
+from apps.jrc_storage.management.commands.jrc_migrate_media_to_s3 import MARKER_KEY
 from apps.media_library import storage as ml_storage
 
 OPTIONS = {
@@ -90,6 +92,9 @@ class FakeS3:
         self.objects[(bucket, key)] = os.path.getsize(filename)
         self.uploads.append((key, ExtraArgs["ContentType"]))
 
+    def put_object(self, Bucket, Key, Body, ContentType):  # noqa: N803
+        self.objects[(Bucket, Key)] = len(Body)
+
     def put_bucket_cors(self, Bucket, CORSConfiguration):  # noqa: N803
         self.cors = (Bucket, CORSConfiguration)
 
@@ -104,38 +109,102 @@ def fake_s3(monkeypatch):
     return fake
 
 
-def test_media_copy_is_idempotent_and_keeps_local_files(tmp_path, fake_s3):
+def _migrate(source):
+    out = StringIO()
+    call_command("jrc_migrate_media_to_s3", source=str(source), stdout=out, stderr=out)
+    return out.getvalue()
+
+
+def _tree(root):
+    return sorted(p.relative_to(root).as_posix() for p in root.rglob("*"))
+
+
+def test_media_copy_once_keeps_local_files_and_dot_media(tmp_path, fake_s3):
     (tmp_path / "media_library" / "2026").mkdir(parents=True)
     (tmp_path / "media_library" / "2026" / "a.png").write_bytes(b"\x89PNG" + b"0" * 100)
     (tmp_path / "avatars").mkdir()
     (tmp_path / "avatars" / "b.jpg").write_bytes(b"jpeg")
+    # Platné médium může začínat tečkou; vynechá se jen provozní soubor JR Content.
+    (tmp_path / "avatars" / ".portrait.png").write_bytes(b"png")
     (tmp_path / ".jrc-working-dir").write_text("/somewhere")
     (tmp_path / "link.png").symlink_to(tmp_path / "avatars" / "b.jpg")
-    before = sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*"))
+    before = _tree(tmp_path)
 
-    out = StringIO()
-    call_command("jrc_migrate_media_to_s3", source=str(tmp_path), stdout=out)
-    assert "copied 2, already present 0" in out.getvalue()
-    assert sorted(fake_s3.uploads) == [("avatars/b.jpg", "image/jpeg"), ("media_library/2026/a.png", "image/png")]
+    assert "copied 3, already present 0" in _migrate(tmp_path)
+    assert sorted(key for key, _ in fake_s3.uploads) == [
+        "avatars/.portrait.png",
+        "avatars/b.jpg",
+        "media_library/2026/a.png",
+    ]
+    assert ("jrc-app", MARKER_KEY) in fake_s3.objects
+    assert _tree(tmp_path) == before
 
-    out = StringIO()
-    call_command("jrc_migrate_media_to_s3", source=str(tmp_path), stdout=out)
-    assert "copied 0, already present 2" in out.getvalue()
-    assert len(fake_s3.uploads) == 2
-    assert sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*")) == before
+    # Po dokončení se nic nekopíruje, ani nový místní soubor.
+    (tmp_path / "avatars" / "late.jpg").write_bytes(b"late")
+    assert "already completed; nothing copied" in _migrate(tmp_path)
+    assert len(fake_s3.uploads) == 3
 
-    # A partially copied object (different size) is copied again.
-    fake_s3.objects[("jrc-app", "avatars/b.jpg")] = 1
-    out = StringIO()
-    call_command("jrc_migrate_media_to_s3", source=str(tmp_path), stdout=out)
-    assert "copied 1, already present 1" in out.getvalue()
+
+def test_completed_migration_never_restores_replaced_or_deleted_media(tmp_path, fake_s3):
+    (tmp_path / "avatars").mkdir()
+    (tmp_path / "avatars" / "me.jpg").write_bytes(b"old local avatar")
+    (tmp_path / "avatars" / "gone.jpg").write_bytes(b"deleted later")
+    _migrate(tmp_path)
+    fake_s3.objects[("jrc-app", "avatars/me.jpg")] = 3  # novější profilovka se stejným názvem
+    del fake_s3.objects[("jrc-app", "avatars/gone.jpg")]  # smazáno v aplikaci
+    _migrate(tmp_path)
+    assert fake_s3.objects[("jrc-app", "avatars/me.jpg")] == 3
+    assert ("jrc-app", "avatars/gone.jpg") not in fake_s3.objects
+
+
+def test_existing_object_is_never_overwritten(tmp_path, fake_s3):
+    (tmp_path / "avatars").mkdir()
+    (tmp_path / "avatars" / "me.jpg").write_bytes(b"old local avatar")
+    fake_s3.objects[("jrc-app", "avatars/me.jpg")] = 3
+    output = _migrate(tmp_path)
+    assert "copied 0, already present 1 (1 differing kept)" in output
+    assert "not overwritten" in output
+    assert fake_s3.objects[("jrc-app", "avatars/me.jpg")] == 3
+    assert fake_s3.uploads == []
+
+
+def test_interrupted_migration_continues(tmp_path, fake_s3, monkeypatch):
+    (tmp_path / "a.png").write_bytes(b"a")
+    (tmp_path / "b.png").write_bytes(b"bb")
+    upload = fake_s3.upload_file
+
+    def fail_on_b(filename, bucket, key, ExtraArgs):  # noqa: N803
+        if key == "b.png":
+            raise OSError("connection lost")
+        upload(filename, bucket, key, ExtraArgs)
+
+    monkeypatch.setattr(fake_s3, "upload_file", fail_on_b)
+    with pytest.raises(OSError):
+        _migrate(tmp_path)
+    assert ("jrc-app", MARKER_KEY) not in fake_s3.objects
+    monkeypatch.setattr(fake_s3, "upload_file", upload)
+    assert "copied 1, already present 1" in _migrate(tmp_path)
+    assert ("jrc-app", MARKER_KEY) in fake_s3.objects
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root čte i adresář bez práv")
+def test_unreadable_directory_fails_without_marker(tmp_path, fake_s3):
+    locked = tmp_path / "media_library" / "locked"
+    locked.mkdir(parents=True)
+    (locked / "x.png").write_bytes(b"x")
+    locked.chmod(0)
+    try:
+        with pytest.raises(CommandError, match="media_library/locked"):
+            _migrate(tmp_path)
+    finally:
+        locked.chmod(0o755)
+    assert ("jrc-app", MARKER_KEY) not in fake_s3.objects
 
 
 def test_media_copy_without_local_directory(tmp_path, fake_s3):
-    out = StringIO()
-    call_command("jrc_migrate_media_to_s3", source=str(tmp_path / "missing"), stdout=out)
-    assert "nothing to copy" in out.getvalue()
+    assert "copied 0, already present 0" in _migrate(tmp_path / "missing")
     assert fake_s3.uploads == []
+    assert ("jrc-app", MARKER_KEY) in fake_s3.objects
 
 
 @override_settings(APP_URL="http://127.0.0.1:13000/")

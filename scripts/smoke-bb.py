@@ -76,20 +76,21 @@ finally:
 print(f"OK Brightbean {sys.argv[1]}: zápis a čtení v jrc-app, podepsaná adresa na místní bránu S3 (900 s)")
 
 if sys.argv[1] == "web":
-    # Kopie místních médií: soubor zůstane, druhý běh nic nekopíruje znovu.
+    # Migrace médií proběhla při make up (značka v bucketu); další běh už nic nekopíruje,
+    # takže stará místní záloha nikdy nepřepíše ani neobnoví média v S3.
+    from apps.jrc_storage.management.commands.jrc_migrate_media_to_s3 import MARKER_KEY  # noqa: E402
+
+    assert default_storage.exists(MARKER_KEY), "Migrace médií do S3 není dokončená"
     local = Path(os.environ["MEDIA_ROOT"], "jrc-smoke", f"{uuid.uuid4()}.txt")
     local.parent.mkdir(parents=True, exist_ok=True)
     local.write_bytes(payload)
     key = local.relative_to(os.environ["MEDIA_ROOT"]).as_posix()
     try:
-        first, second = io.StringIO(), io.StringIO()
-        call_command("jrc_migrate_media_to_s3", stdout=first)
-        call_command("jrc_migrate_media_to_s3", stdout=second)
-        assert "copied 0," in second.getvalue(), second.getvalue()
+        out = io.StringIO()
+        call_command("jrc_migrate_media_to_s3", stdout=out)
+        assert "already completed; nothing copied" in out.getvalue(), out.getvalue()
+        assert not default_storage.exists(key)
         assert local.read_bytes() == payload
-        with default_storage.open(key, "rb") as stored:
-            assert stored.read() == payload
     finally:
-        default_storage.delete(key)
         local.unlink()
-    print("OK Brightbean: kopie místních médií do jrc-app je idempotentní a místní soubor zůstal")
+    print("OK Brightbean: migrace médií do jrc-app dokončená, další běh nic nekopíruje ani nepřepisuje")
