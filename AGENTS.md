@@ -43,7 +43,8 @@ Platí pro Claude (PM, kodér, tester) i pro Codex (kodér, tester). Než začne
 - **Uvnitř Dockeru projektu JR Content** smí agent i mazat a resetovat data, pokud to blok potřebuje,
   ale **jen svého ověřovacího projektu** `JRC_PROJECT=jrc-<blok>`. Data hlavního projektu `jrc` nikdy
   (žádné `down -v`, `make reset`, `docker volume rm` nad `jrc-*-data`). Přímé `docker compose` bez
-  `JRC_PROJECT` Compose odmítne (F0-B09).
+  `JRC_PROJECT` Compose odmítne (F0-B09). Ruční `docker compose` jen se **shodným** `JRC_PROJECT=X` a
+  `--project-name X` (názvy svazků se berou z `JRC_PROJECT`); raději `make down` (F2-B09).
 - **Mimo Docker nic, co by ovlivnilo systém**, bez povolení Honzy. To zahrnuje cron a systemd,
   Tailscale, firewall, systémové balíčky a soubory mimo `KÓD/`, worktree a soubor svého bloku.
 - Kontejnery jiných projektů (kosync, ntfy, jrklon-*, jrreg-*, agent-*) nezastavuj ani neměň.
