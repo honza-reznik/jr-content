@@ -132,3 +132,18 @@ def test_stale_caption_form_conflicts_and_client_cannot_write(client, workspace,
     client.force_login(client_user)
     denied = _save(client, variant, "Client overwrite", base_version=latest.pk)
     assert denied.status_code == 403
+
+
+def test_caption_tab_counter_is_static_script_without_inline_script(client, workspace, user, instagram_content):
+    post, _ = instagram_content
+    client.force_login(user)
+
+    html = client.get(f"{_url(workspace, post)}?tab=caption").content.decode()
+
+    assert "jrc_production/caption-counter.js" in html
+    assert "data-caption-counter" in html and "data-escaped-chars" in html
+    assert "querySelectorAll(\"[data-caption-counter]\")" not in html
+    import re
+
+    inline = [m for m in re.findall(r"<script(?![^>]*\bsrc=)[^>]*>", html) if "nonce=" not in m]
+    assert inline == []

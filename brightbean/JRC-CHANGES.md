@@ -443,3 +443,11 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
 - Node regrese běží přes pytest v obrazu aplikace; HTTP testy ověřují volbu verzí,
   metadata, oprávnění a velikost. Snímky porovnání při 1440 a 390 px jsou
   `ops/screenshoty/F4-B03/compare-1440.png` a `compare-390.png`.
+
+## 2026-10-24 · F6-B01a
+
+- `templates/jrc_production/content_detail.html`: z karty Caption odstraněn vložený skript počítadla znaků
+  (CSP ho blokovala); načítá se statický soubor s nonce.
+- `apps/jrc_production/static/jrc_production/caption-counter.js`: stejná logika počítání (data-limit,
+  data-escaped-chars), beze změny chování.
+- `apps/jrc_production/tests/test_captions.py`: regrese, že karta nemá vložený skript bez nonce.
