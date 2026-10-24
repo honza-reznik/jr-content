@@ -494,3 +494,12 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
 - `apps/jrc_production/static/jrc_production/caption-counter.js`: stejná logika počítání (data-limit,
   data-escaped-chars), beze změny chování.
 - `apps/jrc_production/tests/test_captions.py`: regrese, že karta nemá vložený skript bez nonce.
+
+## 2026-10-24 · F8-B01 — kalendář výrobních fází
+
+- Kalendářní čipy v měsíčním, týdenním, denním a seznamovém zobrazení používají fázi `pipeline_stage()`
+  se stejnými názvy a barvami jako nástěnka; vedou na detail obsahu.
+- Kalendářní filtry, čipy, sloty i seznamový přehled skrývají vypnuté kanály JR; běžné upstream účty bez profilu JR zůstávají kompatibilní s původními Publish záložkami.
+- Přehled „Waiting for me“ ukazuje týmu položky čekající na interní kontrolu a žádosti klienta o změny; klientovi
+  jeho položky čekající na schválení. Přehled je omezený na aktuálního člena a klienta a nezobrazuje texty poznámek.
+- Přidány testy fáze, viditelnosti kanálu a rolí pro čekající položky.

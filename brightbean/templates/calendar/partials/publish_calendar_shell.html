@@ -109,17 +109,13 @@ Toolbar: nav arrows + period + Today + view dropdown | right: filter dropdowns.
         {% endif %}
     </div>
 
-    <!-- Status legend -->
+    <!-- MVP production-stage legend -->
     <div class="px-3 sm:px-4 lg:px-6 pt-4 lg:pt-6">
         <div class="flex flex-wrap items-center justify-end gap-x-1.5 gap-y-2 text-[11px]">
-            <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md"><span class="w-3 h-3 rounded-full" style="background:#A8A29E"></span><span style="color:#57534E">Draft</span></span>
-            <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md"><span class="w-3 h-3 rounded-full" style="background:#F97316"></span><span style="color:#C2410C">Pending Review</span></span>
-            <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md"><span class="w-3 h-3 rounded-full" style="background:#14B8A6"></span><span style="color:#0F766E">Approved</span></span>
-            <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md"><span class="w-3 h-3 rounded-full" style="background:#3B82F6"></span><span style="color:#1D4ED8">Scheduled</span></span>
-            <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md"><span class="w-3 h-3 rounded-full" style="background:#6366F1"></span><span style="color:#4338CA">Publishing</span></span>
-            <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md"><span class="w-3 h-3 rounded-full" style="background:#22C55E"></span><span style="color:#15803D">Published</span></span>
-            <!-- <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md"><span class="w-3 h-3 rounded-full" style="background:#EAB308"></span><span style="color:#A16207">Partially Published</span></span> -->
-            <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md"><span class="w-3 h-3 rounded-full" style="background:#EF4444"></span><span style="color:#B91C1C">Failed</span></span>
+            <span class="pipeline-stage-idea rounded px-2 py-1">Idea</span><span class="pipeline-stage-script rounded px-2 py-1">Script</span>
+            <span class="pipeline-stage-shooting rounded px-2 py-1">Shooting</span><span class="pipeline-stage-editing rounded px-2 py-1">Editing</span>
+            <span class="pipeline-stage-review rounded px-2 py-1">Review</span><span class="pipeline-stage-approved rounded px-2 py-1">Approved</span>
+            <span class="pipeline-stage-ready rounded px-2 py-1">Ready to publish</span><span class="pipeline-stage-published rounded px-2 py-1">Published (manually)</span>
         </div>
     </div>
 </div>

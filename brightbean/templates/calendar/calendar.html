@@ -81,6 +81,22 @@
     .post-chip:hover { transform: translateX(1px); }
     .post-chip .chip-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
 
+    .calendar-stage-label { flex-shrink: 0; font-size: 9px; font-weight: 700; white-space: nowrap; }
+    .pipeline-stage-idea { background:#F5F5F4; color:#57534E; border:1px solid #E7E5E4; }
+    .pipeline-stage-script { background:#EFF6FF; color:#1D4ED8; border:1px solid #BFDBFE; }
+    .pipeline-stage-shooting { background:#FAF5FF; color:#7E22CE; border:1px solid #E9D5FF; }
+    .pipeline-stage-editing { background:#EEF2FF; color:#4338CA; border:1px solid #C7D2FE; }
+    .pipeline-stage-review { background:#FFF7ED; color:#C2410C; border:1px solid #FED7AA; }
+    .pipeline-stage-approved { background:#F0FDFA; color:#0F766E; border:1px solid #99F6E4; }
+    .pipeline-stage-ready { background:#EFF6FF; color:#1D4ED8; border:1px solid #BFDBFE; }
+    .pipeline-stage-published { background:#F0FDF4; color:#15803D; border:1px solid #BBF7D0; }
+    .waiting-panel { margin:0 12px 12px; padding:12px 14px; border:1px solid #E7E5E4; border-radius:10px; background:#FFFBF7; }
+    .waiting-panel h2 { margin:0 0 8px; font-size:13px; font-weight:700; color:#292524; }
+    .waiting-items { display:flex; flex-wrap:wrap; gap:6px; }
+    .waiting-item { display:inline-flex; align-items:center; gap:6px; max-width:100%; padding:5px 8px; border-radius:7px; font-size:11px; text-decoration:none; }
+    .waiting-item:hover { filter:brightness(.97); }
+    @media(max-width:640px) { .waiting-panel { margin:0 8px 10px; } .waiting-item { width:100%; } }
+
     /* Status colors */
     .status-draft      { background: #F5F5F4; color: #57534E; border: 1px solid #E7E5E4; }
     .status-draft .chip-dot { background: #A8A29E; }
@@ -345,6 +361,19 @@
 {% endblock %}
 
 {% block content %}
+{% if waiting_items %}
+<section class="waiting-panel" aria-labelledby="waiting-heading">
+    <h2 id="waiting-heading">Waiting for me <span class="text-stone-400">({{ waiting_items|length }})</span></h2>
+    <div class="waiting-items">
+        {% for item in waiting_items %}
+        <a class="waiting-item pipeline-stage-{{ item.stage }}" href="{% url 'jrc_production:content_detail' workspace_id=workspace.id post_id=item.post.id %}">
+            <span>{{ item.post.title|default:"Untitled content"|truncatechars:48 }}</span>
+            <span class="calendar-stage-label">{{ item.stage_label }}</span>
+        </a>
+        {% endfor %}
+    </div>
+</section>
+{% endif %}
 <div id="publish-body" class="flex-1 flex flex-col min-h-0">
     {% if mode == 'list' %}
         {% include "calendar/partials/publish_list_shell.html" %}

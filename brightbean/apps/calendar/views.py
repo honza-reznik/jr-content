@@ -9,7 +9,7 @@ from datetime import date, datetime, time, timedelta
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
-from django.db.models import QuerySet
+from django.db.models import Prefetch, Q, QuerySet
 from django.db.models.deletion import RestrictedError
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -126,9 +126,16 @@ def _get_filtered_posts(workspace, request):
     """Apply calendar filters from query params."""
     qs = (
         Post.objects.for_workspace(workspace.id)
-        .select_related("author")
-        .prefetch_related("platform_posts__social_account", "media_attachments__media_asset")
+        .select_related("author", "jrc_production")
+        .prefetch_related(
+            Prefetch(
+                "platform_posts",
+                queryset=_enabled_platform_posts().select_related("social_account"),
+            ),
+            "media_attachments__media_asset",
+        )
     )
+    qs = qs.filter(platform_posts__social_account__jrc_channel__is_enabled=True).distinct()
 
     # Status filter — editorial status now lives on PlatformPost, so match
     # posts that have at least one child carrying the target state.
@@ -140,6 +147,13 @@ def _get_filtered_posts(workspace, request):
     platforms = request.GET.getlist("platform")
     if platforms:
         qs = qs.filter(platform_posts__social_account__platform__in=platforms).distinct()
+
+    channels = _get_channel_filters(request)
+    if channels:
+        qs = qs.filter(
+            platform_posts__social_account__jrc_channel__is_enabled=True,
+            platform_posts__social_account_id__in=channels,
+        ).distinct()
 
     # Author filter
     authors = request.GET.getlist("author")
@@ -154,8 +168,6 @@ def _get_filtered_posts(workspace, request):
     # Tag filter (OR - match posts containing any selected tag)
     tags = request.GET.getlist("tag")
     if tags:
-        from django.db.models import Q
-
         tag_q = Q()
         for tag in tags:
             tag_q |= Q(tags__contains=[tag])
@@ -181,12 +193,14 @@ def _get_filtered_platform_posts(workspace, request):
     from django.db.models.functions import Coalesce
 
     qs = (
-        PlatformPost.objects.filter(post__workspace_id=workspace.id)
+        _enabled_platform_posts()
+        .filter(post__workspace_id=workspace.id)
         .select_related("post", "post__author", "post__category", "social_account")
         # Chips render the post's first media thumbnail; without this each chip
         # would fire its own media_attachments + media_asset queries (N+1) on
         # every month/week/day render.
         .prefetch_related("post__media_attachments__media_asset")
+        .prefetch_related("post__platform_posts")
         .annotate(effective_at=Coalesce("scheduled_at", "post__scheduled_at"))
     )
 
@@ -229,6 +243,78 @@ def _get_filtered_platform_posts(workspace, request):
     return qs
 
 
+def _enabled_platform_posts():
+    """Visible variants from explicitly enabled workspace channels."""
+    return PlatformPost.objects.filter(social_account__jrc_channel__is_enabled=True).select_related(
+        "post", "post__jrc_production", "social_account"
+    )
+
+
+def _stage_for_calendar(post):
+    from apps.jrc_production.models import PipelineStage
+    from apps.jrc_production.services import pipeline_stage
+
+    stage = pipeline_stage(post)
+    return stage, PipelineStage(stage).label
+
+
+def _waiting_for_me(workspace, user):
+    """Return this member's workspace-scoped approval queue without note text."""
+    membership = (
+        WorkspaceMembership.objects.filter(user=user, workspace=workspace).select_related("custom_role").first()
+    )
+    if membership is None:
+        return []
+
+    from apps.approvals.models import ApprovalAction
+    from apps.composer.models import Post
+
+    is_client = membership.workspace_role == WorkspaceMembership.WorkspaceRole.CLIENT
+    if is_client:
+        statuses = [PlatformPost.Status.PENDING_CLIENT]
+        posts = Post.objects.filter(
+            workspace=workspace,
+            platform_posts__status__in=statuses,
+            platform_posts__social_account__jrc_channel__is_enabled=True,
+        ).distinct()
+    elif membership.effective_permissions.get("approve_posts", False):
+        client_change_ids = ApprovalAction.objects.filter(
+            post__workspace=workspace,
+            action=ApprovalAction.ActionType.CHANGES_REQUESTED,
+            actor_role=WorkspaceMembership.WorkspaceRole.CLIENT,
+            note_visibility="external",
+        ).values("post_id")
+        posts = (
+            Post.objects.filter(workspace=workspace)
+            .filter(
+                (
+                    Q(platform_posts__status=PlatformPost.Status.PENDING_REVIEW)
+                    | Q(
+                        platform_posts__status=PlatformPost.Status.CHANGES_REQUESTED,
+                        id__in=client_change_ids,
+                    )
+                )
+                & Q(platform_posts__social_account__jrc_channel__is_enabled=True)
+            )
+            .distinct()
+        )
+    else:
+        return []
+
+    posts = (
+        posts.select_related("workspace", "jrc_production")
+        .prefetch_related(
+            Prefetch("platform_posts", queryset=_enabled_platform_posts().select_related("social_account"))
+        )
+        .order_by("updated_at")[:100]
+    )
+    items = []
+    for post in posts:
+        stage, label = _stage_for_calendar(post)
+        items.append({"post": post, "stage": stage, "stage_label": label})
+    return items
+
+
 def _get_calendar_slot_occurrences(workspace, request, display_tz, visible_dates, platform_posts):
     """Return PostingSlot occurrences grouped by display date/hour.
 
@@ -253,6 +339,7 @@ def _get_calendar_slot_occurrences(workspace, request, display_tz, visible_dates
     slots = PostingSlot.objects.filter(
         social_account__workspace=workspace,
         social_account__connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        social_account__jrc_channel__is_enabled=True,
         is_active=True,
     )
     channels = _get_channel_filters(request)
@@ -391,6 +478,7 @@ def _get_publish_context(workspace, request):
     channels_with_posts = (
         SocialAccount.objects.filter(
             platform_posts__post__workspace=workspace,
+            jrc_channel__is_enabled=True,
         )
         .distinct()
         .order_by("platform", "account_name")
@@ -631,10 +719,14 @@ def _get_tab_context(request, workspace, tab: str) -> dict:
 def calendar_view(request, workspace_id):
     """Main publish page - renders calendar or list mode."""
     workspace = _get_workspace(request, workspace_id)
-    has_connected_accounts = SocialAccount.objects.filter(
-        workspace=workspace,
-        connection_status=SocialAccount.ConnectionStatus.CONNECTED,
-    ).exists()
+    has_connected_accounts = (
+        SocialAccount.objects.filter(
+            workspace=workspace,
+            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        )
+        .filter(jrc_channel__is_enabled=True)
+        .exists()
+    )
     default_mode = "calendar" if has_connected_accounts else "list"
     mode = request.GET.get("mode", default_mode)
     active_tab = request.GET.get("tab", "queue")
@@ -647,6 +739,7 @@ def calendar_view(request, workspace_id):
         .filter(
             connection_status=SocialAccount.ConnectionStatus.CONNECTED,
         )
+        .filter(jrc_channel__is_enabled=True)
         .order_by("platform")
     )
 
@@ -712,6 +805,7 @@ def calendar_view(request, workspace_id):
         "active_filters": active_filters,
         "status_choices": Post.Status.choices,
         "show_holidays": show_holidays,
+        "waiting_items": _waiting_for_me(workspace, request.user),
         "is_today_in_view": is_today_in_view,
         **publish_ctx,
     }
@@ -810,6 +904,7 @@ def _month_view_data(request, workspace, target_date, context):
     # Group PlatformPosts by date in the display timezone
     posts_by_date = defaultdict(list)
     for pp in platform_posts:
+        pp.pipeline_stage, pp.pipeline_stage_label = _stage_for_calendar(pp.post)
         if pp.effective_at:
             posts_by_date[pp.effective_at.astimezone(display_tz).date()].append(pp)
 
@@ -898,6 +993,7 @@ def _week_view_data(request, workspace, target_date, context):
     week_days_set = set(week_days)
     posts_by_slot = defaultdict(list)
     for pp in platform_posts:
+        pp.pipeline_stage, pp.pipeline_stage_label = _stage_for_calendar(pp.post)
         if pp.effective_at:
             local_dt = pp.effective_at.astimezone(display_tz)
             if local_dt.date() in week_days_set:
@@ -972,6 +1068,7 @@ def _day_view_data(request, workspace, target_date, context):
     # Group by hour in the display timezone, filtering to the target date
     posts_by_hour = defaultdict(list)
     for pp in platform_posts:
+        pp.pipeline_stage, pp.pipeline_stage_label = _stage_for_calendar(pp.post)
         if pp.effective_at:
             local_dt = pp.effective_at.astimezone(display_tz)
             if local_dt.date() == target_date:
@@ -1024,12 +1121,18 @@ def _day_view(request, workspace, target_date, context):
 
 def _list_view(request, workspace, target_date, context):
     """Render list/table view of posts."""
-    posts = _get_filtered_posts(workspace, request).order_by("-scheduled_at", "-created_at")[:200]
+    posts = list(_get_filtered_posts(workspace, request).order_by("-scheduled_at", "-created_at")[:200])
+    for post in posts:
+        post.pipeline_stage, post.pipeline_stage_label = _stage_for_calendar(post)
 
-    has_connected_accounts = SocialAccount.objects.filter(
-        workspace=workspace,
-        connection_status=SocialAccount.ConnectionStatus.CONNECTED,
-    ).exists()
+    has_connected_accounts = (
+        SocialAccount.objects.filter(
+            workspace=workspace,
+            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        )
+        .filter(jrc_channel__is_enabled=True)
+        .exists()
+    )
 
     context.update(
         {
