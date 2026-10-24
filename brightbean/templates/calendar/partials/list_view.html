@@ -18,11 +18,11 @@ Context: posts, workspace.
         <tbody>
             {% for post in posts %}
             <tr class="border-b border-stone-100 hover:bg-stone-50 transition-colors duration-100 cursor-pointer"
-                @click="window.location='{% url 'composer:compose_edit' workspace_id=workspace.id post_id=post.id %}'">
+                @click="window.location='{% url 'jrc_production:content_detail' workspace_id=workspace.id post_id=post.id %}'">
                 <td class="px-4 py-3">
-                    <span class="post-chip status-{{ post.status }} inline-flex">
+                    <span class="post-chip pipeline-stage-{{ post.pipeline_stage }} inline-flex">
                         <span class="chip-dot"></span>
-                        {{ post.get_status_display }}
+                        {{ post.pipeline_stage_label }}
                     </span>
                 </td>
                 <td class="px-4 py-3 text-xs text-stone-500 tabular-nums whitespace-nowrap">
@@ -34,7 +34,10 @@ Context: posts, workspace.
                     {% endif %}
                 </td>
                 <td class="px-4 py-3 text-sm text-stone-600 max-w-xs truncate">
-                    {{ post.caption_snippet|default:"(no caption)" }}
+                    <a href="{% url 'jrc_production:content_detail' workspace_id=workspace.id post_id=post.id %}"
+                       class="text-inherit hover:text-orange-700 underline decoration-transparent hover:decoration-current">
+                        {{ post.caption_snippet|default:"(no caption)" }}
+                    </a>
                 </td>
                 <td class="px-4 py-3">
                     <div class="flex gap-1">

@@ -443,3 +443,13 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
 - Node regrese běží přes pytest v obrazu aplikace; HTTP testy ověřují volbu verzí,
   metadata, oprávnění a velikost. Snímky porovnání při 1440 a 390 px jsou
   `ops/screenshoty/F4-B03/compare-1440.png` a `compare-390.png`.
+
+
+## 2026-10-24 · F8-B01 — kalendář výrobních fází
+
+- Kalendářní čipy v měsíčním, týdenním, denním a seznamovém zobrazení používají fázi `pipeline_stage()`
+  se stejnými názvy a barvami jako nástěnka; vedou na detail obsahu.
+- Kalendářní filtry, čipy, sloty i seznamový přehled skrývají vypnuté kanály JR; běžné upstream účty bez profilu JR zůstávají kompatibilní s původními Publish záložkami.
+- Přehled „Waiting for me“ ukazuje týmu položky čekající na interní kontrolu a žádosti klienta o změny; klientovi
+  jeho položky čekající na schválení. Přehled je omezený na aktuálního člena a klienta a nezobrazuje texty poznámek.
+- Přidány testy fáze, viditelnosti kanálu a rolí pro čekající položky.
