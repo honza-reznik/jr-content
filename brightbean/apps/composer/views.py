@@ -236,6 +236,22 @@ def _readonly_rejection(request, post):
     )
 
 
+def _versioned_caption_by_platform_post(platform_post_ids):
+    """Newest saved JR Content caption per channel copy (F6-B02).
+
+    A channel with a saved caption version takes its caption only from the Caption
+    tab of the content detail, so the composer must neither show it as editable nor
+    overwrite it. Without the JR Content text app nothing is versioned.
+    """
+    from django.apps import apps
+
+    if not apps.is_installed("apps.jrc_texts"):
+        return {}
+    from apps.jrc_texts.services import latest_saved_captions
+
+    return latest_saved_captions(platform_post_ids)
+
+
 def _sync_platform_posts(request, post, workspace, initial_status=None):
     """Sync platform post selections from form data.
 
@@ -246,6 +262,7 @@ def _sync_platform_posts(request, post, workspace, initial_status=None):
     """
     selected_ids = _parse_selected_account_ids(request.POST.get("selected_accounts", ""))
     _remove_deselected_platform_posts(request, post, selected_ids)
+    versioned_captions = _versioned_caption_by_platform_post(post.platform_posts.values_list("pk", flat=True))
     for acc_id in selected_ids:
         try:
             account = SocialAccount.objects.get(id=acc_id, workspace=workspace)
@@ -263,7 +280,10 @@ def _sync_platform_posts(request, post, workspace, initial_status=None):
         override_caption = request.POST.get(f"override_caption_{acc_id}", "").strip()
         override_comment = request.POST.get(f"override_comment_{acc_id}", "").strip()
         pp.platform_specific_title = override_title if override_title else None
-        pp.platform_specific_caption = override_caption if override_caption else None
+        # JR Content (F6-B02): a channel with a saved caption version keeps it. The
+        # composer shows it read-only, and whatever a form posts here is ignored.
+        if pp.pk not in versioned_captions:
+            pp.platform_specific_caption = override_caption if override_caption else None
         pp.platform_specific_first_comment = override_comment if override_comment else None
 
         # Per-platform extras
@@ -357,7 +377,18 @@ def _sync_platform_posts(request, post, workspace, initial_status=None):
                     extra["video_cover_timestamp_ms"] = cover_ms_val
             pp.platform_extra = extra
 
-        pp.save()
+        if pp.pk in versioned_captions:
+            # Never write the caption column back, so a version saved in the Caption
+            # tab while this request ran cannot be overwritten with a stale copy.
+            pp.save(
+                update_fields=[
+                    field.name
+                    for field in pp._meta.concrete_fields
+                    if not field.primary_key and field.name != "platform_specific_caption"
+                ]
+            )
+        else:
+            pp.save()
 
 
 def _validate_pinterest_board_selection(request, post, workspace):
@@ -825,10 +856,32 @@ def compose(request, workspace_id, post_id=None):
         if cid and cid in asset_url_map:
             extra["cover_image_url"] = asset_url_map[cid]
 
+    # JR Content (F6-B02): channels with a saved caption version show it read-only here.
+    jrc_captions = {}
+    if post:
+        from django.urls import reverse
+
+        caption_edit_url = ""
+        for pp_id, version in _versioned_caption_by_platform_post([pp.pk for pp in platform_post_list]).items():
+            copy = next(pp for pp in platform_post_list if pp.pk == pp_id)
+            if not caption_edit_url:
+                caption_edit_url = (
+                    reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.id, "post_id": post.id})
+                    + "?tab=caption"
+                )
+            jrc_captions[str(copy.social_account_id)] = {
+                "text": version.text,
+                "version": version.number,
+                "count": copy.social_account.caption_wire_length(version.text),
+                "limit": copy.social_account.char_limit,
+                "edit_url": caption_edit_url,
+            }
+
     context = {
         "workspace": workspace,
         "post": post,
         "form": form,
+        "jrc_captions": jrc_captions,
         "social_accounts": social_accounts,
         "selected_account_ids": [str(aid) for aid in selected_account_ids],
         "platform_extras": platform_extras,
@@ -1455,6 +1508,19 @@ def preview(request, workspace_id):
     first_comment = request.POST.get("first_comment", "")
     selected_ids = _parse_selected_account_ids(request.POST.get("selected_accounts", ""))
 
+    # JR Content (F6-B02): channels with a saved caption version preview exactly that text.
+    versioned_text = {}
+    autosave_post_id = request.POST.get("_autosave_post_id", "")
+    if selected_ids and _is_valid_uuid(autosave_post_id):
+        copies = PlatformPost.objects.filter(
+            post_id=autosave_post_id, post__workspace=workspace, social_account_id__in=selected_ids
+        )
+        copy_accounts = dict(copies.values_list("pk", "social_account_id"))
+        versioned_text = {
+            str(copy_accounts[copy_id]): version.text
+            for copy_id, version in _versioned_caption_by_platform_post(copy_accounts).items()
+        }
+
     # Build preview data per platform
     previews = []
     if selected_ids:
@@ -1467,6 +1533,8 @@ def preview(request, workspace_id):
             override_key = f"override_caption_{account.id}"
             effective_title = request.POST.get(override_title_key, "") or title
             effective_caption = request.POST.get(override_key, "") or caption
+            if str(account.id) in versioned_text:
+                effective_caption = versioned_text[str(account.id)]
             char_limit = account.char_limit
             # Counted after escaping, so the badge matches what gets published.
             char_count = account.caption_wire_length(effective_caption)

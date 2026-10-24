@@ -179,3 +179,19 @@ def save(version_id, user, *, expected_revision, content=None, markdown=None):
 def discard(version_id, user, *, expected_revision):
     draft = _draft(version_id, user, expected_revision, recover_orphan=True)
     draft.delete()
+
+
+def latest_saved_captions(platform_post_ids):
+    """Map PlatformPost id to its newest saved caption version (F6-B02).
+
+    Read-only helper for screens that must show the single source of truth for a
+    channel caption. Callers authorise access to the owning post themselves. Channels
+    without a saved version are absent from the result.
+    """
+    versions = TextVersion.objects.filter(
+        document__kind=TextDocument.Kind.CAPTION,
+        document__platform_post_id__in=list(platform_post_ids),
+        state=TextVersion.State.FINAL,
+    ).select_related("document")
+    # Ordered by number, so the last version written per channel is the newest one.
+    return {version.document.platform_post_id: version for version in versions.order_by("number")}

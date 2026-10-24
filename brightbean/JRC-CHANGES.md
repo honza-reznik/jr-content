@@ -189,6 +189,25 @@ aby ji nadále ověřovaly původní testy; v MVP se vůbec nevykresluje.
 - `apps/jrc_production/tests/test_captions.py`: oprávnění, limit IG včetně emoji,
   vznik verze, kopie do varianty, porovnání slov a odmítnutí zastaralého uložení.
 
+## 2026-10-24 · F6-B02
+
+- `apps/composer/views.py`: kanál s uloženou verzí popisku (karta Caption, F6-B01) zůstává
+  v composeru beze změny. `_sync_platform_posts` pro něj nezapisuje `platform_specific_caption`
+  (ani prázdnou hodnotou) a ukládá kanálovou kopii bez tohoto sloupce, takže souběžně uložená
+  verze se nepřepíše. `compose` předává šabloně `jrc_captions` (text poslední verze, číslo,
+  odkaz `?tab=caption`), `preview` bere u takového kanálu text poslední verze místo odeslaného.
+  Pomocná funkce `_versioned_caption_by_platform_post` je bez `apps.jrc_texts` prázdná.
+- `templates/composer/compose.html`: u takového kanálu pole popisku jen ke čtení a odkaz
+  „Edit in Caption tab“; tlačítko „Customize“ a vlastní pole se pro něj nevykreslí.
+- `templates/composer/partials/preview_panel.html`: náhled Instagramu už popisek nezkracuje
+  na 150 znaků (platí limit kanálu), aby ukazoval stejný text jako uložená verze.
+- `apps/jrc_texts/services.py`: `latest_saved_captions()` jen pro čtení.
+- `apps/jrc_production/views.py`, `templates/jrc_production/content_detail.html`: karta Caption
+  ukazuje jen zapnuté kanály klienta (vypnuté mizí, jejich data zůstávají), pole i pro kanál
+  zapnutý po založení obsahu (první uložení založí koncept kopie, jen dokud jsou všechny kopie
+  koncept) a náhled Instagramu poslední uložené verze.
+- Testy: `apps/jrc_production/tests/test_composer_captions.py`.
+
 ## 2026-10-23 · F2-B12
 
 - `apps/social_accounts/tests/test_youtube_compliance.py`: retenční test používá čtyři pevné
