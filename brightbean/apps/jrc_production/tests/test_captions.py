@@ -1,3 +1,5 @@
+import re
+
 import pytest
 from django.urls import reverse
 from django.utils import timezone
@@ -142,8 +144,6 @@ def test_caption_tab_counter_is_static_script_without_inline_script(client, work
 
     assert "jrc_production/caption-counter.js" in html
     assert "data-caption-counter" in html and "data-escaped-chars" in html
-    assert "querySelectorAll(\"[data-caption-counter]\")" not in html
-    import re
-
+    assert 'querySelectorAll("[data-caption-counter]")' not in html
     inline = [m for m in re.findall(r"<script(?![^>]*\bsrc=)[^>]*>", html) if "nonce=" not in m]
     assert inline == []
