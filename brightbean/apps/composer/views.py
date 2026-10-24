@@ -118,8 +118,8 @@ def _get_account_scope(request):
     return scope
 
 
-def _remove_deselected_platform_posts(request, post, selected_ids):
-    """Delete PlatformPosts the user deselected in the composer form.
+def _deselected_platform_posts(request, post, selected_ids):
+    """PlatformPosts the composer would remove, respecting scope and status.
 
     When the composer was opened scoped to a single account
     (``?account=`` → hidden ``account_scope`` input), the form only renders
@@ -132,7 +132,34 @@ def _remove_deselected_platform_posts(request, post, selected_ids):
     scope = _get_account_scope(request)
     if scope:
         qs = qs.filter(social_account_id=scope)
-    qs.exclude(status__in=PlatformPost.PROTECTED_STATUSES).delete()
+    return qs.exclude(status__in=PlatformPost.PROTECTED_STATUSES)
+
+
+def _caption_selection_error(request, post):
+    """Reject stale selections before any writes, while holding the Post lock."""
+    from django.apps import apps
+
+    if not apps.is_installed("apps.jrc_texts"):
+        return None
+    selected_ids = _parse_selected_account_ids(request.POST.get("selected_accounts", ""))
+    if _deselected_platform_posts(request, post, selected_ids).filter(jrc_texts__isnull=False).exists():
+        return (
+            "Not saved: a channel with caption history cannot be removed in the composer. "
+            "Reload the composer to include all channels, then save again. "
+            "Your saved captions and their history are unchanged."
+        )
+    return None
+
+
+def _remove_deselected_platform_posts(request, post, selected_ids):
+    from django.apps import apps
+
+    qs = _deselected_platform_posts(request, post, selected_ids)
+    # Defence in depth: never delete a caption document through composer sync,
+    # even if a future caller forgets the preflight check above.
+    if apps.is_installed("apps.jrc_texts"):
+        qs = qs.filter(jrc_texts__isnull=True)
+    qs.delete()
 
 
 def _scoped_platform_post_ids(request, post):
@@ -276,10 +303,11 @@ def _sync_platform_posts(request, post, workspace, initial_status=None):
             social_account=account,
             defaults=defaults,
         )
-        override_title = request.POST.get(f"override_title_{acc_id}", "").strip()
+        title_key = f"override_title_{acc_id}"
         override_caption = request.POST.get(f"override_caption_{acc_id}", "").strip()
         override_comment = request.POST.get(f"override_comment_{acc_id}", "").strip()
-        pp.platform_specific_title = override_title if override_title else None
+        if title_key in request.POST:
+            pp.platform_specific_title = request.POST[title_key].strip() or None
         # JR Content (F6-B02): a channel with a saved caption version keeps it. The
         # composer shows it read-only, and whatever a form posts here is ignored.
         if pp.pk not in versioned_captions:
@@ -875,6 +903,7 @@ def compose(request, workspace_id, post_id=None):
                 "count": copy.social_account.caption_wire_length(version.text),
                 "limit": copy.social_account.char_limit,
                 "edit_url": caption_edit_url,
+                "title": copy.platform_specific_title or "",
             }
 
     context = {
@@ -1037,13 +1066,14 @@ def _capture_proposed_publish_at(post, post_id, workspace, form, *, clear_when_b
 @login_required
 @require_permission("create_posts")
 @require_POST
+@transaction.atomic
 def save_post(request, workspace_id, post_id=None):
     """Save or update a post (draft, schedule, or publish action)."""
     workspace = _get_workspace(request, workspace_id)
     action = request.POST.get("action", "save_draft")
 
     if post_id:
-        post = get_object_or_404(Post, id=post_id, workspace=workspace)
+        post = get_object_or_404(Post.objects.select_for_update(), id=post_id, workspace=workspace)
         # Enforce edit permissions: authors can edit their own, others need edit_others_posts
         membership = request.workspace_membership
         perms = membership.effective_permissions if membership else {}
@@ -1055,6 +1085,9 @@ def save_post(request, workspace_id, post_id=None):
         readonly_error = _readonly_rejection(request, post)
         if readonly_error is not None:
             return readonly_error
+        selection_error = _caption_selection_error(request, post)
+        if selection_error:
+            return JsonResponse({"errors": {"selected_accounts": selection_error}}, status=409)
         _orig_content = _base_content_snapshot(post)
         form = PostForm(request.POST, instance=post)
     else:
@@ -1407,6 +1440,7 @@ def transition_platform_post(request, workspace_id, post_id, platform_post_id):
 @login_required
 @require_permission("create_posts")
 @require_POST
+@transaction.atomic
 def autosave(request, workspace_id, post_id=None):
     """Auto-save endpoint called every 30 seconds via HTMX.
 
@@ -1419,7 +1453,7 @@ def autosave(request, workspace_id, post_id=None):
     is_new = False
     orig_content = None
     if post_id:
-        post = get_object_or_404(Post, id=post_id, workspace=workspace)
+        post = get_object_or_404(Post.objects.select_for_update(), id=post_id, workspace=workspace)
         # Enforce edit permissions on existing posts
         membership = request.workspace_membership
         perms = membership.effective_permissions if membership else {}
@@ -1438,13 +1472,23 @@ def autosave(request, workspace_id, post_id=None):
         client_post_id = request.POST.get("_autosave_post_id", "").strip()
         if client_post_id:
             try:
-                post = Post.objects.get(id=client_post_id, workspace=workspace)
+                post = Post.objects.select_for_update().get(id=client_post_id, workspace=workspace)
             except Post.DoesNotExist:
                 post = Post(workspace=workspace, author=request.user)
                 is_new = True
         else:
             post = Post(workspace=workspace, author=request.user)
             is_new = True
+
+    if not is_new:
+        selection_error = _caption_selection_error(request, post)
+        if selection_error:
+            # HTMX swaps this indicator on 200; a distinct event also shows the
+            # error on mobile, where the autosave indicator is hidden.
+            return HttpResponse(
+                '<span class="text-xs text-red-600">Not saved — reload the composer</span>',
+                headers={"HX-Trigger": json.dumps({"captionSelectionConflict": {"message": selection_error}})},
+            )
 
     post.title = request.POST.get("title", "")
     post.caption = request.POST.get("caption", "")

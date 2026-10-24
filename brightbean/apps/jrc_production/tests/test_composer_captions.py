@@ -2,14 +2,24 @@
 
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
+from socket import getaddrinfo as resolve_database
+from threading import Event
+from time import monotonic
 
 import pytest
+from django.db import connection, connections, transaction
+from django.db.models.deletion import RestrictedError
+from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.composer import views as composer_views
 from apps.composer.models import PlatformPost
 from apps.jrc_channels.services import create_manual_channel, set_channel_enabled
+from apps.jrc_production import views as production_views
 from apps.jrc_production.services import create_content
 from apps.jrc_texts.models import TextDocument
 from apps.members.models import WorkspaceMembership
@@ -63,6 +73,293 @@ def _composer_save(client, post, accounts, **extra):
             **extra,
         },
     )
+
+
+def _composer_autosave(client, post, accounts, *, fallback=False, **extra):
+    route = "composer:autosave" if fallback else "composer:autosave_edit"
+    kwargs = {"workspace_id": post.workspace_id}
+    if not fallback:
+        kwargs["post_id"] = post.pk
+    return client.post(
+        reverse(route, kwargs=kwargs),
+        {
+            "_autosave_post_id": str(post.pk),
+            "title": "Stale composer title",
+            "caption": "Stale composer caption",
+            "selected_accounts": ",".join(str(account.pk) for account in accounts),
+            **extra,
+        },
+    )
+
+
+def _assert_selection_rejected(response, endpoint):
+    if endpoint == "save":
+        assert response.status_code == 409
+        message = response.json()["errors"]["selected_accounts"]
+    else:
+        assert response.status_code == 200
+        assert b"Not saved" in response.content
+        events = json.loads(response.headers["HX-Trigger"])
+        assert "autosaved" not in events
+        message = events["captionSelectionConflict"]["message"]
+    assert "caption history cannot be removed" in message
+    assert "Reload the composer" in message
+
+
+@pytest.mark.parametrize("endpoint", ["save", "autosave", "autosave_fallback"])
+@pytest.mark.parametrize("stale_list", [False, True], ids=["deselected", "stale-list"])
+def test_composer_cannot_delete_caption_history(client, workspace, user, content, endpoint, stale_list):
+    post, variant, instagram = content
+    client.force_login(user)
+    selected = []
+    if stale_list:
+        # A composer opened before this new channel was added still selects only Instagram.
+        selected = [instagram]
+        channel = create_manual_channel(workspace, "linkedin_personal", "Later LinkedIn")
+        response = client.post(
+            _detail(post), {"action": "save_caption", "platform_post": f"new:{channel.pk}", "caption": "New channel"}
+        )
+        assert response.status_code == 302
+        variant = PlatformPost.objects.get(post=post, social_account=channel)
+    else:
+        assert _save_caption(client, variant, "First saved caption").status_code == 302
+    assert _save_caption(client, variant, LONG_CAPTION, base_version=_latest(variant).pk).status_code == 302
+    document = TextDocument.objects.get(platform_post=variant)
+    before_versions = list(document.versions.values())
+    before_post = (post.title, post.caption)
+
+    if endpoint == "save":
+        response = _composer_save(client, post, selected, title="Stale title")
+    else:
+        response = _composer_autosave(client, post, selected, fallback=endpoint == "autosave_fallback")
+
+    _assert_selection_rejected(response, endpoint)
+    post.refresh_from_db()
+    variant.refresh_from_db()
+    assert (post.title, post.caption) == before_post  # reject the entire save, not just its deletions
+    assert variant.platform_specific_caption == LONG_CAPTION
+    assert list(document.versions.values()) == before_versions
+    assert TextDocument.objects.get(pk=document.pk).platform_post_id == variant.pk
+
+
+@pytest.mark.parametrize("bulk", [False, True])
+def test_caption_document_restricts_direct_copy_deletion(client, user, content, bulk):
+    post, variant, instagram = content
+    client.force_login(user)
+    _save_caption(client, variant, LONG_CAPTION)
+    document = TextDocument.objects.get(platform_post=variant)
+    before = list(document.versions.values())
+
+    with pytest.raises(RestrictedError), transaction.atomic():
+        if bulk:
+            PlatformPost.objects.filter(pk=variant.pk).delete()
+        else:
+            variant.delete()
+
+    assert PlatformPost.objects.filter(pk=variant.pk).exists()
+    assert list(document.versions.values()) == before
+
+
+@pytest.mark.django_db(transaction=True)
+def test_explicit_whole_content_deletion_still_removes_caption_history(client, user, content):
+    post, variant, instagram = content
+    client.force_login(user)
+    _save_caption(client, variant, LONG_CAPTION)
+    document = TextDocument.objects.get(platform_post=variant)
+    with transaction.atomic():
+        post.delete()
+    assert not TextDocument.objects.filter(pk=document.pk).exists()
+    assert not document.versions.exists()
+
+
+def test_caption_guard_keeps_unversioned_deselection_working(client, user, content):
+    post, variant, instagram = content
+    client.force_login(user)
+    assert _composer_save(client, post, []).status_code == 302
+    assert not PlatformPost.objects.filter(pk=variant.pk).exists()
+
+
+def test_scoped_composer_does_not_require_a_sibling_with_caption_history(client, workspace, user, content):
+    post, variant, instagram = content
+    client.force_login(user)
+    _save_caption(client, variant, LONG_CAPTION)
+    channel = create_manual_channel(workspace, "linkedin_personal", "Other channel")
+    PlatformPost.objects.create(post=post, social_account=channel)
+
+    response = _composer_save(client, post, [channel], account_scope=str(channel.pk))
+
+    assert response.status_code == 302
+    assert _latest(variant).text == LONG_CAPTION
+
+
+@pytest.mark.parametrize("submitted", [None, "New video title", ""])
+def test_versioned_caption_keeps_title_editable_and_preserves_an_absent_title(client, workspace, user, submitted):
+    channel = create_manual_channel(workspace, "youtube", "Video channel")
+    post = create_content(workspace, "Shared title", user)
+    variant = PlatformPost.objects.get(post=post, social_account=channel)
+    variant.platform_specific_title = 'Original title <b> & "quoted"'
+    variant.save(update_fields=["platform_specific_title"])
+    original = variant.platform_specific_title
+    client.force_login(user)
+    _save_caption(client, variant, LONG_CAPTION)
+    page = _compose_page(client, post)
+    assert page.context["jrc_captions"][str(channel.pk)]["title"] == original
+    locked_panel = (
+        page.content.decode().split("data-jrc-caption", 1)[1].split("<!-- Platform-specific overrides -->")[0]
+    )
+    assert ":name=\"'override_title_' + accId\"" in locked_panel
+
+    extra = {} if submitted is None else {f"override_title_{channel.pk}": submitted}
+    response = _composer_save(client, post, [channel], **extra)
+
+    assert response.status_code == 302
+    variant.refresh_from_db()
+    assert variant.platform_specific_title == (original if submitted is None else submitted or None)
+    assert variant.platform_specific_caption == LONG_CAPTION
+
+
+def _thread_request(user, operation, pid_queue=None):
+    """Each concurrent HTTP request uses and closes its own PostgreSQL connection."""
+    try:
+        http = Client()
+        http.force_login(user)
+        reported = False
+
+        def report_connection(execute, sql, params, many, context):
+            nonlocal reported
+            if not reported:
+                reported = True
+                execute("SET lock_timeout = '8s'", None, False, context)
+                if pid_queue is not None:
+                    pid_queue.put(connection.connection.info.backend_pid)
+            return execute(sql, params, many, context)
+
+        # Client may reconnect at request start: report the request's connection,
+        # rather than the earlier connection used by force_login.
+        with connection.execute_wrapper(report_connection):
+            return operation(http)
+    finally:
+        connections.close_all()
+
+
+@pytest.fixture
+def concurrent_database(_no_network, monkeypatch, settings):
+    """Allow only PostgreSQL DNS for the workers' new connections; keep HTTP blocked."""
+    import socket
+
+    def database_only(host, port, *args, **kwargs):
+        database = settings.DATABASES["default"]
+        if host == database["HOST"] and str(port) == str(database["PORT"]):
+            return resolve_database(host, port, *args, **kwargs)
+        raise AssertionError("Production services must not access the network")
+
+    monkeypatch.setattr(socket, "getaddrinfo", database_only)
+
+
+def _wait_for_post_lock(pid, future):
+    deadline = monotonic() + 5
+    while monotonic() < deadline and not future.done():
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT cardinality(pg_blocking_pids(%s)) > 0", [pid])
+            if cursor.fetchone()[0]:
+                return True
+        Event().wait(0.01)
+    return False
+
+
+@pytest.mark.django_db(transaction=True)
+def test_first_caption_save_waits_for_composer_and_cannot_be_overwritten(
+    user, content, monkeypatch, concurrent_database
+):
+    post, variant, instagram = content
+    snapshot_ready, continue_composer = Event(), Event()
+    original = composer_views._versioned_caption_by_platform_post
+
+    def pause_after_snapshot(ids):
+        result = original(ids)
+        snapshot_ready.set()
+        assert continue_composer.wait(8)
+        return result
+
+    monkeypatch.setattr(composer_views, "_versioned_caption_by_platform_post", pause_after_snapshot)
+    pid_queue = Queue()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        composer = pool.submit(
+            _thread_request,
+            user,
+            lambda http: _composer_save(
+                http, post, [instagram], **{f"override_caption_{instagram.pk}": "Old override"}
+            ),
+        )
+        try:
+            if not snapshot_ready.wait(8):
+                composer.result(timeout=1)
+                pytest.fail("Composer did not reach the caption snapshot")
+            caption = pool.submit(
+                _thread_request, user, lambda http: _save_caption(http, variant, LONG_CAPTION), pid_queue
+            )
+            blocked = _wait_for_post_lock(pid_queue.get(timeout=8), caption)
+        finally:
+            continue_composer.set()
+        assert composer.result(timeout=10).status_code == 302
+        assert caption.result(timeout=10).status_code == 302
+    assert blocked, "The first Caption save must wait until the composer's stale snapshot is finished"
+    variant.refresh_from_db()
+    assert variant.platform_specific_caption == _latest(variant).text == LONG_CAPTION
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("endpoint", ["save", "autosave", "autosave_fallback"])
+def test_stale_composer_waits_for_new_caption_channel_then_rejects_it(
+    user, workspace, content, monkeypatch, endpoint, concurrent_database
+):
+    post, variant, instagram = content
+    channel = create_manual_channel(workspace, "linkedin_personal", "Concurrent new channel")
+    copy_ready, continue_caption = Event(), Event()
+    original = production_views._create_missing_copy
+
+    def pause_after_copy(*args, **kwargs):
+        copy = original(*args, **kwargs)
+        copy_ready.set()
+        assert continue_caption.wait(8)
+        return copy
+
+    monkeypatch.setattr(production_views, "_create_missing_copy", pause_after_copy)
+    pid_queue = Queue()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        caption = pool.submit(
+            _thread_request,
+            user,
+            lambda http: http.post(
+                _detail(post),
+                {
+                    "action": "save_caption",
+                    "platform_post": f"new:{channel.pk}",
+                    "caption": LONG_CAPTION,
+                },
+            ),
+        )
+        try:
+            if not copy_ready.wait(8):
+                caption.result(timeout=1)
+                pytest.fail("Caption did not reach channel creation")
+
+            def operation(http):
+                if endpoint == "save":
+                    return _composer_save(http, post, [instagram])
+                return _composer_autosave(http, post, [instagram], fallback=endpoint == "autosave_fallback")
+
+            composer = pool.submit(_thread_request, user, operation, pid_queue)
+            blocked = _wait_for_post_lock(pid_queue.get(timeout=8), composer)
+        finally:
+            continue_caption.set()
+        assert caption.result(timeout=10).status_code == 302
+        response = composer.result(timeout=10)
+    assert blocked, "Composer must wait for the Caption transaction before checking the selected channels"
+    _assert_selection_rejected(response, endpoint)
+    copy = PlatformPost.objects.get(post=post, social_account=channel)
+    assert copy.platform_specific_caption == _latest(copy).text == LONG_CAPTION
+    assert TextDocument.objects.get(platform_post=copy).versions.count() == 2
 
 
 def _compose_page(client, post):

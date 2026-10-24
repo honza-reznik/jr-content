@@ -198,7 +198,8 @@ aby ji nadále ověřovaly původní testy; v MVP se vůbec nevykresluje.
   odkaz `?tab=caption`), `preview` bere u takového kanálu text poslední verze místo odeslaného.
   Pomocná funkce `_versioned_caption_by_platform_post` je bez `apps.jrc_texts` prázdná.
 - `templates/composer/compose.html`: u takového kanálu pole popisku jen ke čtení a odkaz
-  „Edit in Caption tab“; tlačítko „Customize“ a vlastní pole se pro něj nevykreslí.
+  „Edit in Caption tab“; tlačítko „Customize“ a vlastní pole popisku se pro něj nevykreslí.
+  Vlastní název u kanálů, které ho podporují, zůstává upravitelný a předvyplněný.
 - `templates/composer/partials/preview_panel.html`: náhled Instagramu už popisek nezkracuje
   na 150 znaků (platí limit kanálu), aby ukazoval stejný text jako uložená verze.
 - `apps/jrc_texts/services.py`: `latest_saved_captions()` jen pro čtení.
@@ -446,6 +447,18 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
 - `templates/media_library/asset_edit.html`: Cropper s `checkCrossOrigin: false`. Jinak by přidal
   k podepsané adrese `?timestamp=` a S3 by obrázek odmítl (403). Ořez dělá server podle `getData()`.
 - Testy: `apps/jrc_storage/tests/` (podpis pro veřejnou adresu, kopie médií, CORS, nastavení a CSP).
+
+## 2026-10-24 · F6-B02 — opravy po review
+
+- Composer odmítá odebrání kanálu s historií popisku před jakoukoliv změnou, včetně
+  autosave se zastaralým seznamem. Chyba žádá obnovení composeru a je vidět i na mobilu.
+  Samotné mazání navíc kopie s textovým dokumentem vynechává.
+- Běžné uložení a autosave drží zámek příspěvku po celou transakci, stejně jako karta
+  Caption; první uložení popisku se nemůže ztratit kvůli dříve načteným hodnotám composeru.
+- U zamčeného popisku zůstává název kanálu upravitelný a předvyplněný; pokud ho požadavek
+  neposílá, server stávající název zachová. Prázdné pole stále umožňuje název zrušit.
+- Vazba TextDocument → PlatformPost používá RESTRICT místo CASCADE: nelze samostatně
+  smazat kopii s historií, ale výslovné smazání celého příspěvku funguje dál.
 
 ## 2026-10-24 · F4-B03
 
