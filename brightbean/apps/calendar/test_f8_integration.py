@@ -1,6 +1,8 @@
 """F8 calendar pipeline, enabled-channel and personal waiting queue coverage."""
 
-from datetime import timedelta
+from datetime import date, datetime, time, timedelta
+from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 from django.test import RequestFactory, TestCase
 from django.urls import reverse
@@ -9,7 +11,7 @@ from django.utils import timezone
 from apps.accounts.models import User
 from apps.approvals.models import ApprovalAction
 from apps.calendar.models import PostingSlot
-from apps.calendar.views import _get_filtered_platform_posts, _get_filtered_posts
+from apps.calendar.views import _day_view_data, _get_filtered_platform_posts, _get_filtered_posts
 from apps.composer.models import PlatformPost
 from apps.jrc_channels.services import create_manual_channel, set_channel_enabled
 from apps.jrc_production.services import create_content
@@ -55,90 +57,128 @@ class F8CalendarIntegrationTests(TestCase):
         return post
 
     def test_calendar_chips_use_pipeline_stage_detail_link_and_enabled_channels(self):
-        post = self._content("Calendar pipeline item", PlatformPost.Status.SCHEDULED, scheduled=True)
-        schedule_date = post.platform_posts.get(social_account=self.enabled_account).scheduled_at.date().isoformat()
-        PlatformPost.objects.create(
-            post=post,
-            social_account=self.disabled_account,
-            status=PlatformPost.Status.SCHEDULED,
-            scheduled_at=timezone.now() + timedelta(days=2),
-        )
-        unprofiled_account = SocialAccount.objects.create(
-            workspace=self.workspace,
-            platform="facebook",
-            account_platform_id="legacy-unprofiled",
-            account_name="Legacy account without channel profile",
-            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
-        )
-        PlatformPost.objects.create(
-            post=post,
-            social_account=unprofiled_account,
-            status=PlatformPost.Status.SCHEDULED,
-            scheduled_at=timezone.now() + timedelta(days=2),
-        )
-        slot_day = post.platform_posts.get(social_account=self.enabled_account).scheduled_at.weekday()
-        PostingSlot.objects.create(social_account=self.enabled_account, day_of_week=slot_day, time="09:00")
-        PostingSlot.objects.create(social_account=self.disabled_account, day_of_week=slot_day, time="10:00")
-        PostingSlot.objects.create(social_account=unprofiled_account, day_of_week=slot_day, time="11:00")
-        url = reverse("calendar:calendar", args=[self.workspace.pk])
-        self.client.force_login(self.owner)
+        fixed_now = datetime(2026, 6, 14, 12, 0, tzinfo=ZoneInfo("UTC"))
+        with patch("django.utils.timezone.now", return_value=fixed_now):
+            post = self._content("Calendar pipeline item", PlatformPost.Status.SCHEDULED, scheduled=True)
+            schedule_date = post.platform_posts.get(social_account=self.enabled_account).scheduled_at.date().isoformat()
+            PlatformPost.objects.create(
+                post=post,
+                social_account=self.disabled_account,
+                status=PlatformPost.Status.SCHEDULED,
+                scheduled_at=timezone.now() + timedelta(days=2),
+            )
+            unprofiled_account = SocialAccount.objects.create(
+                workspace=self.workspace,
+                platform="facebook",
+                account_platform_id="legacy-unprofiled",
+                account_name="Legacy account without channel profile",
+                connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+            )
+            PlatformPost.objects.create(
+                post=post,
+                social_account=unprofiled_account,
+                status=PlatformPost.Status.SCHEDULED,
+                scheduled_at=timezone.now() + timedelta(days=2),
+            )
+            slot_day = post.platform_posts.get(social_account=self.enabled_account).scheduled_at.weekday()
+            PostingSlot.objects.create(social_account=self.enabled_account, day_of_week=slot_day, time="09:00")
+            PostingSlot.objects.create(social_account=self.disabled_account, day_of_week=slot_day, time="10:00")
+            PostingSlot.objects.create(social_account=unprofiled_account, day_of_week=slot_day, time="11:00")
+            url = reverse("calendar:calendar", args=[self.workspace.pk])
+            self.client.force_login(self.owner)
 
-        detail_url = reverse("jrc_production:content_detail", args=[self.workspace.pk, post.pk])
-        for view in ("month", "week", "day", "list"):
-            with self.subTest(view=view):
-                response = self.client.get(url, {"mode": "calendar", "view": view, "date": schedule_date})
-                self.assertEqual(response.status_code, 200)
-                self.assertContains(response, "Ready to publish")
-                self.assertContains(response, detail_url)
-                self.assertIn(self.enabled_account, response.context["social_accounts"])
-                self.assertNotIn(self.disabled_account, response.context["social_accounts"])
-                self.assertNotIn(unprofiled_account, response.context["social_accounts"])
-                self.assertNotIn(self.disabled_account, response.context["channels_with_posts"])
-                self.assertNotIn(unprofiled_account, response.context["channels_with_posts"])
-                if view == "month":
-                    visible_ids = {
-                        pp.social_account_id
-                        for week in response.context["calendar_weeks"]
-                        for day in week
-                        for pp in day["posts"]
-                    }
-                elif view == "week":
-                    visible_ids = {
-                        pp.social_account_id
-                        for _, cells in response.context["week_slots"]
-                        for cell in cells
-                        for pp in cell["posts"]
-                    }
-                elif view == "day":
-                    visible_ids = {
-                        pp.social_account_id for cell in response.context["day_slots"] for pp in cell["posts"]
-                    }
-                    visible_slot_ids = {
-                        slot["account"].pk for cell in response.context["day_slots"] for slot in cell["slots"]
-                    }
-                    self.assertIn(self.enabled_account.pk, visible_slot_ids)
-                    self.assertNotIn(self.disabled_account.pk, visible_slot_ids)
-                    self.assertNotIn(unprofiled_account.pk, visible_slot_ids)
-                else:
-                    visible_ids = {
-                        pp.social_account_id for row in response.context["posts"] for pp in row.platform_posts.all()
-                    }
-                self.assertIn(self.enabled_account.pk, visible_ids)
-                self.assertNotIn(self.disabled_account.pk, visible_ids)
-                self.assertNotIn(unprofiled_account.pk, visible_ids)
+            detail_url = reverse("jrc_production:content_detail", args=[self.workspace.pk, post.pk])
+            for view in ("month", "week", "day", "list"):
+                with self.subTest(view=view):
+                    response = self.client.get(url, {"mode": "calendar", "view": view, "date": schedule_date})
+                    self.assertEqual(response.status_code, 200)
+                    self.assertContains(response, "Ready to publish")
+                    self.assertContains(response, detail_url)
+                    self.assertIn(self.enabled_account, response.context["social_accounts"])
+                    self.assertNotIn(self.disabled_account, response.context["social_accounts"])
+                    self.assertNotIn(unprofiled_account, response.context["social_accounts"])
+                    self.assertNotIn(self.disabled_account, response.context["channels_with_posts"])
+                    self.assertNotIn(unprofiled_account, response.context["channels_with_posts"])
+                    if view == "month":
+                        visible_ids = {
+                            pp.social_account_id
+                            for week in response.context["calendar_weeks"]
+                            for day in week
+                            for pp in day["posts"]
+                        }
+                    elif view == "week":
+                        visible_ids = {
+                            pp.social_account_id
+                            for _, cells in response.context["week_slots"]
+                            for cell in cells
+                            for pp in cell["posts"]
+                        }
+                    elif view == "day":
+                        visible_ids = {
+                            pp.social_account_id for cell in response.context["day_slots"] for pp in cell["posts"]
+                        }
+                        visible_slot_ids = {
+                            slot["account"].pk for cell in response.context["day_slots"] for slot in cell["slots"]
+                        }
+                        self.assertIn(self.enabled_account.pk, visible_slot_ids)
+                        self.assertNotIn(self.disabled_account.pk, visible_slot_ids)
+                        self.assertNotIn(unprofiled_account.pk, visible_slot_ids)
+                    else:
+                        visible_ids = {
+                            pp.social_account_id for row in response.context["posts"] for pp in row.platform_posts.all()
+                        }
+                    self.assertIn(self.enabled_account.pk, visible_ids)
+                    self.assertNotIn(self.disabled_account.pk, visible_ids)
+                    self.assertNotIn(unprofiled_account.pk, visible_ids)
 
-        filtered = self.client.get(
-            url,
-            {"mode": "calendar", "view": "list", "date": schedule_date, "channel": str(self.enabled_account.pk)},
+            filtered = self.client.get(
+                url,
+                {
+                    "mode": "calendar",
+                    "view": "list",
+                    "date": schedule_date,
+                    "channel": str(self.enabled_account.pk),
+                },
+            )
+            self.assertEqual(filtered.status_code, 200)
+            self.assertEqual([row.pk for row in filtered.context["posts"]], [post.pk])
+            filtered_hidden = self.client.get(
+                url,
+                {
+                    "mode": "calendar",
+                    "view": "list",
+                    "date": schedule_date,
+                    "channel": str(self.disabled_account.pk),
+                },
+            )
+            self.assertEqual(filtered_hidden.status_code, 200)
+            self.assertEqual(filtered_hidden.context["posts"], [])
+
+    def test_day_view_slots_at_midnight_and_prague_dst_boundaries(self):
+        self.workspace.timezone = "Europe/Prague"
+        self.workspace.save(update_fields=["timezone"])
+        cases = (
+            (date(2026, 10, 25), time(0, 0)),
+            (date(2026, 10, 25), time(2, 30)),
+            (date(2026, 3, 29), time(3, 30)),
         )
-        self.assertEqual(filtered.status_code, 200)
-        self.assertEqual([row.pk for row in filtered.context["posts"]], [post.pk])
-        filtered_hidden = self.client.get(
-            url,
-            {"mode": "calendar", "view": "list", "date": schedule_date, "channel": str(self.disabled_account.pk)},
-        )
-        self.assertEqual(filtered_hidden.status_code, 200)
-        self.assertEqual(filtered_hidden.context["posts"], [])
+        for target_date, slot_time in cases:
+            with self.subTest(target_date=target_date, slot_time=slot_time):
+                PostingSlot.objects.create(
+                    social_account=self.enabled_account,
+                    day_of_week=target_date.weekday(),
+                    time=slot_time,
+                )
+                context = {"display_timezone": "Europe/Prague"}
+                fixed_now = datetime(2026, 1, 1, 12, 0, tzinfo=ZoneInfo("UTC"))
+                with patch("django.utils.timezone.now", return_value=fixed_now):
+                    _day_view_data(RequestFactory().get("/"), self.workspace, target_date, context)
+                cells = {cell["hour"]: cell for cell in context["day_slots"]}
+                slots = cells[slot_time.hour]["slots"]
+                self.assertEqual(len(slots), 1)
+                self.assertEqual(slots[0]["time_label"], slot_time.strftime("%H:%M"))
+                self.assertEqual(slots[0]["compose_date"], target_date.isoformat())
+                self.assertEqual(slots[0]["compose_time"], slot_time.strftime("%H:%M"))
 
     def test_waiting_for_me_is_workspace_and_role_scoped(self):
         self._content("Team review item", PlatformPost.Status.PENDING_REVIEW)
