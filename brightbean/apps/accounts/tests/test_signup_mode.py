@@ -144,6 +144,24 @@ class TestExistingUsersAreUnaffected:
         assert response.status_code == 302
         assert response.wsgi_request.user.is_authenticated
 
+    def test_jrc_settings_force_invite_mode(self):
+        from config.settings.jrc import SIGNUP_MODE
+
+        assert SIGNUP_MODE == "invite"
+
+    def test_public_signup_does_not_create_an_account_in_jrc_settings(self, client, settings):
+        settings.SIGNUP_MODE = "invite"
+        response = client.post(
+            reverse("account_signup"),
+            {
+                "email": "uninvited@example.invalid",
+                "password1": "A-test-only-password-42!",
+                "password2": "A-test-only-password-42!",
+            },
+        )
+        assert response.status_code == 200
+        assert not User.objects.filter(email="uninvited@example.invalid").exists()
+
     def test_signup_page_shows_the_closed_notice(self, settings, client):
         settings.SIGNUP_MODE = "closed"
         response = client.get(reverse("account_signup"))

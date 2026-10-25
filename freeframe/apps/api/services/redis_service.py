@@ -113,11 +113,13 @@ def check_rate_limit(
     action: str,
     max_requests: int,
     window_seconds: int,
+    *,
+    fail_closed: bool = False,
 ) -> tuple[bool, int]:
     """
     Check if an IP has exceeded the rate limit for a given action.
     Returns (allowed, remaining_seconds_until_reset).
-    Uses a simple counter with TTL in Redis. Fails open if Redis is unavailable.
+    Uses a simple counter with TTL in Redis. Sensitive callers can fail closed.
     """
     try:
         r = get_redis()
@@ -134,7 +136,9 @@ def check_rate_limit(
         pipe.execute()
         return True, 0
     except Exception:
-        # Fail open — allow the request if Redis is unavailable
+        if fail_closed:
+            return False, -1
+        # Preserve the previous fail-open behavior for ordinary API paths.
         return True, 0
 
 

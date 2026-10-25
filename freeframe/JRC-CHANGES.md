@@ -1,5 +1,12 @@
 # JR Content: změny FreeFrame
 
+## 2026-10-25 — F10-B03a
+
+- Zahájení nahrávání má limit 5 pokusů za minutu a při nedostupném Redis se
+  odmítne. Zámky databázových řádků vynucují nastavitelný limit rozpracovaných
+  nahrávání na uživatele a objemu na projekt. Přihlášení a ověření přihlašovacího
+  kódu při výpadku Redis odmítnou požadavek; ostatní cesty API zůstávají beze změny.
+
 Import upstreamu `3829889` (MIT, původní licence a copyright zachovány).
 
 ## 2026-10-24 — F5-B05

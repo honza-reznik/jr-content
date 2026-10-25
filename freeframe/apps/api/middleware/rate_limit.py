@@ -12,7 +12,7 @@ from fastapi import HTTPException, Request, status
 from ..services.redis_service import check_rate_limit
 
 
-def rate_limit(action: str, max_requests: int, window_seconds: int):
+def rate_limit(action: str, max_requests: int, window_seconds: int, *, fail_closed: bool = False):
     """
     Returns a FastAPI dependency that enforces IP-based rate limiting.
 
@@ -27,7 +27,18 @@ def rate_limit(action: str, max_requests: int, window_seconds: int):
         # Do NOT use X-Forwarded-For as it can be spoofed by the client
         ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "unknown")
 
-        allowed, retry_after = check_rate_limit(ip, action, max_requests, window_seconds)
+        if fail_closed:
+            allowed, retry_after = check_rate_limit(
+                ip, action, max_requests, window_seconds, fail_closed=True
+            )
+        else:
+            allowed, retry_after = check_rate_limit(ip, action, max_requests, window_seconds)
+        if retry_after < 0:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Temporarily unavailable. Please retry.",
+                headers={"Retry-After": "5"},
+            )
         if not allowed:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,

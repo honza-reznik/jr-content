@@ -7,8 +7,16 @@ from .jrc_offline import JRC_APPS
 # Pořadí je záměrné: base.py může při importu inicializovat Sentry.
 from .base import *  # noqa: F401, F403, E402
 
+# jrc_test imports the local-storage settings from test.py, which in turn
+# shares this mapping with base.py. Keep the runtime S3 selection isolated so
+# importing both settings modules cannot replace the test suite's backend.
+STORAGES = dict(STORAGES)  # noqa: F405
+
 INSTALLED_APPS = [*INSTALLED_APPS, *JRC_APPS]  # noqa: F405
 DEBUG = True
+# JR Content is an invite-only local workspace; do not inherit Brightbean's
+# public-registration default from base.py.
+SIGNUP_MODE = "invite"
 ALLOWED_HOSTS = ["localhost", "127.0.0.1", "[::1]", "jrc-bb-web"]
 DATABASES = {
     "default": {

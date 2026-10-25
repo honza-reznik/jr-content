@@ -36,6 +36,7 @@ override COMPOSE := docker compose --project-name $(JRC_PROJECT) --file docker-c
 override ADMIN_COMPOSE := PGPASSWORD=unused GARAGE_RPC_SECRET=unused AWS_ACCESS_KEY_ID=unused AWS_SECRET_ACCESS_KEY=unused JRC_BB_SECRET_KEY=unused JRC_BB_ENCRYPTION_KEY_SALT=unused JRC_FF_JWT_SECRET=unused JRC_FF_SYNC_PASSWORD=unused JRC_FF_SSO_SECRET=unused JRC_FF_S3_ACCESS_KEY=unused JRC_FF_S3_SECRET_KEY=unused JRC_BB_S3_ACCESS_KEY=unused JRC_BB_S3_SECRET_KEY=unused docker compose --project-name $(JRC_PROJECT) --file docker-compose.yml --env-file /dev/null
 export JRC_UID := $(shell id -u)
 export JRC_GID := $(shell id -g)
+export JRC_SOURCE_VERSION := $(shell git rev-parse --short HEAD)
 # Změna bind mountu sama službu nerestartuje; otisk v labelu vynutí novou konfiguraci.
 export JRC_CADDYFILE_SHA256 := $(shell sha256sum docker/Caddyfile | cut -d ' ' -f 1)
 # Buildx zapisuje provozní údaje pouze do worktree, i v omezené relaci agenta.

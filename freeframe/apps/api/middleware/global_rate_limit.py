@@ -37,7 +37,7 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = get_route_path(request.scope)
 
-        # Skip exempt paths — uploads are auth-gated and have their own flow control
+        # Upload operations have endpoint-specific flow control.
         if path in EXEMPT_PATHS or path.startswith("/stream/") or path.startswith("/upload/"):
             return await call_next(request)
 
@@ -99,5 +99,5 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
             pipe.execute()
             return True, 0
         except Exception:
-            # Fail open — allow the request if Redis is unavailable
+            # Other API paths retain the previous fail-open behavior.
             return True, 0

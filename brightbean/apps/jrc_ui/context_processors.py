@@ -1,4 +1,5 @@
 # JR Content: přidáno 2026-10-23 (blok F2-B10), AGPL-3.0.
+import os
 
 from .features import MVP_FEATURES, enabled
 
@@ -8,6 +9,7 @@ def ui_context(request):
         "jrc_features": {feature: enabled(feature) for feature in MVP_FEATURES},
         "jrc_app_name": "JR Content",
         "jrc_logo": "img/jrc-logo.svg",
+        "jrc_source_version": os.environ.get("JRC_SOURCE_VERSION", "unknown"),
     }
 
 

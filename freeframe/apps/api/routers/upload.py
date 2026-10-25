@@ -33,6 +33,8 @@ from ..schemas.upload import (
 )
 from ..services.storage import choose_part_size, upload_guard_error
 from ..services.versions import next_version_number
+from ..services.upload_limits import enforce_pending_upload_limits
+from ..middleware.rate_limit import rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +45,11 @@ SLOW_COMPLETION_SECONDS = 5.0
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
-@router.post("/initiate", response_model=InitiateUploadResponse)
+@router.post(
+    "/initiate",
+    response_model=InitiateUploadResponse,
+    dependencies=[Depends(rate_limit("upload_initiate", 5, 60, fail_closed=True))],
+)
 def initiate_upload(
     body: InitiateUploadRequest,
     db: Session = Depends(get_db),
@@ -64,6 +70,7 @@ def initiate_upload(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     require_project_role(db, body.project_id, current_user, ProjectRole.editor)
+    enforce_pending_upload_limits(db, body.project_id, current_user, body.file_size_bytes)
 
     # Get or create asset
     if body.asset_id:
