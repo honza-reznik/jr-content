@@ -573,3 +573,14 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
   Approve / Request changes a panel „Waiting for you“ na nástěnce (jen obsah klienta, kde je člen a kde je na řadě).
 - Testy: `apps/jrc_production/tests/test_approval.py` (18).
 - Živé ověření: `make test-f7-b02-approval` (`scripts/F7-B02/`), jen projekt `jrc-f7b02`; snímky `ops/screenshoty/F7-B02/`.
+## 2026-10-25 · F9-B02 — MCP nástroje pro obsah
+
+- `apps/mcp/handlers.py`: přidáno sedm nástrojů `jrc_get_script`, `jrc_save_script`, `jrc_get_caption`,
+  `jrc_save_caption`, `jrc_list_comments`, `jrc_add_comment` a `jrc_get_stage`. Popisy a vstupní schémata
+  vysvětlují verzování, viditelnost a potřebná oprávnění.
+- Čtení a zápis používají stejné pomocné funkce a služby jako REST F9-B01: `jrc_texts.services`,
+  `approvals.comments` a odpovědi z `apps/api/routers/content.py`. Zápis scénáře/popisku vždy vytvoří
+  verzi přes `base_version`; komentáře filtruje služba podle role. Chyby MCP nesou původní HTTP status
+  v `error.data.status`. Obsah mimo rozsah účtů klíče je 404.
+- `apps/mcp/tests/test_content_tools.py`: katalog a všech sedm nástrojů, zápis a konflikt verzí, zákaz
+  zápisu read-only klíčem, skrytí interních komentářů klientovi a obsah mimo rozsah klíče.

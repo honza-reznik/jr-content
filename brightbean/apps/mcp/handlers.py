@@ -190,6 +190,335 @@ def _parse_iso_datetime(value: Any, field_name: str) -> datetime:
     return parsed
 
 
+def _content_error(message: str, status: int) -> JsonRpcError:
+    """Keep the REST status visible to MCP clients alongside its message."""
+    return JsonRpcError(INVALID_PARAMS, message, {"status": status})
+
+
+def _content_post(context: dict[str, Any], post_id: str) -> Post:
+    """Resolve content with the same workspace and whole-post allowlist as REST."""
+    post_id = _parse_uuid(post_id, "post_id")
+    try:
+        return (
+            _visible_posts_qs(context["api_key"])
+            .select_related("workspace")
+            .prefetch_related("platform_posts__social_account")
+            .get(pk=post_id)
+        )
+    except Post.DoesNotExist as exc:
+        raise _content_error("Post not found", 404) from exc
+
+
+def _content_write_key(context: dict[str, Any]) -> None:
+    permissions = context["membership"].effective_permissions
+    if not any(permissions.get(key, False) for key in ("create_posts", "approve_posts")):
+        raise _content_error("Permission denied: this key is read-only (it needs create_posts or approve_posts).", 403)
+
+
+def _content_editable(post: Post, context: dict[str, Any]) -> None:
+    from apps.jrc_texts.services import can_edit_text
+
+    if not can_edit_text(post, _content_membership(post, context)):
+        raise _content_error("You cannot edit texts for this post.", 403)
+
+
+def _content_membership(post: Post, context: dict[str, Any]):
+    """Rebuild the issuer's real membership narrowed to the key's grants, as REST does."""
+    from django.core.exceptions import PermissionDenied
+
+    from apps.api.routers.content import _KeyMembership
+    from apps.jrc_production.services import content_membership
+
+    try:
+        membership = content_membership(post.workspace, context["api_key"].issued_by)
+    except PermissionDenied as exc:
+        raise _content_error(str(exc), 403) from exc
+    return _KeyMembership(membership, context["membership"].effective_permissions)
+
+
+def _get_script(args: dict, context: dict[str, Any]) -> dict:
+    from apps.api.routers.content import _script_response
+
+    post = _content_post(context, args["post_id"])
+    version = args.get("version_id")
+    selected = _parse_uuid(version, "version_id") if version else None
+    try:
+        result = _script_response(post, _content_membership(post, context), selected)
+    except Exception as exc:
+        from django.http import Http404
+
+        if isinstance(exc, Http404):
+            raise _content_error("Script version not found", 404) from exc
+        raise
+    return _wrap_text(result.model_dump(mode="json"))
+
+
+def _save_script(args: dict, context: dict[str, Any]) -> dict:
+    from django.core.exceptions import PermissionDenied, ValidationError
+    from django.db import transaction
+
+    from apps.api.routers.content import _script_response
+    from apps.jrc_texts import services as text_services
+    from apps.jrc_texts.models import TextDocument, TextVersion
+
+    _content_write_key(context)
+    post = _content_post(context, args["post_id"])
+    _content_editable(post, context)
+    base_id = _parse_uuid(args["base_version"], "base_version") if args.get("base_version") else None
+    actor = context["api_key"].issued_by
+    try:
+        with transaction.atomic():
+            Post.objects.select_for_update().get(pk=post.pk)
+            document = TextDocument.objects.filter(post=post, kind=TextDocument.Kind.SCRIPT).first()
+            if document is None:
+                if base_id is not None:
+                    raise text_services.ConflictError("The script has no saved version yet. Reload the text.")
+                text_services.create_document(post.pk, actor, markdown=args["markdown"], source="mcp")
+                status = 201
+            else:
+                base = document.versions.filter(pk=base_id, state=TextVersion.State.FINAL).first() if base_id else None
+                if base is None:
+                    raise text_services.ConflictError("The script changed. Reload the text and send base_version.")
+                draft = text_services.edit(base.pk, actor, source="mcp")
+                saved = text_services.save(draft.pk, actor, expected_revision=0, markdown=args["markdown"])
+                status = 200 if saved.pk == base.pk else 201
+    except text_services.ConflictError as exc:
+        raise _content_error(str(exc), 409) from exc
+    except PermissionDenied as exc:
+        raise _content_error(str(exc), 403) from exc
+    except ValidationError as exc:
+        raise _content_error(" ".join(exc.messages), 422) from exc
+    result = _script_response(post, _content_membership(post, context))
+    return _wrap_text({**result.model_dump(mode="json"), "status": status})
+
+
+def _caption_for_key(post: Post, platform_post_id: str, context: dict[str, Any]):
+    from django.http import Http404
+
+    from apps.api.routers.content import _caption_response, _channel_enabled
+    from apps.composer.models import PlatformPost
+
+    variant_id = _parse_uuid(platform_post_id, "platform_post_id")
+    allowed = {account.id for account in context["api_key"].social_accounts.all()}
+    variant = (
+        PlatformPost.objects.filter(pk=variant_id, post=post).select_related("social_account__jrc_channel").first()
+    )
+    if variant is None or variant.social_account_id not in allowed or not _channel_enabled(variant.social_account):
+        raise Http404
+    return variant, _caption_response(post, variant, _content_membership(post, context))
+
+
+def _get_caption(args: dict, context: dict[str, Any]) -> dict:
+    from django.http import Http404
+
+    post = _content_post(context, args["post_id"])
+    try:
+        _, result = _caption_for_key(post, args["platform_post_id"], context)
+    except Http404 as exc:
+        raise _content_error("Channel copy not found", 404) from exc
+    return _wrap_text(result.model_dump(mode="json"))
+
+
+def _save_caption(args: dict, context: dict[str, Any]) -> dict:
+    from django.core.exceptions import PermissionDenied, ValidationError
+    from django.http import Http404
+
+    from apps.api.routers.content import _caption_response
+    from apps.jrc_texts import services as text_services
+
+    _content_write_key(context)
+    post = _content_post(context, args["post_id"])
+    _content_editable(post, context)
+    try:
+        variant, _ = _caption_for_key(post, args["platform_post_id"], context)
+        _, changed = text_services.save_caption(
+            post.pk,
+            variant.pk,
+            context["api_key"].issued_by,
+            args["text"].replace("\r\n", "\n").replace("\r", "\n"),
+            base_version_id=_parse_uuid(args["base_version"], "base_version") if args.get("base_version") else None,
+            source="mcp",
+        )
+    except Http404 as exc:
+        raise _content_error("Channel copy not found", 404) from exc
+    except text_services.ConflictError as exc:
+        raise _content_error(str(exc), 409) from exc
+    except PermissionDenied as exc:
+        raise _content_error(str(exc), 403) from exc
+    except ValidationError as exc:
+        raise _content_error(" ".join(exc.messages), 422) from exc
+    variant.refresh_from_db()
+    result = _caption_response(post, variant, _content_membership(post, context))
+    return _wrap_text({**result.model_dump(mode="json"), "status": 201 if changed else 200})
+
+
+def _list_comments(args: dict, context: dict[str, Any]) -> dict:
+    from apps.api.routers.content import _comment_info
+    from apps.approvals import comments as comment_services
+
+    post = _content_post(context, args["post_id"])
+    comments = comment_services.get_comments_for_post(post, context["api_key"].issued_by)
+    return _wrap_text([_comment_info(comment).model_dump(mode="json") for comment in comments])
+
+
+def _add_comment(args: dict, context: dict[str, Any]) -> dict:
+    from apps.api.routers.content import _comment_info
+    from apps.approvals import comments as comment_services
+
+    _content_write_key(context)
+    post = _content_post(context, args["post_id"])
+    body = args["body"].strip()
+    if not body:
+        raise _content_error("Write a comment before sending it.", 422)
+    parent_id = _parse_uuid(args["parent_id"], "parent_id") if args.get("parent_id") else None
+    try:
+        comment = comment_services.create_comment(
+            post=post,
+            author=context["api_key"].issued_by,
+            body=body,
+            visibility=args.get("visibility"),
+            parent_id=parent_id,
+        )
+    except PermissionError as exc:
+        raise _content_error(str(exc), 403) from exc
+    except ValueError as exc:
+        status = 404 if str(exc) == "Comment thread not found." else 422
+        raise _content_error(str(exc), status) from exc
+    return _wrap_text({**_comment_info(comment).model_dump(mode="json"), "status": 201})
+
+
+def _get_stage(args: dict, context: dict[str, Any]) -> dict:
+    from apps.api.routers.content import _stage_response
+
+    post = _content_post(context, args["post_id"])
+    return _wrap_text(_stage_response(post, _content_membership(post, context)).model_dump(mode="json"))
+
+
+def _register_content_tools() -> None:
+    post_id = {"type": "string", "format": "uuid", "description": "ID contentu z nástroje `list_posts`."}
+    platform_post_id = {
+        "type": "string",
+        "format": "uuid",
+        "description": "ID kopie pro konkrétní kanál z `jrc_get_caption` nebo REST API.",
+    }
+    register_tool(
+        Tool(
+            name="jrc_get_script",
+            description="Načte scénář contentu v Markdownu a seznam uložených verzí. Rozpracované koncepty se nikdy nevracejí. Volitelně vyber starší uloženou verzi.",
+            input_schema={
+                "type": "object",
+                "properties": {"post_id": post_id, "version_id": {"type": "string", "format": "uuid"}},
+                "required": ["post_id"],
+                "additionalProperties": False,
+            },
+            handler=_get_script,
+            read_only=True,
+        )
+    )
+    register_tool(
+        Tool(
+            name="jrc_save_script",
+            description="Uloží celý scénář jako novou Markdown verzi. Po první verzi je povinné `base_version` z nejnovější verze; zastaralá verze nebo rozpracovaný koncept vrátí konflikt 409. Vyžaduje oprávnění k úpravě daného contentu.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "post_id": post_id,
+                    "markdown": {"type": "string", "maxLength": 1000000},
+                    "base_version": {
+                        "type": ["string", "null"],
+                        "format": "uuid",
+                        "description": "ID aktuální uložené verze; vynechat jen při první verzi.",
+                    },
+                },
+                "required": ["post_id", "markdown"],
+                "additionalProperties": False,
+            },
+            handler=_save_script,
+        )
+    )
+    register_tool(
+        Tool(
+            name="jrc_get_caption",
+            description="Načte popisek pro jednu povolenou kopii contentu na kanálu, včetně limitu znaků a uložených verzí. Rozpracované koncepty se nevracejí.",
+            input_schema={
+                "type": "object",
+                "properties": {"post_id": post_id, "platform_post_id": platform_post_id},
+                "required": ["post_id", "platform_post_id"],
+                "additionalProperties": False,
+            },
+            handler=_get_caption,
+            read_only=True,
+        )
+    )
+    register_tool(
+        Tool(
+            name="jrc_save_caption",
+            description="Uloží popisek kanálu jako novou verzi a zkopíruje jej do varianty kanálu. Zadej `base_version` z aktuální verze; vynech jej jen před prvním uložením. Konflikt verze vrací 409 a překročení limitu kanálu 422.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "post_id": post_id,
+                    "platform_post_id": platform_post_id,
+                    "text": {"type": "string", "maxLength": 100000},
+                    "base_version": {"type": ["string", "null"], "format": "uuid"},
+                },
+                "required": ["post_id", "platform_post_id", "text"],
+                "additionalProperties": False,
+            },
+            handler=_save_caption,
+        )
+    )
+    register_tool(
+        Tool(
+            name="jrc_list_comments",
+            description="Vrátí vlákna komentářů, která smí přihlášený uživatel vidět. Klientské role nikdy nedostanou interní komentáře ani odpovědi na ně.",
+            input_schema={
+                "type": "object",
+                "properties": {"post_id": post_id},
+                "required": ["post_id"],
+                "additionalProperties": False,
+            },
+            handler=_list_comments,
+            read_only=True,
+        )
+    )
+    register_tool(
+        Tool(
+            name="jrc_add_comment",
+            description="Přidá komentář nebo odpověď. Vyžaduje klíč s `create_posts` nebo `approve_posts`. Klientské role mohou přidat jen externí komentář; odpověď dědí viditelnost vlákna.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "post_id": post_id,
+                    "body": {"type": "string", "minLength": 1, "maxLength": 10000},
+                    "visibility": {"type": ["string", "null"], "enum": ["internal", "external", None]},
+                    "parent_id": {"type": ["string", "null"], "format": "uuid"},
+                },
+                "required": ["post_id", "body"],
+                "additionalProperties": False,
+            },
+            handler=_add_comment,
+        )
+    )
+    register_tool(
+        Tool(
+            name="jrc_get_stage",
+            description="Načte aktuální fázi výroby contentu a fáze, do kterých jej může tento klíč podle role a oprávnění přesunout.",
+            input_schema={
+                "type": "object",
+                "properties": {"post_id": post_id},
+                "required": ["post_id"],
+                "additionalProperties": False,
+            },
+            handler=_get_stage,
+            read_only=True,
+        )
+    )
+
+
+_register_content_tools()
+
+
 # ---------------------------------------------------------------------------
 # Tool: list_accounts
 # ---------------------------------------------------------------------------
