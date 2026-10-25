@@ -9,7 +9,6 @@ assert.equal(process.env.JRC_PROJECT, 'jrc-f10b02');
 assert.equal(process.env.JRC_APP_PORT, '13433');
 assert.equal(process.env.JRC_S3_PORT, '14153');
 const origin = `http://127.0.0.1:${process.env.JRC_APP_PORT}`;
-const s3Origin = `http://127.0.0.1:${process.env.JRC_S3_PORT}`;
 const fixture = JSON.parse(fs.readFileSync('ops/test-output/F10-B02/fixture.json', 'utf8'));
 const shots = path.resolve('ops/screenshoty/F10-B02');
 const output = path.resolve('ops/test-output/F10-B02');
@@ -31,15 +30,12 @@ async function session(browser, who, width = 1440) {
     viewport: { width, height: width === 390 ? 2200 : 1500 },
     timezoneId: 'Europe/Prague',
   });
-  await context.route('**/*', route => {
+  // Local requests remain native browser requests. Intercept only external HTTP(S)
+  // URLs, so Playwright does not mediate the API → signed S3 redirect used by HLS.
+  await context.route(/^https?:\/\/(?!127\.0\.0\.1:(?:13433|14153)(?:\/|$)).*/, route => {
     const url = route.request().url();
-    if (url.startsWith('data:') || url.startsWith('blob:')) return route.continue();
-    const requestOrigin = new URL(url).origin;
-    if (requestOrigin !== origin && requestOrigin !== s3Origin) {
-      external.push(url);
-      return route.abort('blockedbyclient');
-    }
-    return route.continue();
+    external.push(url);
+    return route.abort('blockedbyclient');
   });
   const page = await context.newPage();
   page.on('pageerror', error => errors.push(`${who}: ${error.message}`));
@@ -158,6 +154,11 @@ async function main() {
 
     const ella = await session(browser, 'client');
     await ella.page.goto(`${detail}?tab=video`);
+    await capture(ella.page, '05-ella-video', 1440);
+    const mobile = await ella.context.newPage();
+    await mobile.setViewportSize({ width: 390, height: 2200 });
+    await mobile.goto(`${detail}?tab=video`);
+    await capture(mobile, '05-ella-video', 390);
     const frame = await playerFrame(ella.page, 1);
     await frame.locator('video').first().evaluate(video => {
       video.muted = true;
@@ -171,9 +172,6 @@ async function main() {
     await frame.getByTitle('Send (Enter)').click();
     await frame.getByText('zkrátit', { exact: true }).first().waitFor({ timeout: 20000 });
     await capture(ella.page, '05-ella-video', 1440);
-    const mobile = await ella.context.newPage();
-    await mobile.setViewportSize({ width: 390, height: 2200 });
-    await mobile.goto(`${detail}?tab=video`);
     const mobileFrame = await playerFrame(mobile, 1);
     await mobileFrame.getByText('zkrátit', { exact: true }).first().waitFor({ timeout: 20000 });
     await capture(mobile, '05-ella-video', 390);

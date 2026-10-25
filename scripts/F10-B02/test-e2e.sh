@@ -2,6 +2,8 @@
 # Celý scénář Reel pro Ellu. Reset i úklid míří výhradně na jrc-f10b02.
 set -eu
 [ "${JRC_PROJECT:-}" = "jrc-f10b02" ] || { echo 'Pouze JRC_PROJECT=jrc-f10b02' >&2; exit 2; }
+[ -f .env ] || JRC_PROJECT=jrc-f10b02 JRC_APP_PORT=13433 JRC_S3_PORT=14153 \
+  JRC_POSTGRES_PORT=15683 JRC_BB_PORT=18253 make env
 [ -f .env ] || { echo 'Chybí .env; spusťte JRC_PROJECT=jrc-f10b02 make up' >&2; exit 2; }
 for pair in 'JRC_APP_PORT 13433' 'JRC_S3_PORT 14153' 'JRC_POSTGRES_PORT 15683' 'JRC_BB_PORT 18253'; do
   set -- $pair
@@ -24,6 +26,18 @@ trap cleanup EXIT HUP INT TERM
 JRC_PROJECT=jrc-f10b02 make down >/dev/null 2>&1 || true
 compose down --volumes --remove-orphans >/dev/null
 JRC_PROJECT=jrc-f10b02 JRC_APP_PORT=13433 JRC_S3_PORT=14153 JRC_POSTGRES_PORT=15683 JRC_BB_PORT=18253 make up
+
+# API se hlásí zdravé dřív, než její startovní vlákno nastaví CORS na jrc-video.
+# Nezakládejme scénář, dokud bucket výslovně nepovoluje právě původ z .env.
+attempt=0
+until compose exec -T jrc-ff-api python /jrc-scripts/F10-B02/check-cors.py; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 30 ]; then
+    echo 'CORS bucketu jrc-video se do 30 sekund neshodovalo s původem aplikace.' >&2
+    exit 1
+  fi
+  sleep 1
+done
 
 mkdir -p ops/test-output/F10-B02 ops/screenshoty/F10-B02
 compose exec -T -e JRC_PROJECT=jrc-f10b02 jrc-bb-web python manage.py shell \
