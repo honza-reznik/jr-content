@@ -1,21 +1,23 @@
 """HLS proxy for secure video streaming.
 
 Rewrites m3u8 manifests so that:
-- Variant playlist URLs go through this proxy (with token auth)
-- Managed segment requests also check live membership before a short S3 redirect
+- Variant playlist URLs go through this proxy (with scoped HttpOnly cookies)
+- Managed segment requests check live membership and stream from private S3
 - Other segment (.ts) URLs become presigned S3 URLs (direct to S3)
 
 This eliminates the need for a public bucket policy on processed/*.
 """
 
+import hashlib
 import logging
 import posixpath
 import uuid
 from datetime import datetime, timedelta, timezone
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import Response, RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import Response, StreamingResponse
+from starlette.background import BackgroundTask
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -72,6 +74,28 @@ def create_hls_token(
 SEGMENT_URL_MAX_SECONDS = HLS_TOKEN_SECONDS
 
 
+HLS_COOKIE = "ff_hls"
+SEGMENT_CHUNK_BYTES = 64 * 1024
+
+
+def hls_session_id(s3_prefix: str) -> str:
+    # A public identifier, not a credential. Separate cookie paths allow two
+    # versions to play side by side without replacing each other's session.
+    return hashlib.sha256(s3_prefix.encode()).hexdigest()[:32]
+
+
+def issue_hls_url(request: Request, response: Response, s3_prefix: str, **identity) -> str:
+    path = f"/stream/hls/{hls_session_id(s3_prefix)}/"
+    response.set_cookie(
+        HLS_COOKIE, create_hls_token(s3_prefix, **identity),
+        max_age=HLS_TOKEN_SECONDS,
+        path=request.scope.get("root_path", "").rstrip("/") + path,
+        httponly=True, samesite="strict", secure=request.url.scheme == "https",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return path + "master.m3u8"
+
+
 def _decode_hls_token(token: str) -> dict:
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
@@ -107,13 +131,12 @@ def _rewrite_manifest(
     content: str,
     s3_prefix: str,
     manifest_path: str,
-    token: str,
     segment_expires_in: int = SEGMENT_URL_MAX_SECONDS,
     proxy_segments: bool = False,
 ) -> str:
     """Rewrite URLs in an m3u8 manifest.
 
-    - .m3u8 references -> proxy URLs with token (appended as query param)
+    - .m3u8 references -> relative proxy URLs (credential in an HttpOnly cookie)
     - .ts references -> presigned S3 URLs
     """
     manifest_dir = posixpath.dirname(manifest_path)
@@ -135,13 +158,13 @@ def _rewrite_manifest(
             relative_key = stripped
 
         if stripped.endswith(".m3u8"):
-            # Variant playlist -> proxy URL with token
-            result.append(f"{relative_key}?token={token}")
+            # Resolve relative to the current playlist, within its cookie path.
+            result.append(stripped)
         elif stripped.endswith(".ts"):
             if proxy_segments:
                 # Keep the request at the proxy so membership is checked for
                 # every segment, including long videos and seeking after pause.
-                result.append(f"{stripped}?token={token}")
+                result.append(stripped)
                 continue
             # Segment -> presigned S3 URL (direct to S3), signed for what is
             # left of the token, so pause-and-resume works for as long as the
@@ -167,14 +190,24 @@ def _authorize_managed_hls(payload: dict, db: Session):
     require_project_role(db, project_id, user, ProjectRole.viewer)
 
 
-@router.get("/hls/{path:path}")
-def hls_proxy(path: str, token: str = Query(...), db: Session = Depends(get_db)):
+@router.get("/hls/{session_id}/{path:path}")
+def browser_hls_proxy(session_id: str, path: str, request: Request, db: Session = Depends(get_db)):
+    token = request.cookies.get(HLS_COOKIE)
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing streaming session")
+    payload = _decode_hls_token(token)
+    if session_id != hls_session_id(payload["pfx"]):
+        raise HTTPException(status_code=403, detail="Invalid streaming session")
+    return hls_proxy(path, token, db)
+
+
+def hls_proxy(path: str, token: str, db: Session = Depends(get_db)):
     """Proxy HLS manifests with URL rewriting for secure streaming."""
     payload = _decode_hls_token(token)
     _authorize_managed_hls(payload, db)
     s3_prefix = payload["pfx"]
 
-    # Managed segments check membership before redirecting to private S3.
+    # Managed segments check membership before reading private S3.
     managed_segment = "uid" in payload and path.endswith(".ts")
     if not path.endswith(".m3u8") and not managed_segment:
         raise HTTPException(status_code=400, detail="Only .m3u8 files are proxied")
@@ -190,16 +223,34 @@ def hls_proxy(path: str, token: str = Query(...), db: Session = Depends(get_db))
         raise HTTPException(status_code=400, detail="Invalid path")
 
     if managed_segment:
-        return RedirectResponse(
-            generate_presigned_get_url(s3_key, expires_in=_segment_url_lifetime(payload)),
-            status_code=302, headers={"Cache-Control": "no-store"},
+        s3 = get_s3_client()
+        try:
+            obj = s3.get_object(Bucket=settings.s3_bucket, Key=s3_key)
+        except Exception:
+            # Do not expose storage details or signed URLs in errors/logs.
+            raise HTTPException(status_code=404, detail="Segment not found") from None
+        body = obj["Body"]
+
+        def chunks():
+            try:
+                yield from body.iter_chunks(chunk_size=SEGMENT_CHUNK_BYTES)
+            finally:
+                body.close()
+
+        return StreamingResponse(
+            chunks(), media_type="video/mp2t", headers={"Cache-Control": "no-store"},
+            # Also close an unopened iterator, e.g. if the client disconnects.
+            background=BackgroundTask(body.close),
         )
 
     # Fetch manifest from S3
     s3 = get_s3_client()
     try:
         obj = s3.get_object(Bucket=settings.s3_bucket, Key=s3_key)
-        content = obj["Body"].read().decode("utf-8")
+        try:
+            content = obj["Body"].read().decode("utf-8")
+        finally:
+            obj["Body"].close()
     except s3.exceptions.NoSuchKey:
         raise HTTPException(status_code=404, detail="Manifest not found")
     except Exception as e:
@@ -207,7 +258,7 @@ def hls_proxy(path: str, token: str = Query(...), db: Session = Depends(get_db))
         raise HTTPException(status_code=404, detail="Manifest not found")
 
     rewritten = _rewrite_manifest(
-        content, s3_prefix, normalised, token, _segment_url_lifetime(payload),
+        content, s3_prefix, normalised, _segment_url_lifetime(payload),
         proxy_segments="uid" in payload,
     )
 

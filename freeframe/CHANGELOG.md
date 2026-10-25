@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - JR Content: časový štítek nad obrazem videa, synchronizovaný s vykresleným snímkem; FPS ze souboru a celá obrazovka se štítkem i na telefonu.
 
 ### Fixed
+- JR Content: přehrávání řízeného HLS přenáší segmenty přes API bez přesměrování na S3; HLS přihlášení je v cookie omezené na verzi videa, mimo URL.
 - JR Content: sdílený obsah, komentáře a stahování posílají přihlášení člena; obnova uploadu přes abort respektuje aktuální roli před spuštěním převodu.
 - JR Content: staré veřejné sdílené odkazy, rozpracované uploady, osobní přehledy a živé události respektují odebrání členství a změnu role řízených účtů.
 - JR Content: řízené účty se přihlašují jen přes Brightbean, oprávnění a odvolání relace platí i pro přehrávání; neúspěšné změny se automaticky opakují.

@@ -245,7 +245,7 @@ def test_watching_a_video_is_untouched_by_any_of_this(
     response = client.get(f"/assets/{asset.id}/stream", headers=auth_headers)
 
     assert response.status_code == 200, response.text
-    assert response.json()["url"].startswith("/stream/hls/master.m3u8?token=")
+    assert response.json()["url"].startswith("/stream/hls/")
 
 
 @patch("apps.api.routers.share._log_share_activity")

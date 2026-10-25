@@ -1,5 +1,20 @@
 # JR Content: změny FreeFrame
 
+## 2026-10-25 — F5-B09b
+
+- HLS segmenty řízených projektů API předává ze soukromého S3 přímo po 64 KiB,
+  bez přesměrování mezi původy. Každý segment dál ověřuje aktuální členství a
+  verzi relace; odpovědi se neukládají do mezipaměti. Prohlížeč proto nemusí
+  povolit `Origin: null` a CORS zůstává omezené na přesný původ aplikace.
+- HLS token se nyní skutečně předává v `HttpOnly; SameSite=Strict` cookie na
+  30 minut, s cestou omezenou na konkrétní verzi videa (včetně `/video-api`).
+  URL playlistů ani řízených segmentů neobsahují token. HTTPS zapíná `Secure`.
+  Oddělené cesty cookies dovolují současné přehrávání dvou verzí. Proxy předává
+  FreeFrame pouze HLS cookie; cookies Brightbean zůstávají oddělené. Oba Caddy
+  loggery navíc výslovně odstraňují Cookie a Set-Cookie z hlaviček záznamu.
+- Opravená regrese má API testy pro přenos, cookies a odvolání členství;
+  živé testy F5-B05/F5-B08 mohou běžet i v projektu `jrc-f5b09b`.
+
 ## 2026-10-25 — F10-B03a
 
 - Zahájení nahrávání má limit 5 pokusů za minutu a při nedostupném Redis se

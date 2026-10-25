@@ -1,0 +1,15 @@
+--- a/scripts/F10-B02/reel-for-ella.cjs
++++ b/scripts/F10-B02/reel-for-ella.cjs
+@@ -166,6 +166,12 @@
+       video.currentTime = 17;
+     });
+     await frame.waitForFunction(() => document.querySelector('video').currentTime >= 17);
++    // Wait for a decoded frame, rather than merely the assigned currentTime.
++    await frame.waitForFunction(() => {
++      const video = document.querySelector('video');
++      return video.readyState >= 2 && !video.seeking && /^0:1[78]$/.test(document.querySelector('[data-testid="video-timecode"]').textContent.trim());
++    });
++    console.log('OK E2E: klientka přehrála video a vykreslený snímek v 0:17, bez přesměrování HLS.');
+     await frame.locator('video').first().evaluate(video => video.pause());
+     assert.match((await frame.getByTestId('video-timecode').innerText()).trim(), /^0:1[78]$/);
+     await frame.getByPlaceholder('Leave your comment...').fill('zkrátit');

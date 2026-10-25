@@ -1,4 +1,5 @@
 """Security regressions: change real memberships while the same JWT stays valid."""
+from .hls_helpers import hls_url, segment_storage
 
 import importlib.util
 from datetime import datetime, timedelta, timezone
@@ -142,8 +143,8 @@ def test_share_role_and_hls_rechecked_for_managed_project_even_for_local_member(
     with patch("apps.api.routers.share.generate_presigned_get_url", return_value="/signed") as media_sign:
         response = client.get(f"/share/{link.token}", headers=ctx.headers)
         assert response.status_code == 200, response.text
-        hls_url = response.json()["asset"]["stream_url"]
-        token = hls_url.split("token=")[1]
+        playlist_url = response.json()["asset"]["stream_url"]
+        token = response.cookies.get("ff_hls")
         payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
         assert payload["uid"] == str(ctx.user.id)
         media_sign.reset_mock()
@@ -151,10 +152,10 @@ def test_share_role_and_hls_rechecked_for_managed_project_even_for_local_member(
         assert download.status_code == 200, download.text
         download_signature = next(call for call in media_sign.call_args_list if call.args[0] == ctx.media.s3_key_raw)
         assert download_signature.kwargs["expires_in"] <= 180
-        segment = f"/stream/hls/720p/seg.ts?token={token}"
-        with patch("apps.api.routers.hls_proxy.generate_presigned_get_url", return_value="/signed") as sign:
-            assert client.get(segment, follow_redirects=False).status_code == 302
-            assert sign.call_args.kwargs["expires_in"] <= 180
+        segment = hls_url(client, token, "720p/seg.ts")
+        with segment_storage() as (storage, body):
+            assert client.get(segment, follow_redirects=False).status_code == 200
+            assert storage.get_object.call_count == 1
             # This was a commenting link and the caller is also its creator.
             ctx.member.role = ProjectRole.viewer
             ctx.db.flush()
@@ -164,8 +165,8 @@ def test_share_role_and_hls_rechecked_for_managed_project_even_for_local_member(
             assert response.status_code == 403
             _remove(ctx)
             assert client.get(segment, follow_redirects=False).status_code == 403
-            assert client.get(hls_url).status_code == 403
-            assert sign.call_count == 1
+            assert client.get(playlist_url).status_code == 403
+            assert storage.get_object.call_count == 1
 
 
 def test_valid_share_password_session_does_not_replace_membership(client, live_project):
@@ -454,4 +455,4 @@ def test_pre_review_unbound_share_hls_token_is_revoked(client):
     token = jwt.encode({"sub": "hls", "v": 2, "pfx": "processed/legacy-share",
                         "exp": datetime.now(timezone.utc) + timedelta(hours=24)},
                        settings.jwt_secret, algorithm=settings.jwt_algorithm)
-    assert client.get(f"/stream/hls/master.m3u8?token={token}").status_code == 401
+    assert client.get(hls_url(client, token, "master.m3u8")).status_code == 401
