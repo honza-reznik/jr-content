@@ -90,6 +90,10 @@ class Settings(BaseSettings):
     # Note: S3 multipart still caps effective size at ~10,000 parts x chunk size.
     max_upload_bytes: int = 0
 
+    # JR Content guardrails for uploads which have not finished assembling.
+    max_concurrent_uploads_per_user: int = Field(default=3, ge=1)
+    max_pending_upload_bytes_per_project: int = Field(default=20 * 1024**3, ge=1)
+
     # JR Content (F5-B05): how long the signed address of one upload part is valid, seconds.
     # Upstream used one hour; the web client and Brightbean sign again for every attempt.
     upload_part_url_seconds: int = Field(default=900, ge=60, le=3600)

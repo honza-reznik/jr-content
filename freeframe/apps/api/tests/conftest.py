@@ -84,8 +84,18 @@ def mock_db():
 
 
 @pytest.fixture
-def client(mock_db):
+def client(mock_db, monkeypatch):
     """Return a TestClient with mocked DB and S3."""
+    # Endpoint tests use a mocked session; the upload quota itself is covered
+    # separately with real Postgres so these mocks don't emulate SQL aggregates.
+    from apps.api.routers import assets, upload
+    from apps.api.services import redis_service
+
+    monkeypatch.setattr(upload, "enforce_pending_upload_limits", lambda *args: None)
+    monkeypatch.setattr(assets, "enforce_pending_upload_limits", lambda *args: None)
+    fake_redis = MagicMock()
+    fake_redis.get.return_value = None
+    monkeypatch.setattr(redis_service, "get_redis", lambda: fake_redis)
     with patch("apps.api.services.s3_service.ensure_bucket_exists"):
         with patch("apps.api.services.s3_service.get_s3_client", return_value=MagicMock()):
             from fastapi.testclient import TestClient
@@ -93,8 +103,8 @@ def client(mock_db):
             from apps.api.database import get_db
 
             app.dependency_overrides[get_db] = lambda: mock_db
-            client = TestClient(app, raise_server_exceptions=False)
-            yield client
+            test_client = TestClient(app, raise_server_exceptions=False)
+            yield test_client
             app.dependency_overrides.clear()
 
 

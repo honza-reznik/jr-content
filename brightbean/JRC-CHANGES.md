@@ -1,5 +1,11 @@
 # Úpravy JR Content
 
+## 2026-10-25 — F10-B03a
+
+- Nastavení JR Content vynucuje registraci jen na pozvánku; veřejná registrace
+  bez pozvánky účet nevytvoří. Stránka About & license zobrazuje oznámení o
+  dostupnosti zdrojového kódu a krátkou revizi Gitu předanou příkazem `make`.
+
 Základ: Brightbean Studio `48801fdcd1009e6ed4863fa9942222a478a297e2`, import F2-B01.
 Licence této odvozené verze: AGPL-3.0; původní licence a autorská práva zůstávají zachována.
 
