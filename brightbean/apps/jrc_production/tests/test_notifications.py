@@ -438,10 +438,14 @@ def test_hold_requested_by_the_client_reaches_only_the_team(workspace, everyone,
 
 
 def test_installation_settings_use_console_mail_and_no_webhooks():
-    import config.settings.jrc as jrc
+    # Read the source: importing the settings module would change the environment of later tests.
+    import importlib.util
+    from pathlib import Path
 
-    assert jrc.EMAIL_BACKEND_TYPE == "console"
-    assert jrc.NOTIFICATION_WEBHOOKS_ENABLED is False
+    source = Path(importlib.util.find_spec("config.settings.jrc").origin).read_text(encoding="utf-8")
+
+    assert '\nEMAIL_BACKEND_TYPE = "console"\n' in source
+    assert "\nNOTIFICATION_WEBHOOKS_ENABLED = False\n" in source
 
 
 def test_webhook_channel_is_never_used_when_disabled(workspace, owner, manager, content):
