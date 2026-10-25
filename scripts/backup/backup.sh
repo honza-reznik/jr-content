@@ -196,7 +196,7 @@ case "${1:?Chybí operace}" in
         media=absent
         if volume_exists "$project-bb-media"; then
             docker run --rm --pull never --network none --user "$(id -u):$(id -g)" \
-                --mount "type=volume,src=$project-bb-media,dst=/media,readonly" \
+                --mount "type=volume,src=$project-bb-media,dst=/media,readonly,volume-nocopy" \
                 --mount "type=bind,src=$workdir/$partial,dst=/out" \
                 "$dev_image" tar -cf /out/bb-media.tar -C /media .
             media=present
@@ -276,7 +276,7 @@ case "${1:?Chybí operace}" in
             fi
             docker run --rm --pull never --network none --user 0:0 \
                 --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER \
-                --mount "type=volume,src=$project-bb-media,dst=/media" \
+                --mount "type=volume,src=$project-bb-media,dst=/media,volume-nocopy" \
                 --mount "type=bind,src=$abs,dst=/backup,readonly" \
                 "$dev_image" sh -c \
                 'content=$(find /media -mindepth 1 -maxdepth 1 -print -quit) || exit 4; test -z "$content" || exit 3; tar -xf /backup/bb-media.tar -C /media --no-same-owner && chown -R "$1:$2" /media' \

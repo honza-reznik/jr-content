@@ -42,7 +42,11 @@ x-bb: &bb
     JRC_FF_SYNC_PASSWORD: ${JRC_FF_SYNC_PASSWORD:?Spusťte make env}
   volumes:
     - ./brightbean:/app
-    - jrc-bb-media:/app/media
+    - type: volume
+      source: jrc-bb-media
+      target: /app/media
+      volume:
+        nocopy: true
   networks:
     - internal
   depends_on:
@@ -298,7 +302,7 @@ services:
     # F2-B05: po migraci CORS bucketu jrc-app a idempotentní kopie místních médií do S3
     # (místní soubory zůstávají).
     user: "0:0"
-    command: ["sh", "-c", "chown $${JRC_UID}:$${JRC_GID} /app/media && exec setpriv --reuid=$${JRC_UID} --regid=$${JRC_GID} --clear-groups sh -c 'python manage.py migrate --noinput && python manage.py jrc_configure_s3 && python manage.py jrc_migrate_media_to_s3'"]
+    command: ["sh", "-c", "chown -R $${JRC_UID}:$${JRC_GID} /app/media && setpriv --reuid=$${JRC_UID} --regid=$${JRC_GID} --clear-groups sh -c 'python manage.py migrate --noinput && python manage.py jrc_configure_s3 && python manage.py jrc_migrate_media_to_s3' && chown -R $${JRC_UID}:$${JRC_GID} /app/media"]
     environment:
       <<: [*offline, *bb-s3]
       APP_URL: http://127.0.0.1:${JRC_APP_PORT:-13000}
