@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 import bcrypt
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Request, Response
 import sqlalchemy
 from sqlalchemy import func as sa_func, case
 from sqlalchemy.orm import Session
@@ -52,7 +52,7 @@ from ..services.downloads import (
     original_allowed_for_download, pick_or_refuse,
 )
 from ..services.crypto_service import encrypt_password, decrypt_password
-from .hls_proxy import create_hls_token, managed_hls_identity, MANAGED_MEDIA_SECONDS
+from .hls_proxy import issue_hls_url, managed_hls_identity, share_hls_identity, MANAGED_MEDIA_SECONDS
 from ..models.project import Project, ProjectRole
 from ..tasks.email_tasks import send_share_email
 from ..tasks.celery_app import send_task_safe
@@ -260,6 +260,8 @@ def _build_share_validate_response(
     current_user: Optional[User],
     session_id: Optional[str] = None,
     log_open: bool = False,
+    request: Request | None = None,
+    response: Response | None = None,
 ) -> ShareLinkValidateResponse:
     """Build the full ShareLinkValidateResponse for a validated link.
 
@@ -300,8 +302,9 @@ def _build_share_validate_response(
             if media_file.s3_key_processed:
                 if asset.asset_type == AssetType.video:
                     # Route through /stream/hls so S3 can stay private (#51)
-                    hls_token = create_hls_token(media_file.s3_key_processed, **managed_hls_identity(current_user, asset.project_id, db=db))
-                    stream_url = f"/stream/hls/master.m3u8?token={hls_token}"
+                    stream_url = issue_hls_url(request, response, media_file.s3_key_processed,
+                                               **share_hls_identity(link, asset, media_file, current_user, session_id),
+                                               **managed_hls_identity(current_user, asset.project_id, db=db))
                 else:
                     stream_url = generate_presigned_get_url(media_file.s3_key_processed, **media_expiry)
             elif media_file.s3_key_raw:
@@ -366,6 +369,8 @@ def _build_share_validate_response(
 @router.get("/share/{token}", response_model=ShareLinkValidateResponse, dependencies=[Depends(rate_limit("share_validate", 30, 60))])
 def validate_share_link_endpoint(
     token: str,
+    request: Request,
+    response: Response,
     log_open: bool = False,
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_user),
@@ -399,14 +404,14 @@ def validate_share_link_endpoint(
     # Authenticated link creator bypasses the password (dashboard preview).
     if link.password_hash:
         if current_user and link.created_by == current_user.id:
-            return _build_share_validate_response(db, link, current_user, log_open=log_open)
+            return _build_share_validate_response(db, link, current_user, log_open=log_open, request=request, response=response)
         return ShareLinkValidateResponse(
             requires_password=True,
             title=link.title,
             permission=link.permission,
         )
 
-    return _build_share_validate_response(db, link, current_user, log_open=log_open)
+    return _build_share_validate_response(db, link, current_user, log_open=log_open, request=request, response=response)
 
 
 @router.post(
@@ -416,6 +421,8 @@ def validate_share_link_endpoint(
 )
 def verify_share_link_password(
     token: str,
+    request: Request,
+    response: Response,
     body: ShareVerifyRequest,
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_user),
@@ -441,7 +448,7 @@ def verify_share_link_password(
     if not (current_user and link.created_by == current_user.id):
         if not link.password_hash:
             # No password set — nothing to verify. Return the validate response.
-            return _build_share_validate_response(db, link, current_user)
+            return _build_share_validate_response(db, link, current_user, request=request, response=response)
         try:
             plain_bytes = bcrypt_password_bytes(body.password)
             hashed_bytes = link.password_hash.encode('utf-8')
@@ -456,7 +463,7 @@ def verify_share_link_password(
     create_share_session(token, session_id)
 
     return _build_share_validate_response(
-        db, link, current_user, session_id=session_id, log_open=body.log_open
+        db, link, current_user, session_id=session_id, log_open=body.log_open, request=request, response=response
     )
 
 
@@ -1540,6 +1547,8 @@ def list_share_download_options(
 @router.get("/share/{token}/stream/{asset_id}")
 def get_share_stream_url(
     token: str,
+    request: Request,
+    response: Response,
     asset_id: uuid.UUID,
     version_id: Optional[uuid.UUID] = Query(default=None),
     share_session: Optional[str] = Query(None, alias="share_session"),
@@ -1590,8 +1599,9 @@ def get_share_stream_url(
         )
     elif asset.asset_type == AssetType.video and media_file.s3_key_processed:
         # Route through /stream/hls so S3 can stay private (#51)
-        hls_token = create_hls_token(media_file.s3_key_processed, **managed_hls_identity(current_user, asset.project_id, db=db))
-        url = f"/stream/hls/master.m3u8?token={hls_token}"
+        url = issue_hls_url(request, response, media_file.s3_key_processed,
+                            **share_hls_identity(link, asset, media_file, current_user, share_session),
+                            **managed_hls_identity(current_user, asset.project_id, db=db))
     else:
         url = generate_presigned_get_url(media_file.s3_key_processed or media_file.s3_key_raw, **media_expiry)
 

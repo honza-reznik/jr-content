@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request, Response
 from sqlalchemy.orm import Session
 from sqlalchemy import func, literal, select
 import os
@@ -22,7 +22,7 @@ from ..services.downloads import (
     describe_choices, download_choices, download_filename, may_download_original,
     original_allowed_for_download, pick_or_refuse,
 )
-from .hls_proxy import create_hls_token, managed_hls_identity, HLS_TOKEN_SECONDS, MANAGED_MEDIA_SECONDS
+from .hls_proxy import issue_hls_url, managed_hls_identity, HLS_TOKEN_SECONDS, MANAGED_MEDIA_SECONDS
 from ..schemas.upload import (
     InitiateUploadRequest, InitiateUploadResponse,
     ALLOWED_MIME_TYPES, mime_to_asset_type,
@@ -381,6 +381,8 @@ def _ready_media_file(
 @router.get("/assets/{asset_id}/stream", response_model=StreamUrlResponse)
 def get_stream_url(
     asset_id: uuid.UUID,
+    request: Request,
+    response: Response,
     version_id: Optional[uuid.UUID] = Query(default=None),
     download: bool = Query(default=False),
     # Which file a download serves: an id from GET /assets/{id}/downloads.
@@ -413,11 +415,10 @@ def get_stream_url(
             **media_expiry,
         )
     elif asset.asset_type == AssetType.video and media_file.s3_key_processed:
-        # Route through the HLS proxy so the master playlist, variant
-        # playlists, and .ts segments all get served via short-lived
-        # presigned URLs — the S3 bucket can stay fully private. (#51)
-        token = create_hls_token(media_file.s3_key_processed, **managed_hls_identity(current_user, asset.project_id, db=db))
-        url = f"/stream/hls/master.m3u8?token={token}"
+        # Cookie-authorized playlists and managed segments stay at the API;
+        # the S3 bucket remains private.
+        url = issue_hls_url(request, response, media_file.s3_key_processed,
+                            **managed_hls_identity(current_user, asset.project_id, db=db))
     else:
         url = generate_presigned_get_url(media_file.s3_key_processed or media_file.s3_key_raw, **media_expiry)
 

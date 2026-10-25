@@ -17,6 +17,8 @@
 					delete X-Amz-Security-Token
 					delete X-Goog-Signature
 				}
+				request>headers>Cookie delete
+				resp_headers>Set-Cookie delete
 				resp_headers>Location delete
 			}
 		}
@@ -40,6 +42,8 @@
 					delete X-Amz-Security-Token
 					delete X-Goog-Signature
 				}
+				request>headers>Cookie delete
+				resp_headers>Set-Cookie delete
 				resp_headers>Location delete
 			}
 		}
@@ -56,10 +60,10 @@
 		# Správa FreeFrame (/admin) je jen vnitřní, přes společný vstup ne.
 		@admin path /admin /admin/*
 		respond @admin 403
-		# API ověřuje Bearer token; cookies Brightbean ani webu mu nepředáváme.
+		# API dostane jen HLS cookie; cookies Brightbean ani webu nepředáváme.
 		# Omezení počtu požadavků počítá podle X-Real-IP; hodnotu od klienta přepíšeme.
 		reverse_proxy jrc-ff-api:8000 {
-			header_up -Cookie
+			header_up Cookie "ff_hls={http.request.cookie.ff_hls}"
 			header_up X-Real-IP {remote_host}
 		}
 	}

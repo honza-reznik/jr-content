@@ -8,7 +8,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { chromium } = require('playwright');
 
-assert.match(process.env.JRC_PROJECT, /^(?:jrc-f5b08|jrc-f5b09a)$/);
+assert.match(process.env.JRC_PROJECT, /^(?:jrc-f5b08|jrc-f5b09a|jrc-f5b09b)$/);
 assert.ok(process.env.JRC_APP_PORT);
 const origin = `http://127.0.0.1:${process.env.JRC_APP_PORT}`;
 const output = path.resolve('ops/test-output/F5-B08');
@@ -31,7 +31,20 @@ function makeVideo(file, source, size, seconds) {
 
 async function login(browser, who, viewport = { width: 1440, height: 1750 }) {
   const context = await browser.newContext({ viewport });
+  // F5-B09b: reproduce F10-B02 network interception. A cross-origin HLS
+  // redirect loses Origin here; managed segments must stay at the API.
+  const foreign = new RegExp(`^https?://(?!127\\.0\\.0\\.1:(?:${process.env.JRC_APP_PORT}|${process.env.JRC_S3_PORT})(?:/|$)).*`);
+  await context.route(foreign, route => route.abort('blockedbyclient'));
   const page = await context.newPage();
+  page.on('request', request => {
+    const url = new URL(request.url());
+    if (url.pathname.includes('/stream/hls/')) assert.equal(url.search, '', 'HLS URL obsahuje přístupové údaje');
+  });
+  page.on('response', response => {
+    if (new URL(response.url()).pathname.includes('/stream/hls/')) {
+      assert(![301, 302, 303, 307, 308].includes(response.status()), 'HLS přesměrovalo na jiný původ');
+    }
+  });
   page.on('pageerror', error => errors.push(`${who}: ${error.message}`));
   page.on('console', message => { if (message.type() === 'error') errors.push(`${who}: ${message.text()}`); });
   await page.goto(`${origin}/accounts/login/`);

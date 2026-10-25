@@ -1,8 +1,8 @@
 #!/bin/sh
 # F5-B05: živé ověření nahrání verze videa. Jen projekt jrc-f5b05 (porty 13333/14053/15583/18153).
-# Použití: nastav JRC_PROJECT na jrc-f5b05 nebo jrc-f5b09a a spusť po make up.
+# Použití: nastav JRC_PROJECT na jrc-f5b05 , jrc-f5b09a nebo jrc-f5b09b a spusť po make up.
 set -eu
-[ "${JRC_PROJECT:-}" = "jrc-f5b05" ] || [ "${JRC_PROJECT:-}" = "jrc-f5b09a" ] || { echo 'Jen ověřovací projekt jrc-f5b05 nebo jrc-f5b09a' >&2; exit 2; }
+[ "${JRC_PROJECT:-}" = "jrc-f5b05" ] || [ "${JRC_PROJECT:-}" = "jrc-f5b09a" ] || [ "${JRC_PROJECT:-}" = "jrc-f5b09b" ] || { echo 'Jen ověřovací projekt jrc-f5b05 , jrc-f5b09a nebo jrc-f5b09b' >&2; exit 2; }
 mkdir -p ops/test-output/F5-B05
 project="$JRC_PROJECT"
 COMPOSE="docker compose --project-name $project --file docker-compose.yml --env-file .env"
