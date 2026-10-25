@@ -96,7 +96,7 @@ tail -n 1 "$run_dir/seed-bb-output" > "$seed_bb"
 chmod 600 "$seed_bb"
 grep -q workspace_id "$seed_bb" || fail 'Seed Brightbean nevytvořil data.'
 checked_docker run --rm --pull never --network none --user 0:0 --cap-drop ALL --cap-add DAC_OVERRIDE --cap-add CHOWN \
-    --mount "type=volume,src=$src-bb-media,dst=/m" "jrc-dev:$src" \
+    --mount "type=volume,src=$src-bb-media,dst=/m,volume-nocopy" "jrc-dev:$src" \
     sh -c 'mkdir -p /m/legacy && printf "Stará média (testovací soubor)\n" > /m/legacy/stara-media.txt'
 seed_ff="$out/seed-ff.json"
 seed_freeframe "$src" > "$run_dir/seed-ff-output"
@@ -106,7 +106,7 @@ grep -q source_sha256 "$seed_ff" || fail 'Seed FreeFrame nevytvořil video.'
 inventory() { dc "$1" exec -T jrc-dev python3 "$tool" inventory; }
 media_listing() {
     checked_docker run --rm --pull never --network none --user 0:0 --cap-drop ALL --cap-add DAC_READ_SEARCH --cap-add DAC_OVERRIDE \
-        --mount "type=volume,src=$1-bb-media,dst=/m,readonly" "jrc-dev:$src" \
+        --mount "type=volume,src=$1-bb-media,dst=/m,readonly,volume-nocopy" "jrc-dev:$src" \
         sh -c 'cd /m && find . -type f | sort | xargs -r sha256sum'
 }
 
