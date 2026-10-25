@@ -44,7 +44,7 @@ export BUILDX_CONFIG := $(CURDIR)/.cache/docker-buildx
 CMD ?= bash
 export CMD
 
-.PHONY: restore-lock-check backup backup-verify restore test-backup test-backup-guards build build-bb env check-project-ports up down shell test test-fast test-smoke test-proxy test-s3 test-bb test-bb-fast test-ff test-ff-smoke test-isolation test-ff-offline test-ff-vitest test-ff-tsc test-ff-lint test-f5-b06-embed test-f5-b05-upload test-f5-b08-video test-f7-b02-approval ff-account build-ff reset logs ps
+.PHONY: restore-lock-check backup backup-verify restore test-backup test-backup-guards build build-bb env check-project-ports up down shell test test-fast test-e2e test-smoke test-proxy test-s3 test-bb test-bb-fast test-ff test-ff-smoke test-isolation test-ff-offline test-ff-vitest test-ff-tsc test-ff-lint test-f5-b06-embed test-f5-b05-upload test-f5-b08-video test-f7-b02-approval ff-account build-ff reset logs ps
 build:
 	docker build --tag jrc-dev:$(JRC_PROJECT) --file docker/Dockerfile docker
 
@@ -123,6 +123,10 @@ test-fast:
 	printf '\n=== Souhrn make test-fast ===\n'; \
 	if [ "$$failed" -eq 0 ]; then printf 'Všechny sady prošly.\n'; else printf 'Nejméně jedna sada selhala.\n'; fi; \
 	exit "$$failed"
+
+# F10-B02: kompletní scénář „Reel pro Ellu“ v čistém jrc-f10b02; po běhu smaže jen jeho data a obrazy.
+test-e2e:
+	@sh scripts/F10-B02/test-e2e.sh
 
 test-smoke: test-proxy test-s3
 	@sh scripts/workspace.sh check

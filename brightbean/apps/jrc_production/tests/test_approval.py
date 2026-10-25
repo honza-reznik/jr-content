@@ -210,6 +210,26 @@ def test_changes_then_new_version_then_approval(workspace, team, ella, content):
     assert "Changes Requested" in history and "Shorter, please." in history and "Approved" in history
 
 
+def test_team_can_move_client_changes_to_editing_but_client_cannot(workspace, team, manager, ella, content):
+    from django.core.exceptions import PermissionDenied
+
+    set_mode(workspace, SINGLE)
+    to_review(content, team)
+    decide(ella, content, "request_changes", comment="Shorten the ending.")
+    team_membership = WorkspaceMembership.objects.get(user=manager, workspace=workspace)
+    client_membership = WorkspaceMembership.objects.get(user=ella, workspace=workspace)
+
+    assert "editing" in available_moves(content, team_membership)
+    assert available_moves(content, client_membership) == []
+    with pytest.raises(PermissionDenied):
+        move_content(content, "editing", ella, expected_stage="review")
+
+    move_content(content, "editing", manager, expected_stage="review")
+    content.refresh_from_db()
+    assert pipeline_stage(content) == "editing"
+    assert statuses(content) == {"draft"}
+
+
 # ---- AK2: two-stage and permissions on the server ----------------------------------------------
 
 
