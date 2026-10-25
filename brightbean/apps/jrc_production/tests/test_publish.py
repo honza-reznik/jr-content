@@ -1,5 +1,6 @@
 from datetime import timedelta
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -151,6 +152,50 @@ def test_final_download_is_scoped_and_redirects_only_to_short_signed_storage_url
     assert "no-store" in response["Cache-Control"]
     assert "token=" not in response["Location"]
     assert "signature" not in call.call_args.args[2]
+    query = parse_qs(urlsplit(call.call_args.args[2]).query)
+    assert query["filename"] == ["publish-test-content-instagram-publish-test-channel-v1.mp4"]
+
+
+def test_final_download_filename_is_ascii_and_safe(client, workspace, user, post):
+    post.title = 'Žluťoučký / teaser "one"'
+    post.save(update_fields=["title"])
+    variant = post.platform_posts.get()
+    variant.social_account.account_name = 'Kanál / "A"'
+    variant.social_account.save(update_fields=["account_name"])
+    video = VideoAsset.objects.create(platform_post=variant, ff_asset_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+    version = VideoVersion.objects.create(
+        video=video,
+        number=3,
+        ff_version_id="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        status=VideoVersion.Status.READY,
+    )
+    video.final_version = version
+    video.save(update_fields=["final_version"])
+    client.force_login(user)
+    url = reverse(
+        "jrc_video:final_download",
+        kwargs={"workspace_id": workspace.pk, "post_id": post.pk, "platform_post_id": variant.pk},
+    )
+    signed = "http://127.0.0.1:14133/file.mp4?X-Amz-Expires=600&X-Amz-Signature=signed-disposition"
+    with (
+        override_settings(JRC_S3_PUBLIC_ORIGIN="http://127.0.0.1:14133"),
+        patch("apps.jrc_video.uploads._call", return_value={"url": signed}) as call,
+    ):
+        response = client.get(url)
+    assert response.status_code == 302
+    query = parse_qs(urlsplit(call.call_args.args[2]).query)
+    filename = query["filename"][0]
+    assert filename == "zlutoucky-teaser-one-instagram-kanal-a-v3.mp4"
+    assert filename.isascii()
+    assert not any(char in filename for char in '/\\"')
+
+
+def test_content_detail_renders_flash_message_once(client, workspace, user, post):
+    client.force_login(user)
+    url = reverse("jrc_production:add_content_comment", kwargs={"workspace_id": workspace.pk, "post_id": post.pk})
+    response = client.post(url, {"body": "A comment", "visibility": "external"}, follow=True)
+    assert response.status_code == 200
+    assert response.content.count(b"Comment added.") == 1
 
 
 @pytest.mark.parametrize("role", ["client", "viewer", "editor"])

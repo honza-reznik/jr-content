@@ -388,6 +388,8 @@ def get_stream_url(
     # Which file a download serves: an id from GET /assets/{id}/downloads.
     # Omitted, a download is the first transcode, as it was before the choice.
     rendition: Optional[str] = Query(default=None, max_length=32),
+    # Trusted integrations can supply a contextual name; S3 signs its disposition with the URL.
+    filename: Optional[str] = Query(default=None, max_length=200),
     # Bulk downloads: the original when the instance allows originals outside a
     # project, else the default. Members included; see original_allowed_for_download.
     prefer_original: bool = Query(default=False),
@@ -411,7 +413,7 @@ def get_stream_url(
             prefer_original=prefer_original,
         )
         url = generate_presigned_get_url(
-            choice.s3_key, download_filename=download_filename(asset, media_file, choice),
+            choice.s3_key, download_filename=filename or download_filename(asset, media_file, choice),
             **media_expiry,
         )
     elif asset.asset_type == AssetType.video and media_file.s3_key_processed:
