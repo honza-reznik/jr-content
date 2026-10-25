@@ -1,15 +1,16 @@
 #!/bin/sh
-# F5-B08: živé ověření záložky Video. Jen projekt jrc-f5b08 (porty 13363/14083/15613/18183).
-# Použití: JRC_PROJECT=jrc-f5b08 sh scripts/F5-B08/check-video-tab.sh   (po make up s těmito porty)
+# F5-B08: živé ověření záložky Video v izolovaném projektu jrc-f5b08 nebo jrc-f5b09a.
+# Použití: nastav JRC_PROJECT na jrc-f5b08 nebo jrc-f5b09a a spusť po make up.
 set -eu
-[ "${JRC_PROJECT:-}" = "jrc-f5b08" ] || { echo 'Jen JRC_PROJECT=jrc-f5b08' >&2; exit 2; }
+[ "${JRC_PROJECT:-}" = "jrc-f5b08" ] || [ "${JRC_PROJECT:-}" = "jrc-f5b09a" ] || { echo 'Jen ověřovací projekt jrc-f5b08 nebo jrc-f5b09a' >&2; exit 2; }
 mkdir -p ops/test-output/F5-B08
-COMPOSE="docker compose --project-name jrc-f5b08 --file docker-compose.yml --env-file .env"
-$COMPOSE exec -T -e JRC_PROJECT=jrc-f5b08 jrc-bb-web python manage.py shell < scripts/F5-B08/seed.py \
+project="$JRC_PROJECT"
+COMPOSE="docker compose --project-name $project --file docker-compose.yml --env-file .env"
+$COMPOSE exec -T -e JRC_PROJECT=$project jrc-bb-web python manage.py shell < scripts/F5-B08/seed.py \
   > ops/test-output/F5-B08/fixture.json
 docker run --rm --pull never --network host --user "$(id -u):$(id -g)" \
-  --env-file .env --env JRC_PROJECT=jrc-f5b08 --volume "$PWD:/jrc" --workdir /jrc \
-  "jrc-dev:jrc-f5b08" node scripts/F5-B08/check-video-tab.cjs
+  --env-file .env --env JRC_PROJECT=$project --volume "$PWD:/jrc" --workdir /jrc \
+  "jrc-dev:$project" node scripts/F5-B08/check-video-tab.cjs
 POST=$(python3 -c "import json;print(json.load(open('ops/test-output/F5-B08/fixture.json'))['post'])")
 # Uložení "Final for publishing" v Brightbeanu: jedna finální verze, kdo a kdy.
 $COMPOSE exec -T jrc-bb-web python manage.py shell -c "
@@ -35,14 +36,9 @@ print(v.status, v.width, v.height)
   i=$((i + 1)); sleep 5
 done
 [ "$i" -lt 30 ] || { echo "CHYBA: worker stav neobnovil ($state)" >&2; exit 1; }
-# V logu nesmí být vstupenka. Tokeny FreeFrame (JWT) v adresách ?token= (události /events/<projekt>
-# a stream /stream/hls) zapisuje do logu sám přehrávač FreeFrame (EventSource ani HLS neposílají Authorization); to je
-# známý nález mimo rozsah bloku (viz průběh F5-B08), proto jen upozornění a počet, ne selhání.
+# Caddy musí maskovat tiket v Location i citlivý parametr při přístupu i warningu.
 LOGS=$($COMPOSE logs --no-color jrc-bb-web jrc-bb-worker jrc-ff-api jrc-proxy 2>&1 || true)
-if printf '%s\n' "$LOGS" | grep -Eq 'v1\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}'; then
-  echo 'CHYBA: vstupenka v logu' >&2; exit 1
+if printf '%s\n' "$LOGS" | grep -Eq 'v1\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}|eyJhbGci'; then
+  echo 'CHYBA: přístupový token nebo tiket v logu' >&2; exit 1
 fi
-echo 'OK: v logu není vstupenka'
-other=$(printf '%s\n' "$LOGS" | grep -E 'eyJhbGci' | grep -vc '?token=' || true)
-[ "${other:-0}" = "0" ] || { echo "CHYBA: token mimo ?token= v logu ($other řádků)" >&2; exit 1; }
-echo "UPOZORNĚNÍ: přístupové tokeny jsou v logu jen v adresách ?token= (nález mimo rozsah)"
+echo 'OK: v logu není přístupový token ani tiket'

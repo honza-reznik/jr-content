@@ -8,8 +8,8 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { chromium } = require('playwright');
 
-assert.equal(process.env.JRC_PROJECT, 'jrc-f5b08');
-assert.equal(process.env.JRC_APP_PORT, '13363');
+assert.match(process.env.JRC_PROJECT, /^(?:jrc-f5b08|jrc-f5b09a)$/);
+assert.ok(process.env.JRC_APP_PORT);
 const origin = `http://127.0.0.1:${process.env.JRC_APP_PORT}`;
 const output = path.resolve('ops/test-output/F5-B08');
 const shots = path.resolve('ops/screenshoty/F5-B08');
