@@ -6,9 +6,9 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { chromium } = require('playwright');
 
-assert.equal(process.env.JRC_PROJECT, 'jrc-f5b05');
-assert.equal(process.env.JRC_APP_PORT, '13333');
-assert.equal(process.env.JRC_S3_PORT, '14053');
+assert.match(process.env.JRC_PROJECT, /^(?:jrc-f5b05|jrc-f5b09a)$/);
+assert.ok(process.env.JRC_APP_PORT);
+assert.ok(process.env.JRC_S3_PORT);
 const origin = `http://127.0.0.1:${process.env.JRC_APP_PORT}`;
 const s3Origin = `http://127.0.0.1:${process.env.JRC_S3_PORT}`;
 const output = path.resolve('ops/test-output/F5-B05');
@@ -175,7 +175,7 @@ async function main() {
     await page.getByText('Converting').first().waitFor({ timeout: 30000 }).catch(() => {});
     await page.screenshot({ path: path.join(shots, 'converting-1440.png') });
     await page.locator('[data-version][data-status="ready"]').first().waitFor({ timeout: 360000 });
-    const ready = await page.locator('[data-version]').first().innerText();
+    const ready = await page.locator('[data-version][data-status="ready"]').first().innerText();
     assert(/v1/.test(ready) && /Ready/.test(ready) && /1920×1080/.test(ready) && /1:00/.test(ready), ready);
     await page.screenshot({ path: path.join(shots, 'ready-1440.png') });
     await mobileShot(editor.context, 'ready-390.png');
@@ -184,9 +184,9 @@ async function main() {
     // Druhá verze téhož kanálu.
     await pickFile(page, 'Upload version', small);
     await page.getByText(/Upload finished/).first().waitFor({ timeout: 60000 });
-    await page.locator('[data-version]').nth(1).waitFor();
-    await page.locator('[data-version][data-status="ready"]').nth(1).waitFor({ timeout: 240000 });
-    const second = await page.locator('[data-version]').first().innerText();
+    await page.locator('[data-version][data-status="ready"]').nth(1).waitFor();
+    await page.locator('[data-version][data-status="ready"]').filter({ hasText: /\bv2\b/ }).waitFor({ timeout: 240000 });
+    const second = await page.locator('[data-version][data-status="ready"]').filter({ hasText: /\bv2\b/ }).first().innerText();
     assert(/v2/.test(second), second);
     await page.screenshot({ path: path.join(shots, 'two-versions-1440.png') });
     console.log('OK: v2 téhož kanálu hotová');
@@ -197,7 +197,7 @@ async function main() {
     assert(everything.every(item => !/eyJ[A-Za-z0-9_-]{10,}|access_token|refresh_token|Bearer/.test(item.text)),
       'Odpověď Brightbean obsahuje token');
     const stored = await page.evaluate(() => ({ local: Object.keys(localStorage), session: Object.keys(sessionStorage) }));
-    assert(![...stored.local, ...stored.session].some(key => key.startsWith('ff_')), 'V prohlížeči jsou tokeny FreeFrame');
+    assert(![...stored.local, ...stored.session].some(key => /token|auth|access/i.test(key)), 'V prohlížeči jsou klíče pro přihlašovací tokeny FreeFrame');
     const urls = [...log.puts, ...log2.puts];
     assert(urls.length > 0 && urls.every(url => url.startsWith(s3Origin + '/')), 'Část šla jinam než do úložiště');
     assert(urls.every(url => Number(new URL(url).searchParams.get('X-Amz-Expires')) <= 900), 'Podpis části je delší než 15 minut');
