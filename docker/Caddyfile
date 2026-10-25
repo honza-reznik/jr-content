@@ -5,6 +5,25 @@
 }
 
 :8080 {
+	# Query credentials are needed by local HLS/SSE clients, but never by
+	# access-log readers. Keep access logs useful while removing those values.
+	log {
+		format filter {
+			wrap console
+			fields {
+				request>uri query {
+					delete token
+					delete ticket
+					delete signature
+					delete sig
+					delete X-Amz-Signature
+					delete X-Amz-Credential
+					delete X-Amz-Security-Token
+					delete X-Goog-Signature
+				}
+			}
+		}
+	}
 	# Bezpečnostní hlavičky pro všechny odpovědi; defer přepíše hodnotu aplikace.
 	header {
 		defer

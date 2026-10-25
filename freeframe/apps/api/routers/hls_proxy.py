@@ -32,6 +32,9 @@ router = APIRouter(prefix="/stream", tags=["streaming"])
 
 
 MANAGED_MEDIA_SECONDS = 180
+# HLS credentials are purpose-bound, unlike the long-lived login JWT. A player
+# asks for a fresh stream URL when the playlist session expires.
+HLS_TOKEN_SECONDS = 30 * 60
 
 
 def managed_hls_identity(user, project_id, *, db: Session | None = None) -> dict:
@@ -47,15 +50,16 @@ def managed_hls_identity(user, project_id, *, db: Session | None = None) -> dict
 
 
 def create_hls_token(
-    s3_prefix: str, expires_hours: int = 24, *, managed: bool = False,
+    s3_prefix: str, expires_seconds: int = HLS_TOKEN_SECONDS, *, managed: bool = False,
     user_id: str | None = None, project_id: str | None = None, token_version: int | None = None,
 ) -> str:
     """Create an HLS token; managed sessions also carry a live identity binding."""
     payload = {
         "sub": "hls",
-        "v": 3,
+        # v4 invalidates previously issued 24-hour HLS URLs at deployment.
+        "v": 4,
         "pfx": s3_prefix,
-        "exp": datetime.now(timezone.utc) + timedelta(hours=expires_hours),
+        "exp": datetime.now(timezone.utc) + timedelta(seconds=expires_seconds),
     }
     if managed:
         if not user_id or not project_id or token_version is None:
@@ -65,7 +69,7 @@ def create_hls_token(
 
 
 # The longest a segment URL is signed for: the lifetime create_hls_token gives a token.
-SEGMENT_URL_MAX_SECONDS = 86400
+SEGMENT_URL_MAX_SECONDS = HLS_TOKEN_SECONDS
 
 
 def _decode_hls_token(token: str) -> dict:
@@ -75,9 +79,9 @@ def _decode_hls_token(token: str) -> dict:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     if payload.get("sub") != "hls":
         raise HTTPException(status_code=403, detail="Invalid token type")
-    # Pre-upgrade share tokens (v1/v2) may lack a user binding and live for 24 hours.
-    # Invalidate that format once, rather than preserving the revocation bypass.
-    if payload.get("v") != 3:
+    # Earlier formats used 24-hour URLs. Invalidate them rather than leaving old
+    # credentials valid after the logging and lifetime protections are deployed.
+    if payload.get("v") != 4:
         raise HTTPException(status_code=401, detail="Reload the video to renew its streaming session")
     return payload
 

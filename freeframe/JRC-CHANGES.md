@@ -282,3 +282,18 @@ Provozní postup je v `docs-arch/F2-B02/freeframe-provoz.md` (doplněk pro PM do
   režimu `m:ss` (výběr formátu v přehrávači zůstává). Mimo vložený režim beze změny.
 - Testy: `lib/__tests__/embed-version.test.ts`, `components/review/__tests__/review-provider-embed-version.test.tsx`,
   `app/(dashboard)/projects/[id]/assets/[assetId]/__tests__/embed-version.test.tsx`.
+
+## 2026-10-25 — F5-B09
+
+- Přihlašovací JWT už se pro SSE neposílá v URL. Web si ho před připojením vymění přes Bearer
+  API za tiket platný 5 minut, svázaný s uživatelem, projektem, verzí relace a účelem `sse`.
+  Obnova tiketu po vypršení neobnovuje přihlašovací relaci; změna verze relace dál vyžaduje
+  přihlášení a odebrání členství ukončí stream.
+- HLS přístupové tokeny platí 30 minut, jsou svázané s prefixem videa a mají účel `hls`. Verze
+  tokenu se zvýšila na 4, aby se dříve vydané 24hodinové tokeny zneplatnily při nasazení. Odkazy
+  na segmenty neplatí déle než HLS token; řízené účty navíc dál ověřují členství při každém
+  manifestu a segmentu.
+- Caddy přístupový záznam odstraňuje hodnoty `token`, `ticket` a podpisů AWS/Google. Filtr
+  záznamu uvicorn obdobně maskuje tokeny, tikety a podpisy bez odstranění ostatních údajů URL.
+- Přidány testy platnosti, účelového omezení, odmítnutí přihlašovacího JWT v SSE URL a maskování
+  API záznamů. Celoaplikační ověření poběží po dokončení implementace.

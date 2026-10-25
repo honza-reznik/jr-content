@@ -1,6 +1,8 @@
 import logging
 import os
+import re
 import threading
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +13,40 @@ from .services.email_service import mail_is_configured
 from .middleware.global_rate_limit import GlobalRateLimitMiddleware
 from .middleware.setup_guard import SetupGuardMiddleware
 from .routers import jrc_auth, jrc_sync
+
+
+_SENSITIVE_QUERY_KEYS = {
+    "token", "ticket", "signature", "sig", "x-amz-signature",
+    "x-amz-credential", "x-amz-security-token", "x-goog-signature",
+}
+
+
+def _redact_access_url(value: str) -> str:
+    """Mask credentials and signatures in URLs emitted by Uvicorn access logs."""
+    try:
+        parts = urlsplit(value)
+        query = [
+            (key, "[redacted]" if key.lower() in _SENSITIVE_QUERY_KEYS else item)
+            for key, item in parse_qsl(parts.query, keep_blank_values=True)
+        ]
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+    except (TypeError, ValueError):
+        return re.sub(r"(?i)(token|ticket|signature|sig)=([^&\s]+)", r"\1=[redacted]", value)
+
+
+class UvicornAccessLogRedactionFilter(logging.Filter):
+    """Uvicorn passes the raw request target as the third access-log argument."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) >= 3:
+            mutable = list(args)
+            mutable[2] = _redact_access_url(str(mutable[2]))
+            record.args = tuple(mutable)
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(UvicornAccessLogRedactionFilter())
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

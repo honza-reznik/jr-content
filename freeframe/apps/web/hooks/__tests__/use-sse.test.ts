@@ -7,6 +7,8 @@ const auth = vi.hoisted(() => ({
   refreshAccessToken: vi.fn(async (): Promise<string | null> => null),
 }))
 vi.mock('@/lib/auth', () => auth)
+const eventApi = vi.hoisted(() => ({ post: vi.fn(async () => ({ token: 'short-sse-ticket' })) }))
+vi.mock('@/lib/api', () => ({ api: eventApi }))
 
 // A token shaped like the API's: only `exp` matters to the hook.
 function jwt(expSecondsFromNow: number): string {
@@ -62,9 +64,20 @@ class MockEventSource {
   }
 }
 
+async function renderSSE<Result>(callback: () => Result) {
+  const result = renderHook(callback)
+  await act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+  return result
+}
+
 describe('useSSE hook', () => {
   beforeEach(() => {
     MockEventSource.reset()
+    eventApi.post.mockClear()
+    eventApi.post.mockResolvedValue({ token: 'short-sse-ticket' })
     vi.stubGlobal('EventSource', MockEventSource)
   })
 
@@ -72,15 +85,17 @@ describe('useSSE hook', () => {
     vi.unstubAllGlobals()
   })
 
-  it('creates EventSource with correct URL', () => {
-    renderHook(() => useSSE('project-123'))
+  it('creates EventSource with correct URL', async () => {
+    await renderSSE(() => useSSE('project-123'))
     expect(MockEventSource.instances).toHaveLength(1)
     expect(MockEventSource.instances[0].url).toContain('/events/project-123')
   })
 
-  it('includes access token in URL query param', () => {
-    renderHook(() => useSSE('project-123'))
-    expect(MockEventSource.instances[0].url).toContain('token=test-token')
+  it('uses a short ticket in the URL instead of the access token', async () => {
+    await renderSSE(() => useSSE('project-123'))
+    expect(eventApi.post).toHaveBeenCalledWith('/events/project-123/ticket', {})
+    expect(MockEventSource.instances[0].url).toContain('token=short-sse-ticket')
+    expect(MockEventSource.instances[0].url).not.toContain('test-token')
   })
 
   it('does not create EventSource when projectId is null', () => {
@@ -93,8 +108,8 @@ describe('useSSE hook', () => {
     expect(MockEventSource.instances).toHaveLength(0)
   })
 
-  it('sets isConnected to true when connection opens', () => {
-    const { result } = renderHook(() => useSSE('project-123'))
+  it('sets isConnected to true when connection opens', async () => {
+    const { result } = await renderSSE(() => useSSE('project-123'))
     expect(result.current.isConnected).toBe(false)
     act(() => {
       MockEventSource.instances[0].onopen?.()
@@ -102,9 +117,9 @@ describe('useSSE hook', () => {
     expect(result.current.isConnected).toBe(true)
   })
 
-  it('sets isConnected to false and closes on error', () => {
+  it('sets isConnected to false and closes on error', async () => {
     vi.useFakeTimers()
-    const { result } = renderHook(() => useSSE('project-123'))
+    const { result } = await renderSSE(() => useSSE('project-123'))
 
     act(() => {
       MockEventSource.instances[0].onopen?.()
@@ -120,9 +135,9 @@ describe('useSSE hook', () => {
     vi.useRealTimers()
   })
 
-  it('calls onNewComment callback when new_comment event fires', () => {
+  it('calls onNewComment callback when new_comment event fires', async () => {
     const onNewComment = vi.fn()
-    renderHook(() => useSSE('project-123', { onNewComment }))
+    await renderSSE(() => useSSE('project-123', { onNewComment }))
 
     act(() => {
       MockEventSource.instances[0].emit('new_comment', {
@@ -139,16 +154,16 @@ describe('useSSE hook', () => {
     })
   })
 
-  it('cleans up EventSource on unmount', () => {
-    const { unmount } = renderHook(() => useSSE('project-123'))
+  it('cleans up EventSource on unmount', async () => {
+    const { unmount } = await renderSSE(() => useSSE('project-123'))
     const instance = MockEventSource.instances[0]
     unmount()
     expect(instance.closed).toBe(true)
   })
 
-  it('schedules reconnect with backoff after error', () => {
+  it('schedules reconnect with backoff after error', async () => {
     vi.useFakeTimers()
-    renderHook(() => useSSE('project-123'))
+    await renderSSE(() => useSSE('project-123'))
 
     act(() => {
       MockEventSource.instances[0].onerror?.()
@@ -158,9 +173,10 @@ describe('useSSE hook', () => {
     expect(MockEventSource.instances).toHaveLength(1)
 
     // After backoff delay (1000ms), a new EventSource should be created
-    act(() => {
-      vi.advanceTimersByTime(1100)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1100)
     })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
     expect(MockEventSource.instances).toHaveLength(2)
 
     vi.useRealTimers()
@@ -170,6 +186,8 @@ describe('useSSE hook', () => {
 describe('useSSE when the server revokes the stream', () => {
   beforeEach(() => {
     MockEventSource.reset()
+    eventApi.post.mockClear()
+    eventApi.post.mockResolvedValue({ token: 'short-sse-ticket' })
     vi.stubGlobal('EventSource', MockEventSource)
     vi.useFakeTimers()
     auth.getAccessToken.mockReset().mockImplementation(() => 'test-token')
@@ -182,7 +200,7 @@ describe('useSSE when the server revokes the stream', () => {
   })
 
   it('stops for good when access was revoked', async () => {
-    const { result } = renderHook(() => useSSE('project-123'))
+    const { result } = await renderSSE(() => useSSE('project-123'))
     const first = MockEventSource.instances[0]
     act(() => first.onopen?.())
     expect(result.current.isConnected).toBe(true)
@@ -201,7 +219,7 @@ describe('useSSE when the server revokes the stream', () => {
   })
 
   it('treats an unreadable revoked event as access revoked', async () => {
-    renderHook(() => useSSE('project-123'))
+    await renderSSE(() => useSSE('project-123'))
     act(() => {
       const event = { data: 'not json' } as MessageEvent
       MockEventSource.instances[0].listeners['revoked']?.forEach((fn) => fn(event))
@@ -212,7 +230,7 @@ describe('useSSE when the server revokes the stream', () => {
     expect(MockEventSource.instances).toHaveLength(1)
   })
 
-  it.each(['token_expired', 'token_revoked'])(
+  it.each(['token_revoked'])(
     'refreshes the token and reconnects after %s',
     async (reason) => {
       const original = jwt(600)
@@ -221,8 +239,8 @@ describe('useSSE when the server revokes the stream', () => {
         auth.getAccessToken.mockImplementation(() => 'fresh-token')
         return 'fresh-token'
       })
-      renderHook(() => useSSE('project-123'))
-      expect(MockEventSource.instances[0].url).toContain(`token=${original}`)
+      await renderSSE(() => useSSE('project-123'))
+      expect(MockEventSource.instances[0].url).toContain('token=short-sse-ticket')
 
       act(() => MockEventSource.instances[0].emit('revoked', { reason }))
       expect(MockEventSource.instances[0].closed).toBe(true)
@@ -230,17 +248,28 @@ describe('useSSE when the server revokes the stream', () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(1100)
       })
+      await act(async () => { await Promise.resolve(); await Promise.resolve() })
       // the refused token is not offered again, even though it has not expired
       expect(auth.refreshAccessToken).toHaveBeenCalledTimes(1)
       expect(MockEventSource.instances).toHaveLength(2)
-      expect(MockEventSource.instances[1].url).toContain('token=fresh-token')
+      expect(MockEventSource.instances[1].url).toContain('token=short-sse-ticket')
     },
   )
+
+  it('renews an expired SSE ticket without refreshing the still valid login token', async () => {
+    await renderSSE(() => useSSE('project-123'))
+    act(() => MockEventSource.instances[0].emit('revoked', { reason: 'token_expired' }))
+    await act(async () => { await vi.advanceTimersByTimeAsync(1100) })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(auth.refreshAccessToken).not.toHaveBeenCalled()
+    expect(eventApi.post).toHaveBeenCalledTimes(2)
+    expect(MockEventSource.instances).toHaveLength(2)
+  })
 
   it('does not reconnect with the refused token when the refresh fails', async () => {
     const original = jwt(600)
     auth.getAccessToken.mockImplementation(() => original)
-    renderHook(() => useSSE('project-123'))
+    await renderSSE(() => useSSE('project-123'))
     act(() => MockEventSource.instances[0].emit('revoked', { reason: 'token_revoked' }))
 
     await act(async () => {
@@ -260,26 +289,26 @@ describe('useSSE when the server revokes the stream', () => {
   it('refreshes an expired stored token before connecting', async () => {
     auth.getAccessToken.mockImplementation(() => jwt(-60))
     auth.refreshAccessToken.mockImplementation(async () => 'fresh-token')
-    renderHook(() => useSSE('project-123'))
+    await renderSSE(() => useSSE('project-123'))
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0)
     })
     expect(auth.refreshAccessToken).toHaveBeenCalledTimes(1)
     expect(MockEventSource.instances).toHaveLength(1)
-    expect(MockEventSource.instances[0].url).toContain('token=fresh-token')
+    expect(MockEventSource.instances[0].url).toContain('token=short-sse-ticket')
   })
 
   it('refreshes a token that expires within the skew before connecting', async () => {
     // valid for another 5 s, which is inside the 10 s margin
     auth.getAccessToken.mockImplementation(() => jwt(5))
     auth.refreshAccessToken.mockImplementation(async () => 'fresh-token')
-    renderHook(() => useSSE('project-123'))
+    await renderSSE(() => useSSE('project-123'))
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0)
     })
     expect(auth.refreshAccessToken).toHaveBeenCalledTimes(1)
     expect(MockEventSource.instances).toHaveLength(1)
-    expect(MockEventSource.instances[0].url).toContain('token=fresh-token')
+    expect(MockEventSource.instances[0].url).toContain('token=short-sse-ticket')
   })
 
   it('does not connect when unmounted while a refresh is in flight', async () => {
@@ -301,18 +330,20 @@ describe('useSSE when the server revokes the stream', () => {
     expect(MockEventSource.instances).toHaveLength(0)
   })
 
-  it('connects with a stored token that is still valid, without refreshing', () => {
+  it('connects with a stored token that is still valid, without refreshing', async () => {
     const valid = jwt(600)
     auth.getAccessToken.mockImplementation(() => valid)
-    renderHook(() => useSSE('project-123'))
+    await renderSSE(() => useSSE('project-123'))
     expect(auth.refreshAccessToken).not.toHaveBeenCalled()
-    expect(MockEventSource.instances[0].url).toContain(`token=${valid}`)
+    expect(MockEventSource.instances[0].url).toContain('token=short-sse-ticket')
   })
 })
 
 describe('useSSE with relative NEXT_PUBLIC_API_URL', () => {
   beforeEach(() => {
     MockEventSource.reset()
+    eventApi.post.mockClear()
+    eventApi.post.mockResolvedValue({ token: 'short-sse-ticket' })
     vi.stubGlobal('EventSource', MockEventSource)
   })
 
@@ -331,7 +362,7 @@ describe('useSSE with relative NEXT_PUBLIC_API_URL', () => {
     vi.resetModules()
     const { useSSE: useSSEFresh } = await import('../use-sse')
 
-    expect(() => renderHook(() => useSSEFresh('project-123'))).not.toThrow()
+    await renderSSE(() => useSSEFresh('project-123'))
     expect(MockEventSource.instances).toHaveLength(1)
     expect(MockEventSource.instances[0].url).toContain('/api/events/project-123')
   })
