@@ -160,6 +160,56 @@ def test_image_download_is_named_for_the_webp_it_serves(
     assert mock_presign.call_args.kwargs["download_filename"] == "Poster.webp"
 
 
+@patch("apps.api.routers.assets.generate_presigned_get_url")
+@patch("apps.api.routers.assets.require_asset_access")
+def test_download_can_sign_a_contextual_filename_from_a_trusted_integration(
+    mock_require_access, mock_presign, client, mock_db, auth_headers,
+):
+    from apps.api.models.asset import AssetType
+
+    asset, version = _audio_asset(mock_db, "Final.mp4", AssetType.video)
+    media_file = _media_file(
+        "processed/p/a/v/processed.mp4", "raw/p/a/v/original.mp4", "Final.mp4"
+    )
+    mock_db.first.side_effect = [asset, version, media_file]
+    mock_require_access.return_value = None
+    mock_presign.return_value = "https://s3.example.com/processed.mp4?response-content-disposition=signed"
+    filename = "campaign-instagram-brand-v4.mp4"
+
+    response = client.get(
+        f"/assets/{asset.id}/stream?download=true&filename={filename}", headers=auth_headers
+    )
+
+    assert response.status_code == 200, response.text
+    assert mock_presign.call_args.kwargs["download_filename"] == filename
+
+
+def test_content_disposition_keeps_contextual_filename_safe_and_utf8_compatible():
+    from apps.api.services.s3_service import build_content_disposition
+
+    disposition = build_content_disposition('campaign/"Žluťoučký"-v2.mp4')
+    _, ascii_part, utf8_part = disposition.split("; ")
+    assert ascii_part.isascii()
+    assert "/" not in ascii_part
+    assert "filename*=UTF-8''campaign_%22%C5%BDlu%C5%A5ou%C4%8Dk%C3%BD%22-v2.mp4" == utf8_part
+
+
+def test_presigned_download_url_signs_the_content_disposition():
+    from apps.api.services.s3_service import generate_presigned_get_url
+
+    s3 = MagicMock()
+    s3.generate_presigned_url.return_value = "https://s3.example.com/file.mp4?signed"
+    filename = "campaign-instagram-brand-v4.mp4"
+    with patch("apps.api.services.s3_service._get_presign_client", return_value=s3):
+        url = generate_presigned_get_url("final/file.mp4", download_filename=filename)
+
+    assert url.endswith("?signed")
+    params = s3.generate_presigned_url.call_args.kwargs["Params"]
+    assert params["ResponseContentDisposition"] == (
+        f'attachment; filename="{filename}"; filename*=UTF-8\'\'{filename}'
+    )
+
+
 @patch("apps.api.routers.share._log_share_activity")
 @patch("apps.api.routers.share.generate_presigned_get_url")
 @patch("apps.api.routers.share._get_latest_media_file")

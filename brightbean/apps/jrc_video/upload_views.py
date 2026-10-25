@@ -7,6 +7,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.http import Http404, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404
+from django.utils.text import slugify
 from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_GET, require_POST
@@ -157,15 +158,34 @@ def final_download(request, workspace_id, post_id, platform_post_id):
         raise PermissionDenied("You cannot download the final video.")
     if post.workspace.is_archived:
         raise Http404
-    variant = get_object_or_404(PlatformPost, pk=platform_post_id, post=post)
+    variant = get_object_or_404(PlatformPost.objects.select_related("social_account"), pk=platform_post_id, post=post)
     video = VideoAsset.objects.filter(platform_post=variant).select_related("final_version").first()
     if video is None or video.final_version_id is None:
         raise Http404
+    account = variant.social_account
+    filename = (
+        "-".join(
+            (
+                slugify(post.title, allow_unicode=False)[:80] or "content",
+                slugify(f"{account.get_platform_display()}-{account.account_name}", allow_unicode=False)[:80]
+                or "channel",
+                f"v{video.final_version.number}",
+            )
+        )
+        + ".mp4"
+    )
     try:
+        stream_query = urlencode(
+            {
+                "version_id": video.final_version.ff_version_id,
+                "download": "true",
+                "filename": filename,
+            }
+        )
         result = uploads._call(
             request.user,
             "GET",
-            f"/assets/{video.ff_asset_id}/stream?{urlencode({'version_id': video.final_version.ff_version_id, 'download': 'true'})}",
+            f"/assets/{video.ff_asset_id}/stream?{stream_query}",
         )
         signed_url = result.get("url") if isinstance(result, dict) else None
         uploads._check_signed_url(signed_url)

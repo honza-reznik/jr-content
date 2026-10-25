@@ -37,7 +37,6 @@
     </nav>
 
     <section class="mt-5 rounded-2xl border border-stone-200 bg-white p-4 sm:p-6" role="tabpanel" aria-label="{{ active_tab|title }}">
-        {% if messages %}<div class="mb-4 space-y-2" aria-live="polite">{% for message in messages %}<p class="rounded-lg px-3 py-2 text-sm {% if message.tags == 'error' %}bg-red-50 text-red-800{% else %}bg-emerald-50 text-emerald-800{% endif %}">{{ message }}</p>{% endfor %}</div>{% endif %}
         {% if active_tab == "comments" %}
             <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">Comments</h2><p class="mt-1 text-sm text-stone-500">Discuss this content with your team{% if is_client %}.{% else %}. Internal comments are visible to your team only.{% endif %}</p></div>
             <form method="post" action="{% url 'jrc_production:add_content_comment' workspace_id=workspace.id post_id=post.id %}" class="mb-6 rounded-xl border border-stone-200 bg-stone-50 p-3 sm:p-4">
