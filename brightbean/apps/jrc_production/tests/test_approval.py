@@ -242,6 +242,32 @@ def test_two_stage_client_decides_only_after_the_team(workspace, team, ella, con
     assert statuses(content) == {"approved"}
 
 
+def test_custom_role_client_cannot_skip_team_stage(workspace, team, content):
+    set_mode(workspace, TWO_STAGE)
+    approver = CustomRole.objects.create(
+        organization=workspace.organization,
+        name="Client approver",
+        permissions={"approve_posts": True, "create_posts": False},
+    )
+    client = make_user("custom-client@example.test", "Custom client")
+    membership = join(workspace, client, "client", approver)
+    to_review(content, team)
+
+    assert not can_decide(content, membership)
+    assert "Your decision" not in login(client).get(detail_url(content)).content.decode()
+    for decision in ("approve", "request_changes"):
+        response = login(client).post(
+            decide_url(content), {"decision": decision, "comment": "x", "expected_stage": "review"}
+        )
+        assert response.status_code == 403
+    assert statuses(content) == {"pending_review"}
+    assert "Waiting for you" not in board_html(client)
+
+    decide(team, content, "approve")
+    assert can_decide(content, membership)
+    assert "Waiting for you" in board_html(client)
+
+
 def test_two_stage_client_can_request_changes_after_the_team(workspace, team, ella, content):
     set_mode(workspace, TWO_STAGE)
     to_review(content, team)

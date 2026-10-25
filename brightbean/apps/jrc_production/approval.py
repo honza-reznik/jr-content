@@ -8,7 +8,7 @@ from apps.approvals.models import ApprovalAction
 from apps.jrc_texts.models import TextDocument, TextVersion
 from apps.jrc_texts.services import latest_saved_captions
 
-from .services import can_decide, is_client
+from .services import can_decide
 
 _STATUS_TEXT = {
     "draft": "This content is not in review yet.",
@@ -35,14 +35,14 @@ def post_statuses(post):
 
 def is_waiting_for(post, membership):
     """Content that only this client can decide on now (the "Waiting for you" list)."""
-    return is_client(membership) and can_decide(post, membership)
+    return membership.workspace_role == "client" and can_decide(post, membership)
 
 
 def status_text(post, membership):
     statuses = post_statuses(post)
     if can_decide(post, membership, statuses):
         return "Waiting for your decision."
-    if is_client(membership) and "pending_review" in statuses:
+    if membership.workspace_role == "client" and "pending_review" in statuses:
         mode = post.workspace.approval_workflow_mode
         if mode == "required_internal_and_client":
             return "The team is checking this first. You will be asked to approve after that."

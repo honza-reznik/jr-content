@@ -8,6 +8,7 @@ from typing import Optional
 from ..database import get_db
 from ..middleware.auth import get_current_user
 from ..models.user import User
+from ..services.comment_privacy import hides_internal_comments
 from ..models.asset import Asset, AssetVersion, MediaFile, AssetType, FileType, ProcessingStatus
 from ..models.project import Project, ProjectMember, ProjectRole
 from ..models.share import AssetShare
@@ -80,7 +81,7 @@ def _playable_version(db: Session, asset_id: uuid.UUID) -> AssetVersion | None:
     )
 
 
-def _comment_counts(db: Session, version_ids: list) -> dict:
+def _comment_counts(db: Session, version_ids: list, *, include_internal: bool = True) -> dict:
     """Comments on each version, as its comment panel shows them, by version id.
 
     The panel lists a version's live top-level comments, public and internal,
@@ -100,7 +101,10 @@ def _comment_counts(db: Session, version_ids: list) -> dict:
         Comment.version_id.in_(version_ids),
         Comment.parent_id.is_(None),
         Comment.deleted_at.is_(None),
-    ).cte(name="panel_comments", recursive=True)
+    )
+    if not include_internal:
+        tree = tree.where(Comment.visibility != "internal")
+    tree = tree.cte(name="panel_comments", recursive=True)
     replies = select(
         Comment.id,
         tree.c.version_id,
@@ -109,12 +113,14 @@ def _comment_counts(db: Session, version_ids: list) -> dict:
         Comment.deleted_at.is_(None),
         tree.c.depth < COMMENT_TREE_MAX_DEPTH,
     )
+    if not include_internal:
+        replies = replies.where(Comment.visibility != "internal")
     tree = tree.union_all(replies)
     rows = db.query(tree.c.version_id, func.count(tree.c.id)).group_by(tree.c.version_id).all()
     return {version_id: count for version_id, count in rows}
 
 
-def _build_asset_response(asset: Asset, db: Session) -> AssetResponse:
+def _build_asset_response(asset: Asset, db: Session, current_user: User | None = None) -> AssetResponse:
     """Build AssetResponse with latest version and its files."""
     latest_version = _display_version(db, asset.id)
 
@@ -136,11 +142,16 @@ def _build_asset_response(asset: Asset, db: Session) -> AssetResponse:
     resp.latest_version = version_response
     resp.thumbnail_url = thumbnail_url
     if latest_version:
-        resp.comment_count = _comment_counts(db, [latest_version.id]).get(latest_version.id, 0)
+        include_internal = not hides_internal_comments(db, asset.project_id, current_user)
+        resp.comment_count = _comment_counts(
+            db, [latest_version.id], include_internal=include_internal
+        ).get(latest_version.id, 0)
     return resp
 
 
-def _build_asset_responses_bulk(assets: list[Asset], db: Session) -> list[AssetResponse]:
+def _build_asset_responses_bulk(
+    assets: list[Asset], db: Session, current_user: User | None = None,
+) -> list[AssetResponse]:
     """Build AssetResponse list with bulk-loaded versions and files (no N+1)."""
     if not assets:
         return []
@@ -176,7 +187,8 @@ def _build_asset_responses_bulk(assets: list[Asset], db: Session) -> list[AssetR
     # Bulk load media files for all those versions
     version_ids = [v.id for v in latest_versions]
     all_files = db.query(MediaFile).filter(MediaFile.version_id.in_(version_ids)).all() if version_ids else []
-    comment_counts = _comment_counts(db, version_ids)
+    include_internal = not hides_internal_comments(db, assets[0].project_id, current_user)
+    comment_counts = _comment_counts(db, version_ids, include_internal=include_internal)
     files_by_version: dict = {}
     for f in all_files:
         files_by_version.setdefault(f.version_id, []).append(f)
@@ -249,7 +261,7 @@ def list_assets(
             )
             assets = [a for a in assets if a.id in usable or a.id not in has_any_version]
 
-    return _build_asset_responses_bulk(assets, db)
+    return _build_asset_responses_bulk(assets, db, current_user)
 
 
 @router.get("/assets/{asset_id}", response_model=AssetResponse)
@@ -262,7 +274,7 @@ def get_asset(
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
     require_asset_access(db, asset, current_user)
-    return _build_asset_response(asset, db)
+    return _build_asset_response(asset, db, current_user)
 
 
 @router.patch("/assets/{asset_id}", response_model=AssetResponse)
@@ -282,7 +294,7 @@ def update_asset(
         setattr(asset, field, value)
     db.commit()
     db.refresh(asset)
-    return _build_asset_response(asset, db)
+    return _build_asset_response(asset, db, current_user)
 
 
 @router.delete("/assets/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -527,7 +539,7 @@ def update_assignment(
 
     db.commit()
     db.refresh(asset)
-    return _build_asset_response(asset, db)
+    return _build_asset_response(asset, db, current_user)
 
 
 @router.get("/assets/{asset_id}/assignment")

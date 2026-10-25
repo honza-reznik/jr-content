@@ -583,11 +583,12 @@ def create_comment(
     db.commit()
     db.refresh(comment)
 
-    event_service.publish_sync(asset.project_id, "new_comment", {
-        "asset_id": str(asset_id),
-        "comment_id": str(comment.id),
-        "author": current_user.name,
-    })
+    if not thread_is_internal(db, comment):
+        event_service.publish_sync(asset.project_id, "new_comment", {
+            "asset_id": str(asset_id),
+            "comment_id": str(comment.id),
+            "author": current_user.name,
+        })
 
     return _build_comment_response(comment, db, current_user_id=current_user.id)
 
@@ -650,11 +651,12 @@ def reply_to_comment(
     db.commit()
     db.refresh(reply)
 
-    event_service.publish_sync(asset.project_id, "new_comment", {
-        "asset_id": str(asset_id),
-        "comment_id": str(reply.id),
-        "author": current_user.name,
-    })
+    if not thread_is_internal(db, reply):
+        event_service.publish_sync(asset.project_id, "new_comment", {
+            "asset_id": str(asset_id),
+            "comment_id": str(reply.id),
+            "author": current_user.name,
+        })
 
     return _build_comment_response(reply, db, current_user_id=current_user.id)
 
@@ -1255,8 +1257,10 @@ def guest_comment(
     # so only a caller with real access to the asset may file it here. The field
     # used to be dropped, which stored a signed-in member's internal note as
     # public and showed it to every link holder. Refuse rather than downgrade.
-    if body.visibility == CommentVisibility.internal and not (
-        current_user is not None and can_access_asset(db, asset, current_user)
+    if body.visibility == CommentVisibility.internal and (
+        current_user is None
+        or not can_access_asset(db, asset, current_user)
+        or hides_internal_comments(db, asset.project_id, current_user)
     ):
         raise HTTPException(status_code=403, detail="Internal comments require access to the asset")
 
@@ -1296,7 +1300,11 @@ def guest_comment(
         from ..services.auth_service import get_user_by_email
         user = get_user_by_email(db, email)
         # Same rule as _create_mentions: only someone who can see the asset is told about it.
-        if user and can_access_asset(db, asset, user):
+        if (
+            user
+            and can_access_asset(db, asset, user)
+            and not (comment.visibility == "internal" and hides_internal_comments(db, asset.project_id, user))
+        ):
             mention = Mention(comment_id=comment.id, mentioned_user_id=user.id)
             db.add(mention)
             notif = Notification(
@@ -1337,10 +1345,11 @@ def guest_comment(
 
     # Guests comment through a share link, but the live update belongs to the
     # project team watching the asset, so it goes on the same project channel.
-    event_service.publish_sync(asset.project_id, "new_comment", {
-        "asset_id": str(asset.id),
-        "comment_id": str(comment.id),
-        "author": actor_name or "Guest",
-    })
+    if not thread_is_internal(db, comment):
+        event_service.publish_sync(asset.project_id, "new_comment", {
+            "asset_id": str(asset.id),
+            "comment_id": str(comment.id),
+            "author": actor_name or "Guest",
+        })
 
     return _build_comment_response(comment, db)

@@ -130,6 +130,23 @@ def test_team_can_write_internal(world):
     assert _create(world, world["team"], visibility="internal").visibility == "internal"
 
 
+def test_internal_comment_threads_are_not_broadcast_over_sse(world, monkeypatch):
+    published = []
+    monkeypatch.setattr(comments_module.event_service, "publish_sync", lambda *args: published.append(args))
+
+    hidden = _create(world, world["team"], visibility="internal", text="private")
+    public = _create(world, world["team"], text="visible")
+    hidden_reply = comments_module.reply_to_comment(
+        world["asset"].id, world["internal"].id,
+        CommentCreate(version_id=world["version"].id, body="private reply", visibility="public"),
+        db=world["db"], current_user=world["team"],
+    )
+
+    assert [args[2]["comment_id"] for args in published] == [str(public.id)]
+    assert str(hidden.id) not in repr(published)
+    assert str(hidden_reply.id) not in repr(published)
+
+
 @pytest.mark.parametrize("hidden", ["internal", "reply_under_internal", "internal_under_public"])
 def test_client_gets_404_for_internal_comments_on_every_route(world, hidden):
     db, client, target = world["db"], world["client"], world[hidden]

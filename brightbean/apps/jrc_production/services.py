@@ -110,7 +110,8 @@ def can_decide(post, membership, statuses=None):
         return False
     if post.workspace.approval_workflow_mode != "required_internal_and_client":
         return True
-    return pending == ({"pending_client"} if is_client(membership) else {"pending_review"})
+    # Custom permissions do not change which side of the workflow a member is on.
+    return pending == ({"pending_client"} if membership.workspace_role == "client" else {"pending_review"})
 
 
 def available_moves(post, membership):
