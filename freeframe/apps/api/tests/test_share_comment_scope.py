@@ -131,6 +131,28 @@ def test_an_omitted_version_still_resolves_to_the_latest_ready_one(real_db, seed
     assert saved.version_id == v2.id
 
 
+def test_managed_client_cannot_create_internal_comment_through_share(real_db, seed):
+    from fastapi import HTTPException
+    from apps.api.models.project import ProjectMember, ProjectRole
+    from apps.api.models.user import User
+    from apps.api.schemas.comment import GuestCommentCreate
+    import apps.api.routers.comments as comments_module
+
+    client_user = User(email=f"client-{uuid.uuid4()}@t.local", name="Client", jrc_managed=True)
+    real_db.add(client_user); real_db.flush()
+    real_db.add(ProjectMember(project_id=seed["project_a"].id, user_id=client_user.id, role=ProjectRole.reviewer))
+    real_db.flush()
+
+    with pytest.raises(HTTPException) as exc:
+        comments_module.guest_comment(
+            seed["link"].token,
+            GuestCommentCreate(version_id=seed["versions_a"][0].id, body="private", visibility="internal"),
+            share_session=None, db=real_db, current_user=client_user,
+        )
+    assert exc.value.status_code == 403
+    assert _comments_with_body(real_db, "private") == []
+
+
 def test_a_deleted_version_of_the_shared_asset_is_refused(real_db, seed):
     from fastapi import HTTPException
 

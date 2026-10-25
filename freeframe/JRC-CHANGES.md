@@ -297,3 +297,14 @@ Provozní postup je v `docs-arch/F2-B02/freeframe-provoz.md` (doplněk pro PM do
   záznamu uvicorn obdobně maskuje tokeny, tikety a podpisy bez odstranění ostatních údajů URL.
 - Přidány testy platnosti, účelového omezení, odmítnutí přihlašovacího JWT v SSE URL a maskování
   API záznamů. Celoaplikační ověření poběží po dokončení implementace.
+## 2026-10-25 — F7-B02
+
+- Viditelnost komentářů sladěná s Brightbeanem: pro řízené účty JR Content (`jrc_managed`) s rolí v projektu `reviewer`
+  (klient) a `viewer` jsou komentáře „Internal“ tým-only. Nový `apps/api/services/comment_privacy.py`
+  (`hides_internal_comments`, `thread_is_internal`, `internal_comment_ids`) a použití v `routers/comments.py`: výpis
+  (i odpovědi pod interním komentářem) je nevidí; vytvoření a odpověď s `visibility=internal` vrací 403, odpověď do interního
+  vlákna 404; úprava, mazání, vyřešení, přílohy, reakce, odkaz a export komentáře interního vlákna dávají 404 (export je vynechá);
+  zmínka a upozornění na interní komentář klient nedostane, `routers/notifications.py` staré takové řádky přeskočí.
+  Běžné účty FreeFrame a tým (`owner`, `editor`) beze změny.
+- Web: přepínač Public / Internal a filtr „Internal comments“ se klientovi neukazuje (`lib/comment-visibility.ts`, `allowInternal` v detailu a v porovnání verzí, `showInternalFilter` v `comment-panel.tsx`).
+- Testy: `apps/api/tests/test_jrc_comment_privacy.py` (12), `lib/__tests__/comment-visibility.test.ts`.

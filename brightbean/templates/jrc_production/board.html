@@ -39,6 +39,11 @@
   .board-empty { font-size:11px; color:#a8a29e; text-align:center; margin:20px 0; }
   .board-help { color:#78716c; font-size:12px; margin-bottom:14px; line-height:1.6; }
   .board-error { border:1px solid #fecaca; background:#fef2f2; color:#991b1b; padding:12px; border-radius:8px; margin-bottom:12px; }
+  .board-waiting { border:1px solid #f0d9a8; background:#fffaf0; border-radius:10px; padding:14px 16px; margin-bottom:18px; }
+  .board-waiting h2 { font-size:15px; font-weight:700; margin:0 0 10px; }
+  .board-waiting ul { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:10px; }
+  .board-waiting li { background:white; border:1px solid #e7e5e4; border-radius:8px; padding:12px; overflow-wrap:anywhere; }
+  .board-waiting a { display:inline-flex; align-items:center; min-height:44px; font-weight:600; color:#30584b; text-decoration:underline; }
   .mobile-stage { display:none; }
   @media(min-width:768px) and (max-width:1199px) { .board-grid { grid-template-columns:repeat(4,minmax(0,1fr)); } }
   @media(max-width:767px) {
@@ -76,6 +81,17 @@
       <button class="board-primary" type="submit">Add to Idea</button>
     </form>
   </details>
+  {% endif %}
+  {% if waiting_for_you %}
+  <section class="board-waiting" aria-label="Waiting for you" data-waiting-for-you>
+    <h2>Waiting for you <span class="stage-count">({{ waiting_for_you|length }})</span></h2>
+    <ul>
+      {% for post in waiting_for_you %}
+      <li><span class="board-client">{{ post.workspace.name }}</span><br><strong>{{ post.title|default:"Untitled content" }}</strong><br>
+        <a href="{% url 'jrc_production:content_detail' workspace_id=post.workspace_id post_id=post.id %}?tab=approval">Review and decide</a></li>
+      {% endfor %}
+    </ul>
+  </section>
   {% endif %}
   <p class="board-help">Use “Move” on a card to change its stage. Approval and planning follow your permissions. Dates use each client’s time zone.</p>
   <div class="mobile-stage"><label for="mobile-stage">Show stage</label><select id="mobile-stage"><option value="">All stages</option>{% for column in columns %}<option value="{{ column.value }}">{{ column.label }} ({{ column.cards|length }})</option>{% endfor %}</select></div>

@@ -47,6 +47,7 @@ from ..schemas.comment import (
 )
 from ..services import s3_service
 from ..services import comment_export
+from ..services.comment_privacy import hides_internal_comments, internal_comment_ids, thread_is_internal
 from ..services.permissions import (
     require_asset_access, can_access_asset, validate_share_link_with_session, validate_asset_in_share,
     require_asset_project_live, require_project_role,
@@ -161,6 +162,18 @@ def _get_asset(db: Session, asset_id: uuid.UUID) -> Asset:
 def _require_managed_comment_role(db: Session, asset: Asset, user: Optional[User]):
     if user is not None and user.jrc_managed is True:
         require_project_role(db, asset.project_id, user, ProjectRole.reviewer)
+
+
+def _require_visible_comment(db: Session, asset: Asset, comment: Comment, user: Optional[User]):
+    """A client or viewer of JR Content gets 404 for a team-only comment, as if it did not exist."""
+    if hides_internal_comments(db, asset.project_id, user) and thread_is_internal(db, comment):
+        raise HTTPException(status_code=404, detail="Comment not found")
+
+
+def _require_public_comment_input(db: Session, asset: Asset, user: Optional[User], visibility: Optional[str]):
+    """Clients and viewers write public comments only; the web interface does not offer more."""
+    if visibility == "internal" and hides_internal_comments(db, asset.project_id, user):
+        raise HTTPException(status_code=403, detail="Internal comments are for the team")
 
 
 def _get_comment(db: Session, comment_id: uuid.UUID) -> Comment:
@@ -396,6 +409,8 @@ def _notify_parent_author_about_reply(
     parent_author = db.query(User).filter(User.id == parent.author_id).first()
     if not parent_author or not can_access_asset(db, asset, parent_author):
         return
+    if hides_internal_comments(db, asset.project_id, parent_author) and thread_is_internal(db, reply):
+        return
 
     db.add(Notification(
         user_id=parent.author_id,
@@ -431,6 +446,9 @@ def _create_mentions(db: Session, comment: Comment, asset: Asset, body: str, aut
     # (or a guest via a share link) could @mention an arbitrary user id/email and have their
     # name, the asset name, and a comment preview emailed to someone with no access to either.
     mentioned_users = [u for u in mentioned_users if can_access_asset(db, asset, u)]
+    # A team-only comment never reaches a client or viewer, not even as a mention (F7-B02).
+    if mentioned_users and thread_is_internal(db, comment):
+        mentioned_users = [u for u in mentioned_users if not hides_internal_comments(db, asset.project_id, u)]
 
     for user in mentioned_users:
         mention = Mention(comment_id=comment.id, mentioned_user_id=user.id)
@@ -475,8 +493,13 @@ def list_comments(
         query = query.filter(Comment.version_id == version_id)
     if visibility and visibility in ("public", "internal"):
         query = query.filter(Comment.visibility == visibility)
+    hide_internal = hides_internal_comments(db, asset.project_id, current_user)
+    if hide_internal:
+        query = query.filter(Comment.visibility != "internal")
     top_level = query.order_by(Comment.created_at).all()
-    return _build_comment_responses_batched(asset_id, top_level, db, current_user_id=current_user.id)
+    return _build_comment_responses_batched(
+        asset_id, top_level, db, current_user_id=current_user.id, exclude_internal=hide_internal
+    )
 
 
 @router.post("/assets/{asset_id}/comments", response_model=CommentResponse, status_code=status.HTTP_201_CREATED)
@@ -489,6 +512,7 @@ def create_comment(
     asset = _get_asset(db, asset_id)
     require_asset_access(db, asset, current_user)
     _require_managed_comment_role(db, asset, current_user)
+    _require_public_comment_input(db, asset, current_user, body.visibility)
 
     version = db.query(AssetVersion).filter(
         AssetVersion.id == body.version_id, AssetVersion.asset_id == asset_id,
@@ -509,7 +533,9 @@ def create_comment(
             Comment.asset_id == asset_id,
             Comment.deleted_at.is_(None),
         ).first()
-        if not parent:
+        if not parent or (
+            hides_internal_comments(db, asset.project_id, current_user) and thread_is_internal(db, parent)
+        ):
             raise HTTPException(status_code=400, detail="parent_id does not belong to this asset")
 
     comment = Comment(
@@ -537,7 +563,12 @@ def create_comment(
     _create_mentions(db, comment, asset, body.body, current_user.name, body.mention_user_ids)
 
     # Notify asset creator about the comment (unless they're the commenter)
-    if asset.created_by and asset.created_by != current_user.id:
+    creator = db.query(User).filter(User.id == asset.created_by).first() if asset.created_by else None
+    if (
+        creator is not None
+        and creator.id != current_user.id
+        and not (comment.visibility == "internal" and hides_internal_comments(db, asset.project_id, creator))
+    ):
         db.add(Notification(
             user_id=asset.created_by,
             type=NotificationType.comment,
@@ -552,11 +583,12 @@ def create_comment(
     db.commit()
     db.refresh(comment)
 
-    event_service.publish_sync(asset.project_id, "new_comment", {
-        "asset_id": str(asset_id),
-        "comment_id": str(comment.id),
-        "author": current_user.name,
-    })
+    if not thread_is_internal(db, comment):
+        event_service.publish_sync(asset.project_id, "new_comment", {
+            "asset_id": str(asset_id),
+            "comment_id": str(comment.id),
+            "author": current_user.name,
+        })
 
     return _build_comment_response(comment, db, current_user_id=current_user.id)
 
@@ -575,8 +607,11 @@ def reply_to_comment(
     parent = db.query(Comment).filter(
         Comment.id == comment_id, Comment.asset_id == asset_id, Comment.deleted_at.is_(None),
     ).first()
-    if not parent:
+    if not parent or (
+        hides_internal_comments(db, asset.project_id, current_user) and thread_is_internal(db, parent)
+    ):
         raise HTTPException(status_code=404, detail="Parent comment not found")
+    _require_public_comment_input(db, asset, current_user, body.visibility)
 
     # These four were dropped on the floor before. The endpoint takes a full
     # CommentCreate, so a client sending a timecoded or annotated reply got a
@@ -616,11 +651,12 @@ def reply_to_comment(
     db.commit()
     db.refresh(reply)
 
-    event_service.publish_sync(asset.project_id, "new_comment", {
-        "asset_id": str(asset_id),
-        "comment_id": str(reply.id),
-        "author": current_user.name,
-    })
+    if not thread_is_internal(db, reply):
+        event_service.publish_sync(asset.project_id, "new_comment", {
+            "asset_id": str(asset_id),
+            "comment_id": str(reply.id),
+            "author": current_user.name,
+        })
 
     return _build_comment_response(reply, db, current_user_id=current_user.id)
 
@@ -638,7 +674,9 @@ def update_comment(
     # The author gets past with no access check, so this is what closes a deleted project.
     require_asset_project_live(db, comment.asset_id)
     if current_user.jrc_managed is True:
-        _require_managed_comment_role(db, _get_asset(db, comment.asset_id), current_user)
+        managed_asset = _get_asset(db, comment.asset_id)
+        _require_managed_comment_role(db, managed_asset, current_user)
+        _require_visible_comment(db, managed_asset, comment, current_user)
     # Allow comment owner or project owner to edit
     if comment.author_id != current_user.id:
         asset = _get_asset(db, comment.asset_id)
@@ -669,7 +707,9 @@ def delete_comment(
     # The author gets past with no access check, so this is what closes a deleted project.
     require_asset_project_live(db, comment.asset_id)
     if current_user.jrc_managed is True:
-        _require_managed_comment_role(db, _get_asset(db, comment.asset_id), current_user)
+        managed_asset = _get_asset(db, comment.asset_id)
+        _require_managed_comment_role(db, managed_asset, current_user)
+        _require_visible_comment(db, managed_asset, comment, current_user)
     # Allow comment owner or project owner to delete
     if comment.author_id != current_user.id:
         asset = _get_asset(db, comment.asset_id)
@@ -697,6 +737,7 @@ def resolve_comment(
     asset = _get_asset(db, comment.asset_id)
     require_asset_access(db, asset, current_user)
     _require_managed_comment_role(db, asset, current_user)
+    _require_visible_comment(db, asset, comment, current_user)
     comment.resolved = not comment.resolved
     db.commit()
     db.refresh(comment)
@@ -728,6 +769,7 @@ def create_attachment(
     asset = _get_asset(db, comment.asset_id)
     require_asset_access(db, asset, current_user)
     _require_managed_comment_role(db, asset, current_user)
+    _require_visible_comment(db, asset, comment, current_user)
 
     # Sanitize the filename so it cannot break the S3 key or the presigned
     # URL. S3 flattens path separators, so this isn't traversal — but
@@ -782,6 +824,7 @@ def delete_attachment(
     asset = _get_asset(db, comment.asset_id)
     require_asset_project_live(db, asset.id)
     _require_managed_comment_role(db, asset, current_user)
+    _require_visible_comment(db, asset, comment, current_user)
 
     attachment = db.query(CommentAttachment).filter(
         CommentAttachment.id == attachment_id,
@@ -822,6 +865,7 @@ def toggle_reaction(
     asset = _get_asset(db, comment.asset_id)
     require_asset_access(db, asset, current_user)
     _require_managed_comment_role(db, asset, current_user)
+    _require_visible_comment(db, asset, comment, current_user)
 
     existing = db.query(CommentReaction).filter(
         CommentReaction.comment_id == comment_id,
@@ -851,6 +895,7 @@ def list_reactions(
     comment = _get_comment(db, comment_id)
     asset = _get_asset(db, comment.asset_id)
     require_asset_access(db, asset, current_user)
+    _require_visible_comment(db, asset, comment, current_user)
 
     reactions_raw = db.query(CommentReaction).filter(
         CommentReaction.comment_id == comment_id,
@@ -877,6 +922,7 @@ def comment_deep_link(
     ).first()
     if not comment:
         raise HTTPException(status_code=404, detail="Comment not found")
+    _require_visible_comment(db, asset, comment, current_user)
 
     url = f"{settings.frontend_url}/assets/{asset_id}?comment={comment_id}"
     return {"url": url}
@@ -1009,6 +1055,9 @@ def export_comments(
         Comment.version_id == version.id,
         Comment.deleted_at.is_(None),
     ).order_by(Comment.created_at.asc()).all()
+    if hides_internal_comments(db, asset.project_id, current_user):
+        hidden = internal_comment_ids(comments)
+        comments = [c for c in comments if c.id not in hidden]
 
     user_ids = {c.author_id for c in comments if c.author_id}
     guest_ids = {c.guest_author_id for c in comments if c.guest_author_id}
@@ -1208,8 +1257,10 @@ def guest_comment(
     # so only a caller with real access to the asset may file it here. The field
     # used to be dropped, which stored a signed-in member's internal note as
     # public and showed it to every link holder. Refuse rather than downgrade.
-    if body.visibility == CommentVisibility.internal and not (
-        current_user is not None and can_access_asset(db, asset, current_user)
+    if body.visibility == CommentVisibility.internal and (
+        current_user is None
+        or not can_access_asset(db, asset, current_user)
+        or hides_internal_comments(db, asset.project_id, current_user)
     ):
         raise HTTPException(status_code=403, detail="Internal comments require access to the asset")
 
@@ -1249,7 +1300,11 @@ def guest_comment(
         from ..services.auth_service import get_user_by_email
         user = get_user_by_email(db, email)
         # Same rule as _create_mentions: only someone who can see the asset is told about it.
-        if user and can_access_asset(db, asset, user):
+        if (
+            user
+            and can_access_asset(db, asset, user)
+            and not (comment.visibility == "internal" and hides_internal_comments(db, asset.project_id, user))
+        ):
             mention = Mention(comment_id=comment.id, mentioned_user_id=user.id)
             db.add(mention)
             notif = Notification(
@@ -1290,10 +1345,11 @@ def guest_comment(
 
     # Guests comment through a share link, but the live update belongs to the
     # project team watching the asset, so it goes on the same project channel.
-    event_service.publish_sync(asset.project_id, "new_comment", {
-        "asset_id": str(asset.id),
-        "comment_id": str(comment.id),
-        "author": actor_name or "Guest",
-    })
+    if not thread_is_internal(db, comment):
+        event_service.publish_sync(asset.project_id, "new_comment", {
+            "asset_id": str(asset.id),
+            "comment_id": str(comment.id),
+            "author": actor_name or "Guest",
+        })
 
     return _build_comment_response(comment, db)

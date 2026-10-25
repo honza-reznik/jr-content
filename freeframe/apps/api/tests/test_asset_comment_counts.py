@@ -54,6 +54,18 @@ def test_counts_comments_and_replies_public_and_internal(real_db):
     assert _comment_counts(real_db, [v1.id, v2.id]) == {v1.id: 1, v2.id: 3}
 
 
+def test_client_visible_count_excludes_internal_threads_and_replies(real_db):
+    from apps.api.routers.assets import _comment_counts
+
+    owner, asset, (_, version) = _seed(real_db)
+    public = _comment(real_db, owner, asset, version)
+    _comment(real_db, owner, asset, version, parent=public, visibility="internal")
+    hidden = _comment(real_db, owner, asset, version, visibility="internal")
+    _comment(real_db, owner, asset, version, parent=hidden)  # public-looking reply in hidden thread
+
+    assert _comment_counts(real_db, [version.id], include_internal=False) == {version.id: 1}
+
+
 def test_deleted_comments_and_their_replies_are_not_counted(real_db):
     from apps.api.routers.assets import _comment_counts
 

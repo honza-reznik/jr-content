@@ -43,7 +43,7 @@ export BUILDX_CONFIG := $(CURDIR)/.cache/docker-buildx
 CMD ?= bash
 export CMD
 
-.PHONY: restore-lock-check backup backup-verify restore test-backup test-backup-guards build build-bb env check-project-ports up down shell test test-fast test-smoke test-proxy test-s3 test-bb test-bb-fast test-ff test-ff-smoke test-isolation test-ff-offline test-ff-vitest test-ff-tsc test-ff-lint test-f5-b06-embed test-f5-b05-upload test-f5-b08-video ff-account build-ff reset logs ps
+.PHONY: restore-lock-check backup backup-verify restore test-backup test-backup-guards build build-bb env check-project-ports up down shell test test-fast test-smoke test-proxy test-s3 test-bb test-bb-fast test-ff test-ff-smoke test-isolation test-ff-offline test-ff-vitest test-ff-tsc test-ff-lint test-f5-b06-embed test-f5-b05-upload test-f5-b08-video test-f7-b02-approval ff-account build-ff reset logs ps
 build:
 	docker build --tag jrc-dev:$(JRC_PROJECT) --file docker/Dockerfile docker
 
@@ -218,6 +218,11 @@ test-f5-b05-upload:
 test-f5-b08-video:
 	@sh scripts/workspace.sh check
 	sh scripts/F5-B08/check-video-tab.sh
+
+# Jen projekt jrc-f7b02 (porty 13373/14093/15623/18193); trvá několik minut, proto není ve `make test`.
+test-f7-b02-approval:
+	@sh scripts/workspace.sh check
+	sh scripts/F7-B02/check-approval.sh
 
 test-ff-lint:
 	@sh scripts/workspace.sh check

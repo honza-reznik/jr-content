@@ -56,6 +56,8 @@ interface CommentPanelProps {
   onSeekToTimecode?: (time: number, pause?: boolean) => void;
   /** Compare mode: route annotation display to a pane-scoped overlay instead of the global store. */
   onShowAnnotation?: (drawingData: Record<string, unknown> | null) => void;
+  /** Offer the "Internal comments" filter. False for JR Content clients: the API never returns internal comments to them. */
+  showInternalFilter?: boolean;
   /** Compare mode: export this pane's version instead of the store's currentVersion. */
   exportVersionId?: string;
   /**
@@ -807,6 +809,7 @@ export function CommentPanel({
   onSubmitReply,
   onSeekToTimecode,
   onShowAnnotation,
+  showInternalFilter = true,
   exportVersionId,
   exportAsset,
   canExport = true,
@@ -1030,7 +1033,9 @@ export function CommentPanel({
                 label: "Internal comments",
                 count: internalCount,
               },
-            ].map((item) => (
+            ]
+              .filter((item) => showInternalFilter || item.id !== "internal")
+              .map((item) => (
               <button
                 key={item.id}
                 className={cn(
