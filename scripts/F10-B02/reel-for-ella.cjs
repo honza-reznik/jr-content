@@ -5,13 +5,16 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { chromium } = require('playwright');
 
-assert.equal(process.env.JRC_PROJECT, 'jrc-f10b02');
-assert.equal(process.env.JRC_APP_PORT, '13433');
-assert.equal(process.env.JRC_S3_PORT, '14153');
-const origin = `http://127.0.0.1:${process.env.JRC_APP_PORT}`;
-const fixture = JSON.parse(fs.readFileSync('ops/test-output/F10-B02/fixture.json', 'utf8'));
-const shots = path.resolve('ops/screenshoty/F10-B02');
-const output = path.resolve('ops/test-output/F10-B02');
+const project = process.env.JRC_E2E_PROJECT || 'jrc-f10b02';
+const appPort = process.env.JRC_E2E_APP_PORT || '13433';
+const s3Port = process.env.JRC_E2E_S3_PORT || '14153';
+const output = path.resolve(process.env.JRC_E2E_OUTPUT || 'ops/test-output/F10-B02');
+const shots = path.resolve(process.env.JRC_E2E_SCREENSHOTS || 'ops/screenshoty/F10-B02');
+assert.equal(process.env.JRC_PROJECT, project);
+assert.equal(process.env.JRC_APP_PORT, appPort);
+assert.equal(process.env.JRC_S3_PORT, s3Port);
+const origin = `http://127.0.0.1:${appPort}`;
+const fixture = JSON.parse(fs.readFileSync(path.join(output, 'fixture.json'), 'utf8'));
 const errors = [];
 const external = [];
 fs.mkdirSync(shots, { recursive: true });
@@ -32,7 +35,7 @@ async function session(browser, who, width = 1440) {
   });
   // Local requests remain native browser requests. Intercept only external HTTP(S)
   // URLs, so Playwright does not mediate the API → signed S3 redirect used by HLS.
-  await context.route(/^https?:\/\/(?!127\.0\.0\.1:(?:13433|14153)(?:\/|$)).*/, route => {
+  await context.route(new RegExp(`^https?:\\/\\/(?!127\\.0\\.0\\.1:(?:${appPort}|${s3Port})(?:\\/|$)).*`), route => {
     const url = route.request().url();
     external.push(url);
     return route.abort('blockedbyclient');

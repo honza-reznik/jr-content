@@ -12,7 +12,7 @@ from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.organizations.models import Organization
 from apps.workspaces.models import Workspace
 
-assert os.environ.get("JRC_PROJECT") == "jrc-f10b02", "Pouze vlastní ověřovací projekt!"
+assert os.environ.get("JRC_PROJECT") == os.environ.get("JRC_E2E_PROJECT", "jrc-f10b02"), "Pouze vlastní ověřovací projekt!"
 
 organization = Organization.objects.create(name="F10-B02 Test Studio")
 workspace = Workspace.objects.create(
