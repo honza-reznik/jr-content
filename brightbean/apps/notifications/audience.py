@@ -58,7 +58,7 @@ def content_path(post, tab="approval"):
 
 def content_label(post):
     """A short name of the content for notification texts: the title, never any note or comment."""
-    return (post.title or "").strip() or "Untitled content"
+    return (post.title or "").strip() or post.caption_snippet or "Untitled content"
 
 
 def decides_at_step(workspace, membership, step):

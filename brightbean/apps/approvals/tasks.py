@@ -8,7 +8,7 @@ from django.utils import timezone
 
 from apps.composer.models import Post
 from apps.members.models import WorkspaceMembership
-from apps.notifications.audience import content_path, decides_at_step
+from apps.notifications.audience import content_label, content_path, decides_at_step
 from apps.notifications.engine import notify
 from apps.notifications.models import EventType
 
@@ -116,7 +116,7 @@ def _remind_reviewers(post):
                 user=membership.user,
                 event_type=EventType.APPROVAL_REMINDER,
                 title="Post awaiting your review",
-                body=f'A post in {workspace.name} has been waiting for review: "{post.caption_snippet}"',
+                body=f'A post in {workspace.name} has been waiting for review: "{content_label(post)}"',
                 data={
                     "post_id": str(post.id),
                     "workspace_id": str(workspace.id),

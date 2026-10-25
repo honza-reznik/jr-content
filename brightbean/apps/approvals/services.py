@@ -186,7 +186,7 @@ def submit_for_review(target, user, workspace):
         post=post,
         event_type=EventType.POST_SUBMITTED,
         title="Post submitted for review",
-        body=f'{user.display_name} submitted a post for your review: "{post.caption_snippet}"',
+        body=f'{user.display_name} submitted a post for your review: "{content_label(post)}"',
         step="pending_review",
     )
 
@@ -408,7 +408,7 @@ def resubmit_post(target, user, workspace):
         post=post,
         event_type=EventType.POST_SUBMITTED,
         title="Post resubmitted for review",
-        body=f'{user.display_name} resubmitted a post: "{post.caption_snippet}"',
+        body=f'{user.display_name} resubmitted a post: "{content_label(post)}"',
         step="pending_review",
     )
 
