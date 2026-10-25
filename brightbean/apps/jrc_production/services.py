@@ -1,3 +1,5 @@
+from urllib.parse import urlsplit
+
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.utils import timezone
@@ -9,7 +11,7 @@ from apps.jrc_channels.models import ChannelProfile
 from apps.members.models import WorkspaceMembership
 from apps.members.note_visibility import note_audience
 
-from .models import PipelineStage, PostProduction, ProductionStage, StageChange
+from .models import ManualPublication, PipelineStage, PostProduction, ProductionStage, StageChange
 
 _STATUS_TO_STAGE = {
     "pending_review": PipelineStage.REVIEW,
@@ -219,3 +221,62 @@ def move_content(post, stage, user, *, expected_stage, scheduled_at=None):
             post=post, from_stage=previous, to_stage=current, user=user, **note_audience(post.workspace, user)
         )
     return post
+
+
+@transaction.atomic
+def mark_published_manually(post, platform_post_id, user, *, post_url=""):
+    """Record a team's manual publication for one approved channel copy."""
+    from apps.jrc_video.models import VideoAsset, VideoVersion
+
+    post = Post.objects.select_for_update(of=("self",)).select_related("workspace").get(pk=post.pk)
+    membership = content_membership(post.workspace, user)
+    if membership.workspace_role in {"client", "viewer"} or not membership.effective_permissions.get(
+        "publish_directly", False
+    ):
+        raise PermissionDenied("You cannot mark content as published.")
+    try:
+        child = (
+            PlatformPost.objects.select_for_update(of=("self",))
+            .select_related("social_account")
+            .get(pk=platform_post_id, post=post)
+        )
+    except (PlatformPost.DoesNotExist, ValueError, TypeError):
+        raise ValidationError("Choose a channel of this content.") from None
+    if child.status not in {PlatformPost.Status.APPROVED, PlatformPost.Status.SCHEDULED}:
+        raise ValidationError("Only approved or scheduled content can be marked as published.")
+    if not (child.platform_specific_caption or child.post.caption or "").strip():
+        raise ValidationError("Add a caption before marking this content as published.")
+    video = VideoAsset.objects.filter(platform_post=child).select_related("final_version").first()
+    if video and (not video.final_version_id or video.final_version.status != VideoVersion.Status.READY):
+        raise ValidationError("Mark a converted video as final before publishing this channel.")
+    post_url = (post_url or "").strip()
+    if post_url:
+        parsed = urlsplit(post_url)
+        if (
+            len(post_url) > 2000
+            or parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+        ):
+            raise ValidationError("The post link must be a valid HTTPS address.")
+    if hasattr(child, "jrc_publication"):
+        raise ValidationError("This channel is already marked as published.")
+
+    previous = pipeline_stage(post)
+    publication = ManualPublication.objects.create(
+        platform_post=child, published_by=user, published_at=timezone.now(), post_url=post_url
+    )
+    child.transition_to(PlatformPost.Status.PUBLISHING)
+    child.transition_to(PlatformPost.Status.PUBLISHED)
+    child.save(update_fields=[*PlatformPost.TRANSITION_FIELDS, "updated_at"])
+    from apps.composer.services import sync_post_scheduled_at
+
+    sync_post_scheduled_at(post)
+    post.refresh_from_db()
+    current = pipeline_stage(post)
+    if current != previous:
+        StageChange.objects.create(
+            post=post, from_stage=previous, to_stage=current, user=user, **note_audience(post.workspace, user)
+        )
+    return publication

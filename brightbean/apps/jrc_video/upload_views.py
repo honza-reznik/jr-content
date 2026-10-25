@@ -1,10 +1,11 @@
 """JSON endpoints behind the "Upload version" button (F5-B05). Session login + CSRF on every call."""
 
 import json
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
-from django.http import JsonResponse
+from django.http import Http404, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404
 from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_protect
@@ -140,3 +141,36 @@ def final(request, workspace_id, post_id, version_id):
     _workspace, membership, post = _context(request, workspace_id, post_id)
     data = _body(request)
     return player.set_final(request.user, post, membership, version_id, final=data.get("final", True) is not False)
+
+
+@_secure
+@require_GET
+def final_download(request, workspace_id, post_id, platform_post_id):
+    """Redirect to a short-lived Garage URL for this channel's selected final version."""
+    from apps.composer.models import PlatformPost
+
+    from .models import VideoAsset
+
+    _workspace, _membership, post = _context(request, workspace_id, post_id)
+    if post.workspace.is_archived:
+        raise Http404
+    variant = get_object_or_404(PlatformPost, pk=platform_post_id, post=post)
+    video = VideoAsset.objects.filter(platform_post=variant).select_related("final_version").first()
+    if video is None or video.final_version_id is None:
+        raise Http404
+    try:
+        result = uploads._call(
+            request.user,
+            "GET",
+            f"/assets/{video.ff_asset_id}/stream?{urlencode({'version_id': video.final_version.ff_version_id, 'download': 'true'})}",
+        )
+        signed_url = result.get("url") if isinstance(result, dict) else None
+        uploads._check_signed_url(signed_url)
+        if "token" in parse_qs(urlsplit(signed_url).query):
+            raise UploadError("The video service returned an unexpected address.", 502)
+    except UploadError as exc:
+        return HttpResponse("Video download is unavailable.", status=exc.status, content_type="text/plain")
+    response = HttpResponseRedirect(signed_url)
+    response["Cache-Control"] = "no-store"
+    response["Referrer-Policy"] = "no-referrer"
+    return response

@@ -3,6 +3,13 @@
 Základ: Brightbean Studio `48801fdcd1009e6ed4863fa9942222a478a297e2`, import F2-B01.
 Licence této odvozené verze: AGPL-3.0; původní licence a autorská práva zůstávají zachována.
 
+## 2026-10-25 · F8-B02
+
+- Detail obsahu má kartu Publish s posledním uloženým popiskem každého zapnutého kanálu, kopírováním bez HTML, plánovaným časem v časovém pásmu klienta a možností stáhnout finální video.
+- „Mark as published“ je serverově omezené na členy s `publish_directly`, schválený/naplánovaný kanál, uložený popisek a případné hotové finální video. Zapisuje `ManualPublication`, mění stav kanálové kopie a ukazuje akci v historii; volitelný odkaz přijímá pouze HTTPS.
+- Stažení používá `FreeFrameUserClient` jménem přihlášeného člena a ověří krátkou podepsanou adresu úložiště. Přístupový token FreeFrame se do prohlížeče ani URL předat nesmí.
+- Vizuální scénář a snímky 1440/390 px jsou v `scripts/F8-B02/` a `ops/screenshoty/F8-B02/`.
+
 ## 2026-10-24 · F5-B05
 
 - Nahrání verze videa z karty Video (`templates/jrc_production/content_detail.html`, `apps/jrc_production/views.py`:
