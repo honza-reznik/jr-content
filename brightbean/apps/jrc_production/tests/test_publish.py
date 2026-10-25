@@ -153,6 +153,68 @@ def test_final_download_is_scoped_and_redirects_only_to_short_signed_storage_url
     assert "signature" not in call.call_args.args[2]
 
 
+@pytest.mark.parametrize("role", ["client", "viewer", "editor"])
+def test_final_download_requires_publish_permission_and_hides_link(client, workspace, user, post, role):
+    variant = post.platform_posts.get()
+    video = VideoAsset.objects.create(platform_post=variant, ff_asset_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+    version = VideoVersion.objects.create(
+        video=video,
+        number=1,
+        ff_version_id="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        status=VideoVersion.Status.READY,
+    )
+    video.final_version = version
+    video.save(update_fields=["final_version"])
+    WorkspaceMembership.objects.filter(workspace=workspace, user=user).update(workspace_role=role)
+    client.force_login(user)
+    url = reverse(
+        "jrc_video:final_download",
+        kwargs={"workspace_id": workspace.pk, "post_id": post.pk, "platform_post_id": variant.pk},
+    )
+    with patch("apps.jrc_video.uploads._call") as call:
+        assert client.get(url).status_code == 403
+        call.assert_not_called()
+
+    detail = reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.pk, "post_id": post.pk})
+    response = client.get(detail, {"tab": "publish"})
+    assert response.status_code == 200
+    assert url.encode() not in response.content
+
+
+def test_client_custom_role_cannot_download_even_with_publish_permission(client, workspace, user, post):
+    variant = post.platform_posts.get()
+    video = VideoAsset.objects.create(platform_post=variant, ff_asset_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+    version = VideoVersion.objects.create(
+        video=video,
+        number=1,
+        ff_version_id="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        status=VideoVersion.Status.READY,
+    )
+    video.final_version = version
+    video.save(update_fields=["final_version"])
+    custom = CustomRole.objects.create(
+        organization=workspace.organization,
+        name="Client with a custom publish grant",
+        permissions={"publish_directly": True},
+    )
+    WorkspaceMembership.objects.filter(workspace=workspace, user=user).update(
+        workspace_role="client", custom_role=custom
+    )
+    client.force_login(user)
+    url = reverse(
+        "jrc_video:final_download",
+        kwargs={"workspace_id": workspace.pk, "post_id": post.pk, "platform_post_id": variant.pk},
+    )
+    with patch("apps.jrc_video.uploads._call") as call:
+        assert client.get(url).status_code == 403
+        call.assert_not_called()
+
+    detail = reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.pk, "post_id": post.pk})
+    response = client.get(detail, {"tab": "publish"})
+    assert response.status_code == 200
+    assert url.encode() not in response.content
+
+
 def test_final_download_rejects_foreign_channel_and_freeframe_token_url(client, workspace, organization, user, post):
     from apps.composer.models import Post
 

@@ -13,6 +13,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from apps.composer.models import Post
 from apps.members.models import WorkspaceMembership
+from apps.members.permissions import can_publish_directly
 from apps.workspaces.models import Workspace
 
 from . import player, uploads
@@ -151,7 +152,9 @@ def final_download(request, workspace_id, post_id, platform_post_id):
 
     from .models import VideoAsset
 
-    _workspace, _membership, post = _context(request, workspace_id, post_id)
+    _workspace, membership, post = _context(request, workspace_id, post_id)
+    if not can_publish_directly(membership):
+        raise PermissionDenied("You cannot download the final video.")
     if post.workspace.is_archived:
         raise Http404
     variant = get_object_or_404(PlatformPost, pk=platform_post_id, post=post)

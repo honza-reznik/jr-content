@@ -10,6 +10,7 @@ from apps.composer.services import sync_post_scheduled_at
 from apps.jrc_channels.models import ChannelProfile
 from apps.members.models import WorkspaceMembership
 from apps.members.note_visibility import note_audience
+from apps.members.permissions import can_publish_directly
 
 from .models import ManualPublication, PipelineStage, PostProduction, ProductionStage, StageChange
 
@@ -230,9 +231,7 @@ def mark_published_manually(post, platform_post_id, user, *, post_url=""):
 
     post = Post.objects.select_for_update(of=("self",)).select_related("workspace").get(pk=post.pk)
     membership = content_membership(post.workspace, user)
-    if membership.workspace_role in {"client", "viewer"} or not membership.effective_permissions.get(
-        "publish_directly", False
-    ):
+    if not can_publish_directly(membership):
         raise PermissionDenied("You cannot mark content as published.")
     try:
         child = (

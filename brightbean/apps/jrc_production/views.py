@@ -21,6 +21,7 @@ from apps.jrc_texts import services as text_services
 from apps.jrc_texts.models import TextDocument
 from apps.jrc_texts.services import ConflictError
 from apps.members.models import WorkspaceMembership
+from apps.members.permissions import can_publish_directly
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 
@@ -456,9 +457,7 @@ def content_detail(request, workspace_id, post_id):
             can_view_internal_notes=can_view_internal_notes,
         )
     publish_channels = []
-    can_publish = membership.workspace_role not in {"client", "viewer"} and membership.effective_permissions.get(
-        "publish_directly", False
-    )
+    can_publish = can_publish_directly(membership)
     if active_tab == "publish":
         from apps.jrc_video.models import VideoAsset, VideoVersion
 
@@ -504,7 +503,7 @@ def content_detail(request, workspace_id, post_id):
                         "jrc_video:final_download",
                         kwargs={"workspace_id": workspace.id, "post_id": post.id, "platform_post_id": variant.id},
                     )
-                    if video_final
+                    if video_final and can_publish
                     else "",
                 }
             )
