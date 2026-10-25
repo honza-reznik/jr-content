@@ -21,15 +21,17 @@ from apps.jrc_texts import services as text_services
 from apps.jrc_texts.models import TextDocument
 from apps.jrc_texts.services import ConflictError
 from apps.members.models import WorkspaceMembership
+from apps.members.permissions import can_publish_directly
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 
 from .approval import approval_context, is_waiting_for
-from .models import PipelineStage
+from .models import ManualPublication, PipelineStage
 from .services import (
     available_moves,
     can_create_content,
     create_content,
+    mark_published_manually,
     move_content,
     pipeline_stage,
     request_content_changes,
@@ -176,7 +178,7 @@ def move(request, workspace_id, post_id):
     return redirect(reverse("jrc_production:board") + "?" + urlencode(filters))
 
 
-TABS = ("script", "video", "caption", "approval", "comments", "history")
+TABS = ("script", "video", "caption", "approval", "publish", "comments", "history")
 
 
 def _word_diff(previous, current):
@@ -416,6 +418,19 @@ def content_detail(request, workspace_id, post_id):
         }
         for action in approval_actions
     )
+    history.extend(
+        {
+            "kind": "publication",
+            "created_at": publication.published_at,
+            "label": f"Marked {publication.platform_post.social_account.get_platform_display()} as published",
+            "actor": publication.published_by,
+            "note": publication.post_url,
+            "can_view_note": True,
+        }
+        for publication in ManualPublication.objects.filter(platform_post__post=post).select_related(
+            "published_by", "platform_post__social_account"
+        )
+    )
     history.sort(key=lambda item: item["created_at"], reverse=True)
 
     video_context = {}
@@ -441,6 +456,57 @@ def content_detail(request, workspace_id, post_id):
             _enabled_caption_accounts(post),
             can_view_internal_notes=can_view_internal_notes,
         )
+    publish_channels = []
+    can_publish = can_publish_directly(membership)
+    if active_tab == "publish":
+        from apps.jrc_video.models import VideoAsset, VideoVersion
+
+        variants = {item.social_account_id: item for item in post.platform_posts.select_related("social_account").all()}
+        videos = {
+            item.platform_post_id: item
+            for item in VideoAsset.objects.filter(platform_post__post=post).select_related("final_version")
+        }
+        publications = {
+            item.platform_post_id: item for item in ManualPublication.objects.filter(platform_post__post=post)
+        }
+        for account in _enabled_caption_accounts(post):
+            variant = variants.get(account.pk)
+            if variant is None:
+                continue
+            video = videos.get(variant.pk)
+            publication = publications.get(variant.pk)
+            document = TextDocument.objects.filter(platform_post=variant, kind=TextDocument.Kind.CAPTION).first()
+            latest_caption = document.versions.filter(state="final").order_by("-number").first() if document else None
+            caption = latest_caption.text if latest_caption else (variant.effective_caption or "")
+            scheduled_at = variant.scheduled_at
+            if scheduled_at:
+                scheduled_at = timezone.localtime(scheduled_at, ZoneInfo(workspace.effective_timezone or "UTC"))
+            video_final = bool(
+                video and video.final_version_id and video.final_version.status == VideoVersion.Status.READY
+            )
+            publish_channels.append(
+                {
+                    "variant": variant,
+                    "label": f"{account.get_platform_display()} · {account.account_name}",
+                    "caption": caption,
+                    "scheduled_at": scheduled_at,
+                    "scheduled_label": (scheduled_at.strftime("%b %-d, %Y · %-I:%M %p %Z") if scheduled_at else ""),
+                    "video_final": video_final,
+                    "has_video": bool(video),
+                    "published": publication is not None,
+                    "publication_url": publication.post_url if publication else "",
+                    "can_mark": can_publish
+                    and variant.status in {PlatformPost.Status.APPROVED, PlatformPost.Status.SCHEDULED}
+                    and bool(caption.strip())
+                    and (not video or video_final),
+                    "download_url": reverse(
+                        "jrc_video:final_download",
+                        kwargs={"workspace_id": workspace.id, "post_id": post.id, "platform_post_id": variant.id},
+                    )
+                    if video_final and can_publish
+                    else "",
+                }
+            )
     return render(
         request,
         "jrc_production/content_detail.html",
@@ -465,7 +531,32 @@ def content_detail(request, workspace_id, post_id):
             "caption_channels": caption_channels,
             "caption_media_items": caption_media_items,
             "caption_error": caption_error,
+            "publish_channels": publish_channels,
+            "can_publish": can_publish,
         },
+    )
+
+
+@login_required
+@require_POST
+def mark_published(request, workspace_id, post_id):
+    workspace = get_object_or_404(Workspace, pk=workspace_id)
+    post = get_object_or_404(Post, pk=post_id, workspace=workspace)
+    try:
+        mark_published_manually(
+            post,
+            request.POST.get("platform_post", ""),
+            request.user,
+            post_url=request.POST.get("post_url", ""),
+        )
+    except (PermissionDenied, ValidationError) as exc:
+        if isinstance(exc, PermissionDenied):
+            raise
+        messages.error(request, " ".join(exc.messages))
+    else:
+        messages.success(request, "Channel marked as published.")
+    return redirect(
+        f"{reverse('jrc_production:content_detail', kwargs={'workspace_id': workspace.id, 'post_id': post.id})}?tab=publish"
     )
 
 
