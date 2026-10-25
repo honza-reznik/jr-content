@@ -2,6 +2,25 @@
 	admin off
 	auto_https off
 	persist_config off
+	# Provozní warningy (např. přerušené SSE) také nesmí zaznamenat přístupové údaje.
+	log default {
+		format filter {
+			wrap json
+			fields {
+				request>uri query {
+					delete token
+					delete ticket
+					delete signature
+					delete sig
+					delete X-Amz-Signature
+					delete X-Amz-Credential
+					delete X-Amz-Security-Token
+					delete X-Goog-Signature
+				}
+				resp_headers>Location delete
+			}
+		}
+	}
 }
 
 :8080 {
@@ -21,6 +40,7 @@
 					delete X-Amz-Security-Token
 					delete X-Goog-Signature
 				}
+				resp_headers>Location delete
 			}
 		}
 	}

@@ -1,16 +1,17 @@
 #!/bin/sh
 # F5-B05: živé ověření nahrání verze videa. Jen projekt jrc-f5b05 (porty 13333/14053/15583/18153).
-# Použití: JRC_PROJECT=jrc-f5b05 sh scripts/F5-B05/check-upload.sh   (po make up s těmito porty)
+# Použití: nastav JRC_PROJECT na jrc-f5b05 nebo jrc-f5b09a a spusť po make up.
 set -eu
-[ "${JRC_PROJECT:-}" = "jrc-f5b05" ] || { echo 'Jen JRC_PROJECT=jrc-f5b05' >&2; exit 2; }
+[ "${JRC_PROJECT:-}" = "jrc-f5b05" ] || [ "${JRC_PROJECT:-}" = "jrc-f5b09a" ] || { echo 'Jen ověřovací projekt jrc-f5b05 nebo jrc-f5b09a' >&2; exit 2; }
 mkdir -p ops/test-output/F5-B05
-COMPOSE="docker compose --project-name jrc-f5b05 --file docker-compose.yml --env-file .env"
+project="$JRC_PROJECT"
+COMPOSE="docker compose --project-name $project --file docker-compose.yml --env-file .env"
 # Nový obsah při každém spuštění (jeden nedokončený upload na kanál a uživatele).
-$COMPOSE exec -T -e JRC_PROJECT=jrc-f5b05 jrc-bb-web python manage.py shell < scripts/F5-B05/seed.py \
+$COMPOSE exec -T -e JRC_PROJECT=$project jrc-bb-web python manage.py shell < scripts/F5-B05/seed.py \
   > ops/test-output/F5-B05/fixture.json
 docker run --rm --pull never --network host --user "$(id -u):$(id -g)" \
-  --env-file .env --env JRC_PROJECT=jrc-f5b05 --volume "$PWD:/jrc" --workdir /jrc \
-  "jrc-dev:jrc-f5b05" node scripts/F5-B05/check-upload.cjs
+  --env-file .env --env JRC_PROJECT=$project --volume "$PWD:/jrc" --workdir /jrc \
+  "jrc-dev:$project" node scripts/F5-B05/check-upload.cjs
 # Databáze: jedno video na kanál, dvě verze s čísly 1 a 2, obě hotové.
 POST=$(python3 -c "import json;print(json.load(open('ops/test-output/F5-B05/fixture.json'))['post'])")
 $COMPOSE exec -T jrc-bb-web python manage.py shell -c "
