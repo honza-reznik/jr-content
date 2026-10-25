@@ -10,6 +10,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.composer.models import PlatformPost, Post
+from apps.jrc_production.notifications import notify_text_version
 from apps.jrc_production.services import content_membership
 from apps.members.models import WorkspaceMembership
 
@@ -91,7 +92,7 @@ def create_document(
         raise ValidationError("Choose a valid version source.")
     normalized, text = normalize_content(content=content, markdown=markdown, plain=format == "plain")
     document.save()
-    TextVersion.objects.create(
+    version = TextVersion.objects.create(
         document=document,
         number=1,
         state=TextVersion.State.FINAL,
@@ -101,6 +102,11 @@ def create_document(
         created_by=user,
         finalized_at=timezone.now(),
     )
+    # A script created with real text is a new version for the team (F7-B03). An empty script
+    # (the editor creates one before the first edit) and the copy a caption history starts from
+    # are not: the version saved on top of them is what changes something.
+    if kind == TextDocument.Kind.SCRIPT and text.strip():
+        notify_text_version(version, user)
     return document
 
 
@@ -177,6 +183,7 @@ def save(version_id, user, *, expected_revision, content=None, markdown=None):
     draft.draft_owner = None
     draft.draft_heartbeat_at = None
     draft.save()
+    notify_text_version(draft, user)
     return draft
 
 

@@ -124,7 +124,7 @@ DEFAULT_CHANNELS: dict[str, dict[str, bool]] = {
     EventType.POST_FAILED: {Channel.IN_APP: True, Channel.EMAIL: True},
     EventType.NEW_INBOX_MESSAGE: {Channel.IN_APP: True, Channel.EMAIL: False},
     EventType.INBOX_SLA_OVERDUE: {Channel.IN_APP: True, Channel.EMAIL: True},
-    EventType.CLIENT_APPROVAL_REQUESTED: {Channel.IN_APP: False, Channel.EMAIL: True},
+    EventType.CLIENT_APPROVAL_REQUESTED: {Channel.IN_APP: True, Channel.EMAIL: True},
     EventType.TEAM_MEMBER_INVITED: {Channel.IN_APP: False, Channel.EMAIL: True},
     EventType.SOCIAL_ACCOUNT_DISCONNECTED: {Channel.IN_APP: True, Channel.EMAIL: True},
     EventType.REPORT_GENERATED: {Channel.IN_APP: True, Channel.EMAIL: True},
@@ -134,6 +134,9 @@ DEFAULT_CHANNELS: dict[str, dict[str, bool]] = {
     EventType.APPROVAL_STALLED: {Channel.IN_APP: True, Channel.EMAIL: True},
     EventType.APPROVAL_HOLD_REQUESTED: {Channel.IN_APP: True, Channel.EMAIL: True},
     EventType.CLIENT_CONNECTED_ACCOUNTS: {Channel.IN_APP: True, Channel.EMAIL: True},
+    EventType.CONTENT_SCRIPT_VERSION: {Channel.IN_APP: True, Channel.EMAIL: False},
+    EventType.CONTENT_CAPTION_VERSION: {Channel.IN_APP: True, Channel.EMAIL: False},
+    EventType.CONTENT_VIDEO_VERSION: {Channel.IN_APP: True, Channel.EMAIL: False},
 }
 
 # Event types considered non-critical (suppressed during quiet hours).
@@ -235,8 +238,13 @@ def _resolve_channels(user, event_type: str, pref_cache: dict | None = None) -> 
 
     defaults = DEFAULT_CHANNELS.get(event_type, {})
     channels: list[str] = []
+    # JR Content (F7-B03): the local application sends nothing out, so webhooks can be switched
+    # off for the whole installation (``jrc.py``); upstream keeps them on by default.
+    webhooks_enabled = getattr(settings, "NOTIFICATION_WEBHOOKS_ENABLED", True)
 
     for channel_value in [Channel.IN_APP, Channel.EMAIL, Channel.WEBHOOK]:
+        if channel_value == Channel.WEBHOOK and not webhooks_enabled:
+            continue
         if channel_value in pref_map:
             if pref_map[channel_value]:
                 channels.append(str(channel_value))
@@ -359,15 +367,25 @@ def _dispatch_in_app(delivery: NotificationDelivery) -> None:
     pass
 
 
+def action_link(notification, app_url):
+    """Absolute address for the e-mail button; in-app links are stored as paths (F7-B03)."""
+    url = notification.data.get("action_url") or ""
+    if url.startswith("/") and not url.startswith("//"):
+        return app_url.rstrip("/") + url
+    return url if url.startswith(("http://", "https://")) else ""
+
+
 def _dispatch_email(delivery: NotificationDelivery) -> None:
     """Send notification email using Django's email backend."""
     notification = protect_note_body(delivery.notification)
     user = notification.user
 
+    app_url = getattr(settings, "APP_URL", "http://localhost:8000")
     context = {
         "notification": notification,
         "user": user,
-        "app_url": getattr(settings, "APP_URL", "http://localhost:8000"),
+        "app_url": app_url,
+        "action_link": action_link(notification, app_url),
     }
 
     text_content = render_to_string("notifications/email/notification.txt", context)

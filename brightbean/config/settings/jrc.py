@@ -29,6 +29,8 @@ STORAGES["staticfiles"] = {  # noqa: F405
     "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
 }
 JRC_SOCIAL_PROVIDERS_ENABLED = False
+# JR Content: upraveno 2026-10-25 (blok F7-B03): upozornění neposílají webhooky ven.
+NOTIFICATION_WEBHOOKS_ENABLED = False
 
 # JR Content: upraveno 2026-10-23 (blok F2-B10), AGPL-3.0.
 from apps.jrc_ui.features import configure_ui  # noqa: E402

@@ -16,6 +16,13 @@ from django.db import transaction
 
 from apps.composer.models import PlatformPost, Post
 from apps.members.models import WorkspaceMembership
+from apps.notifications.audience import (
+    active_memberships,
+    content_label,
+    content_path,
+    decides_at_step,
+    team_members,
+)
 from apps.notifications.engine import notify
 from apps.notifications.models import EventType
 
@@ -77,19 +84,68 @@ def _record_action(post, platform_post, user, action, comment=""):
     )
 
 
-def _notify_reviewers(workspace, actor, *, post, event_type, title, body):
-    """Notify every workspace member with ``approve_posts`` (except the actor)."""
-    reviewers = WorkspaceMembership.objects.filter(workspace=workspace).select_related("user", "custom_role")
-    for membership in reviewers:
-        perms = membership.effective_permissions
-        if perms.get("approve_posts", False) and membership.user != actor:
+def _data(post, workspace, tab="approval", **extra):
+    """Data of a content notification: ids plus the link to the content detail (F7-B03)."""
+    return {
+        "post_id": str(post.id),
+        "workspace_id": str(workspace.id),
+        "action_url": content_path(post, tab),
+        **extra,
+    }
+
+
+def _notify_reviewers(workspace, actor, *, post, event_type, title, body, step=None):
+    """Tell the members who are up next (F7-B03).
+
+    With ``step`` (``pending_review`` / ``pending_client``) only the members who decide at that
+    step are told, by the same rule as ``jrc_production.services.can_decide``: in the two-stage
+    mode the client is not asked while the team has not approved yet. A client who decides gets
+    the client wording. Without ``step`` the message goes to the team members with ``approve_posts``
+    (for example a hold requested by a client, which other clients do not need to see).
+    """
+    for membership in active_memberships(workspace):
+        if membership.user_id == actor.pk:
+            continue
+        if step is not None:
+            if not decides_at_step(workspace, membership, step):
+                continue
+        elif membership.workspace_role in ("client", "viewer") or not membership.effective_permissions.get(
+            "approve_posts", False
+        ):
+            continue
+        if step is not None and membership.workspace_role == "client":
             notify(
                 user=membership.user,
-                event_type=event_type,
-                title=title,
-                body=body,
-                data={"post_id": str(post.id), "workspace_id": str(workspace.id)},
+                event_type=EventType.CLIENT_APPROVAL_REQUESTED,
+                title="Posts ready for your review",
+                body=f"A post in {workspace.name} is waiting for your approval.",
+                data=_data(post, workspace),
             )
+            continue
+        notify(
+            user=membership.user,
+            event_type=event_type,
+            title=title,
+            body=body,
+            data=_data(post, workspace),
+        )
+
+
+def _is_client(workspace, user):
+    return WorkspaceMembership.objects.filter(
+        workspace=workspace, user=user, workspace_role=WorkspaceMembership.WorkspaceRole.CLIENT
+    ).exists()
+
+
+def _decision_recipients(post, workspace, actor):
+    """Who hears about a decision: the author, and the whole team when the client decided (F7-B03)."""
+    users = {}
+    if post.author and post.author != actor:
+        users[post.author.pk] = (post.author, True)
+    if _is_client(workspace, actor):
+        for user in team_members(workspace, actor):
+            users.setdefault(user.pk, (user, False))
+    return list(users.values())
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +187,7 @@ def submit_for_review(target, user, workspace):
         event_type=EventType.POST_SUBMITTED,
         title="Post submitted for review",
         body=f'{user.display_name} submitted a post for your review: "{post.caption_snippet}"',
+        step="pending_review",
     )
 
     return post
@@ -179,17 +236,21 @@ def approve_post(target, user, workspace, comment=""):
     # Only tell the author "approved" when the post actually reached approved —
     # in two-stage mode an internal approval that advances to pending_client is
     # not done yet (the client still has to sign off, which re-enters this fn).
-    if post.author and post.author != user and not advanced_to_client:
-        notify(
-            user=post.author,
-            event_type=EventType.POST_APPROVED,
-            title="Post approved",
-            body=f'Your post "{post.caption_snippet}" was approved by {user.display_name}.',
-            data={
-                "post_id": str(post.id),
-                "workspace_id": str(workspace.id),
-            },
-        )
+    if not advanced_to_client:
+        for recipient, is_author in _decision_recipients(post, workspace, user):
+            if is_author:
+                title = "Post approved"
+                body = f'Your post "{post.caption_snippet}" was approved by {user.display_name}.'
+            else:
+                title = "Client approved a post"
+                body = f'{user.display_name} approved "{content_label(post)}".'
+            notify(
+                user=recipient,
+                event_type=EventType.POST_APPROVED,
+                title=title,
+                body=body,
+                data=_data(post, workspace),
+            )
 
     return post
 
@@ -215,17 +276,13 @@ def request_changes(target, user, workspace, comment):
             for pp in moved:
                 action = _record_action(post, pp, user, ApprovalAction.ActionType.CHANGES_REQUESTED, comment)
 
-    if post.author and post.author != user:
+    for recipient, is_author in _decision_recipients(post, workspace, user):
         notify(
-            user=post.author,
+            user=recipient,
             event_type=EventType.POST_CHANGES_REQUESTED,
-            title="Changes requested on your post",
+            title="Changes requested on your post" if is_author else "Client requested changes",
             body=f'{user.display_name} requested changes: "{comment[:100]}"',
-            data={
-                "note_visibility": action.note_visibility,
-                "post_id": str(post.id),
-                "workspace_id": str(workspace.id),
-            },
+            data=_data(post, workspace, note_visibility=action.note_visibility),
         )
 
     return post
@@ -258,11 +315,7 @@ def reject_post(target, user, workspace, comment):
             event_type=EventType.POST_REJECTED,
             title="Post rejected",
             body=f'{user.display_name} rejected your post: "{comment[:100]}"',
-            data={
-                "note_visibility": action.note_visibility,
-                "post_id": str(post.id),
-                "workspace_id": str(workspace.id),
-            },
+            data=_data(post, workspace, note_visibility=action.note_visibility),
         )
 
     return post
@@ -356,6 +409,7 @@ def resubmit_post(target, user, workspace):
         event_type=EventType.POST_SUBMITTED,
         title="Post resubmitted for review",
         body=f'{user.display_name} resubmitted a post: "{post.caption_snippet}"',
+        step="pending_review",
     )
 
     return post
@@ -427,8 +481,5 @@ def _notify_clients(post, workspace):
             event_type=EventType.CLIENT_APPROVAL_REQUESTED,
             title="Posts ready for your review",
             body=f"A post in {workspace.name} is waiting for your approval.",
-            data={
-                "post_id": str(post.id),
-                "workspace_id": str(workspace.id),
-            },
+            data=_data(post, workspace),
         )

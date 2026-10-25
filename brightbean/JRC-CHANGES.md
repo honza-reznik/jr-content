@@ -584,3 +584,19 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
   v `error.data.status`. Obsah mimo rozsah účtů klíče je 404.
 - `apps/mcp/tests/test_content_tools.py`: katalog a všech sedm nástrojů, zápis a konflikt verzí, zákaz
   zápisu read-only klíčem, skrytí interních komentářů klientovi a obsah mimo rozsah klíče.
+## 2026-10-25 · F7-B03 — upozornění v aplikaci
+
+- `apps/notifications/audience.py` (nový): kdo je tým (ne `client`, ne `viewer`), kdo klientská strana, `content_path(post, tab)`
+  (odkaz na detail obsahu a záložku) a `decides_at_step()` – pravidlo „kdo je na řadě“ shodné s `can_decide`
+  (dvoustupňově nejdřív tým při `pending_review`, klient při `pending_client`).
+- `apps/approvals/services.py`: `submit_for_review` a `resubmit_post` už neposílají „Post submitted“ každému s `approve_posts`
+  (nález F7-B02), ale jen těm, kdo jsou na řadě; klient dostane `client_approval_requested`. Rozhodnutí klienta (schválení, žádost o změny)
+  jde autorovi i celému týmu; žádost o pozastavení jen týmu. Všechna upozornění nesou `action_url` (záložka Approval).
+  `apps/approvals/tasks.py`: připomínka týmu stejným pravidlem; `apps/approvals/comments.py`: odkaz na záložku Comments.
+- `apps/jrc_production/notifications.py` (nový): upozornění na novou uloženou verzi scénáře/popisku (`jrc_texts.services.save`,
+  scénář vytvořený rovnou s textem) a na hotový převod videa (`jrc_video.uploads._apply_remote`, jen přechod do `ready`, bez duplicit).
+  Tým bez autora verze; klient a viewer jen od fáze Review. Texty nikdy necitují obsah ani poznámky. Chyba upozornění neruší uložení.
+- `apps/notifications`: nové typy `content_script_version`, `content_caption_version`, `content_video_version` (migrace 0006);
+  `client_approval_requested` je nově i v aplikaci (dřív jen e-mail); e-mail dostává absolutní odkaz (`action_link`), seznam upozornění
+  odkazuje na detail obsahu. `NOTIFICATION_WEBHOOKS_ENABLED=False` v `config/settings/jrc.py` vypíná kanál webhook (e-mail zůstává konzole).
+- Testy: `apps/jrc_production/tests/test_notifications.py` (50).

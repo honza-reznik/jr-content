@@ -8,6 +8,7 @@ from django.utils import timezone
 
 from apps.composer.models import Post
 from apps.members.models import WorkspaceMembership
+from apps.notifications.audience import content_path, decides_at_step
 from apps.notifications.engine import notify
 from apps.notifications.models import EventType
 
@@ -99,15 +100,18 @@ def _process_stage(stage, status, threshold_hours, now):
 
 
 def _remind_reviewers(post):
-    """Send reminder to workspace members with approve_posts permission."""
+    """Remind the members who decide while the post waits for the team (F7-B03).
+
+    Same rule as the approval request: in the two-stage mode the client is not reminded
+    before the team has approved.
+    """
     workspace = post.workspace
     memberships = WorkspaceMembership.objects.filter(
         workspace=workspace,
     ).select_related("user", "custom_role")
 
     for membership in memberships:
-        perms = membership.effective_permissions
-        if perms.get("approve_posts", False):
+        if decides_at_step(workspace, membership, "pending_review"):
             notify(
                 user=membership.user,
                 event_type=EventType.APPROVAL_REMINDER,
@@ -116,6 +120,7 @@ def _remind_reviewers(post):
                 data={
                     "post_id": str(post.id),
                     "workspace_id": str(workspace.id),
+                    "action_url": content_path(post, "approval"),
                 },
             )
 
@@ -137,6 +142,7 @@ def _remind_clients(post):
             data={
                 "post_id": str(post.id),
                 "workspace_id": str(workspace.id),
+                "action_url": content_path(post, "approval"),
             },
         )
 
@@ -164,6 +170,7 @@ def _escalate(post, stage):
                 "post_id": str(post.id),
                 "workspace_id": str(workspace.id),
                 "stage": stage,
+                "action_url": content_path(post, "approval"),
             },
         )
 

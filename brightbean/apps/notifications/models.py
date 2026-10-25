@@ -23,6 +23,9 @@ class EventType(models.TextChoices):
     APPROVAL_STALLED = "approval_stalled", "Stalled approval escalation"
     APPROVAL_HOLD_REQUESTED = "approval_hold_requested", "Client requested a hold"
     CLIENT_CONNECTED_ACCOUNTS = "client_connected_accounts", "Client connected accounts"
+    CONTENT_SCRIPT_VERSION = "content_script_version", "New script version"
+    CONTENT_CAPTION_VERSION = "content_caption_version", "New caption version"
+    CONTENT_VIDEO_VERSION = "content_video_version", "New video version"
 
 
 class Channel(models.TextChoices):

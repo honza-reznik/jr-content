@@ -2,7 +2,7 @@
 
 {{ notification.body }}
 
-{% if notification.data.action_url %}View details: {{ notification.data.action_url }}{% endif %}
+{% if action_link %}View details: {{ action_link }}{% endif %}
 
 ---
 You received this because of your notification settings.
