@@ -512,3 +512,98 @@ def test_decision_text_for_the_author_is_unchanged(workspace, everyone, content)
     notification = got(everyone["owner"], EventType.POST_APPROVED)[0]
     assert notification.title == "Post approved" and "approved by Mia" in notification.body
     assert ApprovalAction.objects.filter(post=content, action="approved").exists()
+
+
+# ---- Review fixes (Luna 04:18) ----------------------------------------------------------------
+
+
+def test_pending_webhook_deliveries_are_closed_when_webhooks_are_off(workspace, manager):
+    from datetime import timedelta
+
+    from apps.notifications.engine import _dispatch_webhook, retry_failed_deliveries
+
+    notification = Notification.objects.create(
+        user=manager, event_type=EventType.POST_SUBMITTED, title="t", data={"webhook_url": "https://example.com/hook"}
+    )
+    delivery = NotificationDelivery.objects.create(
+        notification=notification,
+        channel=Channel.WEBHOOK,
+        status="pending",
+        attempts=1,
+        next_retry_at=timezone.now() - timedelta(minutes=1),
+    )
+
+    with override_settings(NOTIFICATION_WEBHOOKS_ENABLED=False), patch("httpx.post") as post:
+        assert retry_failed_deliveries() == 1
+        with pytest.raises(RuntimeError):
+            _dispatch_webhook(delivery)
+
+    post.assert_not_called()
+    delivery.refresh_from_db()
+    assert delivery.status == "failed" and delivery.next_retry_at is None and delivery.attempts == 1
+
+
+@pytest.mark.parametrize(
+    ("url", "kept"),
+    [
+        ("/workspace/x/content/y/?tab=script", True),
+        ("javascript:alert(1)", False),
+        ("//evil.example/x", False),
+        ("https://evil.example/x", False),
+        ("/\\evil.example", False),
+        ("/ok path", False),
+        ("", False),
+    ],
+)
+def test_only_in_app_paths_become_links(workspace, manager, url, kept):
+    Notification.objects.create(
+        user=manager, event_type=EventType.POST_SUBMITTED, title="Link test", data={"action_url": url}
+    )
+    client = Client()
+    client.force_login(manager)
+
+    page = client.get(reverse("notifications:list")).content.decode()
+    drawer = client.get(reverse("notifications:drawer")).content.decode()
+
+    for html in (page, drawer):
+        assert (f'href="{url}"' in html) is kept
+        assert "javascript:" not in html and "evil.example" not in html
+    from apps.notifications.engine import action_link
+
+    notification = Notification.objects.get(title="Link test")
+    assert bool(action_link(notification, "http://127.0.0.1:13000")) is kept
+
+
+def test_client_step_request_skips_clients_who_cannot_decide_or_are_inactive(workspace, everyone, content):
+    from apps.members.models import CustomRole
+
+    set_mode(workspace, TWO_STAGE)
+    read_only = CustomRole.objects.create(organization=workspace.organization, name="Read only", permissions={})
+    quiet = person(workspace, "client", "Quiet")
+    WorkspaceMembership.objects.filter(user=quiet, workspace=workspace).update(custom_role=read_only)
+    gone = person(workspace, "client", "Gone")
+    User.objects.filter(pk=gone.pk).update(is_active=False)
+    to_review(content, everyone["owner"])
+    Notification.objects.all().delete()
+
+    move_content(content, "approved", everyone["manager"], expected_stage="review")
+
+    assert receivers(EventType.CLIENT_APPROVAL_REQUESTED) == {"ella"}
+
+
+@pytest.mark.parametrize("how", ["removed", "inactive"])
+def test_decision_does_not_reach_an_author_who_left(workspace, everyone, content, how):
+    set_mode(workspace, SINGLE)
+    ella = everyone["client"]
+    mine = create_content(workspace, "Ella's own idea", ella)
+    approvals.submit_for_review(mine, ella, workspace)
+    if how == "removed":
+        WorkspaceMembership.objects.filter(user=ella, workspace=workspace).delete()
+    else:
+        User.objects.filter(pk=ella.pk).update(is_active=False)
+    Notification.objects.all().delete()
+
+    approvals.approve_post(mine, everyone["manager"], workspace)
+    approvals.request_changes(mine, everyone["manager"], workspace, "Rework")
+
+    assert Notification.objects.filter(user=ella).count() == 0

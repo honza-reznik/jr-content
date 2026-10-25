@@ -24,7 +24,7 @@
             class="group relative {% if not n.is_read %}bg-orange-50/50{% endif %} hover:bg-stone-50 transition-colors duration-150"
         >
             <a
-                href="{% if n.data.action_url %}{{ n.data.action_url }}{% else %}{% url 'notifications:list' %}{% endif %}"
+                href="{% if n.safe_action_url %}{{ n.safe_action_url }}{% else %}{% url 'notifications:list' %}{% endif %}"
                 {% if not n.is_read %}
                 hx-post="{% url 'notifications:mark_as_read' n.id %}"
                 hx-target="#notif-{{ n.id }}"

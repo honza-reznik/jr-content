@@ -600,3 +600,7 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
   `client_approval_requested` je nově i v aplikaci (dřív jen e-mail); e-mail dostává absolutní odkaz (`action_link`), seznam upozornění
   odkazuje na detail obsahu. `NOTIFICATION_WEBHOOKS_ENABLED=False` v `config/settings/jrc.py` vypíná kanál webhook (e-mail zůstává konzole).
 - Testy: `apps/jrc_production/tests/test_notifications.py` (50).
+- Opravy po review (F7-B03): `engine._dispatch` a `_dispatch_webhook` kontrolují `NOTIFICATION_WEBHOOKS_ENABLED` i při odeslání, čekající a opakovaná
+  webhook doručení se při vypnutí uzavřou jako `failed` bez spojení; odkazy v seznamu, zásuvce i e-mailu jdou přes `Notification.safe_action_url`
+  (jen cesta aplikace s jedním `/`); `_notify_clients` posílá jen aktivním klientům, kteří rozhodují v kroku `pending_client`;
+  `_decision_recipients` bere autora jen s aktivním členstvím v klientovi. Testy: 15 nových v `test_notifications.py`.

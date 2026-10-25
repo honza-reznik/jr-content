@@ -140,7 +140,9 @@ def _is_client(workspace, user):
 def _decision_recipients(post, workspace, actor):
     """Who hears about a decision: the author, and the whole team when the client decided (F7-B03)."""
     users = {}
-    if post.author and post.author != actor:
+    # The author is told only while still an active member of this client (a removed member
+    # must not read a caption snippet or a decision about content they can no longer open).
+    if post.author and post.author != actor and active_memberships(workspace).filter(user_id=post.author_id).exists():
         users[post.author.pk] = (post.author, True)
     if _is_client(workspace, actor):
         for user in team_members(workspace, actor):
@@ -469,13 +471,12 @@ def _notify_reviewers_of_hold(post, workspace, user, comment):
 
 
 def _notify_clients(post, workspace):
-    """Send CLIENT_APPROVAL_REQUESTED notification to all client members."""
-    client_memberships = WorkspaceMembership.objects.filter(
-        workspace=workspace,
-        workspace_role=WorkspaceMembership.WorkspaceRole.CLIENT,
-    ).select_related("user")
+    """Send CLIENT_APPROVAL_REQUESTED to the active clients who decide at the client step (F7-B03)."""
+    client_memberships = active_memberships(workspace).filter(workspace_role=WorkspaceMembership.WorkspaceRole.CLIENT)
 
     for membership in client_memberships:
+        if not decides_at_step(workspace, membership, "pending_client"):
+            continue
         notify(
             user=membership.user,
             event_type=EventType.CLIENT_APPROVAL_REQUESTED,

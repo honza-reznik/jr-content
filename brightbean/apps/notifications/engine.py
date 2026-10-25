@@ -240,7 +240,7 @@ def _resolve_channels(user, event_type: str, pref_cache: dict | None = None) -> 
     channels: list[str] = []
     # JR Content (F7-B03): the local application sends nothing out, so webhooks can be switched
     # off for the whole installation (``jrc.py``); upstream keeps them on by default.
-    webhooks_enabled = getattr(settings, "NOTIFICATION_WEBHOOKS_ENABLED", True)
+    webhooks_enabled = _webhooks_enabled()
 
     for channel_value in [Channel.IN_APP, Channel.EMAIL, Channel.WEBHOOK]:
         if channel_value == Channel.WEBHOOK and not webhooks_enabled:
@@ -318,8 +318,20 @@ def _is_in_quiet_hours(user) -> bool:
         return now_local >= start or now_local <= end
 
 
+def _webhooks_enabled() -> bool:
+    return bool(getattr(settings, "NOTIFICATION_WEBHOOKS_ENABLED", True))
+
+
 def _dispatch(delivery: NotificationDelivery) -> None:
     """Dispatch a single delivery to its channel."""
+    if delivery.channel == Channel.WEBHOOK and not _webhooks_enabled():
+        # JR Content (F7-B03): rows queued before webhooks were switched off, and any retry of
+        # them, are closed without a connection instead of being sent later.
+        delivery.status = DeliveryStatus.FAILED
+        delivery.error_message = "Webhooks are disabled on this installation."
+        delivery.next_retry_at = None
+        delivery.save(update_fields=["status", "error_message", "next_retry_at"])
+        return
     delivery.attempts += 1
     delivery.save(update_fields=["attempts"])
 
@@ -369,10 +381,8 @@ def _dispatch_in_app(delivery: NotificationDelivery) -> None:
 
 def action_link(notification, app_url):
     """Absolute address for the e-mail button; in-app links are stored as paths (F7-B03)."""
-    url = notification.data.get("action_url") or ""
-    if url.startswith("/") and not url.startswith("//"):
-        return app_url.rstrip("/") + url
-    return url if url.startswith(("http://", "https://")) else ""
+    path = notification.safe_action_url
+    return app_url.rstrip("/") + path if path else ""
 
 
 def _dispatch_email(delivery: NotificationDelivery) -> None:
@@ -417,6 +427,9 @@ def _dispatch_webhook(delivery: NotificationDelivery) -> None:
     import httpx
 
     from apps.common.validators import is_safe_url
+
+    if not _webhooks_enabled():
+        raise RuntimeError("Webhooks are disabled on this installation.")
 
     notification = protect_note_body(delivery.notification)
 
