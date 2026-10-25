@@ -2,6 +2,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 import jwt
+import time
 
 
 class TestCreateHlsToken:
@@ -17,6 +18,8 @@ class TestCreateHlsToken:
         assert payload["sub"] == "hls"
         assert payload["pfx"] == "hls/project-1/version-1"
         assert "exp" in payload
+        assert payload["v"] == 4
+        assert 0 < payload["exp"] - time.time() <= 1800
 
 
 class TestVerifyHlsToken:
@@ -63,7 +66,7 @@ class TestRewriteManifest:
         result = _rewrite_manifest(content, "hls/proj/ver", "720p/index.m3u8", "tok123")
 
         assert "https://s3.example.com/presigned-segment.ts" in result
-        mock_presign.assert_called_once_with("hls/proj/ver/720p/segment0.ts", expires_in=86400)
+        mock_presign.assert_called_once_with("hls/proj/ver/720p/segment0.ts", expires_in=1800)
 
     @patch("apps.api.routers.hls_proxy.generate_presigned_get_url")
     def test_rewrites_m3u8_to_proxy_url(self, mock_presign):
@@ -118,15 +121,15 @@ class TestSegmentUrlLifetime:
 
     The proxy checks only the token's signature and expiry, never the asset, so
     the token's lifetime is the bound on how long a player can keep fetching
-    video after access to it ended. Segment URLs signed for a fixed 24 hours at
-    each playlist fetch stretched that to about 48 hours from the token's issue.
+    video after access to it ended. Segment URLs cannot outlive the short HLS
+    credential that authorized the playlist.
     """
 
     def _token(self, seconds_left):
         from apps.api.config import settings
         from datetime import datetime, timedelta, timezone
         return jwt.encode(
-            {"sub": "hls", "v": 3, "pfx": "hls/proj/ver",
+            {"sub": "hls", "v": 4, "pfx": "hls/proj/ver",
              "exp": datetime.now(timezone.utc) + timedelta(seconds=seconds_left)},
             settings.jwt_secret, algorithm=settings.jwt_algorithm,
         )
@@ -151,12 +154,24 @@ class TestSegmentUrlLifetime:
             assert 1 <= expires <= 60
 
     def test_a_fresh_token_signs_segments_for_its_full_lifetime(self):
-        from apps.api.routers.hls_proxy import create_hls_token
+        from apps.api.routers.hls_proxy import create_hls_token, HLS_TOKEN_SECONDS
         for expires in self._signed_expiries(create_hls_token("hls/proj/ver")):
-            assert 86400 - 60 <= expires <= 86400
+            assert HLS_TOKEN_SECONDS - 60 <= expires <= HLS_TOKEN_SECONDS
 
     def test_an_expired_token_signs_nothing(self):
         from apps.api.routers.hls_proxy import hls_proxy
         with pytest.raises(Exception) as exc_info:
             hls_proxy("720p/index.m3u8", token=self._token(-5))
+        assert exc_info.value.status_code == 401
+
+    def test_previous_long_lived_hls_tokens_are_invalidated(self):
+        from apps.api.config import settings
+        from apps.api.routers.hls_proxy import hls_proxy
+        legacy = jwt.encode(
+            {"sub": "hls", "v": 3, "pfx": "hls/proj/ver",
+             "exp": time.time() + 86400},
+            settings.jwt_secret, algorithm=settings.jwt_algorithm,
+        )
+        with pytest.raises(Exception) as exc_info:
+            hls_proxy("master.m3u8", token=legacy)
         assert exc_info.value.status_code == 401

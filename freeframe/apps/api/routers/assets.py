@@ -21,7 +21,7 @@ from ..services.downloads import (
     describe_choices, download_choices, download_filename, may_download_original,
     original_allowed_for_download, pick_or_refuse,
 )
-from .hls_proxy import create_hls_token, managed_hls_identity, MANAGED_MEDIA_SECONDS
+from .hls_proxy import create_hls_token, managed_hls_identity, HLS_TOKEN_SECONDS, MANAGED_MEDIA_SECONDS
 from ..schemas.upload import (
     InitiateUploadRequest, InitiateUploadResponse,
     ALLOWED_MIME_TYPES, mime_to_asset_type,
@@ -409,7 +409,9 @@ def get_stream_url(
 
     return StreamUrlResponse(
         url=url, asset_type=asset.asset_type,
-        expires_in=MANAGED_MEDIA_SECONDS if current_user.jrc_managed is True else 3600,
+        expires_in=HLS_TOKEN_SECONDS if asset.asset_type == AssetType.video else (
+            MANAGED_MEDIA_SECONDS if current_user.jrc_managed is True else 3600
+        ),
     )
 
 

@@ -2,6 +2,7 @@
 
 import * as React from 'react'
 import { getAccessToken, refreshAccessToken } from '@/lib/auth'
+import { api } from '@/lib/api'
 
 // ─── Event payload types ──────────────────────────────────────────────────────
 
@@ -165,14 +166,21 @@ export function useSSE(projectId: string | null | undefined, options: UseSSEOpti
         }
       }
       const usedToken = token
+      let ticket: string
+      try {
+        const issued = await api.post<{ token: string }>(`/events/${projectId}/ticket`, {})
+        if (destroyed) return
+        ticket = issued.token
+      } catch {
+        if (!destroyed) scheduleReconnect()
+        return
+      }
       // Use window.location.origin as a base so deployments behind a reverse
       // proxy can set NEXT_PUBLIC_API_URL to a relative path like "/api"
       // without crashing the URL constructor.
       const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost'
       const url = new URL(`${API_URL}/events/${projectId}`, base)
-      if (token) {
-        url.searchParams.set('token', token)
-      }
+      url.searchParams.set('token', ticket)
 
       es = new EventSource(url.toString())
 
@@ -203,7 +211,12 @@ export function useSSE(projectId: string | null | undefined, options: UseSSEOpti
         es?.close()
         es = null
         if (TOKEN_REASONS.has(reason)) {
-          rejectedToken = usedToken
+          // A short SSE ticket expires before the login JWT. Ask for another
+          // ticket with the same session unless the login JWT itself needs a
+          // refresh or the server says its session version was revoked.
+          if (reason === 'token_revoked' || (usedToken && isExpiringSoon(usedToken))) {
+            rejectedToken = usedToken
+          }
           scheduleReconnect()
         } else {
           // No longer allowed to see this project: reconnecting would only be

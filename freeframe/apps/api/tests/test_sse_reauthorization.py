@@ -17,10 +17,12 @@ import json
 import time
 import uuid
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import jwt
 import pytest
 from fastapi import HTTPException
+from starlette.responses import Response
 from fastapi.security import HTTPAuthorizationCredentials
 
 from apps.api.config import settings
@@ -227,7 +229,20 @@ async def _open(project_id, token, bearer=False):
         creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
         resp = await events.stream_events(project_id=project_id, token=None, credentials=creds)
     else:
-        resp = await events.stream_events(project_id=project_id, token=token, credentials=None)
+        # Tests pass the login credential as input, then model the browser's
+        # dedicated project-bound ticket used by EventSource.
+        try:
+            payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+            if payload.get("type") == "access":
+                ticket = jwt.encode({
+                    "sub": payload["sub"], "type": "sse", "pid": str(project_id),
+                    "ver": payload.get("ver", 1), "exp": payload["exp"],
+                }, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+            else:
+                ticket = token
+        except (jwt.InvalidTokenError, TypeError):
+            ticket = token
+        resp = await events.stream_events(project_id=project_id, token=ticket, credentials=None)
     return resp.body_iterator
 
 
@@ -270,6 +285,36 @@ def test_an_authorized_member_keeps_receiving_events_and_keepalives(world, broke
 
     asyncio.run(scenario())
     assert broker.closed == 1  # the subscription is torn down when the stream ends
+
+
+def test_event_ticket_is_short_lived_and_bound_to_its_project(monkeypatch):
+    project_id, user_id = uuid.uuid4(), uuid.uuid4()
+    monkeypatch.setattr(events, "project_events_denial", lambda *args: None)
+    response = events.issue_event_ticket(
+        project_id, response=Response(), db=object(),
+        current_user=SimpleNamespace(id=user_id, token_version=8),
+    )
+    ticket = response["token"]
+    payload = jwt.decode(ticket, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+
+    assert payload["type"] == "sse"
+    assert payload["sub"] == str(user_id)
+    assert payload["pid"] == str(project_id)
+    assert payload["ver"] == 8
+    assert 0 < payload["exp"] - time.time() <= events.SSE_TICKET_SECONDS
+    assert events._ticket_claims(ticket, project_id) is not None
+    assert events._ticket_claims(ticket, uuid.uuid4()) is None
+
+
+def test_login_jwt_is_not_accepted_in_event_source_query(world):
+    async def scenario():
+        with pytest.raises(HTTPException) as exc:
+            await events.stream_events(
+                project_id=world["P"], token=_token(world["member"]), credentials=None,
+            )
+        assert exc.value.status_code == 403
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("label,who,proj,revoke,reason,bearer", REVOCATIONS, ids=IDS)
