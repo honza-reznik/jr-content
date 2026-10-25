@@ -17,6 +17,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.composer.models import PlatformPost
+from apps.jrc_production.notifications import notify_video_version
 from apps.jrc_texts import services as text_services
 from apps.members.models import WorkspaceMembership
 
@@ -459,6 +460,14 @@ def _apply_remote(version, remote):
     remote_number = remote.get("version_number")
     if isinstance(remote_number, int) and not isinstance(remote_number, bool) and remote_number > 0:
         changes["number"] = remote_number
+    if status == VideoVersion.Status.READY and version.status != VideoVersion.Status.READY:
+        # Only the refresh that really flips the version to ready announces it (F7-B03);
+        # a second worker or an open tab updating at the same moment finds it ready already.
+        flipped = VideoVersion.objects.filter(pk=version.pk).exclude(status=VideoVersion.Status.READY).update(**changes)
+        if flipped:
+            version.refresh_from_db()
+            notify_video_version(version)
+        return
     if any(getattr(version, key) != value for key, value in changes.items()):
         VideoVersion.objects.filter(pk=version.pk).update(**changes)
 

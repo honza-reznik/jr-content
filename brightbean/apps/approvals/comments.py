@@ -9,6 +9,7 @@ from collections import defaultdict
 from django.utils import timezone
 
 from apps.members.models import WorkspaceMembership
+from apps.notifications.audience import content_path
 from apps.notifications.engine import notify
 from apps.notifications.models import EventType
 
@@ -286,6 +287,7 @@ def _notify_mentions(mentions, post, author, workspace, body, visibility):
                     "note_visibility": visibility,
                     "post_id": str(post.id),
                     "workspace_id": str(workspace.id),
+                    "action_url": content_path(post, "comments"),
                 },
             )
             notified.add(target_user.id)

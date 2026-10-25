@@ -23,6 +23,9 @@ class EventType(models.TextChoices):
     APPROVAL_STALLED = "approval_stalled", "Stalled approval escalation"
     APPROVAL_HOLD_REQUESTED = "approval_hold_requested", "Client requested a hold"
     CLIENT_CONNECTED_ACCOUNTS = "client_connected_accounts", "Client connected accounts"
+    CONTENT_SCRIPT_VERSION = "content_script_version", "New script version"
+    CONTENT_CAPTION_VERSION = "content_caption_version", "New caption version"
+    CONTENT_VIDEO_VERSION = "content_video_version", "New video version"
 
 
 class Channel(models.TextChoices):
@@ -35,6 +38,20 @@ class DeliveryStatus(models.TextChoices):
     PENDING = "pending", "Pending"
     DELIVERED = "delivered", "Delivered"
     FAILED = "failed", "Failed"
+
+
+def safe_app_path(value):
+    """The value if it is an in-app path (one leading slash, no scheme, no backslash or control character), else ""."""
+    if (
+        isinstance(value, str)
+        and value.startswith("/")
+        and not value.startswith("//")
+        and "\\" not in value
+        and value.isprintable()
+        and " " not in value
+    ):
+        return value
+    return ""
 
 
 class Notification(models.Model):
@@ -59,6 +76,12 @@ class Notification(models.Model):
             models.Index(fields=["user", "-created_at"]),
             models.Index(fields=["user", "is_read", "-created_at"]),
         ]
+
+    @property
+    def safe_action_url(self):
+        """Link target for screens: only a verified in-app path, otherwise nothing (F7-B03)."""
+        data = self.data if isinstance(self.data, dict) else {}
+        return safe_app_path(data.get("action_url"))
 
     def __str__(self):
         return f"{self.title} → {self.user}"

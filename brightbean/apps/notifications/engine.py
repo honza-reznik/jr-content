@@ -124,7 +124,7 @@ DEFAULT_CHANNELS: dict[str, dict[str, bool]] = {
     EventType.POST_FAILED: {Channel.IN_APP: True, Channel.EMAIL: True},
     EventType.NEW_INBOX_MESSAGE: {Channel.IN_APP: True, Channel.EMAIL: False},
     EventType.INBOX_SLA_OVERDUE: {Channel.IN_APP: True, Channel.EMAIL: True},
-    EventType.CLIENT_APPROVAL_REQUESTED: {Channel.IN_APP: False, Channel.EMAIL: True},
+    EventType.CLIENT_APPROVAL_REQUESTED: {Channel.IN_APP: True, Channel.EMAIL: True},
     EventType.TEAM_MEMBER_INVITED: {Channel.IN_APP: False, Channel.EMAIL: True},
     EventType.SOCIAL_ACCOUNT_DISCONNECTED: {Channel.IN_APP: True, Channel.EMAIL: True},
     EventType.REPORT_GENERATED: {Channel.IN_APP: True, Channel.EMAIL: True},
@@ -134,6 +134,9 @@ DEFAULT_CHANNELS: dict[str, dict[str, bool]] = {
     EventType.APPROVAL_STALLED: {Channel.IN_APP: True, Channel.EMAIL: True},
     EventType.APPROVAL_HOLD_REQUESTED: {Channel.IN_APP: True, Channel.EMAIL: True},
     EventType.CLIENT_CONNECTED_ACCOUNTS: {Channel.IN_APP: True, Channel.EMAIL: True},
+    EventType.CONTENT_SCRIPT_VERSION: {Channel.IN_APP: True, Channel.EMAIL: False},
+    EventType.CONTENT_CAPTION_VERSION: {Channel.IN_APP: True, Channel.EMAIL: False},
+    EventType.CONTENT_VIDEO_VERSION: {Channel.IN_APP: True, Channel.EMAIL: False},
 }
 
 # Event types considered non-critical (suppressed during quiet hours).
@@ -235,8 +238,13 @@ def _resolve_channels(user, event_type: str, pref_cache: dict | None = None) -> 
 
     defaults = DEFAULT_CHANNELS.get(event_type, {})
     channels: list[str] = []
+    # JR Content (F7-B03): the local application sends nothing out, so webhooks can be switched
+    # off for the whole installation (``jrc.py``); upstream keeps them on by default.
+    webhooks_enabled = _webhooks_enabled()
 
     for channel_value in [Channel.IN_APP, Channel.EMAIL, Channel.WEBHOOK]:
+        if channel_value == Channel.WEBHOOK and not webhooks_enabled:
+            continue
         if channel_value in pref_map:
             if pref_map[channel_value]:
                 channels.append(str(channel_value))
@@ -310,8 +318,20 @@ def _is_in_quiet_hours(user) -> bool:
         return now_local >= start or now_local <= end
 
 
+def _webhooks_enabled() -> bool:
+    return bool(getattr(settings, "NOTIFICATION_WEBHOOKS_ENABLED", True))
+
+
 def _dispatch(delivery: NotificationDelivery) -> None:
     """Dispatch a single delivery to its channel."""
+    if delivery.channel == Channel.WEBHOOK and not _webhooks_enabled():
+        # JR Content (F7-B03): rows queued before webhooks were switched off, and any retry of
+        # them, are closed without a connection instead of being sent later.
+        delivery.status = DeliveryStatus.FAILED
+        delivery.error_message = "Webhooks are disabled on this installation."
+        delivery.next_retry_at = None
+        delivery.save(update_fields=["status", "error_message", "next_retry_at"])
+        return
     delivery.attempts += 1
     delivery.save(update_fields=["attempts"])
 
@@ -359,15 +379,23 @@ def _dispatch_in_app(delivery: NotificationDelivery) -> None:
     pass
 
 
+def action_link(notification, app_url):
+    """Absolute address for the e-mail button; in-app links are stored as paths (F7-B03)."""
+    path = notification.safe_action_url
+    return app_url.rstrip("/") + path if path else ""
+
+
 def _dispatch_email(delivery: NotificationDelivery) -> None:
     """Send notification email using Django's email backend."""
     notification = protect_note_body(delivery.notification)
     user = notification.user
 
+    app_url = getattr(settings, "APP_URL", "http://localhost:8000")
     context = {
         "notification": notification,
         "user": user,
-        "app_url": getattr(settings, "APP_URL", "http://localhost:8000"),
+        "app_url": app_url,
+        "action_link": action_link(notification, app_url),
     }
 
     text_content = render_to_string("notifications/email/notification.txt", context)
@@ -399,6 +427,9 @@ def _dispatch_webhook(delivery: NotificationDelivery) -> None:
     import httpx
 
     from apps.common.validators import is_safe_url
+
+    if not _webhooks_enabled():
+        raise RuntimeError("Webhooks are disabled on this installation.")
 
     notification = protect_note_body(delivery.notification)
 
