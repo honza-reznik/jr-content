@@ -165,13 +165,18 @@ async function main() {
       video.play().catch(() => {});
       video.currentTime = 17;
     });
-    await frame.waitForFunction(() => document.querySelector('video').currentTime >= 17);
+    await frame.waitForFunction(() => {
+      const video = document.querySelector('video');
+      const label = document.querySelector('[data-testid="video-timecode"]')?.textContent?.trim();
+      return video && video.readyState >= 2 && !video.seeking && video.currentTime >= 17 && /^0:1[78]$/.test(label || '');
+    }, null, { timeout: 30000 });
     await frame.locator('video').first().evaluate(video => video.pause());
     assert.match((await frame.getByTestId('video-timecode').innerText()).trim(), /^0:1[78]$/);
     await frame.getByPlaceholder('Leave your comment...').fill('zkrátit');
     await frame.getByTitle('Send (Enter)').click();
     await frame.getByText('zkrátit', { exact: true }).first().waitFor({ timeout: 20000 });
     await capture(ella.page, '05-ella-video', 1440);
+    await mobile.reload(); // Refresh the second device after the comment was posted on desktop.
     const mobileFrame = await playerFrame(mobile, 1);
     await mobileFrame.getByText('zkrátit', { exact: true }).first().waitFor({ timeout: 20000 });
     await capture(mobile, '05-ella-video', 390);
@@ -195,9 +200,9 @@ async function main() {
     await upload(admin.page, v2, 2);
     await admin.page.locator('[data-video-channel]:visible [data-video-final-toggle]').click();
     await admin.page.locator('[data-video-channel]:visible [data-video-final-badge]').waitFor({ state: 'visible' });
-    await admin.page.goto(`${origin}/workspace/${fixture.workspace}/compose/${postId}/`);
-    await admin.page.getByRole('button', { name: /Resubmit/ }).click();
-    await admin.page.waitForLoadState('networkidle');
+    // The pipeline owns this editorial transition. After Editing the platform
+    // statuses are drafts, so move the content back to Review from the board.
+    await move(admin.page, title, 'review');
     await admin.page.goto(`${detail}?tab=approval`);
     await admin.page.getByRole('button', { name: 'Approve', exact: true }).click();
     await admin.page.getByText('Approved by the team. It now waits for the client').first().waitFor();
@@ -219,9 +224,18 @@ async function main() {
     await move(admin.page, title, 'ready', '2030-01-05T12:30');
     await admin.page.goto(`${detail}?tab=publish`);
     await admin.page.getByRole('heading', { name: 'Publish channels' }).waitFor();
+    await admin.context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
     await admin.page.getByRole('button', { name: 'Copy caption' }).first().click();
+    await admin.page.getByText('Caption copied.', { exact: true }).waitFor();
+    assert.equal(await admin.page.evaluate(() => navigator.clipboard.readText()), `${caption} New ending.`);
     const download = admin.page.getByRole('link', { name: 'Download final video' });
     await download.waitFor();
+    const [downloadedVideo] = await Promise.all([admin.page.waitForEvent('download'), download.click()]);
+    const downloadedPath = await downloadedVideo.path();
+    assert(downloadedPath, 'Stažení finálního videa nevytvořilo soubor');
+    const downloadedBytes = await fs.promises.readFile(downloadedPath);
+    assert(downloadedBytes.length > 12, 'Stažené finální video je prázdné');
+    assert.equal(downloadedBytes.subarray(4, 8).toString('ascii'), 'ftyp', 'Stažený soubor není MP4');
     await capture(admin.page, '08-publish-ready', 1440);
     await admin.page.getByRole('button', { name: 'Mark as published' }).first().click();
     await admin.page.waitForLoadState('networkidle');
@@ -229,7 +243,7 @@ async function main() {
     await capture(admin.page, '09-published', 1440);
     await admin.page.goto(`${detail}?tab=history`);
     const history = await admin.page.locator('main').innerText();
-    assert(history.includes('Changes Requested') && history.includes('Published manually'), 'Historie schválení/publikace chybí');
+    assert(history.includes('Changes Requested') && history.includes('Marked Instagram as published'), 'Historie schválení/publikace chybí');
     await ellaAgain.page.goto(`${origin}/notifications/`);
     assert((await ellaAgain.page.locator('main').innerText()).toLowerCase().includes('notification'), 'Ella nevidí upozornění');
 

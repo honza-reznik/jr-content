@@ -133,6 +133,8 @@ def available_moves(post, membership):
     if can_edit and statuses <= {"draft", "changes_requested", "rejected", "approved", "scheduled"}:
         if statuses <= {"draft", "changes_requested", "rejected"}:
             moves.append(PipelineStage.REVIEW)
+            if statuses & {"changes_requested", "rejected"}:
+                moves.append(ProductionStage.EDITING)
         else:
             moves.append(ProductionStage.EDITING)
     if can_decide(post, membership, statuses):
