@@ -557,3 +557,15 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
   a opakovanou úlohou workeru `jrc_refresh_video_statuses` (každých 30 s, servisní účet `jrc-sync`).
 - `apps/jrc_production/views.py`: záložka Video předává příznak `video_player_ready` a před zobrazením obnoví stav verzí.
 - `apps/jrc_video/tests/test_player.py` (21 testů). Živé ověření: `make test-f5-b08-video` (`scripts/F5-B08/`).
+
+## 2026-10-25 · F9-B02 — MCP nástroje pro obsah
+
+- `apps/mcp/handlers.py`: přidáno sedm nástrojů `jrc_get_script`, `jrc_save_script`, `jrc_get_caption`,
+  `jrc_save_caption`, `jrc_list_comments`, `jrc_add_comment` a `jrc_get_stage`. Popisy a vstupní schémata
+  vysvětlují verzování, viditelnost a potřebná oprávnění.
+- Čtení a zápis používají stejné pomocné funkce a služby jako REST F9-B01: `jrc_texts.services`,
+  `approvals.comments` a odpovědi z `apps/api/routers/content.py`. Zápis scénáře/popisku vždy vytvoří
+  verzi přes `base_version`; komentáře filtruje služba podle role. Chyby MCP nesou původní HTTP status
+  v `error.data.status`. Obsah mimo rozsah účtů klíče je 404.
+- `apps/mcp/tests/test_content_tools.py`: katalog a všech sedm nástrojů, zápis a konflikt verzí, zákaz
+  zápisu read-only klíčem, skrytí interních komentářů klientovi a obsah mimo rozsah klíče.
