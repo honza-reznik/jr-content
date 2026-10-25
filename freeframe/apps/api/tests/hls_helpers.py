@@ -20,6 +20,6 @@ def segment_storage():
     body = MagicMock()
     body.iter_chunks.return_value = iter([b"transport-stream"])
     storage = MagicMock()
-    storage.get_object.return_value = {"Body": body}
-    with patch("apps.api.routers.hls_proxy.get_s3_client", return_value=storage):
+    storage.get_object.return_value = {"Body": body, "ContentLength": len(b"transport-stream")}
+    with patch("apps.api.routers.hls_proxy._stream_s3_client", return_value=storage):
         yield storage, body

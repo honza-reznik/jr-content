@@ -52,7 +52,7 @@ from ..services.downloads import (
     original_allowed_for_download, pick_or_refuse,
 )
 from ..services.crypto_service import encrypt_password, decrypt_password
-from .hls_proxy import issue_hls_url, managed_hls_identity, MANAGED_MEDIA_SECONDS
+from .hls_proxy import issue_hls_url, managed_hls_identity, share_hls_identity, MANAGED_MEDIA_SECONDS
 from ..models.project import Project, ProjectRole
 from ..tasks.email_tasks import send_share_email
 from ..tasks.celery_app import send_task_safe
@@ -303,6 +303,7 @@ def _build_share_validate_response(
                 if asset.asset_type == AssetType.video:
                     # Route through /stream/hls so S3 can stay private (#51)
                     stream_url = issue_hls_url(request, response, media_file.s3_key_processed,
+                                               **share_hls_identity(link, asset, media_file, current_user, session_id),
                                                **managed_hls_identity(current_user, asset.project_id, db=db))
                 else:
                     stream_url = generate_presigned_get_url(media_file.s3_key_processed, **media_expiry)
@@ -1599,6 +1600,7 @@ def get_share_stream_url(
     elif asset.asset_type == AssetType.video and media_file.s3_key_processed:
         # Route through /stream/hls so S3 can stay private (#51)
         url = issue_hls_url(request, response, media_file.s3_key_processed,
+                            **share_hls_identity(link, asset, media_file, current_user, share_session),
                             **managed_hls_identity(current_user, asset.project_id, db=db))
     else:
         url = generate_presigned_get_url(media_file.s3_key_processed or media_file.s3_key_raw, **media_expiry)

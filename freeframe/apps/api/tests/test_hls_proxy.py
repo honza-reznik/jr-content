@@ -18,7 +18,7 @@ class TestCreateHlsToken:
         assert payload["sub"] == "hls"
         assert payload["pfx"] == "hls/project-1/version-1"
         assert "exp" in payload
-        assert payload["v"] == 4
+        assert payload["v"] == 5
         assert 0 < payload["exp"] - time.time() <= 1800
 
 
@@ -129,7 +129,7 @@ class TestSegmentUrlLifetime:
         from apps.api.config import settings
         from datetime import datetime, timedelta, timezone
         return jwt.encode(
-            {"sub": "hls", "v": 4, "pfx": "hls/proj/ver",
+            {"sub": "hls", "v": 5, "pfx": "hls/proj/ver",
              "exp": datetime.now(timezone.utc) + timedelta(seconds=seconds_left)},
             settings.jwt_secret, algorithm=settings.jwt_algorithm,
         )
@@ -241,7 +241,7 @@ class TestCookieHls:
                                  project_id=str(uuid.uuid4()), token_version=1)
         with (patch("apps.api.routers.hls_proxy.get_user_by_id", return_value=test_user),
               patch("apps.api.routers.hls_proxy.require_project_role"),
-              patch("apps.api.routers.hls_proxy.get_s3_client") as storage):
+              patch("apps.api.routers.hls_proxy._stream_s3_client") as storage):
             storage.return_value.get_object.side_effect = RuntimeError("private storage detail")
             response = client.get(hls_url(client, token, "720p/seg.ts"))
         assert response.status_code == 404
