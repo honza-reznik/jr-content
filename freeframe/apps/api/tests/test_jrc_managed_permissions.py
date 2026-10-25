@@ -1,4 +1,5 @@
 """Managed identities cannot bypass Brightbean or retain revoked sessions."""
+from .hls_helpers import hls_url, segment_storage
 
 import uuid
 from unittest.mock import patch, MagicMock
@@ -152,32 +153,35 @@ def test_managed_streams_check_membership_and_segments_are_short(client, test_us
     with (patch("apps.api.routers.hls_proxy.get_user_by_id", return_value=test_user),
           patch("apps.api.routers.hls_proxy.require_project_role",
                 side_effect=HTTPException(status_code=403, detail="Not a project member"))):
-        response = client.get(f"/stream/hls/master.m3u8?token={token}")
+        response = client.get(hls_url(client, token, "master.m3u8"))
         assert response.status_code == 403
-        assert client.get(f"/stream/hls/720p/seg.ts?token={token}").status_code == 403
+        assert client.get(hls_url(client, token, "720p/seg.ts")).status_code == 403
 
 
-def test_managed_segment_checks_version_and_redirects_for_only_three_minutes(client, test_user):
+def test_managed_segment_streams_without_redirect_and_rechecks_version(client, test_user):
     token = create_hls_token("processed/video", managed=True, user_id=str(test_user.id),
                              project_id=str(uuid.uuid4()), token_version=1)
     with (patch("apps.api.routers.hls_proxy.get_user_by_id", return_value=test_user),
           patch("apps.api.routers.hls_proxy.require_project_role"),
-          patch("apps.api.routers.hls_proxy.generate_presigned_get_url", return_value="/short") as sign):
-        response = client.get(f"/stream/hls/720p/seg.ts?token={token}", follow_redirects=False)
-        assert response.status_code == 302
+          segment_storage() as (storage, body)):
+        response = client.get(hls_url(client, token, "720p/seg.ts"), follow_redirects=False)
+        assert response.status_code == 200
+        assert response.content == b"transport-stream"
+        assert "location" not in response.headers
+        body.close.assert_called()
         assert response.headers["cache-control"] == "no-store"
-        assert sign.call_args.kwargs["expires_in"] == MANAGED_MEDIA_SECONDS
+        storage.get_object.assert_called_once_with(Bucket=settings.s3_bucket, Key="processed/video/720p/seg.ts")
         test_user.token_version = 2
-        assert client.get(f"/stream/hls/720p/seg.ts?token={token}").status_code == 401
+        assert client.get(hls_url(client, token, "720p/seg.ts")).status_code == 401
 
 
 def test_managed_manifest_keeps_segments_at_authorized_proxy():
     from apps.api.routers.hls_proxy import _rewrite_manifest
 
     content = _rewrite_manifest("#EXTM3U\nseg001.ts\nparts/seg002.ts\n", "processed/video", "720p/index.m3u8",
-                                "opaque-token", proxy_segments=True)
-    assert "seg001.ts?token=opaque-token" in content
-    assert "parts/seg002.ts?token=opaque-token" in content
+                                proxy_segments=True)
+    assert "seg001.ts" in content
+    assert "parts/seg002.ts" in content
     assert "X-Amz" not in content
 
 
@@ -187,7 +191,7 @@ def test_old_unbound_hls_format_cannot_keep_managed_playback_alive(client):
     token = jwt.encode({"sub": "hls", "pfx": "processed/video",
                         "exp": datetime.now(timezone.utc) + timedelta(hours=24)},
                        settings.jwt_secret, algorithm=settings.jwt_algorithm)
-    assert client.get(f"/stream/hls/master.m3u8?token={token}").status_code == 401
+    assert client.get(hls_url(client, token, "master.m3u8")).status_code == 401
 
 
 def test_managed_stream_and_download_use_short_lifetime(client, auth_headers, test_user):
@@ -199,7 +203,7 @@ def test_managed_stream_and_download_use_short_lifetime(client, auth_headers, te
     with patch("apps.api.routers.assets._ready_media_file", return_value=(asset, media)):
         response = client.get(f"/assets/{uuid.uuid4()}/stream", headers=auth_headers)
     assert response.status_code == 200
-    token = response.json()["url"].split("token=")[1]
+    token = response.cookies.get("ff_hls")
     payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
     assert _segment_url_lifetime(payload) <= MANAGED_MEDIA_SECONDS
     asset.asset_type = AssetType.audio
@@ -240,14 +244,14 @@ def test_real_membership_removal_revokes_already_issued_hls_token(client, real_d
     real_db.flush()
     assert client.post(f"/assets/{asset.id}/comments", headers=headers,
                        json={"version_id": str(uuid.uuid4()), "body": "Forbidden"}).status_code == 403
-    url = f"/stream/hls/720p/seg.ts?token={token}"
-    with patch("apps.api.routers.hls_proxy.generate_presigned_get_url", return_value="/short") as sign:
-        assert client.get(url, follow_redirects=False).status_code == 302
+    url = hls_url(client, token, "720p/seg.ts")
+    with segment_storage() as (storage, body):
+        assert client.get(url, follow_redirects=False).status_code == 200
         real_db.delete(member)
         real_db.flush()
         assert client.get(url, follow_redirects=False).status_code == 403
-        assert client.get(f"/stream/hls/master.m3u8?token={token}").status_code == 403
+        assert client.get(hls_url(client, token, "master.m3u8")).status_code == 403
         assert client.get(f"/assets/{asset.id}/stream", headers=headers).status_code == 403
         assert client.get(f"/assets/{asset.id}/versions", headers=headers).status_code == 403
         assert client.get(f"/assets/{asset.id}/comments", headers=headers).status_code == 403
-        assert sign.call_count == 1
+        assert storage.get_object.call_count == 1

@@ -6,7 +6,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { chromium } = require('playwright');
 
-assert.match(process.env.JRC_PROJECT, /^(?:jrc-f5b05|jrc-f5b09a)$/);
+assert.match(process.env.JRC_PROJECT, /^(?:jrc-f5b05|jrc-f5b09a|jrc-f5b09b)$/);
 assert.ok(process.env.JRC_APP_PORT);
 assert.ok(process.env.JRC_S3_PORT);
 const origin = `http://127.0.0.1:${process.env.JRC_APP_PORT}`;
@@ -44,6 +44,14 @@ function watch(page, log) {
   page.on('pageerror', error => log.errors.push(error.message));
   page.on('console', message => { if (message.type() === 'error') log.errors.push(message.text()); });
   page.on('request', request => {
+    const url = new URL(request.url());
+    if (url.pathname.includes('/stream/hls/')) assert.equal(url.search, '', 'HLS token je v URL');
+    for (const value of url.searchParams.values()) {
+      if (!value.startsWith('eyJ')) continue;
+      let claims;
+      try { claims = JSON.parse(Buffer.from(value.split('.')[1], 'base64url').toString()); } catch { continue; }
+      assert(!['access', 'refresh'].includes(claims.type), 'Přihlašovací token je v URL');
+    }
     if (request.method() === 'PUT' && request.url().startsWith(s3Origin)) log.puts.push(request.url());
   });
   page.on('response', async response => {
@@ -197,7 +205,22 @@ async function main() {
     assert(everything.every(item => !/eyJ[A-Za-z0-9_-]{10,}|access_token|refresh_token|Bearer/.test(item.text)),
       'Odpověď Brightbean obsahuje token');
     const stored = await page.evaluate(() => ({ local: Object.keys(localStorage), session: Object.keys(sessionStorage) }));
-    assert(![...stored.local, ...stored.session].some(key => /token|auth|access/i.test(key)), 'V prohlížeči jsou klíče pro přihlašovací tokeny FreeFrame');
+    // The embedded FreeFrame player now signs in automatically after upload.
+    // It shares this origin and intentionally owns its two auth storage keys.
+    const playerKeys = new Set(['ff_access_token', 'ff_refresh_token']);
+    assert(![...stored.local, ...stored.session].some(key =>
+      /token|auth|access/i.test(key) && !playerKeys.has(key)), 'Neznámý klíč pro přihlašovací údaje');
+    assert(![...stored.local, ...stored.session].includes('ff_hls'), 'HLS token je v JS úložišti');
+    // Upload readiness precedes the iframe's stream request; wait for its cookie.
+    let hlsCookies = [];
+    const cookieDeadline = Date.now() + 60000;
+    while (!hlsCookies.length && Date.now() < cookieDeadline) {
+      hlsCookies = (await editor.context.cookies()).filter(cookie => cookie.name === 'ff_hls');
+      if (!hlsCookies.length) await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    assert(hlsCookies.length > 0, 'Chybí cookie přehrávání');
+    assert(hlsCookies.every(cookie => cookie.httpOnly && cookie.sameSite === 'Strict'
+      && /^\/video-api\/stream\/hls\/[a-f0-9]{32}\/$/.test(cookie.path)), 'Nedostatečně omezená HLS cookie');
     const urls = [...log.puts, ...log2.puts];
     assert(urls.length > 0 && urls.every(url => url.startsWith(s3Origin + '/')), 'Část šla jinam než do úložiště');
     assert(urls.every(url => Number(new URL(url).searchParams.get('X-Amz-Expires')) <= 900), 'Podpis části je delší než 15 minut');
@@ -214,7 +237,7 @@ async function main() {
     assert.equal(foreign.status(), 404);
     assert.equal((await other.context.request.get(`${base}versions/${versionId}/resume/`)).status(), 404);
     await other.context.close();
-    console.log('OK: bez tokenů v prohlížeči, krátké podpisy, jen úložiště, bez CSP/CORS chyb, cizí uživatel 404');
+    console.log('OK: HLS v omezené HttpOnly cookie, bez přihlašovacích JWT v URL a odpovědích Brightbean, krátké podpisy, bez CSP/CORS chyb, cizí uživatel 404');
     await editor.context.close();
   } finally {
     await browser.close();

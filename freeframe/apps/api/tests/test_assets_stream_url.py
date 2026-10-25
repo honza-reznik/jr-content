@@ -57,18 +57,17 @@ def test_video_stream_returns_hls_proxy_url_with_token(
     url = body["url"]
 
     # The URL must route through the HLS proxy, not directly to S3.
-    assert url.startswith("/stream/hls/master.m3u8?token="), (
-        f"Expected /stream/hls/master.m3u8?token=..., got: {url}"
+    assert url.startswith("/stream/hls/"), (
+        f"Expected a cookie-authenticated HLS URL, got: {url}"
     )
-    # Only inspect the part before the query string: the opaque JWT token can
-    # incidentally contain "s3" (flaking this check), whereas a leaked presigned
-    # S3 URL would still carry "s3" in its host/path here.
+    # HLS URLs stay at the API and carry no credential in their query.
     assert "s3" not in url.split("?", 1)[0].lower(), (
         f"Stream URL must not contain a presigned S3 URL, got: {url}"
     )
 
     # The token must be a valid HLS JWT scoped to this asset's S3 prefix.
-    token = url.split("token=", 1)[1]
+    assert "?" not in url
+    token = response.cookies.get("ff_hls")
     payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
     assert payload["sub"] == "hls"
     assert payload["pfx"] == media_file.s3_key_processed

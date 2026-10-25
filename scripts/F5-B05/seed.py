@@ -16,7 +16,7 @@ from apps.organizations.models import Organization
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 
-assert os.environ.get("JRC_PROJECT") in {"jrc-f5b05", "jrc-f5b09a"}
+assert os.environ.get("JRC_PROJECT") in {"jrc-f5b05", "jrc-f5b09a", "jrc-f5b09b"}
 organization, _ = Organization.objects.get_or_create(name="F5-B05 test studio")
 workspace, _ = Workspace.objects.get_or_create(organization=organization, name="F5-B05 video client")
 

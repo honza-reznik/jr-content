@@ -71,15 +71,16 @@ def test_validate_share_link_video_returns_master_m3u8(
     assert stream_url is not None
 
     # #51: video stream URLs must route through the HLS proxy, not directly to S3.
-    assert stream_url.startswith("/stream/hls/master.m3u8?token="), (
-        f"Expected /stream/hls/master.m3u8?token=..., got: {stream_url}"
+    assert stream_url.startswith("/stream/hls/"), (
+        f"Expected a cookie-authenticated HLS URL, got: {stream_url}"
     )
     assert "s3.example" not in stream_url, (
         f"Stream URL must not contain a presigned S3 URL, got: {stream_url}"
     )
 
     # The token must be scoped to this version's S3 prefix — never the bucket.
-    token = stream_url.split("token=", 1)[1]
+    assert "?" not in stream_url
+    token = response.cookies.get("ff_hls")
     payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
     assert payload["sub"] == "hls"
     assert payload["pfx"] == "processed/proj/version-abc"
@@ -196,11 +197,12 @@ def test_share_stream_endpoint_video_returns_hls_proxy_url(
     body = response.json()
     url = body["url"]
 
-    assert url.startswith("/stream/hls/master.m3u8?token="), (
-        f"Expected /stream/hls/master.m3u8?token=..., got: {url}"
+    assert url.startswith("/stream/hls/"), (
+        f"Expected a cookie-authenticated HLS URL, got: {url}"
     )
 
-    token = url.split("token=", 1)[1]
+    assert "?" not in url
+    token = response.cookies.get("ff_hls")
     payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
     assert payload["sub"] == "hls"
     assert payload["pfx"] == "processed/proj/version-stream"

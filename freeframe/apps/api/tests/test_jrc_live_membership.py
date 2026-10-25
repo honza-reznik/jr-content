@@ -1,4 +1,5 @@
 """Security regressions: change real memberships while the same JWT stays valid."""
+from .hls_helpers import hls_url, segment_storage
 
 import importlib.util
 from datetime import datetime, timedelta, timezone
@@ -108,6 +109,147 @@ def _request(client, method, path, body, headers=None):
     return getattr(client, method)(path, headers=headers or {}, **({"json": body} if body else {}))
 
 
+@pytest.mark.parametrize("issuer", ["validate", "stream"])
+@pytest.mark.parametrize("change,status", [
+    ("disabled", 403), ("expired", 410), ("deleted", 404),
+    ("password", 403), ("permission", 403), ("visibility", 403), ("token", 403),
+])
+def test_issued_share_hls_cookie_stops_on_live_link_change(client, live_project, issuer, change, status):
+    """Keep the issued cookie, change real DB rows, then retry both HLS paths."""
+    ctx = live_project
+    link = _link(ctx, "asset")
+    path = f"/share/{link.token}" + (f"/stream/{ctx.asset.id}" if issuer == "stream" else "")
+    issued = client.get(path, headers=ctx.headers)
+    assert issued.status_code == 200, issued.text
+    url = issued.json()["url"] if issuer == "stream" else issued.json()["asset"]["stream_url"]
+    segment = url.removesuffix("master.m3u8") + "720p/seg.ts"
+    with segment_storage() as (storage, body):
+        body.read.return_value = b"#EXTM3U\n720p/index.m3u8"
+        assert client.get(url).status_code == 200
+        assert client.get(segment).status_code == 200
+        if change == "disabled":
+            link.is_enabled = False
+        elif change == "expired":
+            link.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        elif change == "deleted":
+            link.deleted_at = datetime.now(timezone.utc)
+        elif change == "password":
+            link.password_hash = "changed-password-hash"
+        elif change == "permission":
+            link.permission = SharePermission.view
+        elif change == "visibility":
+            link.visibility = "secure"
+        else:
+            link.token = uuid.uuid4().hex
+        ctx.db.flush()
+        storage.reset_mock()
+        assert client.get(url).status_code == status
+        assert client.get(segment).status_code == status
+        storage.get_object.assert_not_called()
+        # Membership and the ordinary asset stream remain valid: the denial is
+        # caused by the share binding, not by unrelated account revocation.
+        assert client.get(f"/assets/{ctx.asset.id}/stream", headers=ctx.headers).status_code == 200
+
+
+@pytest.mark.parametrize("scope", ["asset", "folder", "project", "multi"])
+def test_share_hls_cookie_stops_when_asset_leaves_shared_scope(client, live_project, scope):
+    ctx = live_project
+    link = _link(ctx, scope)
+    issued = client.get(f"/share/{link.token}/stream/{ctx.asset.id}", headers=ctx.headers)
+    assert issued.status_code == 200, issued.text
+    url = issued.json()["url"]
+    with segment_storage() as (storage, body):
+        assert client.get(url.removesuffix("master.m3u8") + "720p/seg.ts").status_code == 200
+        other = Asset(project_id=ctx.project.id, name="Another video", created_by=ctx.user.id,
+                      asset_type=AssetType.video)
+        ctx.db.add(other)
+        ctx.db.flush()
+        if scope == "asset":
+            link.asset_id = other.id
+        elif scope == "folder":
+            ctx.asset.folder_id = None
+        elif scope == "project":
+            project = Project(name="Other project", created_by=ctx.user.id)
+            ctx.db.add(project)
+            ctx.db.flush()
+            ctx.asset.project_id = project.id
+        else:
+            ctx.db.query(ShareLinkItem).filter(ShareLinkItem.share_link_id == link.id).first().asset_id = other.id
+        ctx.db.flush()
+        storage.reset_mock()
+        assert client.get(url).status_code == 403
+        assert client.get(url.removesuffix("master.m3u8") + "720p/seg.ts").status_code == 403
+        storage.get_object.assert_not_called()
+
+
+@pytest.mark.parametrize("issuer", ["stream", "verify"])
+def test_anonymous_share_hls_proxies_segments_and_rechecks_password_session(client, live_project, issuer):
+    ctx = live_project
+    ctx.project.jrc_managed = False
+    ctx.user.jrc_managed = False
+    link = _link(ctx, "asset")
+    link.password_hash = "existing-password"
+    ctx.db.flush()
+    with (patch("apps.api.services.permissions.verify_share_session", return_value=True) as verify,
+          patch("apps.api.routers.share.bcrypt.checkpw", return_value=True),
+          patch("apps.api.routers.share.create_share_session")):
+        if issuer == "stream":
+            issued = client.get(f"/share/{link.token}/stream/{ctx.asset.id}?share_session=valid-session")
+        else:
+            issued = client.post(f"/share/{link.token}/verify", json={"password": "test-password"})
+        assert issued.status_code == 200, issued.text
+        url = issued.json()["url"] if issuer == "stream" else issued.json()["asset"]["stream_url"]
+        token = issued.cookies.get("ff_hls")
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        assert "uid" not in payload
+        segment = url.removesuffix("master.m3u8") + "720p/seg.ts"
+        with segment_storage() as (storage, body):
+            body.read.return_value = b"#EXTM3U\nseg.ts"
+            assert client.get(url).text == "#EXTM3U\nseg.ts"
+            assert client.get(segment).status_code == 200
+            verify.return_value = False
+            storage.reset_mock()
+            assert client.get(url).status_code == 403
+            assert client.get(segment).status_code == 403
+            storage.get_object.assert_not_called()
+
+
+@pytest.mark.parametrize("change", ["version_deleted", "versions_hidden"])
+def test_share_hls_cookie_stops_when_selected_version_is_no_longer_visible(client, live_project, change):
+    ctx = live_project
+    link = _link(ctx, "asset")
+    link.show_versions = True
+    newer = AssetVersion(asset_id=ctx.asset.id, version_number=2, created_by=ctx.user.id,
+                         processing_status=ProcessingStatus.ready)
+    ctx.db.add(newer)
+    ctx.db.flush()
+    ctx.db.add(MediaFile(version_id=newer.id, file_type=FileType.video, original_filename="v2.mp4",
+                        mime_type="video/mp4", file_size_bytes=123, s3_key_raw="raw/v2", s3_key_processed="processed/v2"))
+    ctx.db.flush()
+    issued = client.get(f"/share/{link.token}/stream/{ctx.asset.id}?version_id={ctx.version.id}", headers=ctx.headers)
+    assert issued.status_code == 200, issued.text
+    url = issued.json()["url"]
+    with segment_storage() as (storage, body):
+        segment = url.removesuffix("master.m3u8") + "720p/seg.ts"
+        assert client.get(segment).status_code == 200
+        if change == "version_deleted":
+            ctx.version.deleted_at = datetime.now(timezone.utc)
+        else:
+            link.show_versions = False
+        ctx.db.flush()
+        storage.reset_mock()
+        assert client.get(url).status_code == 403
+        assert client.get(segment).status_code == 403
+        storage.get_object.assert_not_called()
+
+
+def test_old_share_hls_cookies_are_invalidated_on_upgrade(client):
+    token = jwt.encode({"sub": "hls", "v": 4, "pfx": "processed/video",
+                        "exp": datetime.now(timezone.utc) + timedelta(minutes=20)},
+                       settings.jwt_secret, algorithm=settings.jwt_algorithm)
+    assert client.get(hls_url(client, token, "master.m3u8")).status_code == 401
+
+
 @pytest.mark.parametrize("scope", ["asset", "folder", "project", "multi"])
 def test_existing_public_jrc_shares_require_membership_on_every_content_endpoint(client, live_project, scope):
     ctx = live_project
@@ -142,8 +284,8 @@ def test_share_role_and_hls_rechecked_for_managed_project_even_for_local_member(
     with patch("apps.api.routers.share.generate_presigned_get_url", return_value="/signed") as media_sign:
         response = client.get(f"/share/{link.token}", headers=ctx.headers)
         assert response.status_code == 200, response.text
-        hls_url = response.json()["asset"]["stream_url"]
-        token = hls_url.split("token=")[1]
+        playlist_url = response.json()["asset"]["stream_url"]
+        token = response.cookies.get("ff_hls")
         payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
         assert payload["uid"] == str(ctx.user.id)
         media_sign.reset_mock()
@@ -151,10 +293,10 @@ def test_share_role_and_hls_rechecked_for_managed_project_even_for_local_member(
         assert download.status_code == 200, download.text
         download_signature = next(call for call in media_sign.call_args_list if call.args[0] == ctx.media.s3_key_raw)
         assert download_signature.kwargs["expires_in"] <= 180
-        segment = f"/stream/hls/720p/seg.ts?token={token}"
-        with patch("apps.api.routers.hls_proxy.generate_presigned_get_url", return_value="/signed") as sign:
-            assert client.get(segment, follow_redirects=False).status_code == 302
-            assert sign.call_args.kwargs["expires_in"] <= 180
+        segment = hls_url(client, token, "720p/seg.ts")
+        with segment_storage() as (storage, body):
+            assert client.get(segment, follow_redirects=False).status_code == 200
+            assert storage.get_object.call_count == 1
             # This was a commenting link and the caller is also its creator.
             ctx.member.role = ProjectRole.viewer
             ctx.db.flush()
@@ -164,8 +306,8 @@ def test_share_role_and_hls_rechecked_for_managed_project_even_for_local_member(
             assert response.status_code == 403
             _remove(ctx)
             assert client.get(segment, follow_redirects=False).status_code == 403
-            assert client.get(hls_url).status_code == 403
-            assert sign.call_count == 1
+            assert client.get(playlist_url).status_code == 403
+            assert storage.get_object.call_count == 1
 
 
 def test_valid_share_password_session_does_not_replace_membership(client, live_project):
@@ -454,4 +596,4 @@ def test_pre_review_unbound_share_hls_token_is_revoked(client):
     token = jwt.encode({"sub": "hls", "v": 2, "pfx": "processed/legacy-share",
                         "exp": datetime.now(timezone.utc) + timedelta(hours=24)},
                        settings.jwt_secret, algorithm=settings.jwt_algorithm)
-    assert client.get(f"/stream/hls/master.m3u8?token={token}").status_code == 401
+    assert client.get(hls_url(client, token, "master.m3u8")).status_code == 401
