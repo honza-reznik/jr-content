@@ -20,7 +20,7 @@ export default function JrcSsoPage() {
     <div role="alert">
       <h1 className="text-xl font-semibold mb-3">Video sign-in could not be completed</h1>
       <p className="text-text-secondary mb-4">Please return to JR Content and open video again.</p>
-      <a className="text-accent underline" href="/">Back to JR Content</a>
+      <a className="text-accent underline" href={`${(process.env.NEXT_PUBLIC_BASE_PATH || "").replace(/\/video$/, "")}/`}>Back to JR Content</a>
     </div>
   ) : <p role="status">Opening video…</p>
 }

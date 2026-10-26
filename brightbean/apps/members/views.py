@@ -250,7 +250,7 @@ def accept_invite(request, token):
         # Redirect to first assigned workspace or home
         if request.user.last_workspace_id:
             return redirect("calendar:calendar", workspace_id=request.user.last_workspace_id)
-        return redirect("/")
+        return redirect("dashboard")
 
     # GET - store token in session for signup flow
     request.session["pending_invite_token"] = token

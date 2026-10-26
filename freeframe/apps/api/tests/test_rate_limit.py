@@ -75,7 +75,7 @@ class TestRateLimitDependency:
     def test_allows_when_under_limit(self, mock_check):
         mock_check.return_value = (True, 0)
         mock_request = MagicMock()
-        mock_request.headers.get.return_value = "10.0.0.1"
+        mock_request.client.host = "10.0.0.1"
 
         from apps.api.middleware.rate_limit import rate_limit
 
@@ -88,7 +88,7 @@ class TestRateLimitDependency:
     def test_raises_429_when_over_limit(self, mock_check):
         mock_check.return_value = (False, 30)
         mock_request = MagicMock()
-        mock_request.headers.get.return_value = "10.0.0.1"
+        mock_request.client.host = "10.0.0.1"
 
         from apps.api.middleware.rate_limit import rate_limit
 
@@ -152,8 +152,10 @@ class TestGlobalRateLimitMiddleware:
             "x-real-ip": "203.0.113.1",
         }.get(key, default)
 
+        mock_request.client.host = "203.0.113.2"
         identity = middleware._get_identity(mock_request)
-        assert identity == "ip:203.0.113.1"
+        # Untrusted peers cannot choose their budget with X-Real-IP.
+        assert identity == "ip:203.0.113.2"
 
     @patch("apps.api.middleware.global_rate_limit.get_redis")
     def test_check_allows_under_limit(self, mock_get_redis):

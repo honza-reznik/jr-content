@@ -228,13 +228,13 @@ def _handle_account_deletion(request, user):
 def accept_terms(request):
     """Terms of Service acceptance page for social signup users."""
     if request.user.tos_accepted_at is not None:
-        return redirect("/")
+        return redirect("dashboard")
 
     if request.method == "POST":
         if request.POST.get("agree"):
             request.user.tos_accepted_at = timezone.now()
             request.user.save(update_fields=["tos_accepted_at"])
-            return redirect("/")
+            return redirect("dashboard")
         messages.error(request, "You must agree to the Terms of Service and Privacy Policy to continue.")
 
     return render(request, "account/accept_terms.html")

@@ -6,11 +6,17 @@ x-offline: &offline
   NPM_CONFIG_FUND: "false"
   NPM_CONFIG_UPDATE_NOTIFIER: "false"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
+# P1-B01: jediné nastavení veřejného vstupu; prázdná předpona znamená kořen.
+x-public: &public
+  JRC_MODE: ${JRC_MODE:-prod}
+  JRC_PUBLIC_ORIGIN: ${JRC_PUBLIC_ORIGIN:-http://127.0.0.1:${JRC_APP_PORT:-13000}}
+  JRC_BASE_PATH: ${JRC_BASE_PATH-/jrc}
 # F2-B05: Brightbean ukládá média do soukromého bucketu jrc-app. Server mluví s Garage
 # uvnitř sítě, podepsané adresy míří na místní bránu S3, kterou otevírá prohlížeč.
 x-bb-s3: &bb-s3
   JRC_S3_ENDPOINT_URL: http://jrc-s3:3900
-  JRC_S3_PUBLIC_URL: http://127.0.0.1:${JRC_S3_PORT:-13900}
+  JRC_S3_PUBLIC_URL: ${JRC_PUBLIC_ORIGIN:-http://127.0.0.1:${JRC_APP_PORT:-13000}}
+  JRC_S3_PUBLIC_PATH: ${JRC_BASE_PATH-/jrc}/storage
   JRC_S3_BUCKET: jrc-app
   JRC_S3_ACCESS_KEY_ID: ${JRC_BB_S3_ACCESS_KEY:?Spusťte make env}
   JRC_S3_SECRET_ACCESS_KEY: ${JRC_BB_S3_SECRET_KEY:?Spusťte make env}
@@ -24,7 +30,7 @@ x-bb: &bb
   init: true
   user: "${JRC_UID:-1000}:${JRC_GID:-1000}"
   environment: &bb-environment
-    <<: [*offline, *bb-s3]
+    <<: [*offline, *public, *bb-s3]
     DJANGO_SETTINGS_MODULE: config.settings.jrc
     JRC_VIDEO_MAX_UPLOAD_BYTES: ${JRC_VIDEO_MAX_UPLOAD_BYTES:-4294967296}
     SIGNUP_MODE: invite
@@ -37,11 +43,12 @@ x-bb: &bb
     DB_PASSWORD: ${PGPASSWORD:?Spusťte make env}
     EMAIL_BACKEND_TYPE: console
     MEDIA_ROOT: /app/media
-    APP_URL: http://127.0.0.1:${JRC_APP_PORT:-13000}
+    APP_URL: ${JRC_PUBLIC_ORIGIN:-http://127.0.0.1:${JRC_APP_PORT:-13000}}
     JRC_FF_SYNC_EMAIL: ${JRC_FF_SYNC_EMAIL:-jrc-sync@example.com}
     JRC_FF_SYNC_PASSWORD: ${JRC_FF_SYNC_PASSWORD:?Spusťte make env}
   volumes:
     - ./brightbean:/app
+    - ./scripts:/jrc-scripts:ro
     - type: volume
       source: jrc-bb-media
       target: /app/media
@@ -65,22 +72,24 @@ x-ff: &ff
   user: "${JRC_UID:-1000}:${JRC_GID:-1000}"
   working_dir: /workspace
   environment: &ff-environment
-    <<: *offline
+    <<: [*offline, *public]
     DATABASE_URL: postgresql://${PGUSER:-jrc}:${PGPASSWORD:?Spusťte make env}@jrc-postgres:5432/freeframe
     REDIS_URL: redis://jrc-redis:6379/0
     JWT_SECRET: ${JRC_FF_JWT_SECRET:?Spusťte make env}
     JRC_FF_SYNC_EMAIL: ${JRC_FF_SYNC_EMAIL:-jrc-sync@example.com}
     JRC_FF_SYNC_PASSWORD: ${JRC_FF_SYNC_PASSWORD:?Spusťte make env}
+    JRC_TRUSTED_PROXY_HOST: jrc-proxy
     S3_STORAGE: minio
     S3_ENDPOINT: http://jrc-s3:3900
-    S3_PUBLIC_ENDPOINT: http://127.0.0.1:${JRC_S3_PORT:-13900}
+    S3_PUBLIC_ENDPOINT: ${JRC_PUBLIC_ORIGIN:-http://127.0.0.1:${JRC_APP_PORT:-13000}}
+    S3_PUBLIC_PATH: ${JRC_BASE_PATH-/jrc}/storage
     S3_ACCESS_KEY: ${JRC_FF_S3_ACCESS_KEY:?Spusťte make env}
     S3_SECRET_KEY: ${JRC_FF_S3_SECRET_KEY:?Spusťte make env}
     S3_BUCKET: jrc-video
     S3_REGION: garage
     AWS_EC2_METADATA_DISABLED: "true"
-    FRONTEND_URL: http://127.0.0.1:${JRC_APP_PORT:-13000}/video
-    CORS_ALLOW_ORIGINS: http://127.0.0.1:${JRC_APP_PORT:-13000}
+    FRONTEND_URL: ${JRC_PUBLIC_ORIGIN:-http://127.0.0.1:${JRC_APP_PORT:-13000}}${JRC_BASE_PATH-/jrc}/video
+    CORS_ALLOW_ORIGINS: ${JRC_PUBLIC_ORIGIN:-http://127.0.0.1:${JRC_APP_PORT:-13000}}
     # F2-B05: API ani bucket jrc-video nepovolí vývojové původy localhost:3000/3001.
     CORS_DEV_ORIGINS: "false"
     # /docs, /redoc a /openapi.json by byly veřejné bez přihlášení.
@@ -130,10 +139,10 @@ services:
     cap_add: [NET_ADMIN, SETUID, SETGID, SETPCAP]
     security_opt: [no-new-privileges:true]
     environment:
-      <<: *offline
+      <<: [*offline, *public]
       JRC_UID: ${JRC_UID:-1000}
       JRC_GID: ${JRC_GID:-1000}
-      # CSP stránky /video povoluje přesně tento původ úložiště (F2-B05).
+      # Diagnostický port; prohlížeč používá společný veřejný původ.
       JRC_S3_PORT: ${JRC_S3_PORT:-13900}
       XDG_DATA_HOME: /data
       XDG_CONFIG_HOME: /config
@@ -156,7 +165,7 @@ services:
       jrc-ff-web:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080' + process.env.JRC_BASE_PATH + '/health/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 3s
       timeout: 6s
       retries: 30
@@ -211,7 +220,7 @@ services:
         condition: service_completed_successfully
   jrc-ff-api:
     <<: *ff
-    command: ["uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--root-path", "/video-api"]
+    command: ["sh", "/jrc-scripts/start-api.sh"]
     environment:
       <<: *ff-environment
       # F5-B02: klíč vstupenek jen pro API (ověřuje), workery ho nedostávají.
@@ -253,17 +262,18 @@ services:
       dockerfile: docker/Dockerfile.ff-web
       args:
         JRC_PROJECT: ${JRC_PROJECT:?Spusťte s JRC_PROJECT}
+        JRC_BASE_PATH: ${JRC_BASE_PATH-/jrc}
     image: jrc-ff-web:${JRC_PROJECT:?Spusťte s JRC_PROJECT}
     restart: unless-stopped
     init: true
     user: "${JRC_UID:-1000}:${JRC_GID:-1000}"
     working_dir: /app
     environment:
-      <<: *offline
-      NEXT_PUBLIC_BASE_PATH: /video
-      NEXT_PUBLIC_API_URL: http://127.0.0.1:${JRC_APP_PORT:-13000}/video-api
+      <<: [*offline, *public]
+      NEXT_PUBLIC_BASE_PATH: ${JRC_BASE_PATH-/jrc}/video
+      NEXT_PUBLIC_API_URL: ${JRC_BASE_PATH-/jrc}/video-api
       API_INTERNAL_URL: http://jrc-ff-api:8000
-    command: ["pnpm", "exec", "next", "dev", "--hostname", "0.0.0.0"]
+    command: ["sh", "/jrc-scripts/start-web.sh"]
     volumes:
       - ./freeframe/apps/web:/app
       - jrc-ff-web-modules:/app/node_modules
@@ -274,7 +284,7 @@ services:
       jrc-ff-api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/video/login').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000' + process.env.NEXT_PUBLIC_BASE_PATH + '/login').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 5s
       timeout: 20s
       retries: 30
@@ -304,8 +314,8 @@ services:
     user: "0:0"
     command: ["sh", "-c", "chown -R $${JRC_UID}:$${JRC_GID} /app/media && setpriv --reuid=$${JRC_UID} --regid=$${JRC_GID} --clear-groups sh -c 'python manage.py migrate --noinput && python manage.py jrc_configure_s3 && python manage.py jrc_migrate_media_to_s3' && chown -R $${JRC_UID}:$${JRC_GID} /app/media"]
     environment:
-      <<: [*offline, *bb-s3]
-      APP_URL: http://127.0.0.1:${JRC_APP_PORT:-13000}
+      <<: [*offline, *public, *bb-s3]
+      APP_URL: ${JRC_PUBLIC_ORIGIN:-http://127.0.0.1:${JRC_APP_PORT:-13000}}
       MEDIA_ROOT: /app/media
       DJANGO_SETTINGS_MODULE: config.settings.jrc
       SECRET_KEY: ${JRC_BB_SECRET_KEY:?Spusťte make env}
@@ -323,7 +333,7 @@ services:
         condition: service_healthy
   jrc-bb-web:
     <<: *bb
-    command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+    command: ["sh", "/jrc-scripts/start-bb.sh"]
     environment:
       <<: *bb-environment
       # F5-B02: klíč vstupenek jen pro web Brightbean (vydává), worker ho nedostává.

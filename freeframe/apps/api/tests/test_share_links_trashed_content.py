@@ -68,9 +68,9 @@ def client(db, monkeypatch):
     monkeypatch.setattr(downloads, "_top_rung_height", lambda prefix: 1080)
     with patch("apps.api.services.s3_service.ensure_bucket_exists"):
         app.dependency_overrides[get_db] = lambda: db
-        c = TestClient(app, raise_server_exceptions=False)
-        # A fresh address per test keeps the per-IP share rate limits out of the way.
-        c.headers["x-real-ip"] = f"10.{uuid.uuid4().int % 250}.{uuid.uuid4().int % 250}.{uuid.uuid4().int % 250}"
+        # A fresh actual peer, not an untrusted X-Real-IP header, per test.
+        peer = f"10.{uuid.uuid4().int % 250}.{uuid.uuid4().int % 250}.{uuid.uuid4().int % 250}"
+        c = TestClient(app, raise_server_exceptions=False, client=(peer, 50000))
         yield c
     app.dependency_overrides.clear()
 

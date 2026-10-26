@@ -172,6 +172,13 @@ def notify(
         logger.warning("Unknown event_type: %s", event_type)
         return None
 
+    # Ukládáme cestu bez aktuální montážní předpony: pozdější přesun na kořen
+    # nebo jinou doménu pak opraví odkazy i ve starších upozorněních.
+    data = dict(data or {})
+    prefix = getattr(settings, "FORCE_SCRIPT_NAME", None) or ""
+    path = data.get("action_url")
+    if prefix and isinstance(path, str) and path.startswith(prefix + "/"):
+        data["action_url"] = path[len(prefix) :]
     notification = protect_note_body(
         Notification(
             user=user,

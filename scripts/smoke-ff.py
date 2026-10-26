@@ -10,7 +10,7 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-origin = f"http://127.0.0.1:{os.environ.get('JRC_APP_PORT', '13000')}"
+origin = (os.environ.get('JRC_PUBLIC_ORIGIN') or f"http://127.0.0.1:{os.environ.get('JRC_APP_PORT', '13000')}") + os.environ.get('JRC_BASE_PATH', '/jrc')
 base = origin + '/video-api'
 out = Path('ops/test-output/F2-B02')
 out.mkdir(parents=True, exist_ok=True)

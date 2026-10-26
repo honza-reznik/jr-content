@@ -6,3 +6,14 @@ WORKDIR /app
 COPY freeframe/apps/web/package.json freeframe/apps/web/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile && mkdir -p .next && chmod 1777 .next
 ENV NEXT_TELEMETRY_DISABLED=1
+
+# Produkční sestavení zůstává mimo vývojový bind mount /app.
+ARG JRC_BASE_PATH=/jrc
+ENV JRC_MODE=prod
+ENV NEXT_PUBLIC_BASE_PATH=${JRC_BASE_PATH}/video NEXT_PUBLIC_API_URL=${JRC_BASE_PATH}/video-api
+COPY freeframe/apps/web /opt/jrc-web
+WORKDIR /opt/jrc-web
+# Next průběžně obnovuje cache a předem vykreslené stránky i pod běžným UID.
+RUN ln -s /app/node_modules node_modules && /app/node_modules/.bin/next build \
+    && chmod -R a+rwX .next/cache .next/server/app
+WORKDIR /app

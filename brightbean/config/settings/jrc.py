@@ -1,5 +1,6 @@
 # JR Content: přidáno 2026-10-22 (blok F2-B01), AGPL-3.0.
 import os
+import re
 
 from .jrc_offline import JRC_APPS
 
@@ -13,7 +14,7 @@ from .base import *  # noqa: F401, F403, E402
 STORAGES = dict(STORAGES)  # noqa: F405
 
 INSTALLED_APPS = [*INSTALLED_APPS, *JRC_APPS]  # noqa: F405
-DEBUG = True
+DEBUG = os.environ.get("JRC_MODE", "prod") == "dev"
 # JR Content is an invite-only local workspace; do not inherit Brightbean's
 # public-registration default from base.py.
 SIGNUP_MODE = "invite"
@@ -99,3 +100,39 @@ JRC_FF_SYNC_ENABLED = bool(JRC_FF_SYNC_EMAIL and JRC_FF_SYNC_PASSWORD)
 JRC_FF_SSO_SECRET = os.environ.get("JRC_FF_SSO_SECRET", "")
 # F5-B05: largest video accepted by "Upload version" (bytes); FreeFrame enforces the same cap.
 JRC_VIDEO_MAX_UPLOAD_BYTES = int(os.environ.get("JRC_VIDEO_MAX_UPLOAD_BYTES", str(4 * 1024**3)))
+
+# P1-B01: veřejná adresa a montáž pod předponou; kořen je platná volba.
+JRC_PUBLIC_ORIGIN = os.environ.get("JRC_PUBLIC_ORIGIN", "http://127.0.0.1:13000").rstrip("/")
+JRC_BASE_PATH = os.environ.get("JRC_BASE_PATH", "/jrc").rstrip("/")
+_public = urlsplit(JRC_PUBLIC_ORIGIN)
+if (
+    _public.scheme not in ("http", "https")
+    or not _public.hostname
+    or _public.path
+    or _public.query
+    or _public.fragment
+    or _public.username
+    or _public.password
+):
+    raise ValueError("JRC_PUBLIC_ORIGIN musí být http(s) původ bez cesty")
+if JRC_BASE_PATH and not re.fullmatch(r"(?:/[A-Za-z0-9_-]+)+", JRC_BASE_PATH):
+    raise ValueError("JRC_BASE_PATH musí být prázdné nebo /cesta bez koncového lomítka")
+# APP_URL je původ; reverse() už předponu přidává i mimo HTTP (e-maily, úlohy).
+APP_URL = JRC_PUBLIC_ORIGIN
+MCP_PUBLIC_BASE_URL = MCP_OAUTH_ISSUER_URL = JRC_PUBLIC_ORIGIN + JRC_BASE_PATH
+FORCE_SCRIPT_NAME = JRC_BASE_PATH or None
+STATIC_URL = JRC_BASE_PATH + "/static/"
+WHITENOISE_STATIC_PREFIX = "/static/"
+LOGIN_URL = "account_login"
+LOGIN_REDIRECT_URL = JRC_BASE_PATH + "/"
+LOGOUT_REDIRECT_URL = JRC_BASE_PATH + "/accounts/login/"
+ACCOUNT_LOGOUT_REDIRECT_URL = LOGOUT_REDIRECT_URL
+SESSION_COOKIE_PATH = CSRF_COOKIE_PATH = JRC_BASE_PATH + "/"
+SESSION_COOKIE_SECURE = CSRF_COOKIE_SECURE = _public.scheme == "https"
+ALLOWED_HOSTS = [_public.hostname, "127.0.0.1", "localhost", "jrc-bb-web"]
+CSRF_TRUSTED_ORIGINS = [JRC_PUBLIC_ORIGIN]
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+SECURE_HSTS_SECONDS = 31536000 if SESSION_COOKIE_SECURE else 0
+SECURE_HSTS_INCLUDE_SUBDOMAINS = SECURE_HSTS_PRELOAD = False
+MIDDLEWARE = ["apps.jrc_ui.proxy.TrustedProxyMiddleware", *MIDDLEWARE]  # noqa: F405
+JRC_S3_PUBLIC_PATH = os.environ.get("JRC_S3_PUBLIC_PATH", "")

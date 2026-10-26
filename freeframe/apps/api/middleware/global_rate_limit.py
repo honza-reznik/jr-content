@@ -8,6 +8,8 @@ Applies to all API requests. Uses Redis sliding window counters.
 Separate limits for read (GET/HEAD/OPTIONS) vs write (POST/PUT/PATCH/DELETE).
 """
 
+from ..middleware.trusted_proxy import client_ip
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -78,9 +80,7 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
                 pass
 
         # Fall back to IP
-        ip = request.headers.get("x-real-ip") or (
-            request.client.host if request.client else "unknown"
-        )
+        ip = client_ip(request)
         return f"ip:{ip}"
 
     def _check(self, identity: str, action: str, max_requests: int) -> tuple[bool, int]:

@@ -9,8 +9,8 @@ import { Button } from '@/components/ui/button'
 async function signOut() {
   await removeTokens()
   clearSsoBinding()
-  document.cookie = 'ff_setup_done=; path=/; max-age=0'
-  window.location.replace('/accounts/login/')
+  document.cookie = `ff_setup_done=; path=${process.env.NEXT_PUBLIC_BASE_PATH || '/'}; max-age=0`
+  window.location.replace(`${(process.env.NEXT_PUBLIC_BASE_PATH || '').replace(/\/video$/, '')}/accounts/login/`)
 }
 
 export default function JrcLogoutPage() {
@@ -36,7 +36,7 @@ export default function JrcLogoutPage() {
       <h1 className="text-xl font-semibold mb-3">Sign out of video?</h1>
       <p className="text-text-secondary mb-4">Confirm to end your video session in this browser.</p>
       <Button onClick={finishSignOut}>Sign out of video</Button>
-      <a className="ml-4 text-accent underline" href="/">Cancel</a>
+      <a className="ml-4 text-accent underline" href={`${(process.env.NEXT_PUBLIC_BASE_PATH || "").replace(/\/video$/, "")}/`}>Cancel</a>
     </div>
   ) : <p role="status">Signing out of video…</p>
 }

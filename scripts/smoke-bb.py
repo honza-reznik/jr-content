@@ -69,7 +69,7 @@ try:
         assert stored.read() == payload
     url = urlsplit(default_storage.url(name))
     assert f"{url.scheme}://{url.netloc}" == os.environ["JRC_S3_PUBLIC_URL"].rstrip("/")
-    assert url.path == f"/jrc-app/{name}"
+    assert url.path == os.environ.get("JRC_S3_PUBLIC_PATH", "") + f"/jrc-app/{name}"
     assert parse_qs(url.query)["X-Amz-Expires"] == ["900"]
 finally:
     default_storage.delete(name)

@@ -44,7 +44,7 @@ class TosAcceptanceMiddleware:
         # session read plus a user query. On an exempt path — /static/, /media/
         # — that work buys nothing, and media is requested once per file.
         if (
-            not request.path.startswith(EXEMPT_PATH_PREFIXES)
+            not request.path_info.startswith(EXEMPT_PATH_PREFIXES)
             and hasattr(request, "user")
             and request.user.is_authenticated
             and request.user.tos_accepted_at is None
@@ -61,7 +61,7 @@ class AuthRateLimitMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
-        if request.method == "POST" and any(request.path.startswith(p) for p in AUTH_RATE_LIMITED_PATHS):
+        if request.method == "POST" and any(request.path_info.startswith(p) for p in AUTH_RATE_LIMITED_PATHS):
             ip = self._get_client_ip(request)
             cache_key = f"auth_ratelimit:{hashlib.md5(ip.encode()).hexdigest()}"
 
@@ -75,7 +75,4 @@ class AuthRateLimitMiddleware:
 
     @staticmethod
     def _get_client_ip(request):
-        x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
-        if x_forwarded_for:
-            return x_forwarded_for.split(",")[0].strip()
         return request.META.get("REMOTE_ADDR", "")

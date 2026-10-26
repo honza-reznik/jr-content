@@ -5,7 +5,7 @@ const port = (name, fallback) => process.env[name] || fallback;
 const url = (name, fallback) => `http://127.0.0.1:${port(name, fallback)}`;
 
 (async () => {
-  const bb = url('JRC_APP_PORT', 13000);
+  const bb = (process.env.JRC_PUBLIC_ORIGIN || url('JRC_APP_PORT', 13000)) + (process.env.JRC_BASE_PATH ?? '/jrc');
   const api = `${bb}/video-api`;
   const web = bb;
   const s3 = url('JRC_S3_PORT', 13900);
@@ -14,7 +14,7 @@ const url = (name, fallback) => `http://127.0.0.1:${port(name, fallback)}`;
   assert.equal((await fetch(`${s3}/`)).status, 403);
   // Správa FreeFrame a dokumentace API nejsou přes společný vstup dostupné.
   for (const route of ['/admin/users', '/ADMIN/users', '/%61dmin/users', '/admin']) {
-    assert.equal((await fetch(`${api}${route}`)).status, 403, route);
+    assert.equal((await fetch(`${api}${route}`)).status, 404, route);
   }
   for (const route of ['/docs', '/redoc', '/openapi.json']) {
     assert.equal((await fetch(`${api}${route}`)).status, 404, route);
@@ -34,16 +34,16 @@ const url = (name, fallback) => `http://127.0.0.1:${port(name, fallback)}`;
     .map(item => item.trim().split(/\s+/)).map(([name, ...values]) => [name, values]));
   assert.deepEqual(directives['frame-ancestors'], ["'self'"]);
   assert.deepEqual(directives['default-src'], ["'self'"]);
-  assert.deepEqual(directives['img-src'], ["'self'", 'data:', 'blob:', s3]);
-  assert.deepEqual(directives['media-src'], ["'self'", 'blob:', s3]);
-  assert.deepEqual(directives['connect-src'], ["'self'", s3]);
+  assert.deepEqual(directives['img-src'], ["'self'", 'data:', 'blob:']);
+  assert.deepEqual(directives['media-src'], ["'self'", 'blob:']);
+  assert.deepEqual(directives['connect-src'], ["'self'"]);
   const browser = await chromium.launch({ headless: true });
   try {
     const context = await browser.newContext({ serviceWorkers: 'block' });
     const foreign = [];
     const fonts = [];
     const responses = [];
-    const allowed = new Set([web, s3]);
+    const allowed = new Set([new URL(web).origin]);
     await context.routeWebSocket('**/*', socket => {
       const address = new URL(socket.url());
       address.protocol = address.protocol === 'wss:' ? 'https:' : 'http:';
@@ -84,7 +84,7 @@ const url = (name, fallback) => `http://127.0.0.1:${port(name, fallback)}`;
       const socket = new URL(address);
       return socket.hostname === '127.0.0.1' && socket.port === port('JRC_APP_PORT', 13000).toString();
     }), 'Skutečný web zkusil cizí WebSocket');
-    console.log('OK brána: API, Brightbean, S3; /admin 403, docs 404, bezpečnostní hlavičky; Chromium přes skutečný web načetl místní písmo/API bez cizí domény.');
+    console.log('OK brána: API, Brightbean, S3; /admin 404, docs 404, bezpečnostní hlavičky; Chromium přes skutečný web načetl místní písmo/API bez cizí domény.');
   } finally {
     await browser.close();
   }

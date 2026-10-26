@@ -8,6 +8,8 @@ Rewrites m3u8 manifests so that:
 This eliminates the need for a public bucket policy on processed/*.
 """
 
+from ..middleware.trusted_proxy import client_ip
+
 import hashlib
 import logging
 import posixpath
@@ -277,7 +279,7 @@ def browser_hls_proxy(session_id: str, path: str, request: Request, db: Session 
     payload = _decode_hls_token(token)
     if session_id != hls_session_id(payload["pfx"]):
         raise HTTPException(status_code=403, detail="Invalid streaming session")
-    ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "unknown")
+    ip = client_ip(request)
     release = hls_limits.acquire(ip, hashlib.sha256(token.encode()).hexdigest())
     try:
         response = hls_proxy(path, token, db)

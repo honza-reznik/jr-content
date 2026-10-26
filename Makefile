@@ -44,7 +44,7 @@ export BUILDX_CONFIG := $(CURDIR)/.cache/docker-buildx
 CMD ?= bash
 export CMD
 
-.PHONY: restore-lock-check backup backup-verify restore test-backup test-backup-guards build build-bb env check-project-ports up down shell test test-fast test-e2e test-restore-e2e test-smoke test-proxy test-s3 test-bb test-bb-fast test-ff test-ff-smoke test-isolation test-ff-offline test-ff-vitest test-ff-tsc test-ff-lint test-f5-b06-embed test-f5-b05-upload test-f5-b08-video test-f7-b02-approval ff-account build-ff reset logs ps
+.PHONY: test-https-proxy restore-lock-check backup backup-verify restore test-backup test-backup-guards build build-bb env check-project-ports up down shell test test-fast test-e2e test-restore-e2e test-smoke test-proxy test-s3 test-bb test-bb-fast test-ff test-ff-smoke test-isolation test-ff-offline test-ff-vitest test-ff-tsc test-ff-lint test-f5-b06-embed test-f5-b05-upload test-f5-b08-video test-f7-b02-approval ff-account build-ff reset logs ps
 build:
 	docker build --tag jrc-dev:$(JRC_PROJECT) --file docker/Dockerfile docker
 
@@ -54,6 +54,7 @@ env:
 	docker run --rm --name $(JRC_PROJECT)-env --network none --pull never \
 	  --user "$(JRC_UID):$(JRC_GID)" --volume "$(CURDIR):/workspace" \
 	  --env JRC_APP_PORT --env JRC_POSTGRES_PORT --env JRC_S3_PORT --env JRC_BB_PORT \
+	  --env JRC_MODE --env JRC_PUBLIC_ORIGIN --env JRC_BASE_PATH \
 	  jrc-dev:$(JRC_PROJECT) node scripts/init-env.cjs
 
 build-bb:
@@ -64,9 +65,9 @@ build-bb:
 	  --volume "$(CURDIR)/brightbean:/source" jrc-bb:$(JRC_PROJECT) sh -c \
 	  'mkdir -p /source/theme/static/css/dist /source/apps/jrc_texts/static/jrc_texts/dist && cp /app/theme/static/css/dist/styles.css /source/theme/static/css/dist/styles.css && cp /opt/jrc-texts/script.js /source/apps/jrc_texts/static/jrc_texts/dist/script.js'
 
-build-ff:
+build-ff: env
 	docker build --tag jrc-ff-api:$(JRC_PROJECT) --build-arg JRC_PROJECT=$(JRC_PROJECT) --file docker/Dockerfile.ff-api .
-	docker build --tag jrc-ff-web:$(JRC_PROJECT) --build-arg JRC_PROJECT=$(JRC_PROJECT) --file docker/Dockerfile.ff-web .
+	docker build --tag jrc-ff-web:$(JRC_PROJECT) --build-arg JRC_PROJECT=$(JRC_PROJECT) --build-arg JRC_BASE_PATH="$${JRC_BASE_PATH-$$(sed -n 's/^JRC_BASE_PATH=//p' .env)}" --file docker/Dockerfile.ff-web .
 
 # F2-B09a: během obnovy hlavního projektu se up/reset/down odmítají (zámek .jrc-restore.lock).
 restore-lock-check:
@@ -129,6 +130,9 @@ test-e2e:
 	@sh scripts/F10-B02/test-e2e.sh
 
 # F10-B04: skutečný E2E průchod, záloha, obnova do prázdného projektu a kontrola Chromiem.
+test-https-proxy:
+	@sh scripts/P1-B01/test-https.sh
+
 test-restore-e2e:
 	@sh scripts/F10-B04/test-restore-e2e.sh
 
@@ -189,12 +193,14 @@ test-ff-tsc:
 
 test-ff: test-isolation test-ff-offline
 	@sh scripts/workspace.sh check
+	# Produkční Next musí pod běžným UID obnovovat cache i předem vykreslené stránky.
+	$(COMPOSE) exec -T jrc-ff-web sh -c 'if [ "$$JRC_MODE" = prod ]; then test -w /opt/jrc-web/.next/cache && test -w /opt/jrc-web/.next/server/app; fi'
 	@for service in jrc-ff-worker jrc-ff-maintenance jrc-ff-beat; do \
 	  $(COMPOSE) exec -T $$service python - < scripts/smoke-ff-internal.py || exit $$?; \
 	done
 	# Upstream test_smoke ověřuje /docs; v provozu je vypne DISABLE_DOCS (ověřuje test brány).
 	# Upstream testy CORS počítají s vývojovými původy localhost; provoz je vypíná (F2-B05).
-	$(COMPOSE) exec -T -e STALE_UPLOAD_TIMEOUT_HOURS=24 -e SOFT_DELETE_RETENTION_DAYS=30 -e DISABLE_DOCS=false -e CORS_DEV_ORIGINS=true jrc-ff-api python -m pytest apps/api/tests -q -p no:cacheprovider
+	$(COMPOSE) exec -T -e STALE_UPLOAD_TIMEOUT_HOURS=24 -e SOFT_DELETE_RETENTION_DAYS=30 -e DISABLE_DOCS=false -e CORS_DEV_ORIGINS=true -e S3_PUBLIC_PATH= jrc-ff-api python -m pytest apps/api/tests -q -p no:cacheprovider
 	# Upstream jednotkové testy předpokládají kořenovou URL; /video ověřuje živý test a build.
 	$(MAKE) --no-print-directory test-ff-vitest
 	$(MAKE) --no-print-directory test-ff-tsc
@@ -239,7 +245,7 @@ test-ff-lint:
 
 test-ff-vitest:
 	@sh scripts/workspace.sh check
-	$(COMPOSE) exec -T -e NEXT_PUBLIC_BASE_PATH= jrc-ff-web pnpm test --maxWorkers=1 $(VITEST_ARGS)
+	$(COMPOSE) exec -T -e NEXT_PUBLIC_BASE_PATH= -e JRC_PUBLIC_ORIGIN= jrc-ff-web pnpm test --maxWorkers=1 $(VITEST_ARGS)
 
 ff-account:
 	@sh scripts/workspace.sh check

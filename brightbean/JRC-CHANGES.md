@@ -1,5 +1,22 @@
 # Úpravy JR Content
 
+## 2026-10-26 — P1-B01
+
+- Produkční běh používá gunicorn (2 procesy, 4 vlákna), `DEBUG=False` a WhiteNoise
+  se statickými soubory připravenými při startu. `JRC_MODE=dev` zachovává vývojový server.
+- `JRC_PUBLIC_ORIGIN` a `JRC_BASE_PATH` řídí veřejné odkazy, Django `SCRIPT_NAME`,
+  statické soubory, přihlášení/odhlášení, cookie cesty a předání vstupenky FreeFrame.
+  Prázdná předpona podporuje kořen domény. Odkazy upozornění fungují také pro starší data;
+  nová upozornění ukládají cestu bez montážní předpony. E-mailové odkazy mají předponu jednou.
+- S3 média se podepisují pro veřejný původ a přenášejí přes `$BASE/storage` na společném
+  vstupu. Caddy odstraní jen transportní předponu; podpis původní cesty a Host zůstává platný.
+- Middleware přijímá HTTPS/IP hlavičky jen od `jrc-proxy`, ostatním je odstraní.
+  Limity čtou ověřenou `REMOTE_ADDR`. HTTPS zapíná Secure cookies a HSTS bez subdomén/preload;
+  CSRF a povolené hosty se odvozují z veřejného původu. Django admin je na bráně nedostupný.
+- Ověření: nové testy `tests/test_jrc_proxy.py`, společný E2E průchod a místní HTTPS proxy
+  v `scripts/P1-B01/`; žádné připojení ke skutečným sociálním sítím.
+
+
 ## 2026-10-25 — F10-B03a
 
 - Nastavení JR Content vynucuje registraci jen na pozvánku; veřejná registrace

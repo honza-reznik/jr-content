@@ -1,5 +1,24 @@
 # JR Content: změny FreeFrame
 
+## 2026-10-26 — P1-B01
+
+- Next.js se sestavuje při Docker buildu a v režimu `prod` běží `next start` z `/opt/jrc-web`,
+  mimo vývojový bind mount. Cache a předem vykreslené stránky jsou zapisovatelné pod běžným UID. `JRC_MODE=dev` zachovává `next dev`. API nemá reload a používá
+  dva procesy (HLS meze v paměti platí pro každý proces zvlášť, stejně jako dosud).
+- Web i API používají konfigurovatelnou předponu `$BASE/video` a `$BASE/video-api`.
+  Prohlížeč volá relativní API stejného původu. Při změně `JRC_BASE_PATH` je nutný nový build
+  webu; změna samotného původu nový build nevyžaduje. Cookie cesty respektují předponu,
+  HTTPS nastavuje Secure i u přístupových cookies a odhlášení se vrací do Brightbean.
+- `S3_PUBLIC_PATH` přidává transportní předponu k podepsaným adresám uploadu, náhledů a stažení,
+  bez změny podpisu. Přes Caddy tak prohlížeč používá jediný původ; HLS dál přenáší API.
+  CSP omezuje přenos médií i spojení na stejný původ, CORS bucketů na veřejný původ aplikace.
+- Ověření zdroje proxy (`JRC_TRUSTED_PROXY_HOST=jrc-proxy`) chrání IP limity i HTTPS scheme;
+  Uvicorn má vlastní zpracování neověřených forwarded hlaviček vypnuté. Průvodce nastavením,
+  administrace, `/docs` a `/openapi.json` jsou na společné bráně nedostupné. `/setup/status`
+  zůstává pouze čtecí kontrolou pro Next middleware; nevytváří účet ani nevrací tajemství.
+- Testy: `tests/test_trusted_proxy.py`, aktualizovaný offline build a E2E/HTTPS průchod P1-B01.
+
+
 ## 2026-10-25 — F5-B09b
 
 - Oprava bezpečnostního review: HLS ze sdíleného odkazu nese vazbu na odkaz,

@@ -81,7 +81,11 @@ class Notification(models.Model):
     def safe_action_url(self):
         """Link target for screens: only a verified in-app path, otherwise nothing (F7-B03)."""
         data = self.data if isinstance(self.data, dict) else {}
-        return safe_app_path(data.get("action_url"))
+        path = safe_app_path(data.get("action_url"))
+        prefix = getattr(settings, "FORCE_SCRIPT_NAME", None) or ""
+        if path and prefix and path != prefix and not path.startswith(prefix + "/"):
+            return prefix + path
+        return path
 
     def __str__(self):
         return f"{self.title} → {self.user}"
