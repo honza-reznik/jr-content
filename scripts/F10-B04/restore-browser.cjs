@@ -9,7 +9,9 @@ const s3Port = process.env.JRC_S3_PORT;
 assert.equal(process.env.JRC_PROJECT, process.env.JRC_EXPECTED_PROJECT);
 assert.equal(appPort, '13483');
 assert.equal(s3Port, '14203');
-const origin = `http://127.0.0.1:${appPort}`;
+const origin = process.env.JRC_PUBLIC_ORIGIN;
+const basePath = process.env.JRC_BASE_PATH ?? "/jrc";
+const app = origin + basePath;
 const fixture = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const screenshot = path.resolve(process.argv[3]);
 const title = 'Reel pro Ellu — ranní zahrada';
@@ -19,18 +21,22 @@ const browserErrors = [];
 
 async function login(browser, who) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1200 }, timezoneId: 'Europe/Prague' });
-  await context.route(new RegExp(`^https?:\\/\\/(?!127\\.0\\.0\\.1:(?:${appPort}|${s3Port})(?:\\/|$)).*`), route => {
-    browserErrors.push(`Externí požadavek: ${route.request().url()}`);
-    return route.abort('blockedbyclient');
+  await context.route('**/*', route => {
+    const url = new URL(route.request().url());
+    if (['http:', 'https:'].includes(url.protocol) && url.origin !== origin) {
+      browserErrors.push(`Externí požadavek: ${url.href}`);
+      return route.abort('blockedbyclient');
+    }
+    return route.continue();
   });
   const page = await context.newPage();
   page.on('pageerror', error => browserErrors.push(error.message));
   page.on('console', message => { if (message.type() === 'error') browserErrors.push(message.text()); });
-  await page.goto(`${origin}/accounts/login/`);
+  await page.goto(`${app}/accounts/login/`);
   await page.locator('input[name="login"]').fill(fixture[who].email);
   await page.locator('input[name="password"]').fill(fixture[who].password);
   await page.locator('button[type="submit"]').click();
-  await page.waitForURL(url => !url.pathname.startsWith('/accounts/login'));
+  await page.waitForURL(url => !url.pathname.startsWith(basePath + '/accounts/login'));
   return { context, page };
 }
 
@@ -54,13 +60,13 @@ async function main() {
   const browser = await chromium.launch({ headless: true });
   try {
     const team = await login(browser, 'admin');
-    await team.page.goto(`${origin}/board/`);
+    await team.page.goto(`${app}/board/`);
     const publishedCard = team.page.locator('.board-column[data-stage="published"] .board-card')
       .filter({ has: team.page.getByRole('heading', { name: title, exact: true }) });
     await publishedCard.waitFor();
     const postId = await publishedCard.getAttribute('data-post');
     assert(postId, 'Obnovený obsah Published nemá identifikátor');
-    const detail = `${origin}/workspace/${fixture.workspace}/content/${postId}/`;
+    const detail = `${app}/workspace/${fixture.workspace}/content/${postId}/`;
 
     await team.page.goto(`${detail}?tab=history`);
     const history = await team.page.locator('main').innerText();
@@ -95,7 +101,7 @@ async function main() {
     await team.context.close();
 
     const ella = await login(browser, 'client');
-    await ella.page.goto(`${origin}/board/`);
+    await ella.page.goto(`${app}/board/`);
     await ella.page.locator('.board-column[data-stage="published"]')
       .getByRole('heading', { name: title, exact: true }).waitFor();
     await ella.page.goto(`${detail}?tab=video`);

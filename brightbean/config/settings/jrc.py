@@ -136,3 +136,12 @@ SECURE_HSTS_SECONDS = 31536000 if SESSION_COOKIE_SECURE else 0
 SECURE_HSTS_INCLUDE_SUBDOMAINS = SECURE_HSTS_PRELOAD = False
 MIDDLEWARE = ["apps.jrc_ui.proxy.TrustedProxyMiddleware", *MIDDLEWARE]  # noqa: F405
 JRC_S3_PUBLIC_PATH = os.environ.get("JRC_S3_PUBLIC_PATH", "")
+
+# Shared cache for authentication and API budgets across gunicorn processes.
+CACHES["default"] = {  # noqa: F405
+    "BACKEND": "django.core.cache.backends.redis.RedisCache",
+    "LOCATION": os.environ.get("JRC_CACHE_REDIS_URL", "redis://jrc-redis:6379/1"),
+}
+
+# Celkový REST/MCP rozpočet, sdílený přes výše uvedenou Redis cache.
+BB_API_LIMIT = 60000

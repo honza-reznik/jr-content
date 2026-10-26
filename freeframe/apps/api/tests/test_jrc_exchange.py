@@ -83,7 +83,7 @@ def sso_env(monkeypatch):
     monkeypatch.setenv("JRC_FF_SSO_SECRET", SECRET)
     monkeypatch.setenv("JRC_FF_SYNC_EMAIL", "jrc-sync@example.com")
     # Keep the shared-IP global limit out of these unauthenticated requests (fails open).
-    monkeypatch.setattr("apps.api.middleware.global_rate_limit.get_redis", BrokenRedis)
+    monkeypatch.setattr("apps.api.middleware.global_rate_limit.check_rate_limit", lambda *a, **kw: (True, 0))
 
 
 @pytest.fixture

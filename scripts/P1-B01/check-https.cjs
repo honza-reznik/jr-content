@@ -24,16 +24,15 @@ const basePath = process.env.JRC_BASE_PATH ?? '/jrc';
     assert(hsts && !/includeSubDomains|preload/i.test(hsts));
     const csrf = (await context.cookies()).find(cookie => cookie.name === 'csrftoken');
     assert(csrf?.secure && csrf.path === basePath + '/');
-    // Podvržená X-Real-IP nesmí rozdělit limit, rozdílní skuteční klienti ano.
-    const limited = async (ip, forged) => context.request.get(origin + basePath + '/video-api/share/p1-missing', {
-      headers: { 'X-Test-Client-IP': ip, 'X-Real-IP': forged },
-    });
-    const subnet = Math.floor(Math.random() * 250) + 1;
-    const clientA = `198.18.${subnet}.70`;
-    const clientB = `198.18.${subnet}.71`;
-    for (let i = 0; i < 30; i++) assert.equal((await limited(clientA, `198.51.100.${i + 1}`)).status(), 404);
-    assert.equal((await limited(clientA, '198.51.100.99')).status(), 429);
-    assert.equal((await limited(clientB, '198.51.100.99')).status(), 404);
+    // Stejná IP nesmí sdílet rozpočet dvou účtů; hlavičky nerozhodují.
+    for (let i = 0; i < 10; i++) {
+      assert.equal((await context.request.post(origin + basePath + '/video-api/auth/login', {
+        data: { email: 'limited-' + Date.now().toString().slice(0, -5) + '@example.com', password: 'wrong' },
+      })).status(), 401);
+    }
+    assert.equal((await context.request.post(origin + basePath + '/video-api/auth/login', {
+      data: { email: 'other-' + Date.now() + '@example.com', password: 'wrong' },
+    })).status(), 401);
     // REST/MCP je přítomné pod předponou a vyžaduje přístupové údaje.
     assert.equal((await context.request.get(origin + basePath + '/api/v1/me/')).status(), 401);
     const mcp = await context.request.post(origin + basePath + '/api/v1/mcp/', {
@@ -47,7 +46,7 @@ const basePath = process.env.JRC_BASE_PATH ?? '/jrc';
     assert.equal(resource.resource, origin + basePath + '/api/v1/mcp');
     const oauth = await (await context.request.get(origin + basePath + '/.well-known/oauth-authorization-server')).json();
     assert.equal(oauth.authorization_endpoint, origin + basePath + '/oauth/authorize/');
-    console.log('OK HTTPS: předpona, soukromé vstupy 404, Secure CSRF, HSTS bez subdomén, skutečná IP a REST.');
+    console.log('OK HTTPS: předpona, soukromé vstupy 404, Secure CSRF, HSTS bez subdomén, oddělené účty a REST.');
     await context.close();
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

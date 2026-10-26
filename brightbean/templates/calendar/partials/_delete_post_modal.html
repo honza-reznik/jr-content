@@ -44,7 +44,7 @@ Expects context: workspace, csrf_token.
                             @click="
                                 deleting = true;
                                 const acctParam = deleteAccountId ? '?account=' + deleteAccountId : '';
-                                fetch('/workspace/{{ workspace.id }}/compose/' + deletePostId + '/delete/' + acctParam, {
+                                fetch(`{% url 'composer:post_delete' workspace_id=workspace.id post_id='00000000-0000-0000-0000-000000000000' %}`.replace('00000000-0000-0000-0000-000000000000', deletePostId) + acctParam, {
                                     method: 'POST',
                                     headers: { 'X-CSRFToken': '{{ csrf_token }}' }
                                 }).then(resp => {

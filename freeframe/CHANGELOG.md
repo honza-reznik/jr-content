@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - JR Content: časový štítek nad obrazem videa, synchronizovaný s vykresleným snímkem; FPS ze souboru a celá obrazovka se štítkem i na telefonu.
 
 ### Fixed
+- JR Content: upload, obnova tokenů a přehrávání mají limity podle ověřeného uživatele; přihlášení a magic code podle e-mailu. Celkové limity včetně bezpečných rezervací HLS sdílejí všechny API procesy přes Redis.
 - JR Content: přehrávání ze sdíleného odkazu při každém požadavku respektuje jeho zrušení, vypršení a změnu oprávnění; přenos má omezený souběh, počet požadavků, čas a velikost segmentu.
 - JR Content: přehrávání řízeného HLS přenáší segmenty přes API bez přesměrování na S3; HLS přihlášení je v cookie omezené na verzi videa, mimo URL.
 - JR Content: sdílený obsah, komentáře a stahování posílají přihlášení člena; obnova uploadu přes abort respektuje aktuální roli před spuštěním převodu.

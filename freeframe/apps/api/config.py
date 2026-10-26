@@ -57,10 +57,9 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 7
     # HLS proxy budgets, per API process. Both the IP and cookie must fit.
-    hls_requests_per_minute_ip: int = Field(600, ge=1)
-    hls_requests_per_minute_session: int = Field(240, ge=1)
-    hls_concurrent_streams_ip: int = Field(8, ge=1)
-    hls_concurrent_streams_session: int = Field(4, ge=1)
+    hls_requests_per_minute_user: int = Field(240, ge=1)
+    hls_requests_per_minute_total: int = Field(6000, ge=1)
+    hls_concurrent_streams_user: int = Field(4, ge=1)
     hls_concurrent_streams_total: int = Field(32, ge=1)
     hls_max_segment_bytes: int = Field(32 * 1024**2, ge=1)
     hls_s3_connect_timeout_seconds: float = Field(3, gt=0)

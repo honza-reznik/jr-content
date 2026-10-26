@@ -128,6 +128,6 @@ seed_freeframe() {
     require_proxy_origin "$seed_project" "$seed_app"
     checked_docker run --rm --network host --pull never --user "$(id -u):$(id -g)" --env-file .env \
         --volume "$PWD:/jrc" --workdir /jrc --env JRC_APP_PORT="$seed_app" --env JRC_S3_PORT="$seed_s3" \
-        --env JRC_TEST_PROJECT="$seed_project" --env JRC_TEST_ORIGIN_VERIFIED=1 \
+        --env JRC_PUBLIC_ORIGIN --env JRC_BASE_PATH --env JRC_TEST_PROJECT="$seed_project" --env JRC_TEST_ORIGIN_VERIFIED=1 \
         "jrc-ff-api:$seed_project" python scripts/backup/seed-ff.py
 }

@@ -11,8 +11,14 @@
 - S3 média se podepisují pro veřejný původ a přenášejí přes `$BASE/storage` na společném
   vstupu. Caddy odstraní jen transportní předponu; podpis původní cesty a Host zůstává platný.
 - Middleware přijímá HTTPS/IP hlavičky jen od `jrc-proxy`, ostatním je odstraní.
-  Limity čtou ověřenou `REMOTE_ADDR`. HTTPS zapíná Secure cookies a HSTS bez subdomén/preload;
+  IP se nepoužívá pro limity přihlášených ani přihlašovacích formulářů. HTTPS zapíná Secure cookies a HSTS bez subdomén/preload;
   CSRF a povolené hosty se odvozují z veřejného původu. Django admin je na bráně nedostupný.
+- Opravy review: login/reset/registrace mají oddělené limity na normalizovaný účet
+  a celou instanci; provozní cache je sdílená přes Redis mezi procesy. Platné REST/MCP
+  klíče i OAuth přístupy se ověřují nezávisle na chybných pokusech ze stejné IP;
+  následují limity na klíč/uživatele a společný rozpočet 60 000 požadavků/minutu.
+- Pozvánky, návrat na přihlášení, mazání a dynamické adresy composeru používají
+  pojmenované routy a zachovávají předponu také po prvním automatickém uložení.
 - Ověření: nové testy `tests/test_jrc_proxy.py`, společný E2E průchod a místní HTTPS proxy
   v `scripts/P1-B01/`; žádné připojení ke skutečným sociálním sítím.
 

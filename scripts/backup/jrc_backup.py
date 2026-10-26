@@ -26,8 +26,9 @@ RESTORE_PROJECT_RE = re.compile(r"jrc-[a-z0-9-]+")
 STAMP_RE = re.compile(r"[0-9]{8}-[0-9]{6}(-[0-9]+)?")
 DATABASES = ("brightbean", "freeframe")
 # Hodnoty, které se při obnově do existujícího .env nemusí shodovat.
-ENV_IGNORED = re.compile(r"^(JRC_UID|JRC_GID|JRC_[A-Z0-9_]*PORT|JRC_S3_[A-Z]+_QUOTA)$")
+ENV_IGNORED = re.compile(r"^(JRC_UID|JRC_GID|JRC_PUBLIC_ORIGIN|JRC_BASE_PATH|JRC_[A-Z0-9_]*PORT|JRC_S3_[A-Z]+_QUOTA)$")
 PORT_KEYS = ("JRC_APP_PORT", "JRC_POSTGRES_PORT", "JRC_S3_PORT", "JRC_BB_PORT")
+URL_KEYS = ("JRC_PUBLIC_ORIGIN", "JRC_BASE_PATH")
 CHUNK = 1024 * 1024
 EXTRA_ARGS = ("ContentType", "ContentDisposition", "ContentEncoding", "ContentLanguage", "CacheControl")
 
@@ -413,13 +414,13 @@ def install_env(saved_path, target, overrides):
     with open(saved_path, encoding="utf-8") as stream:
         for line in stream:
             match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", line.rstrip("\n"))
-            if match and match.group(1) in overrides and overrides[match.group(1)]:
+            if match and match.group(1) in overrides:
                 lines.append(f"{match.group(1)}={overrides[match.group(1)]}\n")
                 seen.add(match.group(1))
             else:
                 lines.append(line if line.endswith("\n") else line + "\n")
     for key, value in overrides.items():
-        if value and key not in seen:
+        if key not in seen:
             lines.append(f"{key}={value}\n")
     temporary = target.with_name(".jrc-env.restore.env.local")
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -764,7 +765,8 @@ def cmd_precheck(args):
             )
         print(".env odpovídá záloze (tajemství se shodují).")
     else:
-        overrides = {key: os.environ.get(key, "") for key in PORT_KEYS}
+        overrides = {key: os.environ[key] for key in (*PORT_KEYS, *URL_KEYS) if key in os.environ
+                     and (os.environ[key] or key == "JRC_BASE_PATH")}
         install_env(saved, target, overrides)
         print(".env vytvořen ze zálohy (práva 600).")
 

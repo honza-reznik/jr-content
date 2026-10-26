@@ -27,7 +27,7 @@ from ..tasks.celery_app import send_task_safe
 from ..models.user import User, UserStatus
 from ..models.instance_branding import InstanceBranding
 from ..middleware.auth import get_current_user
-from ..middleware.rate_limit import rate_limit
+from ..middleware.rate_limit import account_rate_limit, enforce_user_limit
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -53,7 +53,7 @@ def _generate_invite_token() -> str:
     return secrets.token_urlsafe(48)
 
 
-@router.post("/send-magic-code", response_model=SendMagicCodeResponse, dependencies=[Depends(rate_limit("send_magic_code", 5, 600, fail_closed=True))])
+@router.post("/send-magic-code", response_model=SendMagicCodeResponse, dependencies=[Depends(account_rate_limit("send_magic_code", 5, 600))])
 def send_magic_code(body: SendMagicCodeRequest, db: Session = Depends(get_db)):
     """
     Send magic code to an existing user's email, for login.
@@ -90,7 +90,7 @@ def send_magic_code(body: SendMagicCodeRequest, db: Session = Depends(get_db)):
     )
 
 
-@router.post("/verify-magic-code", response_model=TokenResponse, dependencies=[Depends(rate_limit("verify_magic_code", 10, 600, fail_closed=True))])
+@router.post("/verify-magic-code", response_model=TokenResponse, dependencies=[Depends(account_rate_limit("verify_magic_code", 10, 600))])
 def verify_magic_code(body: VerifyMagicCodeRequest, db: Session = Depends(get_db)):
     """
     Verify magic code and return tokens.
@@ -203,7 +203,7 @@ def accept_invite(body: AcceptInviteRequest, db: Session = Depends(get_db)):
     )
 
 
-@router.post("/login", response_model=TokenResponse, dependencies=[Depends(rate_limit("login", 10, 600, fail_closed=True))])
+@router.post("/login", response_model=TokenResponse, dependencies=[Depends(account_rate_limit("login", 10, 600))])
 def login(body: LoginRequest, db: Session = Depends(get_db)):
     """Login with email + password."""
     user = get_user_by_email(db, body.email)
@@ -222,7 +222,7 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
     )
 
 
-@router.post("/refresh", response_model=TokenResponse, dependencies=[Depends(rate_limit("refresh_token", 30, 60))])
+@router.post("/refresh", response_model=TokenResponse)
 def refresh_token(body: RefreshRequest, db: Session = Depends(get_db)):
     payload = decode_token(body.refresh_token)
     if not payload or payload.get("type") != "refresh":
@@ -232,6 +232,7 @@ def refresh_token(body: RefreshRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="User not found")
     if payload.get("ver", 1) != user.token_version:
         raise HTTPException(status_code=401, detail="Session expired, please log in again")
+    enforce_user_limit(user, "refresh_token", 30, 60)
     return TokenResponse(
         access_token=create_access_token(str(user.id), token_version=user.token_version),
         refresh_token=create_refresh_token(str(user.id), token_version=user.token_version),

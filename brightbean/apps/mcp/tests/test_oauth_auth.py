@@ -112,6 +112,20 @@ def _mint_oauth_token(user, *, scope: str = "mcp", expired: bool = False) -> str
 
 @pytest.mark.django_db
 class TestMcpOAuthChallenge:
+    def test_valid_oauth_survives_failed_bearers_from_same_ip(self):
+        from django.core.cache import cache
+
+        from apps.api.limits import _AUTH_FAIL_LIMIT
+
+        user, _, _ = _make_user_with_workspace("same-ip@example.invalid", "owner")
+        raw = _mint_oauth_token(user)
+        cache.delete("agent_api:auth_fail:127.0.0.1")
+        attacker = _SecureClient(HTTP_AUTHORIZATION="Bearer invalid")
+        for _ in range(_AUTH_FAIL_LIMIT + 2):
+            assert _post(attacker, _rpc("tools/list"))[0] == 401
+        valid = _SecureClient(HTTP_AUTHORIZATION=f"Bearer {raw}")
+        assert _post(valid, _rpc("tools/list"))[0] == 200
+
     def test_unauthenticated_post_advertises_oauth(self):
         c = _SecureClient()
         r = c.post(MCP_URL, data=json.dumps(_rpc("initialize", {})), content_type="application/json")

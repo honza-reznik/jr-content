@@ -13,8 +13,9 @@ AUTH_RATE_LIMITED_PATHS = (
     "/accounts/password/reset/key/",
 )
 
-# Rate limit: 10 POST requests per minute per IP for auth endpoints
+# Separate account and instance budgets for auth endpoints
 AUTH_RATE_LIMIT = 10
+AUTH_TOTAL_RATE_LIMIT = 1000
 AUTH_RATE_WINDOW = 60  # seconds
 
 EXEMPT_PATH_PREFIXES = (
@@ -62,17 +63,21 @@ class AuthRateLimitMiddleware:
 
     def __call__(self, request):
         if request.method == "POST" and any(request.path_info.startswith(p) for p in AUTH_RATE_LIMITED_PATHS):
-            ip = self._get_client_ip(request)
-            cache_key = f"auth_ratelimit:{hashlib.md5(ip.encode()).hexdigest()}"
-
-            attempts = cache.get(cache_key, 0)
-            if attempts >= AUTH_RATE_LIMIT:
-                return HttpResponse("Too many requests. Please try again later.", status=429)
-
-            cache.set(cache_key, attempts + 1, AUTH_RATE_WINDOW)
+            account = (request.POST.get("login") or request.POST.get("email") or "").strip().casefold()
+            digest = hashlib.sha256(account.encode()).hexdigest()
+            for key, limit in (
+                (f"auth_ratelimit:account:{digest}", AUTH_RATE_LIMIT),
+                ("auth_ratelimit:total", AUTH_TOTAL_RATE_LIMIT),
+            ):
+                if cache.add(key, 1, AUTH_RATE_WINDOW):
+                    attempts = 1
+                else:
+                    try:
+                        attempts = cache.incr(key)
+                    except ValueError:
+                        cache.add(key, 1, AUTH_RATE_WINDOW)
+                        attempts = 1
+                if attempts > limit:
+                    return HttpResponse("Too many requests. Please try again later.", status=429)
 
         return self.get_response(request)
-
-    @staticmethod
-    def _get_client_ip(request):
-        return request.META.get("REMOTE_ADDR", "")

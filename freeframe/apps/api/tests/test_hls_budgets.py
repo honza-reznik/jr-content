@@ -1,6 +1,7 @@
 """Security regression: HLS bypasses the global /stream/ rate limiter."""
 import asyncio
 import uuid
+import redis
 from unittest.mock import patch
 
 import pytest
@@ -11,6 +12,23 @@ from apps.api.config import settings
 from apps.api.routers import hls_proxy as hls
 from apps.api.services.hls_limits import HlsLimits
 from .hls_helpers import hls_url, segment_storage
+
+
+@pytest.fixture(autouse=True)
+def shared_hls_redis(monkeypatch):
+    connection = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    namespace = f"test-hls:{uuid.uuid4().hex}"
+    monkeypatch.setattr("apps.api.services.hls_limits.get_redis", lambda: connection)
+    monkeypatch.setattr(HlsLimits, "__init__", lambda self: setattr(self, "namespace", namespace))
+    yield connection
+    keys = list(connection.scan_iter(namespace + '*'))
+    if keys:
+        connection.delete(*keys)
+
+
+def active_total(limits):
+    from apps.api.services.hls_limits import get_redis
+    return get_redis().zcard(limits.namespace + ':active:total')
 
 
 @pytest.fixture
@@ -25,7 +43,7 @@ def managed_stream(client, test_user, monkeypatch):
         yield token, url, limits
 
 
-@pytest.mark.parametrize("budget", ["ip", "session"])
+@pytest.mark.parametrize("budget", ["user", "total"])
 def test_hls_request_rate_rejects_before_reading_storage(client, managed_stream, monkeypatch, budget):
     _, url, limits = managed_stream
     monkeypatch.setattr(settings, f"hls_requests_per_minute_{budget}", 2)
@@ -37,10 +55,10 @@ def test_hls_request_rate_rejects_before_reading_storage(client, managed_stream,
         assert response.status_code == 429
         assert response.headers["retry-after"] == "60"
         assert storage.get_object.call_count == 2
-        assert limits.total == 0
+        assert active_total(limits) == 0
 
 
-@pytest.mark.parametrize("budget", ["ip", "session", "total"])
+@pytest.mark.parametrize("budget", ["user", "total"])
 def test_open_stream_occupies_capacity_until_response_finishes(client, mock_db, managed_stream, monkeypatch, budget):
     token, _, limits = managed_stream
     monkeypatch.setattr(settings, f"hls_concurrent_streams_{budget}", 1)
@@ -48,7 +66,7 @@ def test_open_stream_occupies_capacity_until_response_finishes(client, mock_db, 
         (b"cookie", f"ff_hls={token}".encode())], "client": ("testclient", 1000)})
     with segment_storage() as (storage, body):
         response = hls.browser_hls_proxy(hls.hls_session_id("processed/v1"), "720p/seg.ts", request, mock_db)
-        assert limits.total == 1
+        assert active_total(limits) == 1
         with pytest.raises(HTTPException) as denied:
             hls.browser_hls_proxy(hls.hls_session_id("processed/v1"), "720p/seg.ts", request, mock_db)
         assert denied.value.status_code == 429
@@ -61,23 +79,52 @@ def test_open_stream_occupies_capacity_until_response_finishes(client, mock_db, 
             pass
 
         asyncio.run(response({"type": "http", "asgi": {"spec_version": "2.0"}}, disconnected, send))
-        assert limits.total == 0
-        assert not limits.active
+        assert active_total(limits) == 0
         body.close.assert_called()
 
 
-def test_rate_budget_is_not_reset_by_finishing_request_and_expires(monkeypatch):
-    limits = HlsLimits()
-    monkeypatch.setattr(settings, "hls_requests_per_minute_ip", 1)
-    with patch("apps.api.services.hls_limits.monotonic", return_value=10):
-        release = limits.acquire("ip", "s1")
-        release()
-        release()  # cleanup must be safe to repeat
-        with pytest.raises(HTTPException):
-            limits.acquire("ip", "s2")
-    with patch("apps.api.services.hls_limits.monotonic", return_value=71):
-        limits.acquire("ip", "s2")()
-    assert limits.total == 0
+def test_rate_budget_survives_release_and_shared_workers(monkeypatch, shared_hls_redis):
+    first, second = HlsLimits(), HlsLimits()
+    monkeypatch.setattr(settings, "hls_requests_per_minute_user", 1)
+    release = first.acquire("user:a")
+    release()
+    release()
+    with pytest.raises(HTTPException):
+        second.acquire("user:a")
+    second.acquire("user:b")()
+    for key in shared_hls_redis.scan_iter(first.namespace + ':rate:*'):
+        shared_hls_redis.delete(key)
+    second.acquire("user:a")()
+    assert active_total(first) == 0
+
+
+def test_total_capacity_and_safe_release_after_expiry(monkeypatch, shared_hls_redis):
+    first, second = HlsLimits(), HlsLimits()
+    monkeypatch.setattr(settings, "hls_concurrent_streams_total", 1)
+    old_release = first.acquire("user:a")
+    with pytest.raises(HTTPException):
+        second.acquire("user:b")
+    # Simulate the worker dying and Redis expiring its lease.
+    for key in shared_hls_redis.scan_iter(first.namespace + ':active:*'):
+        shared_hls_redis.zadd(key, {member: 0 for member in shared_hls_redis.zrange(key, 0, -1)})
+    release = second.acquire("user:b")
+    old_release()
+    assert active_total(first) == 1
+    release()
+    release()
+    assert active_total(first) == 0
+
+
+def test_same_user_shares_budget_across_different_hls_tokens(client, test_user, mock_db, managed_stream, monkeypatch):
+    _, url, _ = managed_stream
+    monkeypatch.setattr(settings, "hls_requests_per_minute_user", 1)
+    with segment_storage() as (storage, body):
+        assert client.get(url).status_code == 200
+        token = hls.create_hls_token("processed/other", managed=True, user_id=str(test_user.id),
+                                     project_id=str(uuid.uuid4()), token_version=1)
+        url = hls_url(client, token, "720p/seg.ts")
+        assert client.get(url).status_code == 429
+        assert storage.get_object.call_count == 1
 
 
 @pytest.mark.parametrize("error", [ConnectTimeoutError, ReadTimeoutError])
@@ -88,7 +135,7 @@ def test_s3_timeout_returns_generic_504_and_releases_capacity(client, managed_st
         response = client.get(url)
     assert response.status_code == 504
     assert "private-storage" not in response.text
-    assert limits.total == 0
+    assert active_total(limits) == 0
 
 
 def test_stream_client_uses_bounded_timeouts_without_retries():
@@ -112,7 +159,7 @@ def test_oversize_segment_is_closed_and_rejected_before_streaming(client, manage
     assert response.status_code == 413
     body.iter_chunks.assert_not_called()
     body.close.assert_called()
-    assert limits.total == 0
+    assert active_total(limits) == 0
 
 
 @pytest.mark.parametrize("failure", ["size", "time", "read_timeout", "disconnect"])
@@ -139,5 +186,4 @@ def test_midstream_failure_closes_storage_and_releases_capacity(client, managed_
             body.iter_chunks.side_effect = interrupted
         client.get(url)
     body.close.assert_called()
-    assert limits.total == 0
-    assert not limits.active
+    assert active_total(limits) == 0

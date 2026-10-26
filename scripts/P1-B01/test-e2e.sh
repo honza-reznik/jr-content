@@ -12,3 +12,6 @@ docker run --rm --pull never --network host --user "$(id -u):$(id -g)" \
   --env JRC_E2E_APP_PORT=13443 --env JRC_E2E_S3_PORT=14163 --env JRC_E2E_HTTPS \
   --env JRC_E2E_OUTPUT=ops/test-output/P1-B01 --env JRC_E2E_SCREENSHOTS=ops/screenshoty/P1-B01 \
   --volume "$PWD:/jrc" --workdir /jrc jrc-dev:jrc-p1b01 node scripts/F10-B02/reel-for-ella.cjs
+docker run --rm --pull never --network host --user "$(id -u):$(id -g)" \
+  --env-file .env --volume "$PWD:/jrc" --workdir /jrc \
+  jrc-dev:jrc-p1b01 node scripts/P1-B01/check-paths.cjs

@@ -1,103 +1,27 @@
-"""
-Global per-user / per-IP rate limiting middleware.
-
-Applies to all API requests. Uses Redis sliding window counters.
-- Authenticated users: keyed by user ID (from JWT)
-- Unauthenticated requests: keyed by IP
-
-Separate limits for read (GET/HEAD/OPTIONS) vs write (POST/PUT/PATCH/DELETE).
-"""
-
-from ..middleware.trusted_proxy import client_ip
-
+"""Instance-wide Redis budgets, shared by all API processes."""
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette._utils import get_route_path
-import jwt
+from ..services.redis_service import check_rate_limit
 
-from ..config import settings
-from ..services.redis_service import get_redis
-
-# Limits per window — tuned for media-review workflows where a single folder
-# page can trigger 10+ paginated asset fetches plus SWR calls for project,
-# members, folders, etc., and bulk uploads generate many write requests.
-READ_LIMIT = 600       # GET requests per window
-WRITE_LIMIT = 300      # Mutating requests per window
-WINDOW_SECONDS = 60    # 1-minute window
-
-# Paths exempt from global rate limiting (they have their own)
-EXEMPT_PATHS = {
-    "/health",
-    "/docs",
-    "/redoc",
-    "/openapi.json",
-}
+READ_LIMIT = 600
+WRITE_LIMIT = 300
+WINDOW_SECONDS = 60
+EXEMPT_PATHS = {"/health", "/docs", "/redoc", "/openapi.json"}
 
 
 class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
+    async def dispatch(self, request, call_next):
         path = get_route_path(request.scope)
-
-        # Upload operations have endpoint-specific flow control.
-        if path in EXEMPT_PATHS or path.startswith("/stream/") or path.startswith("/upload/"):
+        if path in EXEMPT_PATHS or path.startswith("/stream/"):
             return await call_next(request)
-
-        # Determine identity: user_id from JWT or IP
-        identity = self._get_identity(request)
-
-        # Determine limit based on method
-        is_write = request.method in ("POST", "PUT", "PATCH", "DELETE")
-        action = "global_w" if is_write else "global_r"
-        limit = WRITE_LIMIT if is_write else READ_LIMIT
-
-        # Check rate limit
-        allowed, retry_after = self._check(identity, action, limit)
+        write = request.method in ("POST", "PUT", "PATCH", "DELETE")
+        allowed, retry = check_rate_limit(
+            "total", "global_w" if write else "global_r",
+            (WRITE_LIMIT if write else READ_LIMIT) * 100, WINDOW_SECONDS, fail_closed=True,
+        )
         if not allowed:
-            return JSONResponse(
-                status_code=429,
-                content={"detail": f"Too many requests. Try again in {retry_after}s."},
-                headers={"Retry-After": str(retry_after)},
-            )
-
+            return JSONResponse(status_code=503 if retry < 0 else 429,
+                                content={"detail": "Temporarily unavailable" if retry < 0 else "Too many requests"},
+                                headers={"Retry-After": str(5 if retry < 0 else retry)})
         return await call_next(request)
-
-    def _get_identity(self, request: Request) -> str:
-        """Extract user ID from JWT or fall back to IP."""
-        auth_header = request.headers.get("authorization", "")
-        if auth_header.startswith("Bearer "):
-            token = auth_header[7:]
-            try:
-                payload = jwt.decode(
-                    token, settings.jwt_secret,
-                    algorithms=[settings.jwt_algorithm],
-                    options={"verify_exp": False},
-                )
-                user_id = payload.get("sub")
-                if user_id:
-                    return f"user:{user_id}"
-            except jwt.InvalidTokenError:
-                pass
-
-        # Fall back to IP
-        ip = client_ip(request)
-        return f"ip:{ip}"
-
-    def _check(self, identity: str, action: str, max_requests: int) -> tuple[bool, int]:
-        try:
-            r = get_redis()
-            key = f"grl:{action}:{identity}"
-            current = r.get(key)
-
-            if current is not None and int(current) >= max_requests:
-                ttl = r.ttl(key)
-                return False, max(ttl, 1)
-
-            pipe = r.pipeline()
-            pipe.incr(key)
-            pipe.expire(key, WINDOW_SECONDS, nx=True)
-            pipe.execute()
-            return True, 0
-        except Exception:
-            # Other API paths retain the previous fail-open behavior.
-            return True, 0

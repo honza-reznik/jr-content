@@ -1,189 +1,86 @@
-"""Tests for rate limiting functionality."""
+"""Review P1: budgets isolate accounts/users and are atomic between workers."""
+from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+import uuid
+
 import pytest
-from unittest.mock import MagicMock, patch
+import redis
+from fastapi import HTTPException
+from apps.api.config import settings
+from apps.api.services import redis_service
+from apps.api.middleware.rate_limit import enforce_user_limit
 
 
-class TestCheckRateLimit:
-    """Tests for the Redis-based rate limit checker."""
-
-    @patch("apps.api.services.redis_service.get_redis")
-    def test_allows_request_under_limit(self, mock_get_redis):
-        mock_redis = MagicMock()
-        mock_redis.get.return_value = None
-        mock_pipe = MagicMock()
-        mock_redis.pipeline.return_value = mock_pipe
-        mock_get_redis.return_value = mock_redis
-
-        from apps.api.services.redis_service import check_rate_limit
-
-        allowed, retry_after = check_rate_limit("127.0.0.1", "test_action", 5, 60)
-
-        assert allowed is True
-        assert retry_after == 0
-        mock_pipe.incr.assert_called_once()
-        mock_pipe.expire.assert_called_once()
-        mock_pipe.execute.assert_called_once()
-
-    @patch("apps.api.services.redis_service.get_redis")
-    def test_blocks_request_at_limit(self, mock_get_redis):
-        mock_redis = MagicMock()
-        mock_redis.get.return_value = "5"
-        mock_redis.ttl.return_value = 42
-        mock_get_redis.return_value = mock_redis
-
-        from apps.api.services.redis_service import check_rate_limit
-
-        allowed, retry_after = check_rate_limit("127.0.0.1", "test_action", 5, 60)
-
-        assert allowed is False
-        assert retry_after == 42
-
-    @patch("apps.api.services.redis_service.get_redis")
-    def test_allows_request_below_limit(self, mock_get_redis):
-        mock_redis = MagicMock()
-        mock_redis.get.return_value = "3"
-        mock_pipe = MagicMock()
-        mock_redis.pipeline.return_value = mock_pipe
-        mock_get_redis.return_value = mock_redis
-
-        from apps.api.services.redis_service import check_rate_limit
-
-        allowed, retry_after = check_rate_limit("127.0.0.1", "test_action", 5, 60)
-
-        assert allowed is True
-        assert retry_after == 0
-
-    @patch("apps.api.services.redis_service.get_redis")
-    def test_retry_after_minimum_is_one(self, mock_get_redis):
-        mock_redis = MagicMock()
-        mock_redis.get.return_value = "10"
-        mock_redis.ttl.return_value = -1
-        mock_get_redis.return_value = mock_redis
-
-        from apps.api.services.redis_service import check_rate_limit
-
-        allowed, retry_after = check_rate_limit("127.0.0.1", "test_action", 10, 60)
-
-        assert allowed is False
-        assert retry_after == 1
+@pytest.fixture
+def shared_redis(monkeypatch):
+    connection = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    prefix = f"test-rate:{uuid.uuid4().hex}:"
+    monkeypatch.setattr(redis_service, "get_redis", lambda: connection)
+    monkeypatch.setattr(redis_service, "RATE_LIMIT_PREFIX", prefix)
+    yield connection
+    keys = list(connection.scan_iter(prefix + '*'))
+    if keys:
+        connection.delete(*keys)
 
 
-class TestRateLimitDependency:
-    """Tests for the FastAPI rate_limit dependency."""
-
-    @patch("apps.api.middleware.rate_limit.check_rate_limit")
-    def test_allows_when_under_limit(self, mock_check):
-        mock_check.return_value = (True, 0)
-        mock_request = MagicMock()
-        mock_request.client.host = "10.0.0.1"
-
-        from apps.api.middleware.rate_limit import rate_limit
-
-        dep = rate_limit("test", 5, 60)
-        dep(mock_request)  # Should not raise
-
-        mock_check.assert_called_once_with("10.0.0.1", "test", 5, 60)
-
-    @patch("apps.api.middleware.rate_limit.check_rate_limit")
-    def test_raises_429_when_over_limit(self, mock_check):
-        mock_check.return_value = (False, 30)
-        mock_request = MagicMock()
-        mock_request.client.host = "10.0.0.1"
-
-        from apps.api.middleware.rate_limit import rate_limit
-
-        dep = rate_limit("test", 5, 60)
-        with pytest.raises(Exception) as exc_info:
-            dep(mock_request)
-        assert exc_info.value.status_code == 429
-
-    @patch("apps.api.middleware.rate_limit.check_rate_limit")
-    def test_falls_back_to_client_host(self, mock_check):
-        mock_check.return_value = (True, 0)
-        mock_request = MagicMock()
-        mock_request.headers.get.return_value = None
-        mock_request.client.host = "192.168.1.1"
-
-        from apps.api.middleware.rate_limit import rate_limit
-
-        dep = rate_limit("test", 5, 60)
-        dep(mock_request)
-
-        mock_check.assert_called_once_with("192.168.1.1", "test", 5, 60)
+def test_atomic_budget_across_connections(shared_redis):
+    def attempt(_):
+        return redis_service.check_rate_limit('total', 'parallel', 7, 60, fail_closed=True)[0]
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        assert sum(pool.map(attempt, range(40))) == 7
 
 
-class TestGlobalRateLimitMiddleware:
-    """Tests for the global rate limit middleware."""
+def test_user_and_total_budgets_are_independent_of_ip(shared_redis):
+    a, b = SimpleNamespace(id='a'), SimpleNamespace(id='b')
+    for _ in range(2):
+        enforce_user_limit(a, 'upload', 2, 60)
+    with pytest.raises(HTTPException) as error:
+        enforce_user_limit(a, 'upload', 2, 60)
+    assert error.value.status_code == 429
+    enforce_user_limit(b, 'upload', 2, 60)
+    shared_redis.set(redis_service.RATE_LIMIT_PREFIX + 'upload:total', 200, ex=60)
+    with pytest.raises(HTTPException):
+        enforce_user_limit(SimpleNamespace(id='c'), 'upload', 2, 60)
 
-    def test_exempt_paths_skipped(self):
-        from apps.api.middleware.global_rate_limit import GlobalRateLimitMiddleware, EXEMPT_PATHS
 
-        assert "/health" in EXEMPT_PATHS
-        assert "/docs" in EXEMPT_PATHS
-        assert "/redoc" in EXEMPT_PATHS
-        assert "/openapi.json" in EXEMPT_PATHS
+def test_both_upload_routes_share_verified_user_budget(client, auth_headers, test_user, shared_redis):
+    from apps.api.main import app
+    from apps.api.middleware.auth import get_current_user
+    body = dict(project_id=str(uuid.uuid4()), asset_name='test', original_filename='file.txt',
+                mime_type='text/plain', file_size_bytes=1)
+    for _ in range(5):
+        assert client.post('/upload/initiate', json=body, headers=auth_headers).status_code == 400
+    assert client.post(f'/assets/{uuid.uuid4()}/versions', json=body, headers=auth_headers).status_code == 429
+    other = MagicMock(id=uuid.uuid4())
+    app.dependency_overrides[get_current_user] = lambda: other
+    assert client.post('/upload/initiate', json=body, headers=auth_headers).status_code == 400
 
-    @patch("apps.api.middleware.global_rate_limit.get_redis")
-    def test_get_identity_extracts_user_from_jwt(self, mock_get_redis):
-        from apps.api.middleware.global_rate_limit import GlobalRateLimitMiddleware
-        from apps.api.config import settings
 
-        middleware = GlobalRateLimitMiddleware(app=MagicMock())
+@pytest.mark.parametrize('path,maximum,body', [
+    ('login', 10, {'password':'wrong'}),
+    ('send-magic-code', 5, {}),
+    ('verify-magic-code', 10, {'code':'123456'}),
+])
+def test_account_limit_normalizes_email_without_blocking_same_ip(client, shared_redis, path, maximum, body):
+    for _ in range(maximum):
+        assert client.post('/auth/' + path, json={'email':'one@example.com', **body}).status_code in (200,401)
+    assert client.post('/auth/' + path, json={'email':'ONE@example.com', **body}).status_code == 429
+    assert client.post('/auth/' + path, json={'email':'two@example.com', **body}).status_code in (200,401)
+    shared_redis.set(redis_service.RATE_LIMIT_PREFIX + path.replace('-', '_') + ':total', maximum * 100, ex=60)
+    assert client.post('/auth/' + path, json={'email':'three@example.com', **body}).status_code == 429
 
-        import jwt
-        token = jwt.encode(
-            {"sub": "user-123", "type": "access"},
-            settings.jwt_secret,
-            algorithm=settings.jwt_algorithm,
-        )
-        mock_request = MagicMock()
-        mock_request.headers.get.return_value = f"Bearer {token}"
 
-        identity = middleware._get_identity(mock_request)
-        assert identity == "user:user-123"
-
-    def test_get_identity_falls_back_to_ip(self):
-        from apps.api.middleware.global_rate_limit import GlobalRateLimitMiddleware
-
-        middleware = GlobalRateLimitMiddleware(app=MagicMock())
-        mock_request = MagicMock()
-        mock_request.headers.get.side_effect = lambda key, default="": {
-            "authorization": "",
-            "x-real-ip": "203.0.113.1",
-        }.get(key, default)
-
-        mock_request.client.host = "203.0.113.2"
-        identity = middleware._get_identity(mock_request)
-        # Untrusted peers cannot choose their budget with X-Real-IP.
-        assert identity == "ip:203.0.113.2"
-
-    @patch("apps.api.middleware.global_rate_limit.get_redis")
-    def test_check_allows_under_limit(self, mock_get_redis):
-        from apps.api.middleware.global_rate_limit import GlobalRateLimitMiddleware
-
-        mock_redis = MagicMock()
-        mock_redis.get.return_value = None
-        mock_pipe = MagicMock()
-        mock_redis.pipeline.return_value = mock_pipe
-        mock_get_redis.return_value = mock_redis
-
-        middleware = GlobalRateLimitMiddleware(app=MagicMock())
-        allowed, retry_after = middleware._check("user:123", "global_r", 600)
-
-        assert allowed is True
-        assert retry_after == 0
-
-    @patch("apps.api.middleware.global_rate_limit.get_redis")
-    def test_check_blocks_over_limit(self, mock_get_redis):
-        from apps.api.middleware.global_rate_limit import GlobalRateLimitMiddleware
-
-        mock_redis = MagicMock()
-        mock_redis.get.return_value = "600"
-        mock_redis.ttl.return_value = 25
-        mock_get_redis.return_value = mock_redis
-
-        middleware = GlobalRateLimitMiddleware(app=MagicMock())
-        allowed, retry_after = middleware._check("user:123", "global_r", 600)
-
-        assert allowed is False
-        assert retry_after == 25
+def test_refresh_budget_uses_verified_user_not_shared_ip(client, shared_redis, monkeypatch):
+    from apps.api.routers import auth
+    from apps.api.services.auth_service import create_refresh_token
+    from .conftest import _make_user
+    first, second = _make_user(), _make_user()
+    users = {first.id: first, second.id: second}
+    monkeypatch.setattr(auth, 'get_user_by_id', lambda db, uid: users.get(uid))
+    def refresh(user):
+        return client.post('/auth/refresh', json={'refresh_token': create_refresh_token(str(user.id))})
+    for _ in range(30):
+        assert refresh(first).status_code == 200
+    assert refresh(first).status_code == 429
+    assert refresh(second).status_code == 200

@@ -31,6 +31,7 @@ x-bb: &bb
   user: "${JRC_UID:-1000}:${JRC_GID:-1000}"
   environment: &bb-environment
     <<: [*offline, *public, *bb-s3]
+    JRC_CACHE_REDIS_URL: redis://jrc-redis:6379/1
     DJANGO_SETTINGS_MODULE: config.settings.jrc
     JRC_VIDEO_MAX_UPLOAD_BYTES: ${JRC_VIDEO_MAX_UPLOAD_BYTES:-4294967296}
     SIGNUP_MODE: invite
@@ -317,6 +318,7 @@ services:
       <<: [*offline, *public, *bb-s3]
       APP_URL: ${JRC_PUBLIC_ORIGIN:-http://127.0.0.1:${JRC_APP_PORT:-13000}}
       MEDIA_ROOT: /app/media
+      JRC_CACHE_REDIS_URL: redis://jrc-redis:6379/1
       DJANGO_SETTINGS_MODULE: config.settings.jrc
       SECRET_KEY: ${JRC_BB_SECRET_KEY:?Spusťte make env}
       ENCRYPTION_KEY_SALT: ${JRC_BB_ENCRYPTION_KEY_SALT:?Spusťte make env}

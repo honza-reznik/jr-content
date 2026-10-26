@@ -27,10 +27,10 @@ def test_unfinished_setup_exemptions_with_root_path(monkeypatch, prefix, path):
 
 
 @pytest.mark.parametrize("prefix", ["", "/video-api"])
-@pytest.mark.parametrize("path", ["/health", "/stream/hls/master.m3u8", "/upload/initiate"])
+@pytest.mark.parametrize("path", ["/health", "/stream/hls/master.m3u8"])
 def test_rate_limit_exemptions_with_root_path(monkeypatch, prefix, path):
     check = MagicMock(return_value=(False, 60))
-    monkeypatch.setattr(GlobalRateLimitMiddleware, "_check", check)
+    monkeypatch.setattr("apps.api.middleware.global_rate_limit.check_rate_limit", check)
     app = FastAPI(root_path=prefix)
     app.add_middleware(GlobalRateLimitMiddleware)
     app.add_api_route(path, lambda: {"ok": True})
