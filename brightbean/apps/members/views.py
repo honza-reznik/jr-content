@@ -1,6 +1,7 @@
 """Views for team member management."""
 
 from django.contrib.auth.decorators import login_required
+from django.conf import settings
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -85,6 +86,8 @@ def member_list(request):
             .select_related("invited_by")
             .order_by("-created_at")
         )
+        for invite in pending_invites:
+            invite.accept_url = _invite_url(invite)
 
     # Role choices for forms: only owners may assign Admin (see helper).
     org_role_choices = _org_role_choices_for(request.org_membership)
@@ -157,6 +160,7 @@ def invite_member(request):
             {
                 "invite": invitation,
                 "is_admin": True,
+                "invite_url": _invite_url(invitation),
             },
         )
     return redirect("members:list")
@@ -186,9 +190,17 @@ def resend_invite(request, invitation_id):
             {
                 "invite": invitation,
                 "is_admin": True,
+                "invite_url": _invite_url(invitation),
             },
         )
     return redirect("members:list")
+
+
+def _invite_url(invitation):
+    """Build the public invitation URL using the configured public origin."""
+    return settings.APP_URL.rstrip("/") + reverse(
+        "members:accept_invite", kwargs={"token": invitation.token}
+    )
 
 
 @login_required

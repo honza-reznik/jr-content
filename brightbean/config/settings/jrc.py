@@ -1,6 +1,7 @@
 # JR Content: přidáno 2026-10-22 (blok F2-B01), AGPL-3.0.
 import os
 import re
+from pathlib import Path
 
 from .jrc_offline import JRC_APPS
 
@@ -32,6 +33,28 @@ DATABASES = {
 ENCRYPTION_KEY_SALT = env("ENCRYPTION_KEY_SALT").encode("utf-8")  # noqa: F405
 EMAIL_BACKEND_TYPE = "console"
 EMAIL_INNER_BACKEND = "django.core.mail.backends.console.EmailBackend"
+JRC_SOURCE_VERSION = os.environ.get("JRC_SOURCE_VERSION", "unknown")
+JRC_SOURCE_ARCHIVE_DIR = Path("/opt/jrc-source")
+_smtp_values = {
+    "host": os.environ.get("JRC_SMTP_HOST", "").strip(),
+    "port": os.environ.get("JRC_SMTP_PORT", "").strip(),
+    "user": os.environ.get("JRC_SMTP_USER", "").strip(),
+    "password": os.environ.get("JRC_SMTP_PASSWORD", ""),
+    "from": os.environ.get("JRC_SMTP_FROM", "").strip(),
+}
+if _smtp_values["host"]:
+    if not all(_smtp_values.values()):
+        raise RuntimeError("JRC_SMTP_HOST requires JRC_SMTP_PORT, JRC_SMTP_USER, JRC_SMTP_PASSWORD, and JRC_SMTP_FROM")
+    EMAIL_BACKEND_TYPE = "smtp"
+    EMAIL_INNER_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    EMAIL_HOST = _smtp_values["host"]
+    EMAIL_PORT = int(_smtp_values["port"])
+    EMAIL_HOST_USER = _smtp_values["user"]
+    EMAIL_HOST_PASSWORD = _smtp_values["password"]
+    DEFAULT_FROM_EMAIL = _smtp_values["from"]
+    EMAIL_USE_SSL = EMAIL_PORT == 465
+    EMAIL_USE_TLS = not EMAIL_USE_SSL
+    del _smtp_values
 SESSION_COOKIE_SECURE = False
 CSP_REPORT_ONLY = True
 STORAGES["staticfiles"] = {  # noqa: F405

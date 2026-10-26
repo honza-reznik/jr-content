@@ -24,6 +24,8 @@ x-bb-s3: &bb-s3
 x-bb: &bb
   build:
     context: ./brightbean
+    args:
+      JRC_SOURCE_VERSION: ${JRC_SOURCE_VERSION:-unknown}
   # Helper editoru žije v obrazu mimo bind mount; obraz musí patřit tomuto projektu.
   image: jrc-bb:${JRC_PROJECT:?JRC_PROJECT není nastavený, použij make}
   restart: unless-stopped
@@ -43,6 +45,11 @@ x-bb: &bb
     DB_USER: ${PGUSER:-jrc}
     DB_PASSWORD: ${PGPASSWORD:?Spusťte make env}
     EMAIL_BACKEND_TYPE: console
+    JRC_SMTP_HOST: ${JRC_SMTP_HOST:-}
+    JRC_SMTP_PORT: ${JRC_SMTP_PORT:-}
+    JRC_SMTP_USER: ${JRC_SMTP_USER:-}
+    JRC_SMTP_PASSWORD: ${JRC_SMTP_PASSWORD:-}
+    JRC_SMTP_FROM: ${JRC_SMTP_FROM:-}
     MEDIA_ROOT: /app/media
     APP_URL: ${JRC_PUBLIC_ORIGIN:-http://127.0.0.1:${JRC_APP_PORT:-13000}}
     JRC_FF_SYNC_EMAIL: ${JRC_FF_SYNC_EMAIL:-jrc-sync@example.com}

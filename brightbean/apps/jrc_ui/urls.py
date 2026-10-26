@@ -4,4 +4,8 @@ from django.urls import path
 from . import views
 
 app_name = "jrc_ui"
-urlpatterns = [path("", views.about, name="about"), path("license/", views.license_text, name="license")]
+urlpatterns = [
+    path("", views.about, name="about"),
+    path("license/", views.license_text, name="license"),
+    path("source-code/", views.source_code, name="source_code"),
+]

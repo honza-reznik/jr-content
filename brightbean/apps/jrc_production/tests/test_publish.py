@@ -4,6 +4,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.conf import settings
 from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -54,10 +55,9 @@ def test_mark_published_manually_records_channel_actor_time_url_and_history(clie
     assert b"social.example/post/123" in client.get(detail, {"tab": "history"}).content
 
 
-@pytest.mark.parametrize("role", ["client", "viewer"])
-def test_client_and_viewer_cannot_mark_published(client, workspace, user, post, role):
+def test_viewer_cannot_mark_published(client, workspace, user, post):
     variant = approved_post(post)
-    WorkspaceMembership.objects.filter(workspace=workspace, user=user).update(workspace_role=role)
+    WorkspaceMembership.objects.filter(workspace=workspace, user=user).update(workspace_role="viewer")
     with pytest.raises(PermissionDenied):
         mark_published_manually(post, variant.pk, user)
 
@@ -67,18 +67,46 @@ def test_client_and_viewer_cannot_mark_published(client, workspace, user, post, 
     assert ManualPublication.objects.count() == 0
 
 
-def test_custom_client_cannot_publish_even_if_custom_role_grants_permission(client, workspace, user, post):
+def test_client_can_mark_approved_content_published(client, workspace, user, post):
+    variant = approved_post(post)
+    WorkspaceMembership.objects.filter(workspace=workspace, user=user).update(workspace_role="client")
+    client.force_login(user)
+    url = reverse("jrc_production:mark_published", kwargs={"workspace_id": workspace.pk, "post_id": post.pk})
+    assert client.post(url, {"platform_post": variant.pk}).status_code == 302
+    assert ManualPublication.objects.filter(platform_post=variant, published_by=user).count() == 1
+
+
+def test_client_publish_requires_ready_final_video(client, workspace, user, post):
+    variant = approved_post(post)
+    video = VideoAsset.objects.create(platform_post=variant, ff_asset_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+    WorkspaceMembership.objects.filter(workspace=workspace, user=user).update(workspace_role="client")
+    from django.core.exceptions import ValidationError
+
+    with pytest.raises(ValidationError, match="converted video"):
+        mark_published_manually(post, variant.pk, user)
+
+    version = VideoVersion.objects.create(
+        video=video,
+        number=1,
+        ff_version_id="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        status=VideoVersion.Status.READY,
+    )
+    video.final_version = version
+    video.save(update_fields=["final_version"])
+    assert mark_published_manually(post, variant.pk, user)
+
+
+def test_client_can_publish_even_with_custom_role_without_publish_grant(client, workspace, user, post):
     variant = approved_post(post)
     custom = CustomRole.objects.create(
         organization=workspace.organization,
-        name="Client with an invalid publish grant",
-        permissions={"publish_directly": True},
+        name="Client role custom permissions",
+        permissions={},
     )
     WorkspaceMembership.objects.filter(workspace=workspace, user=user).update(
         workspace_role="client", custom_role=custom
     )
-    with pytest.raises(PermissionDenied):
-        mark_published_manually(post, variant.pk, user)
+    assert mark_published_manually(post, variant.pk, user)
 
 
 def test_mark_published_rejects_foreign_channel_and_non_https_url(client, workspace, organization, user, post):
@@ -198,7 +226,7 @@ def test_content_detail_renders_flash_message_once(client, workspace, user, post
     assert response.content.count(b"Comment added.") == 1
 
 
-@pytest.mark.parametrize("role", ["client", "viewer", "editor"])
+@pytest.mark.parametrize("role", ["viewer", "editor"])
 def test_final_download_requires_publish_permission_and_hides_link(client, workspace, user, post, role):
     variant = post.platform_posts.get()
     video = VideoAsset.objects.create(platform_post=variant, ff_asset_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
@@ -226,7 +254,7 @@ def test_final_download_requires_publish_permission_and_hides_link(client, works
     assert url.encode() not in response.content
 
 
-def test_client_custom_role_cannot_download_even_with_publish_permission(client, workspace, user, post):
+def test_client_can_download_even_with_custom_role(client, workspace, user, post):
     variant = post.platform_posts.get()
     video = VideoAsset.objects.create(platform_post=variant, ff_asset_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
     version = VideoVersion.objects.create(
@@ -239,8 +267,8 @@ def test_client_custom_role_cannot_download_even_with_publish_permission(client,
     video.save(update_fields=["final_version"])
     custom = CustomRole.objects.create(
         organization=workspace.organization,
-        name="Client with a custom publish grant",
-        permissions={"publish_directly": True},
+        name="Client without publish permission grant",
+        permissions={},
     )
     WorkspaceMembership.objects.filter(workspace=workspace, user=user).update(
         workspace_role="client", custom_role=custom
@@ -250,14 +278,20 @@ def test_client_custom_role_cannot_download_even_with_publish_permission(client,
         "jrc_video:final_download",
         kwargs={"workspace_id": workspace.pk, "post_id": post.pk, "platform_post_id": variant.pk},
     )
-    with patch("apps.jrc_video.uploads._call") as call:
-        assert client.get(url).status_code == 403
-        call.assert_not_called()
+    with patch(
+        "apps.jrc_video.uploads._call",
+        return_value={
+            "url": f"{settings.JRC_S3_PUBLIC_ORIGIN}/storage/jrc-video/final.mp4?X-Amz-Expires=900&X-Amz-Signature=local-test"
+        },
+    ) as call:
+        response = client.get(url)
+        assert response.status_code == 302
+        call.assert_called_once()
 
     detail = reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.pk, "post_id": post.pk})
     response = client.get(detail, {"tab": "publish"})
     assert response.status_code == 200
-    assert url.encode() not in response.content
+    assert url.encode() in response.content
 
 
 def test_final_download_rejects_foreign_channel_and_freeframe_token_url(client, workspace, organization, user, post):

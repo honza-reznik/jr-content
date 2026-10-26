@@ -49,3 +49,38 @@ assert all(app in settings.INSTALLED_APPS for app in settings.JRC_APPS)
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_jrc_smtp_environment_selects_tls_backend_without_printing_credentials():
+    secret = "local-fake-smtp-password"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import importlib
+settings = importlib.import_module('config.settings.jrc')
+assert settings.EMAIL_BACKEND_TYPE == 'smtp'
+assert settings.EMAIL_INNER_BACKEND == 'django.core.mail.backends.smtp.EmailBackend'
+assert settings.EMAIL_HOST == 'smtp.invalid'
+assert settings.EMAIL_PORT == 587
+assert settings.EMAIL_USE_TLS and not settings.EMAIL_USE_SSL
+assert settings.EMAIL_HOST_PASSWORD == 'local-fake-smtp-password'
+assert settings.DEFAULT_FROM_EMAIL == 'noreply@example.invalid'
+""",
+        ],
+        env={
+            **os.environ,
+            "DJANGO_SETTINGS_MODULE": "config.settings.jrc",
+            "JRC_SMTP_HOST": "smtp.invalid",
+            "JRC_SMTP_PORT": "587",
+            "JRC_SMTP_USER": "local-user",
+            "JRC_SMTP_PASSWORD": secret,
+            "JRC_SMTP_FROM": "noreply@example.invalid",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert secret not in result.stdout + result.stderr

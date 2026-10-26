@@ -1,5 +1,7 @@
 FROM python:3.12-slim AS base
 
+ARG JRC_SOURCE_VERSION=unknown
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PORT=8000
@@ -27,6 +29,8 @@ COPY apps/jrc_texts/editor/*.mjs /opt/jrc-texts/
 RUN npm run build --prefix /opt/jrc-texts
 
 COPY . .
+RUN mkdir -p /opt/jrc-source \
+    && mv .jrc-source.tar.gz /opt/jrc-source/jr-content-${JRC_SOURCE_VERSION}.tar.gz
 RUN mkdir -p apps/jrc_texts/static/jrc_texts/dist \
     && cp /opt/jrc-texts/script.js apps/jrc_texts/static/jrc_texts/dist/script.js
 

@@ -4,6 +4,6 @@
     <p class="text-sm mb-4">A local workspace for planning and preparing content.</p>
     <p class="text-sm mb-4">Based on <a class="underline" href="https://github.com/brightbeanxyz/brightbean-studio" rel="noopener noreferrer" target="_blank">Brightbean Studio</a>. Original copyright and license notices are preserved. Modified by JR Content, October 2026.</p>
     <p class="text-sm mb-4">This software is licensed under the <a class="underline" href="{% url 'jrc_ui:license' %}">GNU Affero General Public License, version 3</a>.</p>
-    <p class="text-sm mb-4">Source code available on request. Version: <code>{{ jrc_source_version }}</code>.</p>
+    {% if user.is_authenticated %}<p class="text-sm mb-4"><a class="underline" href="{% url 'jrc_ui:source_code' %}">Source code</a> <span class="text-stone-500">(tar.gz · <code>{{ jrc_source_version }}</code>)</span></p>{% endif %}
     <a href="{% url 'dashboard' %}" class="text-sm underline">Back to workspace</a>
 </div>

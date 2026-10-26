@@ -59,7 +59,9 @@ env:
 
 build-bb:
 	# Worktree nesmějí přepsat obraz jinému ověřovacímu projektu.
-	docker build --tag jrc-bb:$(JRC_PROJECT) brightbean
+	@set -eu; archive=brightbean/.jrc-source.tar.gz; version="$$(git rev-parse --short HEAD)"; \
+	  git archive --format=tar.gz --prefix="jr-content-$$version/" --output="$$archive" HEAD; \
+	  docker build --build-arg JRC_SOURCE_VERSION="$$version" --tag jrc-bb:$(JRC_PROJECT) brightbean
 	# Zdrojový bind mount skryje CSS sestavené v obrazu; přeneseme je do worktree.
 	docker run --rm --network none --pull never --user "$(JRC_UID):$(JRC_GID)" \
 	  --volume "$(CURDIR)/brightbean:/source" jrc-bb:$(JRC_PROJECT) sh -c \
