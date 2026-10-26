@@ -11,7 +11,7 @@ def get_redis() -> redis.Redis:
     """Get Redis client singleton."""
     global _redis_client
     if _redis_client is None:
-        _redis_client = redis.from_url(settings.redis_url, decode_responses=True)
+        _redis_client = redis.from_url(settings.redis_url, decode_responses=True, socket_connect_timeout=2, socket_timeout=2)
     return _redis_client
 
 
@@ -124,17 +124,17 @@ def check_rate_limit(
     try:
         r = get_redis()
         key = f"{RATE_LIMIT_PREFIX}{action}:{ip}"
-        current = r.get(key)
-
-        if current is not None and int(current) >= max_requests:
-            ttl = r.ttl(key)
-            return False, max(ttl, 1)
-
-        pipe = r.pipeline()
-        pipe.incr(key)
-        pipe.expire(key, window_seconds, nx=True)
-        pipe.execute()
-        return True, 0
+        retry = int(r.eval("""
+            local count = tonumber(redis.call('GET', KEYS[1]) or '0')
+            if count >= tonumber(ARGV[1]) then
+                return math.max(redis.call('TTL', KEYS[1]), 1)
+            end
+            if redis.call('INCR', KEYS[1]) == 1 then
+                redis.call('EXPIRE', KEYS[1], ARGV[2])
+            end
+            return 0
+        """, 1, key, max_requests, window_seconds))
+        return retry == 0, retry
     except Exception:
         if fail_closed:
             return False, -1

@@ -1,12 +1,10 @@
 # JR Content: přidáno 2026-10-24 (blok F2-B05), AGPL-3.0.
 """Private S3 media for JR Content.
 
-The web and worker containers reach Garage inside the Docker network
-(``AWS_S3_ENDPOINT_URL``, e.g. ``http://jrc-s3:3900``), but the browser can only
-open the local S3 gate (``JRC_S3_PUBLIC_URL``, e.g. ``http://127.0.0.1:13900``).
-A SigV4 signature covers the Host header, so a URL signed for the internal host
-cannot simply be rewritten: presigned URLs are created by a second client whose
-endpoint is the browser-facing one. Signing is local (no network request).
+The web and worker reach Garage on the private Docker network. Browser URLs
+are signed locally for the configured public origin, then wrapped in the
+transport path (e.g. /jrc/storage). Caddy removes that path and forwards the
+configured public Host, preserving the exact request covered by SigV4.
 """
 
 import threading
@@ -48,9 +46,14 @@ class JrcS3Storage(S3Boto3Storage):
         params = parameters.copy() if parameters else {}
         params["Bucket"] = self.bucket_name
         params["Key"] = self._normalize_name(clean_name(name))
-        return self.public_connection.meta.client.generate_presigned_url(
+        url = self.public_connection.meta.client.generate_presigned_url(
             "get_object",
             Params=params,
             ExpiresIn=self.querystring_expire if expire is None else expire,
             HttpMethod=http_method,
         )
+
+        # Proxy odstraní pouze transportní předponu. Podpis stále pokrývá
+        # /bucket/key a veřejný Host, stejně jako požadavek dorazí do Garage.
+        prefix = getattr(settings, "JRC_S3_PUBLIC_PATH", "")
+        return url.replace(self.public_endpoint_url, self.public_endpoint_url + prefix, 1)

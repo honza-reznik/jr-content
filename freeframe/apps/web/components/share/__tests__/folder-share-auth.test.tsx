@@ -9,7 +9,7 @@ beforeEach(() => {
     addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }))
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     let body: unknown = { assets: [{ id: 'a1', name: 'Member photo', asset_type: 'image', latest_version_id: 'v1' }], subfolders: [], total: 25 }
-    if (new URL(url).searchParams.get('page') === '2') body = { assets: [{ id: 'a2', name: 'Next page photo', asset_type: 'image' }], subfolders: [], total: 25 }
+    if (new URL(url, window.location.origin).searchParams.get('page') === '2') body = { assets: [{ id: 'a2', name: 'Next page photo', asset_type: 'image' }], subfolders: [], total: 25 }
     if (url.includes('/comments?')) body = [{ id: 'c1', body: 'Private member comment', created_at: new Date().toISOString(), guest_name: 'Member' }]
     return new Response(JSON.stringify(body))
   }))

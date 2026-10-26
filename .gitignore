@@ -10,7 +10,8 @@ data/
 ops/screenshoty/
 # Lokální výstupy smoke testu prostředí
 ops/test-output/
-.cache/docker-buildx/
+# Build cache a místní dočasné kopie .env při ověřování P1-B01
+.cache/
 # F1-B04: testovací video (vyrábí se lokálně FFmpegem) a výstupy Playwrightu
 proto/F1-B04/media/
 proto/F1-B04/test-results/

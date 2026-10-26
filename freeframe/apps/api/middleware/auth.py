@@ -13,6 +13,7 @@ optional_bearer_scheme = HTTPBearer(auto_error=False)
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: Session = Depends(get_db),
+    request: Request = None,
 ) -> User:
     token = credentials.credentials
     payload = decode_token(token)
@@ -26,11 +27,15 @@ def get_current_user(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or deactivated")
     if payload.get("ver", 1) != user.token_version:
         raise HTTPException(status_code=401, detail="Session expired, please log in again")
+    from .rate_limit import enforce_limit
+    write = request is not None and request.method in ("POST", "PUT", "PATCH", "DELETE")
+    enforce_limit(f"user:{user.id}", "global_w" if write else "global_r", 300 if write else 600, 60)
     return user
 
 def get_optional_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(optional_bearer_scheme),
     db: Session = Depends(get_db),
+    request: Request = None,
 ) -> Optional[User]:
     """Allow guests without credentials; reject an invalid supplied session with 401.
 
@@ -39,5 +44,5 @@ def get_optional_user(
     """
     if not credentials:
         return None
-    return get_current_user(credentials, db)
+    return get_current_user(credentials, db, request)
 

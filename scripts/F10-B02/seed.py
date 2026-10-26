@@ -3,10 +3,12 @@
 import json
 import os
 import secrets
+from datetime import timedelta
 
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.api_keys.services import issue_api_key
 from apps.jrc_channels.services import create_manual_channel
 from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.organizations.models import Organization
@@ -24,7 +26,7 @@ workspace = Workspace.objects.create(
 
 def create_person(key, name, role, org_role="member"):
     user = User.objects.create(
-        email=f"{key}@f10-b02.example.invalid",
+        email=f"{key}-{secrets.token_hex(4)}@f10-b02.example.invalid",
         name=name,
         tos_accepted_at=timezone.now(),
     )
@@ -38,6 +40,10 @@ def create_person(key, name, role, org_role="member"):
 
 admin = create_person("honza", "Honza Team", "owner", "owner")
 ella = create_person("ella", "Ella", "client")
-create_manual_channel(workspace, "instagram", "Ella Instagram")
+account = create_manual_channel(workspace, "instagram", "Ella Instagram")
+issued = issue_api_key(
+    workspace=workspace, social_accounts=[account], issued_by=User.objects.get(email=admin["email"]),
+    name="P1-B01 local verification", permissions=[], expires_at=timezone.now() + timedelta(hours=1),
+)
 
-print(json.dumps({"workspace": str(workspace.pk), "admin": admin, "client": ella}))
+print(json.dumps({"workspace": str(workspace.pk), "admin": admin, "client": ella, "api_token": issued.plaintext_token}))

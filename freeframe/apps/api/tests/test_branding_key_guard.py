@@ -73,9 +73,8 @@ def api(real_db, s3, monkeypatch):
     from apps.api.database import get_db
     from apps.api.middleware.auth import get_current_user, get_optional_user
     from apps.api.middleware import rate_limit
-    from apps.api.middleware.global_rate_limit import GlobalRateLimitMiddleware
 
-    monkeypatch.setattr(GlobalRateLimitMiddleware, "_check", lambda self, *a: (True, 0))
+    monkeypatch.setattr("apps.api.middleware.global_rate_limit.check_rate_limit", lambda *a, **kw: (True, 0))
     monkeypatch.setattr(rate_limit, "check_rate_limit", lambda *a, **k: (True, 0))
 
     who = {"user": None}

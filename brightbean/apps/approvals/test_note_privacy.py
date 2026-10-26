@@ -99,7 +99,12 @@ class NoteNotificationPrivacyTests(ApprovalWorkflowBase):
 class CommentPrivacyTests(ApprovalWorkflowBase):
     def test_client_and_viewer_attachment_visibility_including_parent_thread(self):
         post = self._post("draft")
-        with override_settings(STORAGES={"default": {"BACKEND": "django.core.files.storage.InMemoryStorage"}}):
+        with override_settings(
+            STORAGES={
+                "default": {"BACKEND": "django.core.files.storage.InMemoryStorage"},
+                "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+            }
+        ):
             for role in ("client", "viewer"):
                 WorkspaceMembership.objects.filter(user=self.author, workspace=self.ws).update(workspace_role=role)
                 self.client.force_login(self.author)

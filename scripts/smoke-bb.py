@@ -57,6 +57,22 @@ django.setup()
 from django.core.files.base import ContentFile  # noqa: E402
 from django.core.files.storage import default_storage  # noqa: E402
 from django.core.management import call_command  # noqa: E402
+from django.conf import settings  # noqa: E402
+from django.core.cache import caches  # noqa: E402
+from django.core.cache.backends.redis import RedisCache  # noqa: E402
+
+# P1 review: skutečná provozní cache musí sdílet stav mezi nezávislými klienty.
+assert settings.CACHES["default"]["BACKEND"] == "django.core.cache.backends.redis.RedisCache"
+shared = caches["default"]
+other = RedisCache(settings.CACHES["default"]["LOCATION"], {})
+budget_key = f"jrc-smoke-budget:{uuid.uuid4()}"
+try:
+    assert shared.add(budget_key, 1, 60)
+    assert other.incr(budget_key) == 2
+    assert shared.get(budget_key) == 2
+finally:
+    shared.delete(budget_key)
+print("OK Brightbean: provozní limity sdílejí Redis mezi nezávislými klienty")
 
 from apps.media_library.storage import is_s3_backend  # noqa: E402
 
@@ -69,7 +85,7 @@ try:
         assert stored.read() == payload
     url = urlsplit(default_storage.url(name))
     assert f"{url.scheme}://{url.netloc}" == os.environ["JRC_S3_PUBLIC_URL"].rstrip("/")
-    assert url.path == f"/jrc-app/{name}"
+    assert url.path == os.environ.get("JRC_S3_PUBLIC_PATH", "") + f"/jrc-app/{name}"
     assert parse_qs(url.query)["X-Amz-Expires"] == ["900"]
 finally:
     default_storage.delete(name)

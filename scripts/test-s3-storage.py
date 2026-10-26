@@ -15,7 +15,7 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 
 s3_origin = f"http://127.0.0.1:{os.environ.get('JRC_S3_PORT', '13900')}"
-app_origin = f"http://127.0.0.1:{os.environ.get('JRC_APP_PORT', '13000')}"
+app_origin = os.environ.get("JRC_PUBLIC_ORIGIN") or f"http://127.0.0.1:{os.environ.get('JRC_APP_PORT', '13000')}"
 config = Config(signature_version="s3v4", s3={"addressing_style": "path"}, connect_timeout=5, read_timeout=10)
 
 

@@ -50,7 +50,7 @@ def managed_hls_identity(user, project_id, *, db: Session | None = None) -> dict
         return {}
     managed_project = db is not None and db.query(Project.jrc_managed).filter(Project.id == project_id).scalar() is True
     if user.jrc_managed is not True and not managed_project:
-        return {}
+        return {"user_id": str(user.id)}
     return {
         "managed": True, "user_id": str(user.id), "project_id": str(project_id),
         "token_version": user.token_version,
@@ -65,11 +65,13 @@ def create_hls_token(
     """Create an HLS token; managed sessions also carry a live identity binding."""
     payload = {
         "sub": "hls",
-        # v5 also invalidates share cookies issued without a live link binding.
-        "v": 5,
+        # v6 invalidates older cookies without an authenticated actor budget.
+        "v": 6,
         "pfx": s3_prefix,
         "exp": datetime.now(timezone.utc) + timedelta(seconds=expires_seconds),
     }
+    if user_id:
+        payload["actor"] = user_id
     if managed:
         if not user_id or not project_id or token_version is None:
             raise ValueError("Managed HLS requires a user, project and token version")
@@ -113,7 +115,7 @@ def _decode_hls_token(token: str) -> dict:
     if payload.get("sub") != "hls":
         raise HTTPException(status_code=403, detail="Invalid token type")
     # Earlier formats used long-lived URLs or omitted the share-link binding.
-    if payload.get("v") != 5:
+    if payload.get("v") != 6:
         raise HTTPException(status_code=401, detail="Reload the video to renew its streaming session")
     return payload
 
@@ -277,8 +279,12 @@ def browser_hls_proxy(session_id: str, path: str, request: Request, db: Session 
     payload = _decode_hls_token(token)
     if session_id != hls_session_id(payload["pfx"]):
         raise HTTPException(status_code=403, detail="Invalid streaming session")
-    ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "unknown")
-    release = hls_limits.acquire(ip, hashlib.sha256(token.encode()).hexdigest())
+    _authorize_managed_hls(payload, db)
+    _authorize_share_hls(payload, db)
+    share = payload.get("share", {})
+    user_id = payload.get("uid") or payload.get("actor") or share.get("user")
+    identity = f"user:{user_id}" if user_id else f"share:{share.get('id', payload['pfx'])}"
+    release = hls_limits.acquire(identity)
     try:
         response = hls_proxy(path, token, db)
         if isinstance(response, _HlsStreamResponse):

@@ -3,6 +3,7 @@
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 from django_ratelimit.decorators import ratelimit
@@ -232,7 +233,9 @@ def accept_invite(request, token):
 
     if request.method == "POST":
         if not request.user.is_authenticated:
-            return redirect(f"/accounts/login/?next=/members/invite/{token}/accept/")
+            from django.contrib.auth.views import redirect_to_login
+
+            return redirect_to_login(reverse("members:accept_invite", kwargs={"token": token}))
 
         try:
             services.accept_invitation(invitation, request.user)
@@ -250,7 +253,7 @@ def accept_invite(request, token):
         # Redirect to first assigned workspace or home
         if request.user.last_workspace_id:
             return redirect("calendar:calendar", workspace_id=request.user.last_workspace_id)
-        return redirect("/")
+        return redirect("dashboard")
 
     # GET - store token in session for signup flow
     request.session["pending_invite_token"] = token

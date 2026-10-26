@@ -1,0 +1,2 @@
+# P1-B01: sdílené limity a provozní cache mezi procesy.
+redis==5.3.1

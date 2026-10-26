@@ -602,7 +602,7 @@
                          x-data="{ boards: [], boardsLoading: false, boardsLoaded: false }"
                          x-effect="if (charLimits[accId]?.platform === 'pinterest' && !boardsLoaded) {
                              boardsLoading = true;
-                             fetch(`/workspace/{{ workspace.id }}/compose/pinterest-boards/${accId}/`)
+                             fetch(`{% url 'composer:pinterest_boards' workspace_id=workspace.id account_id='00000000-0000-0000-0000-000000000000' %}`.replace('00000000-0000-0000-0000-000000000000', accId))
                                  .then(r => r.json())
                                  .then(data => { boards = data.boards || []; boardsLoaded = true; })
                                  .catch(() => {})
@@ -893,7 +893,7 @@
                                  $watch('ttBrandingBlocked', () => enforceBrandingLock())"
                          x-effect="if (charLimits[accId]?.platform === 'tiktok' && !ttLoaded && !ttLoading) {
                              ttLoading = true;
-                             fetch(`/workspace/{{ workspace.id }}/compose/tiktok-creator-info/${accId}/`)
+                             fetch(`{% url 'composer:tiktok_creator_info' workspace_id=workspace.id account_id='00000000-0000-0000-0000-000000000000' %}`.replace('00000000-0000-0000-0000-000000000000', accId))
                                  .then(r => r.ok ? r.json() : null)
                                  .then(data => {
                                      if (data) {
@@ -2270,19 +2270,19 @@ function composerApp() {
                     // Update the autosave trigger URL to use the edit endpoint
                     const trigger = document.getElementById('autosave-trigger');
                     if (trigger) {
-                        const editUrl = `/workspace/{{ workspace.id }}/compose/${detail.postId}/autosave/`;
+                        const editUrl = `{% url 'composer:autosave_edit' workspace_id=workspace.id post_id='00000000-0000-0000-0000-000000000000' %}`.replace('00000000-0000-0000-0000-000000000000', detail.postId);
                         trigger.setAttribute('hx-post', editUrl);
                         htmx.process(trigger);
                     }
                     // Also update the main form's action URL
                     const form = document.getElementById('composer-form');
                     if (form) {
-                        const editSaveUrl = `/workspace/{{ workspace.id }}/compose/${detail.postId}/save/`;
+                        const editSaveUrl = `{% url 'composer:save_post_edit' workspace_id=workspace.id post_id='00000000-0000-0000-0000-000000000000' %}`.replace('00000000-0000-0000-0000-000000000000', detail.postId);
                         form.setAttribute('hx-post', editSaveUrl);
                         htmx.process(form);
                     }
                     // Update upload URL to attach media to the post directly
-                    this.uploadUrl = `/workspace/{{ workspace.id }}/compose/${detail.postId}/upload-media/`;
+                    this.uploadUrl = `{% url 'composer:upload_media_post' workspace_id=workspace.id post_id='00000000-0000-0000-0000-000000000000' %}`.replace('00000000-0000-0000-0000-000000000000', detail.postId);
                 }
             });
 
@@ -2476,7 +2476,7 @@ function composerApp() {
             this.unsplashImporting = true;
             this.unsplashError = '';
             const url = this.autosavedPostId
-                ? `/workspace/{{ workspace.id }}/compose/${this.autosavedPostId}/unsplash-import/`
+                ? `{% url 'composer:unsplash_import_post' workspace_id=workspace.id post_id='00000000-0000-0000-0000-000000000000' %}`.replace('00000000-0000-0000-0000-000000000000', this.autosavedPostId)
                 : '{% url "composer:unsplash_import" workspace_id=workspace.id %}';
             const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
             fetch(url, {
@@ -2522,7 +2522,7 @@ function composerApp() {
             const assetId = attached.dataset.assetId;
             this.frameAssetId = assetId || null;
             const url = assetId
-                ? `/workspace/{{ workspace.id }}/compose/media-stream/${assetId}/`
+                ? `{% url 'composer:media_stream' workspace_id=workspace.id asset_id='00000000-0000-0000-0000-000000000000' %}`.replace('00000000-0000-0000-0000-000000000000', assetId)
                 : attached.getAttribute('src').split('#')[0];
             this.frameVideoUrl = url;
             // crossorigin only helps when the file is actually cross-origin
@@ -2569,7 +2569,7 @@ function composerApp() {
             // each frame via byte ranges, so we only download ~8 small JPEGs).
             // Fall back to client-side extraction if it's unavailable.
             if (this.frameAssetId) {
-                fetch(`/workspace/{{ workspace.id }}/compose/media-filmstrip/${this.frameAssetId}/`)
+                fetch(`{% url 'composer:media_filmstrip' workspace_id=workspace.id asset_id='00000000-0000-0000-0000-000000000000' %}`.replace('00000000-0000-0000-0000-000000000000', this.frameAssetId))
                     .then(r => r.ok ? r.json() : Promise.reject(r))
                     .then(data => {
                         if (run !== this._filmstripRun) return;
@@ -2901,7 +2901,7 @@ function composerApp() {
                         window.htmx.process(inserted.parentElement);
                     }
                     if (self.autosavedPostId && !self.uploadUrl.includes(self.autosavedPostId)) {
-                        self.uploadUrl = `/workspace/{{ workspace.id }}/compose/${self.autosavedPostId}/upload-media/`;
+                        self.uploadUrl = `{% url 'composer:upload_media_post' workspace_id=workspace.id post_id='00000000-0000-0000-0000-000000000000' %}`.replace('00000000-0000-0000-0000-000000000000', self.autosavedPostId);
                     }
                     // Auto-set YouTube thumbnail to latest uploaded image
                     if (file.type.startsWith('image/')) {

@@ -3,6 +3,7 @@
 import hashlib
 import secrets
 
+from django.conf import settings
 from django.contrib.auth import logout
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse, HttpResponseRedirect
@@ -33,14 +34,14 @@ def video_sso(request):
         ticket = issue_ticket(request.user, audience="web", next_path=next_path)
     except TicketError:
         return render(request, "jrc_video/sso.html", {"unavailable": True}, status=503)
-    response = HttpResponseRedirect("/video/jrc-sso#ticket=" + ticket)
+    response = HttpResponseRedirect(getattr(settings, "JRC_BASE_PATH", "") + "/video/jrc-sso#ticket=" + ticket)
     # A digest binds the fragment to this browser without exposing the ticket
     # in Cookie headers. JS reads it only at the trusted same-origin SSO page.
     response.set_cookie(
         "jrc_sso_binding",
         hashlib.sha256(ticket.encode("ascii")).hexdigest(),
         max_age=60,
-        path="/video",
+        path=getattr(settings, "JRC_BASE_PATH", "") + "/video",
         secure=request.is_secure(),
         samesite="Strict",
     )
@@ -56,15 +57,15 @@ def video_logout(request):
         return render(request, "jrc_video/logout.html")
     logout(request)
     grant = secrets.token_urlsafe(32)
-    response = HttpResponseRedirect("/video/jrc-logout#grant=" + grant)
+    response = HttpResponseRedirect(getattr(settings, "JRC_BASE_PATH", "") + "/video/jrc-logout#grant=" + grant)
     response.set_cookie(
         "jrc_logout_binding",
         hashlib.sha256(grant.encode("ascii")).hexdigest(),
         max_age=60,
-        path="/video",
+        path=getattr(settings, "JRC_BASE_PATH", "") + "/video",
         secure=request.is_secure(),
         samesite="Strict",
     )
-    response.delete_cookie("jrc_sso_binding", path="/video", samesite="Strict")
+    response.delete_cookie("jrc_sso_binding", path=getattr(settings, "JRC_BASE_PATH", "") + "/video", samesite="Strict")
     response["Referrer-Policy"] = "no-referrer"
     return response

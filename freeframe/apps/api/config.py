@@ -49,16 +49,17 @@ class Settings(BaseSettings):
     s3_access_key: str = "minioadmin"
     s3_secret_key: str = "minioadmin"
     s3_region: str = "us-east-1"
+    s3_public_path: str = ""
+    jrc_trusted_proxy_host: str = ""
     s3_public_endpoint: str | None = None  # External URL for presigned URLs (e.g. http://localhost:9000 when S3_ENDPOINT is http://minio:9000)
     jwt_secret: str
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 7
     # HLS proxy budgets, per API process. Both the IP and cookie must fit.
-    hls_requests_per_minute_ip: int = Field(600, ge=1)
-    hls_requests_per_minute_session: int = Field(240, ge=1)
-    hls_concurrent_streams_ip: int = Field(8, ge=1)
-    hls_concurrent_streams_session: int = Field(4, ge=1)
+    hls_requests_per_minute_user: int = Field(240, ge=1)
+    hls_requests_per_minute_total: int = Field(6000, ge=1)
+    hls_concurrent_streams_user: int = Field(4, ge=1)
     hls_concurrent_streams_total: int = Field(32, ge=1)
     hls_max_segment_bytes: int = Field(32 * 1024**2, ge=1)
     hls_s3_connect_timeout_seconds: float = Field(3, gt=0)

@@ -4,11 +4,14 @@
  * default, so root deployments are unchanged.
  */
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH || ''
+if (basePath && !/^(\/[A-Za-z0-9_-]+)+$/.test(basePath)) {
+  throw new Error('NEXT_PUBLIC_BASE_PATH must be empty or a path without trailing slash')
+}
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   basePath,
-  output: 'standalone',
+  output: process.env.JRC_MODE ? undefined : 'standalone',
   eslint: {
     ignoreDuringBuilds: true,
   },

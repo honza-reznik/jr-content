@@ -11,12 +11,14 @@ try {
   fs.copyFileSync('.env.example', path.join(temporary, '.env.example'));
   const run = (env = process.env) => execFileSync(process.execPath, [generator], { cwd: temporary, env });
   const read = () => fs.readFileSync(path.join(temporary, '.env'), 'utf8');
-  run({ ...process.env, JRC_APP_PORT: '13223', JRC_POSTGRES_PORT: '15473', JRC_S3_PORT: '13943', JRC_BB_PORT: '18043' });
+  run({ ...process.env, JRC_PUBLIC_ORIGIN: '', JRC_APP_PORT: '13223', JRC_POSTGRES_PORT: '15473', JRC_S3_PORT: '13943', JRC_BB_PORT: '18043' });
   const fresh = read();
   assert.match(fresh, /^JRC_APP_PORT=13223$/m);
   assert.match(fresh, /^JRC_POSTGRES_PORT=15473$/m);
   assert.match(fresh, /^JRC_S3_PORT=13943$/m);
   assert.match(fresh, /^JRC_BB_PORT=18043$/m);
+  assert.match(fresh, /^JRC_PUBLIC_ORIGIN=http:\/\/127\.0\.0\.1:13223$/m);
+  assert.match(fresh, /^JRC_MODE=prod$/m);
   assert.match(fresh, /^JRC_BB_SECRET_KEY=[a-f0-9]{96}$/m);
   assert.match(fresh, /^JRC_BB_ENCRYPTION_KEY_SALT=[a-f0-9]{64}$/m);
   assert.match(fresh, /^JRC_FF_JWT_SECRET=[a-f0-9]{96}$/m);
@@ -48,6 +50,9 @@ try {
   assert.match(upgraded, /^JRC_BB_S3_ACCESS_KEY=GK[a-f0-9]{24}$/m);
   run();
   assert.equal(read(), upgraded);
+  fs.writeFileSync(path.join(temporary, '.env'), upgraded.replace(/^JRC_BASE_PATH=.*$/m, 'JRC_BASE_PATH='));
+  run();
+  assert.match(read(), /^JRC_BASE_PATH=$/m);
   console.log('OK .env: nové hodnoty, doplnění starého souboru, zachování hesel, opakování a práva 600');
 } finally {
   fs.rmSync(temporary, { recursive: true, force: true });

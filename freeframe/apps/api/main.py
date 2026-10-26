@@ -109,6 +109,8 @@ app.add_middleware(
 )
 app.add_middleware(GlobalRateLimitMiddleware)
 app.add_middleware(SetupGuardMiddleware)
+from .middleware.trusted_proxy import TrustedProxyMiddleware
+app.add_middleware(TrustedProxyMiddleware)
 
 app.include_router(auth.router)
 app.include_router(users.router)

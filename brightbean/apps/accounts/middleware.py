@@ -4,6 +4,8 @@ from django.core.cache import cache
 from django.http import HttpResponse
 from django.shortcuts import redirect
 from django.urls import reverse
+from django.utils.deprecation import MiddlewareMixin
+from redis.exceptions import RedisError
 
 # Paths that are rate-limited for unauthenticated POST requests (auth flows)
 AUTH_RATE_LIMITED_PATHS = (
@@ -13,8 +15,9 @@ AUTH_RATE_LIMITED_PATHS = (
     "/accounts/password/reset/key/",
 )
 
-# Rate limit: 10 POST requests per minute per IP for auth endpoints
+# Separate account and instance budgets for auth endpoints
 AUTH_RATE_LIMIT = 10
+AUTH_TOTAL_RATE_LIMIT = 1000
 AUTH_RATE_WINDOW = 60  # seconds
 
 EXEMPT_PATH_PREFIXES = (
@@ -44,7 +47,7 @@ class TosAcceptanceMiddleware:
         # session read plus a user query. On an exempt path — /static/, /media/
         # — that work buys nothing, and media is requested once per file.
         if (
-            not request.path.startswith(EXEMPT_PATH_PREFIXES)
+            not request.path_info.startswith(EXEMPT_PATH_PREFIXES)
             and hasattr(request, "user")
             and request.user.is_authenticated
             and request.user.tos_accepted_at is None
@@ -54,28 +57,40 @@ class TosAcceptanceMiddleware:
         return self.get_response(request)
 
 
-class AuthRateLimitMiddleware:
+def cache_unavailable_response():
+    return HttpResponse(
+        "Service temporarily unavailable. Please try again later.", status=503, headers={"Retry-After": "5"}
+    )
+
+
+class AuthRateLimitMiddleware(MiddlewareMixin):
     """Rate-limit POST requests to authentication endpoints (login, signup, password reset)."""
 
-    def __init__(self, get_response):
-        self.get_response = get_response
+    def process_exception(self, request, exception):
+        if isinstance(exception, RedisError):
+            return cache_unavailable_response()
 
-    def __call__(self, request):
-        if request.method == "POST" and any(request.path.startswith(p) for p in AUTH_RATE_LIMITED_PATHS):
-            ip = self._get_client_ip(request)
-            cache_key = f"auth_ratelimit:{hashlib.md5(ip.encode()).hexdigest()}"
+    def process_request(self, request):
+        try:
+            return self.check_auth_budget(request)
+        except RedisError:
+            return cache_unavailable_response()
 
-            attempts = cache.get(cache_key, 0)
-            if attempts >= AUTH_RATE_LIMIT:
-                return HttpResponse("Too many requests. Please try again later.", status=429)
-
-            cache.set(cache_key, attempts + 1, AUTH_RATE_WINDOW)
-
-        return self.get_response(request)
-
-    @staticmethod
-    def _get_client_ip(request):
-        x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
-        if x_forwarded_for:
-            return x_forwarded_for.split(",")[0].strip()
-        return request.META.get("REMOTE_ADDR", "")
+    def check_auth_budget(self, request):
+        if request.method == "POST" and any(request.path_info.startswith(p) for p in AUTH_RATE_LIMITED_PATHS):
+            account = (request.POST.get("login") or request.POST.get("email") or "").strip().casefold()
+            digest = hashlib.sha256(account.encode()).hexdigest()
+            for key, limit in (
+                (f"auth_ratelimit:account:{digest}", AUTH_RATE_LIMIT),
+                ("auth_ratelimit:total", AUTH_TOTAL_RATE_LIMIT),
+            ):
+                if cache.add(key, 1, AUTH_RATE_WINDOW):
+                    attempts = 1
+                else:
+                    try:
+                        attempts = cache.incr(key)
+                    except ValueError:
+                        cache.add(key, 1, AUTH_RATE_WINDOW)
+                        attempts = 1
+                if attempts > limit:
+                    return HttpResponse("Too many requests. Please try again later.", status=429)

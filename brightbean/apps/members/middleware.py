@@ -41,7 +41,7 @@ class RBACMiddleware:
         request.workspace = None
         request.workspace_membership = None
 
-        if request.path.startswith(CONTEXT_FREE_PATH_PREFIXES):
+        if request.path_info.startswith(CONTEXT_FREE_PATH_PREFIXES):
             return self.get_response(request)
 
         # Resolve org and workspace context early.

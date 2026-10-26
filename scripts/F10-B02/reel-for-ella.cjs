@@ -13,7 +13,9 @@ const shots = path.resolve(process.env.JRC_E2E_SCREENSHOTS || 'ops/screenshoty/F
 assert.equal(process.env.JRC_PROJECT, project);
 assert.equal(process.env.JRC_APP_PORT, appPort);
 assert.equal(process.env.JRC_S3_PORT, s3Port);
-const origin = `http://127.0.0.1:${appPort}`;
+const origin = process.env.JRC_PUBLIC_ORIGIN || `http://127.0.0.1:${appPort}`;
+const basePath = process.env.JRC_BASE_PATH ?? '/jrc';
+const base = origin + basePath;
 const fixture = JSON.parse(fs.readFileSync(path.join(output, 'fixture.json'), 'utf8'));
 const errors = [];
 const external = [];
@@ -25,19 +27,23 @@ function makeVideo(file, seconds, source = 'testsrc2') {
     '-f', 'lavfi', '-i', `${source}=size=640x360:rate=25:duration=${seconds}`,
     '-f', 'lavfi', '-i', `sine=frequency=440:sample_rate=48000:duration=${seconds}`,
     '-c:v', 'libx264', '-threads', '2', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-g', '25',
-    '-b:v', '800k', '-c:a', 'aac', file]);
+    ...(process.env.JRC_E2E_HTTPS === '1'
+      ? ['-b:v', '5M', '-minrate', '5M', '-maxrate', '5M', '-bufsize', '5M', '-x264-params', 'nal-hrd=cbr']
+      : ['-b:v', '800k']), '-c:a', 'aac', file]);
 }
 
 async function session(browser, who, width = 1440) {
   const context = await browser.newContext({
     viewport: { width, height: width === 390 ? 2200 : 1500 },
+    ignoreHTTPSErrors: process.env.JRC_E2E_HTTPS === '1',
     timezoneId: 'Europe/Prague',
   });
   // Local requests remain native browser requests. Intercept only external HTTP(S)
   // URLs, so Playwright does not mediate the API → signed S3 redirect used by HLS.
-  await context.route(new RegExp(`^https?:\\/\\/(?!127\\.0\\.0\\.1:(?:${appPort}|${s3Port})(?:\\/|$)).*`), route => {
-    const url = route.request().url();
-    external.push(url);
+  await context.route('**/*', route => {
+    const url = new URL(route.request().url());
+    if (url.origin === origin) return route.continue();
+    external.push(url.origin + url.pathname);
     return route.abort('blockedbyclient');
   });
   const page = await context.newPage();
@@ -45,11 +51,15 @@ async function session(browser, who, width = 1440) {
   page.on('console', message => {
     if (message.type() === 'error') errors.push(`${who}: ${message.text()}`);
   });
-  await page.goto(`${origin}/accounts/login/`);
+  await page.goto(`${base}/accounts/login/`);
   await page.locator('input[name="login"]').fill(fixture[who].email);
   await page.locator('input[name="password"]').fill(fixture[who].password);
   await page.locator('button[type="submit"]').click();
-  await page.waitForURL(url => !url.pathname.startsWith('/accounts/login'));
+  await page.waitForURL(url => !url.pathname.startsWith(basePath + '/accounts/login'));
+  if (process.env.JRC_E2E_HTTPS === '1') {
+    const sessionCookie = (await context.cookies()).find(cookie => cookie.name === 'sessionid');
+    assert(sessionCookie?.secure && sessionCookie.path === basePath + '/', 'Session cookie není Secure nebo má chybnou cestu');
+  }
   return { context, page };
 }
 
@@ -60,7 +70,7 @@ async function capture(page, name, width) {
 }
 
 async function move(page, title, stage, date) {
-  await page.goto(`${origin}/board/`);
+  await page.goto(`${base}/board/`);
   const card = page.locator('.board-card').filter({ has: page.getByRole('heading', { name: title, exact: true }) });
   await card.locator('summary').click();
   await card.getByLabel('Move to', { exact: true }).selectOption(stage);
@@ -70,6 +80,14 @@ async function move(page, title, stage, date) {
 }
 
 async function upload(page, file, number) {
+  const parts = new Set();
+  const track = request => {
+    const url = new URL(request.url());
+    if (request.method() === 'PUT' && url.pathname.startsWith(basePath + '/storage/')) {
+      parts.add(url.searchParams.get('partNumber'));
+    }
+  };
+  page.on('request', track);
   const [chooser] = await Promise.all([
     page.waitForEvent('filechooser'),
     page.getByRole('button', { name: 'Upload version', exact: true }).first().click(),
@@ -78,6 +96,8 @@ async function upload(page, file, number) {
   await page.getByText(/Upload finished/).first().waitFor({ timeout: 60000 });
   await page.locator(`[data-video-channel]:visible [data-version][data-status="ready"]`).nth(number - 1)
     .waitFor({ timeout: 240000 });
+  page.off('request', track);
+  if (process.env.JRC_E2E_HTTPS === '1') assert(parts.has('2'), 'HTTPS upload neověřil druhou část souboru');
 }
 
 async function playerFrame(page, number) {
@@ -109,7 +129,19 @@ async function main() {
   const browser = await chromium.launch({ headless: true });
   try {
     const admin = await session(browser, 'admin');
-    await admin.page.goto(`${origin}/board/`);
+    if (process.env.JRC_E2E_HTTPS === '1') {
+      const headers = { Authorization: `Bearer ${fixture.api_token}` };
+      const me = await admin.context.request.get(`${base}/api/v1/me/`, { headers });
+      assert.equal(me.status(), 200, 'REST s klíčem pod předponou');
+      assert.equal((await me.json()).workspace_id, fixture.workspace);
+      const mcp = await admin.context.request.post(`${base}/api/v1/mcp/`, {
+        headers: { ...headers, Accept: 'application/json, text/event-stream' },
+        data: { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+      });
+      assert.equal(mcp.status(), 200, 'MCP s klíčem pod předponou');
+      assert((await mcp.json()).result.tools.length > 0);
+    }
+    await admin.page.goto(`${base}/board/`);
     await admin.page.getByText('+ New content', { exact: true }).click();
     await admin.page.getByLabel('Content title', { exact: true }).fill('Reel pro Ellu — ranní zahrada');
     await admin.page.getByRole('button', { name: 'Add to Idea' }).click();
@@ -117,7 +149,7 @@ async function main() {
     const card = admin.page.locator('.board-card').filter({ hasText: 'Reel pro Ellu — ranní zahrada' });
     const postId = await card.getAttribute('data-post');
     assert(postId, 'Nový obsah není na nástěnce');
-    const detail = `${origin}/workspace/${fixture.workspace}/content/${postId}/`;
+    const detail = `${base}/workspace/${fixture.workspace}/content/${postId}/`;
     assert.match(detail, /\/workspace\/[^/]+\/content\/[^/]+\/$/);
     const title = 'Reel pro Ellu — ranní zahrada';
     await capture(admin.page, '01-new-idea', 1440);
@@ -163,6 +195,14 @@ async function main() {
     await mobile.goto(`${detail}?tab=video`);
     await capture(mobile, '05-ella-video', 390);
     const frame = await playerFrame(ella.page, 1);
+    if (process.env.JRC_E2E_HTTPS === '1') {
+      const cookies = await ella.context.cookies();
+      for (const name of ['ff_access_token', 'ff_refresh_token', 'ff_hls']) {
+        const cookie = cookies.find(item => item.name === name);
+        assert(cookie?.secure, `${name} není Secure`);
+        assert(cookie.path.startsWith(basePath + '/video'), `${name} nemá předponu v cestě`);
+      }
+    }
     await frame.locator('video').first().evaluate(video => {
       video.muted = true;
       video.play().catch(() => {});
@@ -211,7 +251,7 @@ async function main() {
     await admin.page.getByText('Approved by the team. It now waits for the client').first().waitFor();
 
     const ellaAgain = await session(browser, 'client');
-    await ellaAgain.page.goto(`${origin}/board/`);
+    await ellaAgain.page.goto(`${base}/board/`);
     await ellaAgain.page.locator('[data-waiting-for-you]').getByText(title).waitFor();
     await ellaAgain.page.goto(`${detail}?tab=approval`);
     await ellaAgain.page.getByRole('button', { name: 'Approve', exact: true }).click();
@@ -247,9 +287,16 @@ async function main() {
     await admin.page.goto(`${detail}?tab=history`);
     const history = await admin.page.locator('main').innerText();
     assert(history.includes('Changes Requested') && history.includes('Marked Instagram as published'), 'Historie schválení/publikace chybí');
-    await ellaAgain.page.goto(`${origin}/notifications/`);
+    await ellaAgain.page.goto(`${base}/notifications/`);
     assert((await ellaAgain.page.locator('main').innerText()).toLowerCase().includes('notification'), 'Ella nevidí upozornění');
 
+    await admin.page.goto(`${base}/accounts/logout/`);
+    await admin.page.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await admin.page.waitForURL(`${base}/accounts/login/`);
+    const remaining = await admin.context.cookies();
+    assert(!remaining.some(cookie => ['sessionid', 'ff_access_token', 'ff_refresh_token'].includes(cookie.name)), 'Odhlášení ponechalo přihlašovací cookie');
+    await admin.page.goto(`${base}/board/`);
+    assert(new URL(admin.page.url()).pathname.startsWith(basePath + '/accounts/login/'));
     assert.deepEqual(external, [], `Prohlížeč poslal požadavky mimo localhost: ${external.slice(0, 5)}`);
     assert.deepEqual(errors.filter(text => /Content Security Policy|Refused to|CORS/i.test(text)), [], 'Chyby CSP/CORS');
     assert.deepEqual(errors, [], `Chyby konzole/prohlížeče: ${errors.slice(0, 8).join(' | ')}`);

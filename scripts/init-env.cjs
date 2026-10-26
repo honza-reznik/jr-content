@@ -16,6 +16,9 @@ const values = {
   JRC_BB_S3_SECRET_KEY: crypto.randomBytes(32).toString('hex'),
   JRC_UID: process.getuid(),
   JRC_GID: process.getgid(),
+  JRC_MODE: process.env.JRC_MODE || 'prod',
+  JRC_PUBLIC_ORIGIN: process.env.JRC_PUBLIC_ORIGIN || `http://127.0.0.1:${process.env.JRC_APP_PORT || '13000'}`,
+  JRC_BASE_PATH: process.env.JRC_BASE_PATH ?? '/jrc',
   JRC_APP_PORT: process.env.JRC_APP_PORT || '13000',
   JRC_POSTGRES_PORT: process.env.JRC_POSTGRES_PORT || '5432',
   JRC_S3_PORT: process.env.JRC_S3_PORT || '13900',
@@ -25,6 +28,10 @@ const template = fs.readFileSync('.env.example', 'utf8');
 const exists = fs.existsSync('.env');
 const original = exists ? fs.readFileSync('.env', 'utf8') : '';
 let content = original;
+if (exists) {
+  const port = /^JRC_APP_PORT=(.*)$/m.exec(original)?.[1] || '13000';
+  values.JRC_PUBLIC_ORIGIN = `http://127.0.0.1:${port}`;
+}
 for (const line of template.split('\n')) {
   const match = /^(\w+)=(.*)$/.exec(line);
   if (!match) continue;
@@ -32,12 +39,12 @@ for (const line of template.split('\n')) {
   // Tolerantní hledání: `KEY=…`, `export KEY=…`, mezery kolem `=` (review F2-B01: nepřepsat existující heslo).
   const tolerant = new RegExp(`^[ \\t]*(?:export[ \\t]+)?${key}[ \\t]*=[ \\t]*(.*)$`, 'm');
   const anyFound = tolerant.exec(content);
-  if (anyFound && anyFound[1].trim() !== '') continue;
+  if (anyFound && (anyFound[1].trim() !== '' || key === 'JRC_BASE_PATH')) continue;
   const existing = new RegExp(`^[ \\t]*(?:export[ \\t]+)?${key}[ \\t]*=(.*)$`, 'm');
   const found = existing.exec(content);
   // Pro nový worktree respektuj předané porty. Při doplnění existujícího
   // souboru ponech výchozí nastavení; nikdy nepřepisuj jeho vlastní hodnoty.
-  const value = (!exists && values[key] !== undefined ? values[key] : fallback) || values[key];
+  const value = (key === 'JRC_PUBLIC_ORIGIN' || !exists) && values[key] !== undefined ? values[key] : (fallback || values[key]);
   if (value === undefined) throw new Error(`Chybí generátor hodnoty ${key}`);
   if (found) content = content.replace(existing, `${key}=${value}`);
   else content += `${content && !content.endsWith('\n') ? '\n' : ''}${key}=${value}\n`;

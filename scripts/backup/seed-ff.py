@@ -15,9 +15,11 @@ if (not os.environ.get("JRC_TEST_PROJECT", "").startswith("jrc-")
         or os.environ.get("JRC_S3_PORT") in (None, "", "13900")):
     raise SystemExit("Cíl zápisu nebyl ověřen jako vlastní testovací projekt.")
 
-origin = f"http://127.0.0.1:{os.environ['JRC_APP_PORT']}"
-base = origin + "/video-api"
+origin = os.environ["JRC_PUBLIC_ORIGIN"].rstrip("/")
+base_path = os.environ.get("JRC_BASE_PATH", "/jrc")
+base = origin + base_path + "/video-api"
 token = None
+opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor())
 
 
 def request(method, path, body=None):
@@ -26,7 +28,7 @@ def request(method, path, body=None):
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(base + path, method=method, headers=headers,
                                  data=json.dumps(body).encode() if body is not None else None)
-    with urllib.request.urlopen(req, timeout=30) as response:
+    with opener.open(req, timeout=30) as response:
         raw = response.read()
         return json.loads(raw) if raw else None
 
@@ -49,8 +51,9 @@ with video.open("rb") as stream:
         signed = request("POST", "/upload/presign-part", {
             "s3_key": upload["s3_key"], "upload_id": upload["upload_id"], "part_number": number})
         destination = urllib.parse.urlsplit(signed["presigned_url"])
-        if (destination.scheme != "http" or destination.hostname != "127.0.0.1"
-                or destination.port != int(os.environ["JRC_S3_PORT"]) or destination.username or destination.password):
+        if (urllib.parse.urlunsplit((destination.scheme, destination.netloc, "", "", "")) != origin
+                or not destination.path.startswith(base_path + "/storage/jrc-video/")
+                or destination.username or destination.password):
             raise SystemExit("Podepsaná adresa nepatří ověřovacímu úložišti.")
         put = urllib.request.Request(signed["presigned_url"], data=chunk, method="PUT")
         with urllib.request.urlopen(put, timeout=60) as response:

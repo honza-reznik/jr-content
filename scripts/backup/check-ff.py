@@ -4,10 +4,12 @@ import os
 import sys
 import urllib.request
 
-origin = f"http://127.0.0.1:{os.environ['JRC_APP_PORT']}"
-base = origin + "/video-api"
+origin = os.environ["JRC_PUBLIC_ORIGIN"].rstrip("/")
+base_path = os.environ.get("JRC_BASE_PATH", "/jrc")
+base = origin + base_path + "/video-api"
 seed = json.load(open(sys.argv[1]))
 token = None
+opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor())
 
 
 def request(method, path, body=None, raw=False):
@@ -16,7 +18,7 @@ def request(method, path, body=None, raw=False):
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(path if raw else base + path, method=method, headers=headers,
                                  data=json.dumps(body).encode() if body is not None else None)
-    with urllib.request.urlopen(req, timeout=30) as response:
+    with opener.open(req, timeout=30) as response:
         data = response.read()
         return data if raw else (json.loads(data) if data else None)
 

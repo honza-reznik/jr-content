@@ -30,7 +30,7 @@ from ..schemas.upload import (
 from ..services.storage import choose_part_size, upload_guard_error
 from ..services.versions import next_version_number
 from ..services.upload_limits import enforce_pending_upload_limits
-from ..middleware.rate_limit import rate_limit
+from ..middleware.rate_limit import user_rate_limit
 from ..services.s3_service import create_multipart_upload
 
 router = APIRouter(tags=["assets"])
@@ -455,7 +455,7 @@ def list_download_options(
 @router.post(
     "/assets/{asset_id}/versions",
     response_model=InitiateUploadResponse,
-    dependencies=[Depends(rate_limit("upload_initiate", 5, 60, fail_closed=True))],
+    dependencies=[Depends(user_rate_limit("upload_initiate", 5, 60, fail_closed=True))],
 )
 def initiate_new_version(
     asset_id: uuid.UUID,

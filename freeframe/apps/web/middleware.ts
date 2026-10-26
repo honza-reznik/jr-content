@@ -39,7 +39,7 @@ export async function middleware(request: NextRequest) {
       if (res.ok) {
         const data = await res.json()
         if (data.needs_setup) {
-          return NextResponse.redirect(new URL(withBasePath('/setup'), request.url))
+          return NextResponse.redirect(new URL(withBasePath('/setup'), process.env.JRC_PUBLIC_ORIGIN || request.url))
         }
         // Cache setup only after the auth check below has also run.
         cacheSetupDone = true
@@ -55,7 +55,7 @@ export async function middleware(request: NextRequest) {
 
   let response: NextResponse
   if (!accessToken && !refreshToken) {
-    const loginUrl = new URL(withBasePath('/login'), request.url)
+    const loginUrl = new URL(withBasePath('/login'), process.env.JRC_PUBLIC_ORIGIN || request.url)
     const candidate = `${pathname}${request.nextUrl.search}`
     loginUrl.searchParams.set('from', safeAppDestination(candidate) ?? safeAppDestination(pathname) ?? '/projects')
     response = NextResponse.redirect(loginUrl)
@@ -64,7 +64,7 @@ export async function middleware(request: NextRequest) {
   }
 
   if (cacheSetupDone) {
-    response.cookies.set('ff_setup_done', '1', { path: '/', maxAge: 60 * 60 * 24 })
+    response.cookies.set('ff_setup_done', '1', { path: basePath || '/', maxAge: 60 * 60 * 24, secure: (process.env.JRC_PUBLIC_ORIGIN || request.url).startsWith('https:'), sameSite: 'lax' })
   }
   return response
 }

@@ -1,5 +1,33 @@
 # Úpravy JR Content
 
+## 2026-10-26 — P1-B01
+
+- Review2: Redis cache omezuje spojení i čtení na 1 s; výpadek ochrany vrací 503
+  u přihlášení, webových operací i REST/MCP. E-mailová upozornění a souhrny
+  zachovávají předponu také v hlavním odkazu a předvolbách. Obnova přijímá staré
+  zálohy bez `JRC_MODE`, provozní nastavení se ověřuje odděleně od tajemství.
+
+- Produkční běh používá gunicorn (2 procesy, 4 vlákna), `DEBUG=False` a WhiteNoise
+  se statickými soubory připravenými při startu. `JRC_MODE=dev` zachovává vývojový server.
+- `JRC_PUBLIC_ORIGIN` a `JRC_BASE_PATH` řídí veřejné odkazy, Django `SCRIPT_NAME`,
+  statické soubory, přihlášení/odhlášení, cookie cesty a předání vstupenky FreeFrame.
+  Prázdná předpona podporuje kořen domény. Odkazy upozornění fungují také pro starší data;
+  nová upozornění ukládají cestu bez montážní předpony. E-mailové odkazy mají předponu jednou.
+- S3 média se podepisují pro veřejný původ a přenášejí přes `$BASE/storage` na společném
+  vstupu. Caddy odstraní jen transportní předponu; podpis původní cesty a Host zůstává platný.
+- Middleware přijímá HTTPS/IP hlavičky jen od `jrc-proxy`, ostatním je odstraní.
+  IP se nepoužívá pro limity přihlášených ani přihlašovacích formulářů. HTTPS zapíná Secure cookies a HSTS bez subdomén/preload;
+  CSRF a povolené hosty se odvozují z veřejného původu. Django admin je na bráně nedostupný.
+- Opravy review: login/reset/registrace mají oddělené limity na normalizovaný účet
+  a celou instanci; provozní cache je sdílená přes Redis mezi procesy. Platné REST/MCP
+  klíče i OAuth přístupy se ověřují nezávisle na chybných pokusech ze stejné IP;
+  následují limity na klíč/uživatele a společný rozpočet 60 000 požadavků/minutu.
+- Pozvánky, návrat na přihlášení, mazání a dynamické adresy composeru používají
+  pojmenované routy a zachovávají předponu také po prvním automatickém uložení.
+- Ověření: nové testy `tests/test_jrc_proxy.py`, společný E2E průchod a místní HTTPS proxy
+  v `scripts/P1-B01/`; žádné připojení ke skutečným sociálním sítím.
+
+
 ## 2026-10-25 — F10-B03a
 
 - Nastavení JR Content vynucuje registraci jen na pozvánku; veřejná registrace

@@ -1,6 +1,9 @@
 #!/bin/sh
 # E2E Reel pro Ellu → záloha A → obnova do prázdného B → Chromium; vlastní projekty F10-B04.
 set -eu
+if [ "${JRC_PROJECT:-}" = jrc-p1b01 ] && [ "${JRC_ISOLATED_TEST:-}" != 1 ]; then
+    exec sh scripts/backup/isolated-test.sh "$0"
+fi
 src=${JRC_PROJECT:-}
 case "$src" in jrc-[a-z0-9-]*) ;; *) echo 'Spusť s JRC_PROJECT=jrc-<název> make test-restore-e2e.' >&2; exit 2 ;; esac
 [ "$src" != jrc ] || exit 2
@@ -9,6 +12,11 @@ new_run
 dst=${src}r
 src_app=13473 src_s3=14193 src_pg=15723 src_bb=18293
 dst_app=13483 dst_s3=14203 dst_pg=15733 dst_bb=18303
+src_origin="http://127.0.0.1:$src_app"
+dst_origin="http://127.0.0.1:$dst_app"
+src_base=${JRC_BASE_PATH-/jrc}
+dst_base=${JRC_RESTORE_BASE_PATH-$src_base}
+
 backup_root=backups/$src
 output=ops/test-output/F10-B04/$run_id
 shots=ops/screenshoty/F10-B04/$run_id
@@ -19,17 +27,17 @@ src_started=0 dst_started=0 backups_owned=0 output_owned=0
 backup_path=
 fail() { printf 'CHYBA F10-B04: %s\n' "$*" >&2; exit 1; }
 step() { printf '\n== %s ==\n' "$*"; }
-dc() { project=$1; shift; JRC_PROJECT="$project" checked_docker compose --project-name "$project" --file docker-compose.yml --env-file .env "$@"; }
+dc() { project=$1; shift; JRC_PUBLIC_ORIGIN="$([ "$project" = "$src" ] && printf %s "$src_origin" || printf %s "$dst_origin")" JRC_BASE_PATH="$([ "$project" = "$src" ] && printf %s "$src_base" || printf %s "$dst_base")" JRC_PROJECT="$project" checked_docker compose --project-name "$project" --file docker-compose.yml --env-file .env "$@"; }
 check_restored_comment() {
     project=$1
-    count=$(JRC_PROJECT="$project" checked_docker compose --project-name "$project" --file docker-compose.yml --env-file .env \
+    count=$(JRC_PUBLIC_ORIGIN="$([ "$project" = "$src" ] && printf %s "$src_origin" || printf %s "$dst_origin")" JRC_BASE_PATH="$([ "$project" = "$src" ] && printf %s "$src_base" || printf %s "$dst_base")" JRC_PROJECT="$project" checked_docker compose --project-name "$project" --file docker-compose.yml --env-file .env \
         exec -T jrc-postgres psql -U jrc -d freeframe -Atc "SELECT count(*) FROM comments WHERE body = 'zkrátit' AND timecode_start BETWEEN 17 AND 18")
     [ "$count" -gt 0 ] || fail "Komentář klientky u 0:17 se v projektu $project neobnovil."
     printf 'OK komentář klientky u 0:17 je v obnovené databázi (%s záznamů)\n' "$count"
 }
 check_media() {
     project=$1 service=$2
-    JRC_PROJECT="$project" checked_docker compose --project-name "$project" --file docker-compose.yml --env-file .env exec -T \
+    JRC_PUBLIC_ORIGIN="$([ "$project" = "$src" ] && printf %s "$src_origin" || printf %s "$dst_origin")" JRC_BASE_PATH="$([ "$project" = "$src" ] && printf %s "$src_base" || printf %s "$dst_base")" JRC_PROJECT="$project" checked_docker compose --project-name "$project" --file docker-compose.yml --env-file .env exec -T \
         -e JRC_EXPECT_UID="$uid" -e JRC_EXPECT_GID="$gid" "$service" python -c '
 import os
 from pathlib import Path
@@ -48,7 +56,7 @@ print(f"OK {root}: vlastník {actual}, zápis/čtení/smazání funguje")'
 }
 make_source() {
     make --no-print-directory JRC_PROJECT="$src" JRC_APP_PORT="$src_app" JRC_S3_PORT="$src_s3" \
-        JRC_POSTGRES_PORT="$src_pg" JRC_BB_PORT="$src_bb" "$@"
+        JRC_POSTGRES_PORT="$src_pg" JRC_BB_PORT="$src_bb" JRC_PUBLIC_ORIGIN="$src_origin" JRC_BASE_PATH="$src_base" "$@"
 }
 cleanup() {
     status=$?
@@ -100,7 +108,7 @@ JRC_PROJECT="$src" JRC_E2E_PROJECT="$src" JRC_APP_PORT="$src_app" JRC_S3_PORT="$
     JRC_E2E_APP_PORT="$src_app" JRC_E2E_S3_PORT="$src_s3" \
     JRC_E2E_OUTPUT="$output" JRC_E2E_SCREENSHOTS="$shots" \
     checked_docker run --rm --pull never --network host --user "$(id -u):$(id -g)" \
-      --env-file .env --env JRC_PROJECT="$src" --env JRC_APP_PORT="$src_app" --env JRC_S3_PORT="$src_s3" \
+      --env-file .env --env JRC_PROJECT="$src" --env JRC_PUBLIC_ORIGIN="$src_origin" --env JRC_BASE_PATH="$src_base" --env JRC_APP_PORT="$src_app" --env JRC_S3_PORT="$src_s3" \
       --env JRC_E2E_PROJECT="$src" --env JRC_E2E_APP_PORT="$src_app" --env JRC_E2E_S3_PORT="$src_s3" \
       --env JRC_E2E_OUTPUT="$output" --env JRC_E2E_SCREENSHOTS="$shots" \
       --volume "$PWD:/jrc" --workdir /jrc "jrc-dev:$src" node scripts/F10-B02/reel-for-ella.cjs
@@ -120,7 +128,7 @@ make_source backup-verify BACKUP="$backup_path"
 step "Obnova do čistého projektu $dst"
 dst_started=1
 if make --no-print-directory JRC_PROJECT="$dst" JRC_APP_PORT="$dst_app" JRC_S3_PORT="$dst_s3" \
-    JRC_POSTGRES_PORT="$dst_pg" JRC_BB_PORT="$dst_bb" restore BACKUP="$backup_path"; then
+    JRC_POSTGRES_PORT="$dst_pg" JRC_BB_PORT="$dst_bb" JRC_PUBLIC_ORIGIN="$dst_origin" JRC_BASE_PATH="$dst_base" restore BACKUP="$backup_path"; then
     record_images "$dst"
 else
     record_images "$dst"
@@ -132,7 +140,7 @@ check_restored_comment "$dst"
 
 step 'Ověření obnovených dat v Chromiu'
 checked_docker run --rm --pull never --network host --user "$uid:$gid" \
-    --env JRC_PROJECT="$dst" --env JRC_EXPECTED_PROJECT="$dst" --env JRC_APP_PORT="$dst_app" --env JRC_S3_PORT="$dst_s3" \
+    --env JRC_PROJECT="$dst" --env JRC_EXPECTED_PROJECT="$dst" --env JRC_PUBLIC_ORIGIN="$dst_origin" --env JRC_BASE_PATH="$dst_base" --env JRC_APP_PORT="$dst_app" --env JRC_S3_PORT="$dst_s3" \
     --volume "$PWD:/jrc" --workdir /jrc "jrc-dev:$dst" \
     node scripts/F10-B04/restore-browser.cjs "$output/fixture.json" "$shots/obnoveno.png"
 

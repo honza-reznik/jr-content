@@ -5,6 +5,20 @@ import os
 import socket
 import struct
 import sys
+from urllib.parse import urlsplit
+
+# Důvěřujeme jen hostitelské bráně, přes kterou přichází lokální Funnel.
+# Hodnota vzniká ze skutečné trasy, klient ji nemůže podvrhnout hlavičkou.
+with open('/proc/net/route') as routes:
+    gateways = [socket.inet_ntoa(struct.pack('<I', int(row.split()[2], 16)))
+                for row in routes.readlines()[1:] if row.split()[1] == '00000000']
+base = os.environ.get('JRC_BASE_PATH', '/jrc')
+public = urlsplit(os.environ.get('JRC_PUBLIC_ORIGIN', 'http://127.0.0.1:13000'))
+os.environ['JRC_PUBLIC_HOST'] = public.netloc
+os.environ['JRC_HSTS_HEADER'] = 'Strict-Transport-Security "max-age=31536000"' if public.scheme == 'https' else ''
+os.environ['JRC_SCRIPT_EVAL'] = " 'unsafe-eval'" if os.environ.get('JRC_MODE') == 'dev' else ''
+os.environ['JRC_BASE_REDIRECT'] = f'redir {base} {base}/ 308' if base else ''
+os.environ['JRC_HOST_GATEWAY'] = ' '.join([*gateways, '127.0.0.1/32', '::1/128'])
 
 # Docker 29 nepublikuje porty čistě internal sítí. Vstupní síť proto slouží jen
 # místním portům; odstranění výchozích tras proběhne před spuštěním aplikace.

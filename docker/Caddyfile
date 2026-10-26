@@ -1,5 +1,10 @@
 {
 	admin off
+	servers {
+		trusted_proxies static {$JRC_HOST_GATEWAY}
+		trusted_proxies_strict
+		client_ip_headers X-Forwarded-For
+	}
 	auto_https off
 	persist_config off
 	# Provozní warningy (např. přerušené SSE) také nesmí zaznamenat přístupové údaje.
@@ -53,38 +58,75 @@
 		defer
 		X-Content-Type-Options nosniff
 		Referrer-Policy same-origin
+		{$JRC_HSTS_HEADER}
 	}
-	# API předponu odstraníme, Next.js naopak potřebuje celý basePath.
-	redir /video-api /video-api/ 308
-	handle_path /video-api/* {
-		# Správa FreeFrame (/admin) je jen vnitřní, přes společný vstup ne.
-		@admin path /admin /admin/*
-		respond @admin 403
-		# API dostane jen HLS cookie; cookies Brightbean ani webu nepředáváme.
-		# Omezení počtu požadavků počítá podle X-Real-IP; hodnotu od klienta přepíšeme.
-		reverse_proxy jrc-ff-api:8000 {
-			header_up Cookie "ff_hls={http.request.cookie.ff_hls}"
-			header_up X-Real-IP {remote_host}
+	# Zdraví je vždy jen stav, žádné provozní podrobnosti.
+	@outside not path {$JRC_BASE_PATH} {$JRC_BASE_PATH}/ {$JRC_BASE_PATH}/*
+	respond @outside 404
+	{$JRC_BASE_REDIRECT}
+
+	# Podpis zahrnuje původní /bucket/key a Host. Odstraníme pouze transportní
+	# předponu; Host odpovídá veřejnému původu podpisu, query se nemění. Bez cookies.
+	handle_path {$JRC_BASE_PATH}/storage/* {
+		header {
+			defer
+			Content-Security-Policy "sandbox; default-src 'none'"
+			X-Frame-Options DENY
+		}
+		@forbidden not method GET HEAD PUT POST OPTIONS
+		respond @forbidden 405
+		reverse_proxy jrc-s3:3900 {
+			header_up Host {$JRC_PUBLIC_HOST}
+			header_up -Cookie
+			header_up -Authorization
 		}
 	}
-	@video path /video /video/*
+	redir {$JRC_BASE_PATH}/video-api {$JRC_BASE_PATH}/video-api/ 308
+	handle_path {$JRC_BASE_PATH}/video-api/* {
+		@private path /admin /admin/* /docs /docs/* /redoc /openapi.json /setup /setup/*
+		# Next middleware čte pouze boolean, nemůže založit správce.
+		@setupStatus path /setup/status
+		handle @setupStatus {
+			reverse_proxy jrc-ff-api:8000 {
+				header_up Host {$JRC_PUBLIC_HOST}
+				header_up -Cookie
+				header_up X-Real-IP {client_ip}
+			}
+		}
+		handle @private {
+			respond 404
+		}
+		handle {
+			reverse_proxy jrc-ff-api:8000 {
+				header_up Host {$JRC_PUBLIC_HOST}
+				header_up Cookie "ff_hls={http.request.cookie.ff_hls}"
+				header_up X-Real-IP {client_ip}
+			}
+		}
+	}
+	@video path {$JRC_BASE_PATH}/video {$JRC_BASE_PATH}/video/*
 	handle @video {
-		# Přehrávač se vkládá do Brightbean na stejné adrese, jinam ne.
-		# F2-B05: vynucená CSP; úložiště jen přesný původ místní brány S3 (náhledy,
-		# segmenty HLS, nahrávání částí). Vývojový Next.js potřebuje inline a eval skripty.
+		@setup path {$JRC_BASE_PATH}/video/setup {$JRC_BASE_PATH}/video/setup/*
+		respond @setup 404
 		header {
 			defer
 			X-Frame-Options SAMEORIGIN
-			Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http://127.0.0.1:{$JRC_S3_PORT}; media-src 'self' blob: http://127.0.0.1:{$JRC_S3_PORT}; connect-src 'self' http://127.0.0.1:{$JRC_S3_PORT}; font-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'"
+			Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'{$JRC_SCRIPT_EVAL}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; font-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'"
 		}
-		reverse_proxy jrc-ff-web:3000
+		reverse_proxy jrc-ff-web:3000 {
+			header_up Host {$JRC_PUBLIC_HOST}
+		}
 	}
-	# Host včetně portu zachová kontrolu CSRF i odkazy společného vstupu.
-	handle {
+	handle_path {$JRC_BASE_PATH}/* {
+		@admin path /admin /admin/*
+		respond @admin 404
 		header {
 			defer
 			X-Frame-Options DENY
 		}
-		reverse_proxy jrc-bb-web:8000
+		reverse_proxy jrc-bb-web:8000 {
+			header_up Host {$JRC_PUBLIC_HOST}
+			header_up X-Real-IP {client_ip}
+		}
 	}
 }

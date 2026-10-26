@@ -82,6 +82,7 @@ run_tool_isolated() {
     docker run --rm --pull never --network none --user "$(id -u):$(id -g)" \
         --env PYTHONDONTWRITEBYTECODE=1 \
         --env JRC_APP_PORT --env JRC_POSTGRES_PORT --env JRC_S3_PORT --env JRC_BB_PORT \
+        --env JRC_PUBLIC_ORIGIN --env JRC_BASE_PATH \
         --volume "$workdir:/workspace" --volume "$abs:/backup:ro" --workdir /workspace \
         "$dev_image" python3 "$tool" "$@"
 }

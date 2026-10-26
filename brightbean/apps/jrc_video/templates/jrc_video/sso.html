@@ -6,7 +6,7 @@
     {% if unavailable %}
     <h1 class="text-2xl font-bold mb-4">Video is temporarily unavailable</h1>
     <p>Please try again in a moment.</p>
-    <a class="btn-outline mt-4" href="/">Back to JR Content</a>
+    <a class="btn-outline mt-4" href="{% url 'dashboard' %}">Back to JR Content</a>
     {% else %}
     <h1 class="text-2xl font-bold mb-4">Open video</h1>
     <p class="mb-4">Continue to video with your JR Content account.</p>

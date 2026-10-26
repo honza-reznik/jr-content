@@ -31,7 +31,7 @@ async function main() {
     recursive: true, verbatimSymlinks: true, mode: fs.constants.COPYFILE_FICLONE,
   });
   const audit = path.join(tmp, 'network.jsonl');
-  const env = { ...process.env, NEXT_PUBLIC_API_URL: 'http://jrc-ff-api:8000',
+  const env = { ...process.env, NEXT_PUBLIC_BASE_PATH: '/video', NEXT_PUBLIC_API_URL: 'http://jrc-ff-api:8000',
     JRC_NETWORK_AUDIT: audit, NODE_OPTIONS: '--require=/jrc-scripts/web-network-audit.cjs' };
   const next = path.join(app, 'node_modules/next/dist/bin/next');
   const server = spawn(process.execPath, [next, 'dev', '--hostname', '0.0.0.0', '--port', '3100'],

@@ -95,6 +95,7 @@ def client(mock_db, monkeypatch):
     monkeypatch.setattr(assets, "enforce_pending_upload_limits", lambda *args: None)
     fake_redis = MagicMock()
     fake_redis.get.return_value = None
+    fake_redis.eval.return_value = 0
     monkeypatch.setattr(redis_service, "get_redis", lambda: fake_redis)
     with patch("apps.api.services.s3_service.ensure_bucket_exists"):
         with patch("apps.api.services.s3_service.get_s3_client", return_value=MagicMock()):

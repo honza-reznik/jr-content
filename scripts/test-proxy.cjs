@@ -2,18 +2,19 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const { chromium } = require('playwright');
-const origin = `http://127.0.0.1:${process.env.JRC_APP_PORT || 13000}`;
+const origin = process.env.JRC_PUBLIC_ORIGIN || `http://127.0.0.1:${process.env.JRC_APP_PORT || 13000}`;
+const base = origin + (process.env.JRC_BASE_PATH ?? '/jrc');
 
 (async () => {
-  const health = await fetch(`${origin}/health/`);
+  const health = await fetch(`${base}/health/`);
   assert.equal(health.status, 200);
   assert.deepEqual(await health.json(), { status: 'ok' });
-  const root = await fetch(`${origin}/`, { redirect: 'manual' });
+  const root = await fetch(`${base}/`, { redirect: 'manual' });
   assert.equal(root.status, 302);
   const destination = new URL(root.headers.get('location'), origin);
   assert.equal(destination.origin, origin, 'Přesměrování opustilo společnou adresu');
-  assert.equal(destination.pathname, '/accounts/login/');
-  const css = await fetch(`${origin}/static/css/dist/styles.css`);
+  assert.equal(destination.pathname, (process.env.JRC_BASE_PATH ?? '/jrc') + '/accounts/login/');
+  const css = await fetch(`${base}/static/css/dist/styles.css`);
   assert.equal(css.status, 200);
   assert((await css.text()).length > 1000, 'Chybí sestavené styly');
 
@@ -36,7 +37,7 @@ const origin = `http://127.0.0.1:${process.env.JRC_APP_PORT || 13000}`;
       page.on('response', response => {
         if (response.status() >= 400) failed.push([response.url(), response.status()]);
       });
-      await page.goto(origin, { waitUntil: 'networkidle' });
+      await page.goto(base + '/', { waitUntil: 'networkidle' });
       await page.locator('input[type="email"]').waitFor({ state: 'visible' });
       assert.equal(new URL(page.url()).origin, origin);
       assert.equal(await page.title(), 'Log in · JR Content');

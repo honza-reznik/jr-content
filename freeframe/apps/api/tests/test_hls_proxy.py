@@ -18,7 +18,7 @@ class TestCreateHlsToken:
         assert payload["sub"] == "hls"
         assert payload["pfx"] == "hls/project-1/version-1"
         assert "exp" in payload
-        assert payload["v"] == 5
+        assert payload["v"] == 6
         assert 0 < payload["exp"] - time.time() <= 1800
 
 
@@ -129,7 +129,7 @@ class TestSegmentUrlLifetime:
         from apps.api.config import settings
         from datetime import datetime, timedelta, timezone
         return jwt.encode(
-            {"sub": "hls", "v": 5, "pfx": "hls/proj/ver",
+            {"sub": "hls", "v": 6, "pfx": "hls/proj/ver",
              "exp": datetime.now(timezone.utc) + timedelta(seconds=seconds_left)},
             settings.jwt_secret, algorithm=settings.jwt_algorithm,
         )

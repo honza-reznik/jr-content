@@ -278,6 +278,13 @@ def create_multipart_upload(s3_key: str, content_type: str) -> str:
     )
     return response["UploadId"]
 
+def _browser_url(url: str) -> str:
+    if _is_aws_s3() or not settings.s3_public_path:
+        return url
+    origin = (settings.s3_public_endpoint or settings.s3_endpoint).rstrip("/")
+    return url.replace(origin, origin + settings.s3_public_path, 1)
+
+
 def presign_upload_part(s3_key: str, upload_id: str, part_number: int, expires_in: int | None = None) -> str:
     """Return a presigned URL for uploading a single part.
 
@@ -287,7 +294,7 @@ def presign_upload_part(s3_key: str, upload_id: str, part_number: int, expires_i
     if expires_in is None:
         expires_in = settings.upload_part_url_seconds
     s3 = _get_presign_client()
-    return s3.generate_presigned_url(
+    return _browser_url(s3.generate_presigned_url(
         "upload_part",
         Params={
             "Bucket": settings.s3_bucket,
@@ -296,7 +303,7 @@ def presign_upload_part(s3_key: str, upload_id: str, part_number: int, expires_i
             "PartNumber": part_number,
         },
         ExpiresIn=expires_in,
-    )
+    ))
 
 def complete_multipart_upload(s3_key: str, upload_id: str, parts: list[dict]) -> None:
     """Complete a multipart upload. `parts` is a list of {"PartNumber": int, "ETag": str}."""
@@ -537,7 +544,7 @@ def generate_presigned_put_url(s3_key: str, content_type: str | None = None, exp
     params: dict = {"Bucket": settings.s3_bucket, "Key": s3_key}
     if content_type:
         params["ContentType"] = content_type
-    return s3.generate_presigned_url("put_object", Params=params, ExpiresIn=expires_in)
+    return _browser_url(s3.generate_presigned_url("put_object", Params=params, ExpiresIn=expires_in))
 
 
 def generate_presigned_get_url(s3_key: str, expires_in: int = 3600, download_filename: str | None = None) -> str:
@@ -553,11 +560,11 @@ def generate_presigned_get_url(s3_key: str, expires_in: int = 3600, download_fil
     params: dict = {"Bucket": settings.s3_bucket, "Key": s3_key}
     if download_filename:
         params["ResponseContentDisposition"] = build_content_disposition(download_filename)
-    return s3.generate_presigned_url(
+    return _browser_url(s3.generate_presigned_url(
         "get_object",
         Params=params,
         ExpiresIn=expires_in,
-    )
+    ))
 
 def generate_internal_presigned_get_url(s3_key: str, expires_in: int = 3600) -> str:
     """Generate a presigned GET URL using the API's configured S3 endpoint.

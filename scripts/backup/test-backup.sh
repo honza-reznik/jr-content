@@ -3,6 +3,9 @@
 # porovnání (řádky, objekty a součty, svazek médií), přihlášení a zobrazení v Chromiu, úklid obou projektů.
 # JRC_PROJECT je jen prefix; oba skutečné projekty dostávají jedinečnou příponu tohoto běhu.
 set -eu
+if [ "${JRC_PROJECT:-}" = jrc-p1b01 ] && [ "${JRC_ISOLATED_TEST:-}" != 1 ]; then
+    exec sh scripts/backup/isolated-test.sh "$0"
+fi
 
 base=${JRC_PROJECT:?JRC_PROJECT chybí}
 [ "$base" != jrc ] || { printf 'Test pro jrc je zakázáno.\n' >&2; exit 1; }
@@ -20,6 +23,11 @@ dst_app=${JRC_RESTORE_APP_PORT:-13313}
 dst_s3=${JRC_RESTORE_S3_PORT:-14033}
 dst_pg=${JRC_RESTORE_POSTGRES_PORT:-15563}
 dst_bb=${JRC_RESTORE_BB_PORT:-18133}
+src_origin="http://127.0.0.1:$src_app"
+dst_origin="http://127.0.0.1:$dst_app"
+src_base=${JRC_BASE_PATH-/jrc}
+dst_base=${JRC_RESTORE_BASE_PATH-$src_base}
+
 out=ops/test-output/F2-B09/$run_id
 shots=ops/screenshoty/F2-B09/$run_id
 tool=scripts/backup/jrc_backup.py
@@ -30,7 +38,7 @@ step() { printf '\n== %s ==\n' "$*"; }
 # Argumenty příkazové řádky mají přednost i před zděděnými hodnotami v MAKEFLAGS.
 source_make() {
     make --no-print-directory JRC_PROJECT="$src" JRC_APP_PORT="$src_app" JRC_S3_PORT="$src_s3" \
-        JRC_POSTGRES_PORT="$src_pg" JRC_BB_PORT="$src_bb" "$@"
+        JRC_POSTGRES_PORT="$src_pg" JRC_BB_PORT="$src_bb" JRC_PUBLIC_ORIGIN="$src_origin" JRC_BASE_PATH="$src_base" "$@"
 }
 
 for name in "$src" "$dst"; do
@@ -46,7 +54,7 @@ done
 
 # JRC_PROJECT musí vždy odpovídat názvu projektu: z něj Compose odvozuje názvy svazků (jinak by down --volumes
 # mířil na svazky jiného projektu).
-dc() { proj=$1; shift; JRC_PROJECT="$proj" checked_docker compose --project-name "$proj" --file docker-compose.yml --env-file .env "$@"; }
+dc() { proj=$1; shift; JRC_PUBLIC_ORIGIN="$([ "$proj" = "$src" ] && printf %s "$src_origin" || printf %s "$dst_origin")" JRC_BASE_PATH="$([ "$proj" = "$src" ] && printf %s "$src_base" || printf %s "$dst_base")" JRC_PROJECT="$proj" checked_docker compose --project-name "$proj" --file docker-compose.yml --env-file .env "$@"; }
 require_unused_project "$src"
 require_unused_project "$dst"
 [ ! -L backups ] || fail 'backups nesmí být odkaz.'
@@ -99,7 +107,7 @@ checked_docker run --rm --pull never --network none --user 0:0 --cap-drop ALL --
     --mount "type=volume,src=$src-bb-media,dst=/m,volume-nocopy" "jrc-dev:$src" \
     sh -c 'mkdir -p /m/legacy && printf "Stará média (testovací soubor)\n" > /m/legacy/stara-media.txt'
 seed_ff="$out/seed-ff.json"
-seed_freeframe "$src" > "$run_dir/seed-ff-output"
+JRC_APP_PORT="$src_app" JRC_PUBLIC_ORIGIN="$src_origin" JRC_BASE_PATH="$src_base" seed_freeframe "$src" > "$run_dir/seed-ff-output"
 tail -n 1 "$run_dir/seed-ff-output" > "$seed_ff"
 grep -q source_sha256 "$seed_ff" || fail 'Seed FreeFrame nevytvořil video.'
 
@@ -152,7 +160,7 @@ restore_main_mode() {
 }
 restore() {
     make --no-print-directory JRC_PROJECT="$dst" JRC_APP_PORT="$dst_app" JRC_S3_PORT="$dst_s3" \
-        JRC_POSTGRES_PORT="$dst_pg" JRC_BB_PORT="$dst_bb" restore BACKUP="backups/$src/$latest"
+        JRC_POSTGRES_PORT="$dst_pg" JRC_BB_PORT="$dst_bb" JRC_PUBLIC_ORIGIN="$dst_origin" JRC_BASE_PATH="$dst_base" restore BACKUP="backups/$src/$latest"
 }
 dst_started=1
 if restore_main_mode; then :; else
@@ -180,9 +188,9 @@ checked_docker run --rm --network none --pull never --user "$uid:$gid" --env PYT
     "$out/media-src.txt" "$out/media-dst.txt"
 
 step 'Chromium a FreeFrame v obnoveném projektu'
-checked_docker run --rm --network host --pull never --user "$uid:$gid" --env JRC_APP_PORT="$dst_app" --env JRC_S3_PORT="$dst_s3" \
+checked_docker run --rm --network host --pull never --user "$uid:$gid" --env JRC_PUBLIC_ORIGIN="$dst_origin" --env JRC_BASE_PATH="$dst_base" --env JRC_APP_PORT="$dst_app" --env JRC_S3_PORT="$dst_s3" \
     --volume "$PWD:/jrc" --workdir /jrc "jrc-dev:$dst" node scripts/backup/browser.cjs "$seed_bb" "$shots/obnoveno.png"
-checked_docker run --rm --network host --pull never --user "$uid:$gid" --env-file .env --env JRC_APP_PORT="$dst_app" --env JRC_S3_PORT="$dst_s3" \
+checked_docker run --rm --network host --pull never --user "$uid:$gid" --env-file .env --env JRC_PUBLIC_ORIGIN="$dst_origin" --env JRC_BASE_PATH="$dst_base" --env JRC_APP_PORT="$dst_app" --env JRC_S3_PORT="$dst_s3" \
     --volume "$PWD:/jrc" --workdir /jrc "jrc-ff-api:$dst" python scripts/backup/check-ff.py "$seed_ff"
 
 printf '\nVšechny kontroly test-backup prošly.\n'

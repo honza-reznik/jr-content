@@ -64,8 +64,8 @@ function writeTokens(access: string, refresh: string): void {
   localStorage.setItem(ACCESS_TOKEN_KEY, access)
   localStorage.setItem(REFRESH_TOKEN_KEY, refresh)
   // Set cookies so middleware can check auth on server side
-  document.cookie = `${ACCESS_TOKEN_KEY}=${access}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`
-  document.cookie = `${REFRESH_TOKEN_KEY}=${refresh}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`
+  document.cookie = `${ACCESS_TOKEN_KEY}=${access}; path=${process.env.NEXT_PUBLIC_BASE_PATH || '/'}; max-age=${60 * 60 * 24 * 7}; SameSite=Lax${window.location.protocol === 'https:' ? '; Secure' : ''}`
+  document.cookie = `${REFRESH_TOKEN_KEY}=${refresh}; path=${process.env.NEXT_PUBLIC_BASE_PATH || '/'}; max-age=${60 * 60 * 24 * 7}; SameSite=Lax${window.location.protocol === 'https:' ? '; Secure' : ''}`
 }
 
 export function removeTokens(): Promise<void> {
@@ -78,8 +78,8 @@ function deleteTokens(): void {
   localStorage.removeItem(ACCESS_TOKEN_KEY)
   localStorage.removeItem(REFRESH_TOKEN_KEY)
   // Clear auth cookies
-  document.cookie = `${ACCESS_TOKEN_KEY}=; path=/; max-age=0`
-  document.cookie = `${REFRESH_TOKEN_KEY}=; path=/; max-age=0`
+  document.cookie = `${ACCESS_TOKEN_KEY}=; path=${process.env.NEXT_PUBLIC_BASE_PATH || '/'}; max-age=0`
+  document.cookie = `${REFRESH_TOKEN_KEY}=; path=${process.env.NEXT_PUBLIC_BASE_PATH || '/'}; max-age=0`
 }
 
 export async function clearTokens(version?: string | null): Promise<void> {

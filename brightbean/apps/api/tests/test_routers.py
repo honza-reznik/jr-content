@@ -137,6 +137,26 @@ def client_with_token(issued_key):
 
 @pytest.mark.django_db
 class TestAuth:
+    @pytest.mark.parametrize("path", ["/api/v1/me/", "/api/v1/mcp/"])
+    @pytest.mark.parametrize("failure_name", ["ConnectionError", "TimeoutError"])
+    def test_cache_outage_returns_503(self, client_with_token, monkeypatch, path, failure_name):
+        from unittest.mock import Mock
+
+        from django.core.cache import cache
+        from redis import exceptions
+
+        monkeypatch.setattr(cache, "get", Mock(side_effect=getattr(exceptions, failure_name)("unavailable")))
+        response = (
+            client_with_token.post(
+                path, data={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, content_type="application/json"
+            )
+            if path.endswith("/mcp/")
+            else client_with_token.get(path)
+        )
+        assert response.status_code == 503
+        assert response.json()["error"] == "service_unavailable"
+        assert response["Retry-After"] == "5"
+
     def test_missing_authorization_header_returns_401(self):
         c = _SecureClient()
         r = c.get("/api/v1/me/")
@@ -633,48 +653,23 @@ class TestPlatformQuota:
 
 @pytest.mark.django_db
 class TestFailedAuthThrottle:
-    def test_blocked_ip_short_circuits_before_verify_token(self, monkeypatch):
-        """Codex P4 regression: once the failed-auth budget is exhausted,
-        further attempts from the same IP must NOT call verify_token
-        (which does HMAC work). The 401 response shape is unchanged so
-        an attacker can't detect the throttle.
-
-        Note on isolation: pytest-django wraps every test in a DB
-        transaction, but the Django cache (which our throttle uses)
-        is process-wide and NOT reset between tests. Earlier auth tests
-        in this file already incremented the counter for 127.0.0.1, so
-        we explicitly clear the failed-auth bucket before counting.
-        """
+    def test_valid_key_survives_failed_attempts_from_same_ip(self, issued_key):
         from django.core.cache import cache
 
-        from apps.api import auth as auth_module
         from apps.api.limits import _AUTH_FAIL_LIMIT
 
-        # Wipe any failed-auth state from earlier tests in this process.
         cache.delete("agent_api:auth_fail:127.0.0.1")
-
-        call_count = {"n": 0}
-
-        def counting_verify(token):
-            call_count["n"] += 1
-            return None  # always-fail simulation
-
-        monkeypatch.setattr(auth_module, "verify_token", counting_verify)
-
-        c = _SecureClient(HTTP_AUTHORIZATION="Bearer bb_studio_fake-token-aaaaaaaaaaaaaaaaa_00000000")
-
-        # The first _AUTH_FAIL_LIMIT attempts increment the counter and
-        # call verify_token; the (limit+1)-th must short-circuit BEFORE
-        # verify_token.
-        for _ in range(_AUTH_FAIL_LIMIT):
-            r = c.get("/api/v1/me/")
-            assert r.status_code == 401
-        assert call_count["n"] == _AUTH_FAIL_LIMIT
-
-        # (limit+1)-th attempt — verify_token must NOT be called.
-        r = c.get("/api/v1/me/")
-        assert r.status_code == 401
-        assert call_count["n"] == _AUTH_FAIL_LIMIT, "verify_token was called past the throttle threshold"
+        attacker = _SecureClient(HTTP_AUTHORIZATION="Bearer invalid")
+        for _ in range(_AUTH_FAIL_LIMIT + 2):
+            assert attacker.get("/api/v1/me/").status_code == 401
+        valid = _SecureClient(HTTP_AUTHORIZATION=f"Bearer {issued_key.plaintext_token}")
+        assert valid.get("/api/v1/me/").status_code == 200
+        response = valid.post(
+            "/api/v1/mcp/",
+            data={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+            content_type="application/json",
+        )
+        assert response.status_code == 200
 
 
 # ---------------------------------------------------------------------------

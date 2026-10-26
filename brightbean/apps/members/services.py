@@ -550,7 +550,9 @@ def _send_invite_email(invitation) -> bool:
         return False
 
     app_url = getattr(settings, "APP_URL", "http://localhost:8000").rstrip("/")
-    accept_url = f"{app_url}/members/invite/{invitation.token}/accept/"
+    from django.urls import reverse
+
+    accept_url = app_url + reverse("members:accept_invite", kwargs={"token": invitation.token})
 
     context = {
         "invitation": invitation,
