@@ -40,7 +40,7 @@ const errors = [];
     // obrázek: podepsaná adresa míří na obnovené úložiště a vrací původní bajty
     await page.goto(`${app}/workspace/${seed.workspace_id}/media/${seed.asset_id}/`, { waitUntil: 'networkidle' });
     const images = await page.evaluate(() => Array.from(document.images).map((i) => ({ src: i.currentSrc || i.src, w: i.naturalWidth })));
-    const shown = images.find((i) => i.src.startsWith(`${app}/storage/jrc-app/`) && i.w === 320);
+    const shown = images.find((i) => i.src.startsWith(`${app}/files/`) && i.w === 320);
     assert.ok(shown, `obrázek z úložiště na cílovém původu ${origin} se nezobrazil: ${JSON.stringify(images)}`);
     const bytes = await (await page.request.get(shown.src)).body();
     assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'), seed.png_sha256, 'obrázek má jiné bajty než původní');

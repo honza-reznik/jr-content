@@ -1,7 +1,7 @@
 #!/bin/sh
 # Celý scénář Reel pro Ellu. Reset i úklid míří výhradně na jrc-f10b02.
 set -eu
-if [ "${JRC_PROJECT:-}" = jrc-p1b01 ]; then
+if [ "${JRC_PROJECT:-}" = jrc-p1b01 ] || [ "${JRC_PROJECT:-}" = jrc-p1b03 ]; then
   exec sh scripts/P1-B01/test-e2e.sh
 fi
 [ "${JRC_PROJECT:-}" = "jrc-f10b02" ] || { echo 'Pouze JRC_PROJECT=jrc-f10b02' >&2; exit 2; }

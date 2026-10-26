@@ -547,7 +547,7 @@ def generate_presigned_put_url(s3_key: str, content_type: str | None = None, exp
     return _browser_url(s3.generate_presigned_url("put_object", Params=params, ExpiresIn=expires_in))
 
 
-def generate_presigned_get_url(s3_key: str, expires_in: int = 3600, download_filename: str | None = None) -> str:
+def generate_presigned_get_url(s3_key: str, expires_in: int = 3600, download_filename: str | None = None, *, share_link=None, share_user=None, share_session=None) -> str:
     """Generate a presigned GET URL for an object.
 
     Args:
@@ -556,15 +556,37 @@ def generate_presigned_get_url(s3_key: str, expires_in: int = 3600, download_fil
         download_filename: If set, adds Content-Disposition: attachment header
                           so the browser downloads with this filename.
     """
+    from urllib.parse import quote, urlencode
+    if settings.s3_public_path:
+        base = settings.s3_public_path.removesuffix("/storage")
+        url = settings.s3_public_endpoint.rstrip("/") + base + "/files/video/" + quote(s3_key, safe="/")
+        query = {}
+        if download_filename:
+            query["filename"] = download_filename
+        if share_link is not None:
+            import json
+            from fastapi import HTTPException
+            from ..routers.hls_proxy import _share_security_fingerprint
+            from .redis_service import get_redis
+            if share_user is None:
+                raise HTTPException(403, "Sign in to read files")
+            try:
+                get_redis().setex(f"files:share:{share_user.id}:{share_link.id}", 1800, json.dumps({
+                    "session": share_session, "security": _share_security_fingerprint(share_link),
+                }))
+            except Exception:
+                raise HTTPException(503, "File service unavailable") from None
+            query["share"] = str(share_link.id)
+        if query:
+            url += "?" + urlencode(query)
+        return url
+    # Standalone upstream deployments retain their configured transport.
     s3 = _get_presign_client()
     params: dict = {"Bucket": settings.s3_bucket, "Key": s3_key}
     if download_filename:
         params["ResponseContentDisposition"] = build_content_disposition(download_filename)
-    return _browser_url(s3.generate_presigned_url(
-        "get_object",
-        Params=params,
-        ExpiresIn=expires_in,
-    ))
+    return _browser_url(s3.generate_presigned_url("get_object", Params=params, ExpiresIn=expires_in))
+
 
 def generate_internal_presigned_get_url(s3_key: str, expires_in: int = 3600) -> str:
     """Generate a presigned GET URL using the API's configured S3 endpoint.

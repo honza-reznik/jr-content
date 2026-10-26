@@ -65,15 +65,17 @@
 	respond @outside 404
 	{$JRC_BASE_REDIRECT}
 
-	# Podpis zahrnuje původní /bucket/key a Host. Odstraníme pouze transportní
-	# předponu; Host odpovídá veřejnému původu podpisu, query se nemění. Bez cookies.
+	# Úložiště je z prohlížeče dostupné pouze pro podepsaný PUT konkrétního uploadu.
+	# GET/HEAD (i se starým platným podpisem) odmítneme před předáním do S3.
 	handle_path {$JRC_BASE_PATH}/storage/* {
 		header {
 			defer
 			Content-Security-Policy "sandbox; default-src 'none'"
 			X-Frame-Options DENY
 		}
-		@forbidden not method GET HEAD PUT POST OPTIONS
+		@read method GET HEAD
+		respond @read 404
+		@forbidden not method PUT OPTIONS
 		respond @forbidden 405
 		reverse_proxy jrc-s3:3900 {
 			header_up Host {$JRC_PUBLIC_HOST}

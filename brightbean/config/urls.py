@@ -82,11 +82,13 @@ urlpatterns = [
 ]
 
 if getattr(settings, "JRC_UI_ENABLED", False):
+    from apps.jrc_storage.views import private_file
     from apps.jrc_video.views import video_logout, video_sso
 
     # Before both accounts URL includes: namespaced and allauth logout resolve
     # to the same CSRF-protected endpoint and fixed cross-app logout chain.
     urlpatterns = [
+        path("files/<path:path>", private_file, name="jrc_private_file"),
         path("video-sso/", video_sso, name="video_sso"),
         path("accounts/logout/", video_logout),
     ] + urlpatterns

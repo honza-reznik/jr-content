@@ -1,7 +1,7 @@
 #!/bin/sh
 # E2E Reel pro Ellu → záloha A → obnova do prázdného B → Chromium; vlastní projekty F10-B04.
 set -eu
-if [ "${JRC_PROJECT:-}" = jrc-p1b01 ] && [ "${JRC_ISOLATED_TEST:-}" != 1 ]; then
+if { [ "${JRC_PROJECT:-}" = jrc-p1b01 ] || [ "${JRC_PROJECT:-}" = jrc-p1b03 ]; } && [ "${JRC_ISOLATED_TEST:-}" != 1 ]; then
     exec sh scripts/backup/isolated-test.sh "$0"
 fi
 src=${JRC_PROJECT:-}

@@ -43,7 +43,7 @@ class HlsLimits:
         keys = [f"{self.namespace}:active:total", f"{self.namespace}:active:{digest}",
                 f"{self.namespace}:rate:total", f"{self.namespace}:rate:{digest}"]
         lease = uuid.uuid4().hex
-        ttl = (settings.hls_stream_timeout_seconds + settings.hls_s3_connect_timeout_seconds
+        ttl = (max(settings.hls_stream_timeout_seconds, settings.file_stream_timeout_seconds) + settings.hls_s3_connect_timeout_seconds
                + settings.hls_s3_read_timeout_seconds + 60)
         try:
             admitted = get_redis().eval(

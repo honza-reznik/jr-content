@@ -16,7 +16,7 @@ const basePath = process.env.JRC_BASE_PATH ?? '/jrc';
       assert.equal((await context.request.get(origin + basePath + suffix)).status(), 404, suffix);
     }
     const unsigned = await context.request.get(origin + basePath + '/storage/jrc-video/private-missing.mp4');
-    assert.equal(unsigned.status(), 403);
+    assert.equal(unsigned.status(), 404);
     assert(unsigned.headers()['content-security-policy'].includes('sandbox'));
     const login = await page.goto(origin + basePath + '/accounts/login/');
     assert.equal(login.status(), 200);

@@ -89,6 +89,13 @@ def _get_project_id_from_link(db: Session, link: ShareLink) -> uuid.UUID:
     raise HTTPException(status_code=400, detail="Invalid share link")
 
 
+def _share_file_url(link, user, session, key, **kwargs):
+    from ..config import settings
+    if settings.s3_public_path:
+        kwargs.update(share_link=link, share_user=user, share_session=session)
+    return generate_presigned_get_url(key, **kwargs)
+
+
 def _share_media_expiry(db: Session, link: ShareLink, user: Optional[User]) -> dict:
     identity = managed_hls_identity(user, _get_project_id_from_link(db, link), db=db)
     return {"expires_in": MANAGED_MEDIA_SECONDS} if identity else {}
@@ -295,7 +302,7 @@ def _build_share_validate_response(
         media_file = _get_latest_media_file(db, asset.id)
         thumbnail_url = None
         if media_file and media_file.s3_key_thumbnail:
-            thumbnail_url = generate_presigned_get_url(media_file.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS)
+            thumbnail_url = _share_file_url(link, current_user, session_id, media_file.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS)
         # Get stream URL
         stream_url = None
         if media_file:
@@ -306,9 +313,9 @@ def _build_share_validate_response(
                                                **share_hls_identity(link, asset, media_file, current_user, session_id),
                                                **managed_hls_identity(current_user, asset.project_id, db=db))
                 else:
-                    stream_url = generate_presigned_get_url(media_file.s3_key_processed, **media_expiry)
+                    stream_url = _share_file_url(link, current_user, session_id, media_file.s3_key_processed, **media_expiry)
             elif media_file.s3_key_raw:
-                stream_url = generate_presigned_get_url(media_file.s3_key_raw, **media_expiry)
+                stream_url = _share_file_url(link, current_user, session_id, media_file.s3_key_raw, **media_expiry)
 
         asset_data = {
             "id": str(asset.id),
@@ -1331,7 +1338,7 @@ def get_folder_share_assets(
                 for pa in preview_assets:
                     mf = _get_latest_media_file(db, pa.id)
                     if mf and mf.s3_key_thumbnail:
-                        thumb_urls.append(generate_presigned_get_url(mf.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS))
+                        thumb_urls.append(_share_file_url(link, current_user, share_session, mf.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS))
                 subfolder_items.append(FolderShareSubfolder(
                     id=sf.id, name=sf.name, item_count=asset_count + child_folder_count, thumbnail_urls=thumb_urls,
                 ))
@@ -1346,7 +1353,7 @@ def get_folder_share_assets(
             ).order_by(Asset.created_at.desc()).offset(offset).limit(per_page).all()
             for a in shared_assets:
                 mf = _get_latest_media_file(db, a.id)
-                thumbnail_url = generate_presigned_get_url(mf.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS) if mf and mf.s3_key_thumbnail else None
+                thumbnail_url = _share_file_url(link, current_user, share_session, mf.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS) if mf and mf.s3_key_thumbnail else None
                 comment_count = _latest_version_comment_count(db, a.id)
                 asset_items.append(FolderShareAssetItem(
                     id=a.id, name=a.name, asset_type=a.asset_type.value if hasattr(a.asset_type, 'value') else str(a.asset_type),
@@ -1417,7 +1424,7 @@ def get_folder_share_assets(
         for pa in preview_assets:
             mf = _get_latest_media_file(db, pa.id)
             if mf and mf.s3_key_thumbnail:
-                thumb_urls.append(generate_presigned_get_url(mf.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS))
+                thumb_urls.append(_share_file_url(link, current_user, share_session, mf.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS))
             if len(thumb_urls) >= 4:
                 break
 
@@ -1456,7 +1463,7 @@ def get_folder_share_assets(
         media_file = _get_latest_media_file(db, asset.id)
         if media_file:
             if media_file.s3_key_thumbnail:
-                thumbnail_url = generate_presigned_get_url(media_file.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS)
+                thumbnail_url = _share_file_url(link, current_user, share_session, media_file.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS)
             file_size = media_file.file_size_bytes
             duration_seconds = media_file.duration_seconds
 
@@ -1593,7 +1600,7 @@ def get_share_stream_url(
             ),
             prefer_original=prefer_original,
         )
-        url = generate_presigned_get_url(
+        url = _share_file_url(link, current_user, share_session,
             choice.s3_key, download_filename=download_filename(asset, media_file, choice),
             **media_expiry,
         )
@@ -1603,7 +1610,7 @@ def get_share_stream_url(
                             **share_hls_identity(link, asset, media_file, current_user, share_session),
                             **managed_hls_identity(current_user, asset.project_id, db=db))
     else:
-        url = generate_presigned_get_url(media_file.s3_key_processed or media_file.s3_key_raw, **media_expiry)
+        url = _share_file_url(link, current_user, share_session, media_file.s3_key_processed or media_file.s3_key_raw, **media_expiry)
 
     # Log activity
     activity_action = ShareActivityAction.downloaded if download else ShareActivityAction.viewed_asset
@@ -1619,7 +1626,7 @@ def get_share_stream_url(
     # Get thumbnail URL
     thumb_url = None
     if media_file.s3_key_thumbnail:
-        thumb_url = generate_presigned_get_url(media_file.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS)
+        thumb_url = _share_file_url(link, current_user, share_session, media_file.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS)
 
     return {
         "url": url,
@@ -1654,7 +1661,7 @@ def get_share_thumbnail_url(
     if not media_file or not media_file.s3_key_thumbnail:
         raise HTTPException(status_code=404, detail="Thumbnail not found")
 
-    url = generate_presigned_get_url(media_file.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS)
+    url = _share_file_url(link, current_user, share_session, media_file.s3_key_thumbnail, expires_in=PREVIEW_URL_SECONDS)
     return {"url": url}
 
 

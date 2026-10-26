@@ -3,7 +3,7 @@ import os
 import subprocess
 import sys
 from io import StringIO
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import urlsplit
 
 import pytest
 from botocore.exceptions import ClientError
@@ -31,28 +31,27 @@ OPTIONS = {
 }
 
 
-def test_url_is_signed_for_the_browser_facing_gate():
+def test_url_uses_session_gateway_with_no_signature():
     storage = JrcS3Storage(**OPTIONS)
     url = storage.url("media_library/2026/10/a b.png")
-    parts = urlsplit(url)
-    query = parse_qs(parts.query)
-    assert f"{parts.scheme}://{parts.netloc}" == "http://127.0.0.1:13900"
-    assert parts.path == "/jrc-app/media_library/2026/10/a%20b.png"
-    assert query["X-Amz-Algorithm"] == ["AWS4-HMAC-SHA256"]
-    assert query["X-Amz-Expires"] == ["900"]
-    assert query["X-Amz-SignedHeaders"] == ["host"]
-    assert query["X-Amz-Signature"]
-    # Server-side operations keep using the internal endpoint.
+    assert url == "/files/media_library/2026/10/a%20b.png"
+    assert not urlsplit(url).query
     assert storage.connection.meta.client.meta.endpoint_url == "http://jrc-s3:3900"
 
 
-def test_signature_covers_the_public_host():
+@override_settings(FORCE_SCRIPT_NAME="/jrc")
+def test_url_respects_prefix_and_never_calls_public_presigner(monkeypatch):
+    from django.urls import set_script_prefix
+
     storage = JrcS3Storage(**OPTIONS)
-    internal = storage.connection.meta.client.generate_presigned_url(
-        "get_object", Params={"Bucket": "jrc-app", "Key": "x.png"}, ExpiresIn=900
+    monkeypatch.setattr(
+        storage.public_connection.meta.client, "generate_presigned_url", lambda *a, **k: pytest.fail("read signature")
     )
-    public = storage.url("x.png")
-    assert parse_qs(urlsplit(internal).query)["X-Amz-Signature"] != parse_qs(urlsplit(public).query)["X-Amz-Signature"]
+    set_script_prefix("/jrc/")
+    try:
+        assert storage.url("x.png") == "/jrc/files/x.png"
+    finally:
+        set_script_prefix("/")
 
 
 def test_unsigned_urls_are_refused():
