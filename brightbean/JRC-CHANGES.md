@@ -2,6 +2,11 @@
 
 ## 2026-10-26 — P1-B01
 
+- Review2: Redis cache omezuje spojení i čtení na 1 s; výpadek ochrany vrací 503
+  u přihlášení, webových operací i REST/MCP. E-mailová upozornění a souhrny
+  zachovávají předponu také v hlavním odkazu a předvolbách. Obnova přijímá staré
+  zálohy bez `JRC_MODE`, provozní nastavení se ověřuje odděleně od tajemství.
+
 - Produkční běh používá gunicorn (2 procesy, 4 vlákna), `DEBUG=False` a WhiteNoise
   se statickými soubory připravenými při startu. `JRC_MODE=dev` zachovává vývojový server.
 - `JRC_PUBLIC_ORIGIN` a `JRC_BASE_PATH` řídí veřejné odkazy, Django `SCRIPT_NAME`,

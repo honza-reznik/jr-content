@@ -142,6 +142,7 @@ test-smoke: test-proxy test-s3
 	$(COMPOSE) exec -T jrc-dev node scripts/test-init-env.cjs
 	$(COMPOSE) exec -T jrc-bb-web python - web < scripts/smoke-bb.py
 	$(COMPOSE) exec -T jrc-bb-worker python - worker < scripts/smoke-bb.py
+	$(COMPOSE) exec -T jrc-bb-web python manage.py shell < scripts/P1-B01/check-redis.py
 
 # Prohlížeč i HTTP požadavky běží v Dockeru proti skutečnému místnímu portu.
 test-proxy:

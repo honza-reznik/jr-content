@@ -141,6 +141,7 @@ JRC_S3_PUBLIC_PATH = os.environ.get("JRC_S3_PUBLIC_PATH", "")
 CACHES["default"] = {  # noqa: F405
     "BACKEND": "django.core.cache.backends.redis.RedisCache",
     "LOCATION": os.environ.get("JRC_CACHE_REDIS_URL", "redis://jrc-redis:6379/1"),
+    "OPTIONS": {"socket_connect_timeout": 1, "socket_timeout": 1},
 }
 
 # Celkový REST/MCP rozpočet, sdílený přes výše uvedenou Redis cache.

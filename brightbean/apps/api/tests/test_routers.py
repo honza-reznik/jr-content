@@ -137,6 +137,26 @@ def client_with_token(issued_key):
 
 @pytest.mark.django_db
 class TestAuth:
+    @pytest.mark.parametrize("path", ["/api/v1/me/", "/api/v1/mcp/"])
+    @pytest.mark.parametrize("failure_name", ["ConnectionError", "TimeoutError"])
+    def test_cache_outage_returns_503(self, client_with_token, monkeypatch, path, failure_name):
+        from unittest.mock import Mock
+
+        from django.core.cache import cache
+        from redis import exceptions
+
+        monkeypatch.setattr(cache, "get", Mock(side_effect=getattr(exceptions, failure_name)("unavailable")))
+        response = (
+            client_with_token.post(
+                path, data={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, content_type="application/json"
+            )
+            if path.endswith("/mcp/")
+            else client_with_token.get(path)
+        )
+        assert response.status_code == 503
+        assert response.json()["error"] == "service_unavailable"
+        assert response["Retry-After"] == "5"
+
     def test_missing_authorization_header_returns_401(self):
         c = _SecureClient()
         r = c.get("/api/v1/me/")

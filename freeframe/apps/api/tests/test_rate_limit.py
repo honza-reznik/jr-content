@@ -71,6 +71,26 @@ def test_account_limit_normalizes_email_without_blocking_same_ip(client, shared_
     assert client.post('/auth/' + path, json={'email':'three@example.com', **body}).status_code == 429
 
 
+@pytest.mark.parametrize('path,maximum,body', [
+    ('login', 10, {'password': 'wrong'}),
+    ('send-magic-code', 5, {}),
+    ('verify-magic-code', 10, {'code': '123456'}),
+])
+def test_display_names_share_the_authenticated_email_budget(client, shared_redis, path, maximum, body, monkeypatch):
+    from apps.api.routers import auth
+    lookup = MagicMock(return_value=None)
+    monkeypatch.setattr(auth, 'get_user_by_email', lookup)
+    for attempt in range(maximum):
+        email = f'Pokus{attempt + 1} <victim@EXAMPLE.com>'
+        assert client.post('/auth/' + path, json={'email': email, **body}).status_code in (200, 401)
+        assert lookup.call_args.args[1] == 'victim@example.com'
+    for email in ['victim@example.com', 'Pokus999 <victim@example.com>', ' Victim <victim@EXAMPLE.com> ']:
+        assert client.post('/auth/' + path, json={'email': email, **body}).status_code == 429
+    assert lookup.call_count == maximum
+    assert client.post('/auth/' + path, json={'email': 'other@example.com', **body}).status_code in (200, 401)
+    assert client.post('/auth/' + path, json={'email': 'invalid', **body}).status_code == 422
+
+
 def test_refresh_budget_uses_verified_user_not_shared_ip(client, shared_redis, monkeypatch):
     from apps.api.routers import auth
     from apps.api.services.auth_service import create_refresh_token

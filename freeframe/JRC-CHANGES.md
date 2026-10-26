@@ -2,6 +2,9 @@
 
 ## 2026-10-26 — P1-B01
 
+- Review2: limit loginu i magic code vychází ze stejného validovaného `EmailStr`
+  jako autentizace; různé zobrazované jméno u stejné adresy nerozdělí rozpočet.
+
 - Next.js se sestavuje při Docker buildu a v režimu `prod` běží `next start` z `/opt/jrc-web`,
   mimo vývojový bind mount. Cache a předem vykreslené stránky jsou zapisovatelné pod běžným UID. `JRC_MODE=dev` zachovává `next dev`. API nemá reload a používá
   dva procesy se společnými limity v Redis.

@@ -4,6 +4,8 @@ from django.core.cache import cache
 from django.http import HttpResponse
 from django.shortcuts import redirect
 from django.urls import reverse
+from django.utils.deprecation import MiddlewareMixin
+from redis.exceptions import RedisError
 
 # Paths that are rate-limited for unauthenticated POST requests (auth flows)
 AUTH_RATE_LIMITED_PATHS = (
@@ -55,13 +57,26 @@ class TosAcceptanceMiddleware:
         return self.get_response(request)
 
 
-class AuthRateLimitMiddleware:
+def cache_unavailable_response():
+    return HttpResponse(
+        "Service temporarily unavailable. Please try again later.", status=503, headers={"Retry-After": "5"}
+    )
+
+
+class AuthRateLimitMiddleware(MiddlewareMixin):
     """Rate-limit POST requests to authentication endpoints (login, signup, password reset)."""
 
-    def __init__(self, get_response):
-        self.get_response = get_response
+    def process_exception(self, request, exception):
+        if isinstance(exception, RedisError):
+            return cache_unavailable_response()
 
-    def __call__(self, request):
+    def process_request(self, request):
+        try:
+            return self.check_auth_budget(request)
+        except RedisError:
+            return cache_unavailable_response()
+
+    def check_auth_budget(self, request):
         if request.method == "POST" and any(request.path_info.startswith(p) for p in AUTH_RATE_LIMITED_PATHS):
             account = (request.POST.get("login") or request.POST.get("email") or "").strip().casefold()
             digest = hashlib.sha256(account.encode()).hexdigest()
@@ -79,5 +94,3 @@ class AuthRateLimitMiddleware:
                         attempts = 1
                 if attempts > limit:
                     return HttpResponse("Too many requests. Please try again later.", status=429)
-
-        return self.get_response(request)

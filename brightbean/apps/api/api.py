@@ -17,6 +17,7 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from ninja import NinjaAPI
 from ninja.errors import AuthenticationError, HttpError
 from ninja.openapi.docs import Swagger
+from redis.exceptions import RedisError
 
 from apps.api.auth import ApiKeyAuth, McpAuth
 from apps.api.routers.accounts import router as accounts_router
@@ -133,6 +134,15 @@ api.add_router("/mcp", mcp_router, auth=McpAuth())
 # error shape so agents can parse ``tier``, ``retry_after``, etc. without
 # string scraping.
 # ---------------------------------------------------------------------------
+
+
+@api.exception_handler(RedisError)
+def _cache_unavailable_handler(request: HttpRequest, exc: RedisError) -> HttpResponse:
+    return JsonResponse(
+        {"error": "service_unavailable", "detail": "Service temporarily unavailable. Please try again later."},
+        status=503,
+        headers={"Retry-After": "5"},
+    )
 
 
 @api.exception_handler(HttpError)

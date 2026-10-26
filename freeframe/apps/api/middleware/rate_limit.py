@@ -35,10 +35,11 @@ def user_rate_limit(action: str, maximum: int, window: int, *, fail_closed: bool
     return dependency
 
 
-def account_rate_limit(action: str, maximum: int, window: int):
-    async def dependency(request: Request):
-        body = await request.json()
-        email = str(body.get("email", "") if isinstance(body, dict) else "").strip().casefold()
+def account_rate_limit(action: str, maximum: int, window: int, schema):
+    def dependency(body: schema):
+        # Use the endpoint's validated EmailStr, including display-name and
+        # international-domain normalization, before deriving the budget key.
+        email = str(body.email).casefold()
         identity = hashlib.sha256(email.encode()).hexdigest()
         enforce_limit(f"account:{identity}", action, maximum, window)
         enforce_limit("total", action, maximum * 100, window)

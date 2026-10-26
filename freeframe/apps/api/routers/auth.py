@@ -53,7 +53,7 @@ def _generate_invite_token() -> str:
     return secrets.token_urlsafe(48)
 
 
-@router.post("/send-magic-code", response_model=SendMagicCodeResponse, dependencies=[Depends(account_rate_limit("send_magic_code", 5, 600))])
+@router.post("/send-magic-code", response_model=SendMagicCodeResponse, dependencies=[Depends(account_rate_limit("send_magic_code", 5, 600, SendMagicCodeRequest))])
 def send_magic_code(body: SendMagicCodeRequest, db: Session = Depends(get_db)):
     """
     Send magic code to an existing user's email, for login.
@@ -90,7 +90,7 @@ def send_magic_code(body: SendMagicCodeRequest, db: Session = Depends(get_db)):
     )
 
 
-@router.post("/verify-magic-code", response_model=TokenResponse, dependencies=[Depends(account_rate_limit("verify_magic_code", 10, 600))])
+@router.post("/verify-magic-code", response_model=TokenResponse, dependencies=[Depends(account_rate_limit("verify_magic_code", 10, 600, VerifyMagicCodeRequest))])
 def verify_magic_code(body: VerifyMagicCodeRequest, db: Session = Depends(get_db)):
     """
     Verify magic code and return tokens.
@@ -203,7 +203,7 @@ def accept_invite(body: AcceptInviteRequest, db: Session = Depends(get_db)):
     )
 
 
-@router.post("/login", response_model=TokenResponse, dependencies=[Depends(account_rate_limit("login", 10, 600))])
+@router.post("/login", response_model=TokenResponse, dependencies=[Depends(account_rate_limit("login", 10, 600, LoginRequest))])
 def login(body: LoginRequest, db: Session = Depends(get_db)):
     """Login with email + password."""
     user = get_user_by_email(db, body.email)

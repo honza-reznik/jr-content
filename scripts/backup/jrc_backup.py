@@ -25,8 +25,13 @@ PROJECT_RE = re.compile(r"jrc(-[a-z0-9-]+)?")
 RESTORE_PROJECT_RE = re.compile(r"jrc-[a-z0-9-]+")
 STAMP_RE = re.compile(r"[0-9]{8}-[0-9]{6}(-[0-9]+)?")
 DATABASES = ("brightbean", "freeframe")
-# Hodnoty, které se při obnově do existujícího .env nemusí shodovat.
-ENV_IGNORED = re.compile(r"^(JRC_UID|JRC_GID|JRC_PUBLIC_ORIGIN|JRC_BASE_PATH|JRC_[A-Z0-9_]*PORT|JRC_S3_[A-Z]+_QUOTA)$")
+# Provozní nastavení lze změnit při obnově. Neznámé klíče se nadále porovnávají,
+# aby přidání nového tajemství nikdy tiše neoslabilo kontrolu.
+ENV_OPERATIONAL = {
+    "JRC_MODE", "JRC_UID", "JRC_GID", "JRC_PUBLIC_ORIGIN", "JRC_BASE_PATH",
+    "JRC_FF_MAX_CONCURRENT_UPLOADS_PER_USER", "JRC_FF_MAX_PENDING_UPLOAD_BYTES_PER_PROJECT",
+}
+ENV_IGNORED = re.compile(r"^(JRC_[A-Z0-9_]*PORT|JRC_S3_[A-Z]+_QUOTA)$")
 PORT_KEYS = ("JRC_APP_PORT", "JRC_POSTGRES_PORT", "JRC_S3_PORT", "JRC_BB_PORT")
 URL_KEYS = ("JRC_PUBLIC_ORIGIN", "JRC_BASE_PATH")
 CHUNK = 1024 * 1024
@@ -393,10 +398,10 @@ def load_env_file(path):
 
 
 def compare_env(current, saved):
-    """Vrací názvy nastavení (nikdy hodnoty), které se liší; porty a UID se ignorují."""
+    """Vrací odlišná tajemství/identitu dat; provozní nastavení se ignoruje."""
     differing = []
     for key in sorted(set(current) | set(saved)):
-        if ENV_IGNORED.match(key):
+        if key in ENV_OPERATIONAL or ENV_IGNORED.match(key):
             continue
         if current.get(key, "") != saved.get(key, ""):
             differing.append(key)

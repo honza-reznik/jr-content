@@ -5,8 +5,8 @@
 {% endfor %}{% if overflow %}
 ...and {{ overflow }} more.
 {% endif %}
-View all: {{ app_url }}/notifications/
+View all: {{ app_url }}{% url 'notifications:list' %}
 
 ---
 You received this because of your notification settings.
-Manage preferences: {{ app_url }}/notifications/preferences/
+Manage preferences: {{ app_url }}{% url 'notifications:preferences' %}

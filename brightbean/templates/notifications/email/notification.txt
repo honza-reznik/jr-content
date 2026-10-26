@@ -6,4 +6,4 @@
 
 ---
 You received this because of your notification settings.
-Manage preferences: {{ app_url }}/notifications/preferences/
+Manage preferences: {{ app_url }}{% url 'notifications:preferences' %}
