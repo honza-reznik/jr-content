@@ -645,3 +645,12 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
   webhook doručení se při vypnutí uzavřou jako `failed` bez spojení; odkazy v seznamu, zásuvce i e-mailu jdou přes `Notification.safe_action_url`
   (jen cesta aplikace s jedním `/`); `_notify_clients` posílá jen aktivním klientům, kteří rozhodují v kroku `pending_client`;
   `_decision_recipients` bere autora jen s aktivním členstvím v klientovi. Testy: 15 nových v `test_notifications.py`.
+# 2026-10-26 · P1-B02 — zdrojový kód, pozvánky, SMTP a publikace klientem
+
+- Build Brightbean vytváří `git archive` celého repozitáře do `tar.gz` s revizí v názvu; archiv je uložený v obrazu mimo zdrojový bind mount a neobsahuje ignorované `.env`, zálohy ani logy. Přihlášený uživatel ho stáhne přes About & license a odkaz v patičce.
+- Čekající pozvánky i nově odeslané a znovu odeslané pozvánky zobrazují „Copy link“. Odkaz se skládá z `APP_URL` a pojmenované URL aplikace, takže zachovává veřejný původ a `JRC_BASE_PATH`; řádek je viditelný jen správcům organizace.
+- `JRC_SMTP_HOST`, `JRC_SMTP_PORT`, `JRC_SMTP_USER`, `JRC_SMTP_PASSWORD`, `JRC_SMTP_FROM` zapínají SMTP. Port 465 používá TLS, ostatní porty STARTTLS; bez úplné konfigurace aplikace zůstává na konzolovém backendu. Heslo se nepíše do logu.
+- Produkční cíle sestavení odmítnou nečistý worktree; Brightbean archiv i oba obrazy se sestavují ze stejné revize. Pro SMTP má přístup ven pouze volitelný relay s pevným cílem `JRC_SMTP_HOST:JRC_SMTP_PORT`; ostatní služby zůstávají bez internetu. Lokální test používá izolovaný SMTP kontejner.
+- Po review: SMTP výjimky nezobrazují přihlašovací údaje, stažení videa ověřuje schválení, popisek a stav finální verze, pozvánky fungují i v HTMX odpovědích a odkazy i skryté odpovědi respektují veřejnou předponu a hranice workspace. Přidány regresní testy pro všech sedm nálezů.
+- Role `client` může na kartě Publish stáhnout hotové finální video, kopírovat popisek a zaznamenat ruční publikaci schváleného příspěvku s popiskem a případným hotovým videem. Role `viewer` zůstává bez těchto oprávnění.
+- Přidány regrese pro archiv a přihlášení, odkazy pozvánek, klientská oprávnění i SMTP nastavení.

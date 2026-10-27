@@ -2,6 +2,8 @@ SHELL := /bin/sh
 .DEFAULT_GOAL := up
 # Povolen je jen JR Content; oddělený jrc-* projekt slouží k ověření worktree.
 export JRC_PROJECT ?= jrc
+# Compose profile SMTP is enabled only when an SMTP destination is configured.
+export COMPOSE_PROFILES := $(if $(strip $(JRC_SMTP_HOST)$(shell sed -n 's/^JRC_SMTP_HOST=//p' .env 2>/dev/null | head -n 1)),smtp,)
 # Jen písmena, číslice a pomlčky (review F2-B01: žádné shellové znaky v příkazech).
 ifneq ($(shell printf '%s' '$(subst ','',$(JRC_PROJECT))' | grep -Ex 'jrc(-[a-z0-9-]+)?'),$(JRC_PROJECT))
 $(error JRC_PROJECT musí být jrc nebo jrc-<malá písmena, číslice, pomlčky>)
@@ -11,6 +13,9 @@ ifeq ($(JRC_PROJECT),jrc)
 ifneq ($(CURDIR),/home/honza/jr-content)
 ifneq ($(filter reset down,$(MAKECMDGOALS)),)
 $(error Ve worktree nelze '$(filter reset down,$(MAKECMDGOALS))' hlavního projektu jrc. Použij JRC_PROJECT=jrc-<blok>)
+endif
+ifneq ($(filter test-up,$(MAKECMDGOALS)),)
+$(error test-up je jen pro oddělený ověřovací projekt jrc-<blok>)
 endif
 endif
 endif
@@ -44,7 +49,34 @@ export BUILDX_CONFIG := $(CURDIR)/.cache/docker-buildx
 CMD ?= bash
 export CMD
 
-.PHONY: test-https-proxy restore-lock-check backup backup-verify restore test-backup test-backup-guards build build-bb env check-project-ports up down shell test test-fast test-e2e test-restore-e2e test-smoke test-proxy test-s3 test-bb test-bb-fast test-ff test-ff-smoke test-isolation test-ff-offline test-ff-vitest test-ff-tsc test-ff-lint test-f5-b06-embed test-f5-b05-upload test-f5-b08-video test-f7-b02-approval ff-account build-ff reset logs ps
+.PHONY: test-https-proxy restore-lock-check backup backup-verify restore test-backup test-backup-guards build build-bb env check-project-ports up down shell test test-fast test-e2e test-restore-e2e test-smoke test-proxy test-s3 test-bb test-bb-fast test-ff test-ff-smoke test-isolation test-ff-offline test-ff-vitest test-ff-tsc test-ff-lint test-f5-b06-embed test-f5-b05-upload test-f5-b08-video test-f7-b02-approval ff-account build-ff reset logs ps test-smtp-relay
+.PHONY: check-clean-worktree test-build-source test-up test-p1b02-regressions
+check-clean-worktree:
+	sh scripts/P1-B02/check-clean-worktree.sh
+
+test-build-source:
+	docker run --rm --pull never --network none --user "$(JRC_UID):$(JRC_GID)" \
+	  --volume "$(CURDIR)/scripts/P1-B02:/test:ro" \
+	  jrc-dev:$(JRC_PROJECT) sh /test/test-build-source.sh /test/check-clean-worktree.sh
+
+test-smtp-relay:
+	@sh scripts/P1-B02/test-smtp-relay-scope.sh
+	@sh scripts/P1-B02/test-smtp-relay.sh
+
+test-p1b02-regressions:
+	$(COMPOSE) exec -T jrc-bb-web pytest -p no:cacheprovider -o addopts="" -q --tb=short --ds=config.settings.jrc_test \
+	  apps/jrc_video/tests/test_player.py apps/jrc_video/tests/test_upload.py \
+	  apps/jrc_production/tests/test_publish.py apps/members/tests/test_invite_copy_link.py \
+	  apps/members/tests/test_public_prefix.py
+
+# Build a dirty tree only for an isolated test project; production build targets
+# above continue to reject dirty trees. The archive remains the HEAD snapshot.
+test-up: env check-project-ports
+	@set -eu; version="$$(git rev-parse --short HEAD)"; \
+	  git archive --format=tar.gz --prefix="jr-content-$$version/" --output=brightbean/.jrc-source.tar.gz HEAD
+	$(COMPOSE) up --detach --build --wait --wait-timeout 120
+	@sh scripts/workspace.sh remember
+
 build:
 	docker build --tag jrc-dev:$(JRC_PROJECT) --file docker/Dockerfile docker
 
@@ -58,14 +90,17 @@ env:
 	  jrc-dev:$(JRC_PROJECT) node scripts/init-env.cjs
 
 build-bb:
+	$(MAKE) --no-print-directory check-clean-worktree
 	# Worktree nesmějí přepsat obraz jinému ověřovacímu projektu.
-	docker build --tag jrc-bb:$(JRC_PROJECT) brightbean
+	@set -eu; archive=brightbean/.jrc-source.tar.gz; version="$$(git rev-parse --short HEAD)"; \
+	  git archive --format=tar.gz --prefix="jr-content-$$version/" --output="$$archive" HEAD; \
+	  docker build --build-arg JRC_SOURCE_VERSION="$$version" --tag jrc-bb:$(JRC_PROJECT) brightbean
 	# Zdrojový bind mount skryje CSS sestavené v obrazu; přeneseme je do worktree.
 	docker run --rm --network none --pull never --user "$(JRC_UID):$(JRC_GID)" \
 	  --volume "$(CURDIR)/brightbean:/source" jrc-bb:$(JRC_PROJECT) sh -c \
 	  'mkdir -p /source/theme/static/css/dist /source/apps/jrc_texts/static/jrc_texts/dist && cp /app/theme/static/css/dist/styles.css /source/theme/static/css/dist/styles.css && cp /opt/jrc-texts/script.js /source/apps/jrc_texts/static/jrc_texts/dist/script.js'
 
-build-ff: env
+build-ff: check-clean-worktree env
 	docker build --tag jrc-ff-api:$(JRC_PROJECT) --build-arg JRC_PROJECT=$(JRC_PROJECT) --file docker/Dockerfile.ff-api .
 	docker build --tag jrc-ff-web:$(JRC_PROJECT) --build-arg JRC_PROJECT=$(JRC_PROJECT) --build-arg JRC_BASE_PATH="$${JRC_BASE_PATH-$$(sed -n 's/^JRC_BASE_PATH=//p' .env)}" --file docker/Dockerfile.ff-web .
 
@@ -98,7 +133,7 @@ shell:
 
 test: check-project-ports
 	@failed=0; \
-	for suite in test-smoke test-bb test-ff test-backup-guards; do \
+	for suite in test-smoke test-build-source test-bb test-ff test-backup-guards test-smtp-relay; do \
 	  printf '\n=== %s ===\n' "$$suite"; \
 	  if $(MAKE) --no-print-directory "$$suite"; then \
 	    printf 'VÝSLEDEK: %s OK\n' "$$suite"; \

@@ -46,6 +46,7 @@ else:
 # adresy pro prohlížeč jsou krátkodobě podepsané pro místní bránu S3.
 import io  # noqa: E402
 import os  # noqa: E402
+import tarfile  # noqa: E402
 import uuid  # noqa: E402
 from pathlib import Path  # noqa: E402
 from urllib.parse import parse_qs, urlsplit  # noqa: E402
@@ -60,6 +61,22 @@ from django.core.management import call_command  # noqa: E402
 from django.conf import settings  # noqa: E402
 from django.core.cache import caches  # noqa: E402
 from django.core.cache.backends.redis import RedisCache  # noqa: E402
+
+if sys.argv[1] == "web":
+    archive = settings.JRC_SOURCE_ARCHIVE_DIR / f"jr-content-{settings.JRC_SOURCE_VERSION}.tar.gz"
+    assert archive.is_file(), f"Chybí zdrojový archiv sestavení {settings.JRC_SOURCE_VERSION}"
+    with tarfile.open(archive, "r:gz") as source:
+        names = source.getnames()
+    prefix = f"jr-content-{settings.JRC_SOURCE_VERSION}/"
+    assert prefix + "brightbean/Dockerfile" in names
+    assert prefix + "freeframe/apps/web/package.json" in names
+    assert not any(
+        name == prefix + ".env"
+        or name.startswith(prefix + "backups/")
+        or name.endswith(".log")
+        for name in names
+    )
+    print(f"OK Brightbean: archiv git archive {settings.JRC_SOURCE_VERSION} obsahuje oba projekty bez tajných a provozních dat")
 
 # P1 review: skutečná provozní cache musí sdílet stav mezi nezávislými klienty.
 assert settings.CACHES["default"]["BACKEND"] == "django.core.cache.backends.redis.RedisCache"

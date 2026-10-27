@@ -199,7 +199,13 @@ class BudgetedEmailBackend(BaseEmailBackend):
             if message.extra_headers:
                 message.extra_headers.pop(EMAIL_CLASS_HEADER, None)
 
-        return self._inner().send_messages(allowed) or 0
+        try:
+            return self._inner().send_messages(allowed) or 0
+        except Exception:
+            # SMTP servers may echo credentials or message contents in their
+            # error replies. Do not let the original exception reach callers,
+            # logs, or NotificationDelivery.error_message.
+            raise RuntimeError("SMTP delivery failed") from None
 
     def _allow(self, message) -> bool:
         # recipients() is to + cc + bcc. Suppression has to cover all of them —

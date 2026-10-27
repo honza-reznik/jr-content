@@ -798,6 +798,7 @@
             <a href="{% url 'jrc_ui:about' %}" class="px-3 py-2 text-xs text-stone-500" aria-label="About JR Content">
                 <img src="{% static 'img/jrc-logo.svg' %}" width="20" height="20" alt="" class="inline-block align-middle"> JR Content · About &amp; license
             </a>
+            {% if user.is_authenticated %}<a href="{% url 'jrc_ui:source_code' %}" class="px-3 pb-2 text-[11px] text-stone-400 hover:text-stone-600">Source code · <code>{{ jrc_source_version }}</code></a>{% endif %}
 
             <!-- Organization footer -->
             <div class="sidebar-org-footer border-t border-stone-100 relative px-3 py-3" x-data="{ orgMenuOpen: false }"
@@ -1407,6 +1408,19 @@
     </script>
     {% endif %}
     {% block extra_js %}{% endblock %}
+    <script nonce="{{ request.csp_nonce }}">
+        document.addEventListener('click', async function(event) {
+            const button = event.target.closest('[data-copy-text]');
+            if (!button) return;
+            try {
+                await navigator.clipboard.writeText(button.dataset.copyText);
+                button.textContent = 'Copied';
+            } catch (_) {
+                button.textContent = 'Copy failed';
+            }
+            window.setTimeout(() => { button.textContent = 'Copy link'; }, 1800);
+        });
+    </script>
     {% if can_create_workspace %}
     <!-- Create workspace modal -->
     <div x-data="{ createWsOpen: false }"

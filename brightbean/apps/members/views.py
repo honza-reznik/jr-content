@@ -1,5 +1,6 @@
 """Views for team member management."""
 
+from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -85,6 +86,8 @@ def member_list(request):
             .select_related("invited_by")
             .order_by("-created_at")
         )
+        for invite in pending_invites:
+            invite.invite_url = _invite_url(invite)
 
     # Role choices for forms: only owners may assign Admin (see helper).
     org_role_choices = _org_role_choices_for(request.org_membership)
@@ -157,6 +160,7 @@ def invite_member(request):
             {
                 "invite": invitation,
                 "is_admin": True,
+                "invite_url": _invite_url(invitation),
             },
         )
     return redirect("members:list")
@@ -186,9 +190,19 @@ def resend_invite(request, invitation_id):
             {
                 "invite": invitation,
                 "is_admin": True,
+                "invite_url": _invite_url(invitation),
             },
         )
     return redirect("members:list")
+
+
+def _invite_url(invitation):
+    """Build the public invitation URL using the configured public origin."""
+    path = reverse("members:accept_invite", kwargs={"token": invitation.token})
+    base_path = getattr(settings, "JRC_BASE_PATH", "").rstrip("/")
+    if base_path and not path.startswith(f"{base_path}/"):
+        path = f"{base_path}{path}"
+    return settings.APP_URL.rstrip("/") + path
 
 
 @login_required
@@ -247,6 +261,7 @@ def accept_invite(request, token):
                     "invitation": invitation,
                     "ws_display": ws_display,
                     "error": str(e),
+                    "accept_url": reverse("members:accept_invite", kwargs={"token": token}),
                 },
             )
 
@@ -264,7 +279,7 @@ def accept_invite(request, token):
         {
             "invitation": invitation,
             "ws_display": ws_display,
-            "accept_url": f"/members/invite/{token}/accept/",
+            "accept_url": reverse("members:accept_invite", kwargs={"token": token}),
         },
     )
 

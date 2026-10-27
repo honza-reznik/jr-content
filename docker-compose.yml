@@ -24,6 +24,8 @@ x-bb-s3: &bb-s3
 x-bb: &bb
   build:
     context: ./brightbean
+    args:
+      JRC_SOURCE_VERSION: ${JRC_SOURCE_VERSION:-unknown}
   # Helper editoru žije v obrazu mimo bind mount; obraz musí patřit tomuto projektu.
   image: jrc-bb:${JRC_PROJECT:?JRC_PROJECT není nastavený, použij make}
   restart: unless-stopped
@@ -43,6 +45,11 @@ x-bb: &bb
     DB_USER: ${PGUSER:-jrc}
     DB_PASSWORD: ${PGPASSWORD:?Spusťte make env}
     EMAIL_BACKEND_TYPE: console
+    JRC_SMTP_HOST: ${JRC_SMTP_HOST:+jrc-smtp-relay}
+    JRC_SMTP_PORT: ${JRC_SMTP_PORT:-}
+    JRC_SMTP_USER: ${JRC_SMTP_USER:-}
+    JRC_SMTP_PASSWORD: ${JRC_SMTP_PASSWORD:-}
+    JRC_SMTP_FROM: ${JRC_SMTP_FROM:-}
     MEDIA_ROOT: /app/media
     APP_URL: ${JRC_PUBLIC_ORIGIN:-http://127.0.0.1:${JRC_APP_PORT:-13000}}
     JRC_FF_SYNC_EMAIL: ${JRC_FF_SYNC_EMAIL:-jrc-sync@example.com}
@@ -349,6 +356,34 @@ services:
   jrc-bb-worker:
     <<: *bb
     command: ["python", "manage.py", "run_studio_worker"]
+  # The sole internet-connected service. It forwards SMTP bytes only to the
+  # configured destination; Make enables this profile only for configured SMTP.
+  jrc-smtp-relay:
+    profiles: [smtp]
+    build:
+      context: docker/smtp-relay
+    image: jrc-smtp-relay:${JRC_PROJECT:?Spusťte s JRC_PROJECT}
+    restart: unless-stopped
+    read_only: true
+    user: "65534:65534"
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+    environment:
+      <<: *offline
+      SMTP_TARGET_HOST: ${JRC_SMTP_HOST:-127.0.0.1}
+      SMTP_TARGET_PORT: ${JRC_SMTP_PORT:-25}
+      SMTP_LISTEN_PORT: ${JRC_SMTP_PORT:-25}
+    networks: [internal, smtp-egress]
+  # Local-only sink used by P1-B02's relay regression check.
+  jrc-smtp-test:
+    profiles: [smtp-test]
+    image: python:3.12-slim
+    command: ["python", "/jrc-scripts/P1-B02/fake_smtp.py"]
+    environment: *offline
+    volumes:
+      - ./scripts:/jrc-scripts:ro
+    networks: [internal]
   jrc-dev:
     image: jrc-dev:${JRC_PROJECT:?Spusťte s JRC_PROJECT}
     container_name: ${JRC_PROJECT:?JRC_PROJECT není nastavený, použij make (výchozí jrc) nebo JRC_PROJECT=jrc-<blok>}-dev
@@ -428,6 +463,8 @@ services:
 networks:
   internal:
     internal: true
+  smtp-egress:
+    driver: bridge
   ingress:
     # Pouze místní vstupní porty. Brány před exec odstraní výchozí trasy;
     # navíc není povolen překlad jejich adres na adresu hostitele.

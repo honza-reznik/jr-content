@@ -6,6 +6,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from django.contrib.auth.models import AnonymousUser
+from django.http import HttpResponse
 from django.template import Context, Template
 from django.test import RequestFactory, override_settings
 from django.urls import get_script_prefix, set_script_prefix
@@ -54,6 +55,35 @@ def test_invitation_email_and_anonymous_redirect_keep_prefix(prefix):
     url = urlsplit(result.url)
     assert url.path == prefix + "/accounts/login/"
     assert parse_qs(url.query)["next"] == [prefix + "/members/invite/test-token/accept/"]
+
+
+@pytest.mark.parametrize("invalid", [False, True])
+def test_accept_invite_form_and_error_keep_script_prefix(prefix, invalid):
+    invitation = SimpleNamespace(
+        pk=1,
+        email="invite@example.invalid",
+        token="test-token",
+        organization=SimpleNamespace(name="Org"),
+        invited_by=None,
+        workspace_assignments=[],
+        is_expired=False,
+        is_accepted=False,
+    )
+    request = RequestFactory().post("/members/invite/test-token/accept/") if invalid else RequestFactory().get("/")
+    request.user = AnonymousUser()
+    request.session = {}
+    with patch.object(views.Invitation.objects, "select_related") as query:
+        query.return_value.get.return_value = invitation
+        with patch.object(views, "render", return_value=HttpResponse()) as render:
+            if invalid:
+                request.user = SimpleNamespace(is_authenticated=True)
+                with patch.object(services, "accept_invitation", side_effect=ValueError("invalid invitation")):
+                    views.accept_invite(request, "test-token")
+            else:
+                views.accept_invite(request, "test-token")
+
+    expected = prefix + "/members/invite/test-token/accept/"
+    assert render.call_args.args[2]["accept_url"] == expected
 
 
 def test_dynamic_composer_and_delete_urls_use_named_routes(prefix):
