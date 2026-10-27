@@ -41,7 +41,7 @@ if [ -n "$remote" ]; then
                git -C "$repo" merge --ff-only --quiet refs/remotes/jrc-offsite/zalohy >/dev/null 2>&1; then :; else
                 result=$?; status "CHYBA: místní větev záloh nejde bezpečně navázat (kód $result)."; exit "$result"
             fi
-        elif git -C "$repo" switch --quiet --track -c zalohy jrc-offsite/zalohy >/dev/null 2>&1; then :; else
+        elif git -C "$repo" switch --quiet -c zalohy refs/remotes/jrc-offsite/zalohy >/dev/null 2>&1; then :; else
             result=$?; status "CHYBA: příprava místní větve záloh selhala (kód $result)."; exit "$result"
         fi
     fi

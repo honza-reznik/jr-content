@@ -290,7 +290,11 @@ case "${1:?Chybí operace}" in
             require_empty_volume "$project-$name"
         done
         # Jen databáze a úložiště: aplikace se spustí až nad obnovenými daty.
-        compose up --detach --build --wait --wait-timeout 120 jrc-postgres jrc-s3 jrc-dev
+        if [ "${JRC_BACKUP_NO_BUILD:-}" = yes ]; then
+            compose up --detach --no-build --pull never --wait --wait-timeout 120 jrc-postgres jrc-s3 jrc-dev
+        else
+            compose up --detach --build --wait --wait-timeout 120 jrc-postgres jrc-s3 jrc-dev
+        fi
         sh scripts/workspace.sh check
         compose run --rm --no-deps -T --volume "$abs:/backup:ro" jrc-dev \
             python3 "$tool" restore-check --project "$project" --backup /backup $allow_main_flag
