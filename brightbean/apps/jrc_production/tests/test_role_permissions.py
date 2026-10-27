@@ -25,7 +25,12 @@ ROLES = ["owner", "manager", "editor", "contributor", "client", "viewer"]
 @pytest.fixture
 def content(workspace, user):
     create_manual_channel(workspace, "instagram", "Role test")
-    post = create_content(workspace, "Shared content", user)
+    post = create_content(
+        workspace,
+        "Shared content",
+        user,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     post.internal_notes = "SECRET TEAM NOTES"
     post.save()
     document = texts.create_document(post.pk, user, markdown="Saved script")

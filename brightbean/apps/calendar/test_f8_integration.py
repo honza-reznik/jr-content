@@ -47,7 +47,14 @@ class F8CalendarIntegrationTests(TestCase):
         set_channel_enabled(self.disabled_account, enabled=False)
 
     def _content(self, title, status, *, scheduled=False):
-        post = create_content(self.workspace, title, self.owner)
+        post = create_content(
+            self.workspace,
+            title,
+            self.owner,
+            social_account_ids=self.workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list(
+                "pk", flat=True
+            ),
+        )
         child = post.platform_posts.get(social_account=self.enabled_account)
         child.status = status
         if scheduled:
@@ -198,7 +205,14 @@ class F8CalendarIntegrationTests(TestCase):
             workspace_role=WorkspaceMembership.WorkspaceRole.OWNER,
         )
         other_account = create_manual_channel(other_workspace, "instagram", "Other workspace IG")
-        foreign_post = create_content(other_workspace, "Foreign review item must stay hidden", self.owner)
+        foreign_post = create_content(
+            other_workspace,
+            "Foreign review item must stay hidden",
+            self.owner,
+            social_account_ids=other_workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list(
+                "pk", flat=True
+            ),
+        )
         foreign_child = foreign_post.platform_posts.get(social_account=other_account)
         foreign_child.status = PlatformPost.Status.PENDING_REVIEW
         foreign_child.save(update_fields=["status", "updated_at"])

@@ -3,12 +3,18 @@
 
 import json
 import pathlib
+from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
+from threading import Event
+from time import monotonic
 
 import pytest
 from django.core.cache import cache
+from django.db import connection, connections
 from django.test import Client, override_settings
 
 from apps.accounts.models import User
+from apps.api.routers import content as content_routes
 from apps.api_keys.services import issue_api_key
 from apps.approvals.models import PostComment
 from apps.composer.models import PlatformPost, Post
@@ -44,7 +50,12 @@ def channel(workspace):
 
 @pytest.fixture
 def content(workspace, user, channel):
-    return create_content(workspace, "API content", user)
+    return create_content(
+        workspace,
+        "API content",
+        user,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
 
 
 def make_key(workspace, user, accounts=None, permissions=None):
@@ -200,7 +211,12 @@ def test_caption_channel_scope(workspace, user, org_owner, content, channel):
 
 
 def test_caption_of_another_content_is_404(key, workspace, user, content):
-    other = create_content(workspace, "Second", user)
+    other = create_content(
+        workspace,
+        "Second",
+        user,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     foreign_variant = other.platform_posts.get()
     assert api(key, "get", f"{content.pk}/captions/{foreign_variant.pk}").status_code == 404
 
@@ -223,10 +239,13 @@ def test_no_other_api_path_rewrites_or_deletes_a_versioned_caption(key, content)
         versions_before
     )
 
-    # The API has no way to delete a post or channel copy.
+    # A whole post has no delete route; a versioned copy cannot be removed (P1-B06).
     spec = Client(HTTP_AUTHORIZATION=f"Bearer {key.plaintext_token}").get("/api/v1/openapi.json", secure=True)
     paths = spec.json()["paths"]
-    assert not [p for p, ops in paths.items() if "delete" in ops and "/posts" in p]
+    assert {p for p, ops in paths.items() if "delete" in ops and "/posts" in p} == {
+        "/api/v1/posts/{post_id}/channels/{platform_post_id}"
+    }
+    assert api(key, "delete", f"{content.pk}/channels/{variant.pk}").status_code == 422
     assert api(key, "delete", f"{content.pk}").status_code in (404, 405)
     assert PlatformPost.objects.filter(pk=variant.pk).exists()
 
@@ -382,7 +401,12 @@ def test_foreign_workspace_and_anonymous(workspace, user, org_owner, content, or
     other_ws = Workspace.objects.create(organization=organization, name="Foreign")
     WorkspaceMembership.objects.create(workspace=other_ws, user=user, workspace_role="owner")
     create_manual_channel(other_ws, "instagram", "Foreign IG")
-    foreign = create_content(other_ws, "Foreign content", user)
+    foreign = create_content(
+        other_ws,
+        "Foreign content",
+        user,
+        social_account_ids=other_ws.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     key = make_key(workspace, user)
     fvariant = foreign.platform_posts.get()
     for method, path, data in [
@@ -481,3 +505,229 @@ def test_upstream_post_routes_cannot_write_unversioned_captions(key, workspace, 
     variant.refresh_from_db()
     assert variant.platform_specific_caption == "Versioned"
     assert Post.objects.get(pk=new_id).caption == "Base caption"
+
+
+# P1-B06: content without channels and explicitly selected channel sets.
+def test_create_channel_less_content_script_comments_stage_and_idempotency(key, workspace):
+    response = api(key, "post", "", {"title": "Unassigned idea", "idempotency_key": "unassigned"})
+    assert response.status_code == 201, response.content
+    post_id = response.json()["id"]
+    assert response.json()["platform_posts"] == []
+    assert api(key, "post", "", {"title": "Unassigned idea", "idempotency_key": "unassigned"}).json()["id"] == post_id
+    assert api(key, "get", post_id).status_code == 200
+    assert api(key, "get", f"{post_id}/captions").json() == []
+    assert api(key, "post", f"{post_id}/script", {"markdown": "# A channel can wait"}).status_code == 201
+    assert api(key, "post", f"{post_id}/comments", {"body": "Keep this idea"}).status_code == 201
+    assert len(api(key, "get", f"{post_id}/comments").json()) == 1
+    stage = api(key, "get", f"{post_id}/stage").json()
+    assert set(stage["available_moves"]) == {"script", "shooting", "editing"}
+    moved = api(key, "post", f"{post_id}/stage", {"stage": "editing", "expected_stage": "idea"})
+    assert moved.status_code == 200 and moved.json()["stage"] == "editing"
+    review = api(key, "post", f"{post_id}/stage", {"stage": "review", "expected_stage": "editing"})
+    assert review.status_code == 422 and "Add a channel" in review.json()["detail"]
+    schedule = api(key, "post", f"{post_id}/schedule", {"scheduled_at": "2099-01-01T12:00:00Z"})
+    assert schedule.status_code == 422 and "Add a channel" in schedule.json()["detail"]
+    assert (
+        api(
+            key, "post", "", {"title": "No schedule", "action": "schedule", "scheduled_at": "2099-01-01T12:00:00Z"}
+        ).status_code
+        == 422
+    )
+    assert not Post.objects.filter(workspace=workspace, title="No schedule").exists()
+
+
+def test_multi_channel_creation_scope_and_overrides(workspace, user, channel, org_owner):
+    second = create_manual_channel(workspace, "custom", "Web")
+    key = make_key(workspace, user, accounts=[channel, second])
+    payload = {"title": "Two explicit channels", "social_account_ids": [str(channel.pk), str(second.pk)]}
+    response = api(key, "post", "", payload)
+    assert response.status_code == 201, response.content
+    assert {p["social_account_id"] for p in response.json()["platform_posts"]} == {str(channel.pk), str(second.pk)}
+    narrow = make_key(workspace, user, accounts=[channel])
+    assert api(narrow, "post", "", payload).status_code == 403
+    assert api(narrow, "get", response.json()["id"]).status_code == 404
+    both = {**payload, "social_account_id": str(channel.pk)}
+    assert api(key, "post", "", both).status_code == 422
+    assert api(key, "post", "", {"social_account_ids": [str(channel.pk), str(channel.pk)]}).status_code == 422
+    assert (
+        api(
+            key,
+            "post",
+            "",
+            {**payload, "platform_overrides": [{"social_account_id": str(second.pk), "caption": "Unversioned"}]},
+        ).status_code
+        == 422
+    )
+    assert Post.objects.filter(title="Two explicit channels").count() == 1
+
+
+def test_explicit_api_channel_add_remove_and_allowlist(workspace, user, channel, org_owner):
+    second = create_manual_channel(workspace, "custom", "Web")
+    key = make_key(workspace, user, accounts=[channel, second])
+    narrow = make_key(workspace, user, accounts=[channel])
+    post = api(key, "post", "", {"title": "Add later"}).json()
+    post_id = post["id"]
+    assert api(narrow, "post", f"{post_id}/channels", {"social_account_id": str(second.pk)}).status_code == 403
+    added = api(key, "post", f"{post_id}/channels", {"social_account_id": str(second.pk)})
+    assert added.status_code == 200, added.content
+    copy_id = added.json()["platform_posts"][0]["id"]
+    assert (
+        api(key, "post", f"{post_id}/channels", {"social_account_id": str(second.pk)}).json()["platform_posts"][0]["id"]
+        == copy_id
+    )
+    assert api(narrow, "delete", f"{post_id}/channels/{copy_id}").status_code == 404
+    removed = api(key, "delete", f"{post_id}/channels/{copy_id}")
+    assert removed.status_code == 200 and removed.json()["platform_posts"] == []
+    # Last copy removed: workspace access still reaches script and comments.
+    assert api(narrow, "get", f"{post_id}/script").status_code == 200
+    added = api(key, "post", f"{post_id}/channels", {"social_account_id": str(channel.pk)})
+    copy_id = added.json()["platform_posts"][0]["id"]
+    assert api(key, "post", f"{post_id}/captions/{copy_id}", {"text": "Keep history"}).status_code == 201
+    assert api(key, "delete", f"{post_id}/channels/{copy_id}").status_code == 422
+
+
+def test_channel_api_respects_key_and_issuer_permissions(key, workspace, user, channel):
+    post_id = api(key, "post", "", {"title": "Limited key"}).json()["id"]
+    read_only = make_key(workspace, user, accounts=[channel], permissions=[])
+    assert api(read_only, "post", f"{post_id}/channels", {"social_account_id": str(channel.pk)}).status_code == 403
+    # Contributor cannot attach a channel to another author's content.
+    member = User.objects.create_user(email="channel-contributor@example.test")
+    WorkspaceMembership.objects.create(workspace=workspace, user=member, workspace_role="contributor")
+    OrgMembership.objects.create(user=member, organization=workspace.organization, org_role="owner")
+    contributor_key = make_key(workspace, member, accounts=[channel])
+    assert (
+        api(contributor_key, "post", f"{post_id}/channels", {"social_account_id": str(channel.pk)}).status_code == 403
+    )
+    # A workspace-scoped unassigned content UUID cannot cross workspaces.
+    other = Workspace.objects.create(organization=workspace.organization, name="Other workspace")
+    WorkspaceMembership.objects.create(workspace=other, user=user, workspace_role="owner")
+    foreign = create_content(other, "Foreign unassigned", user)
+    assert api(key, "get", str(foreign.pk)).status_code == 404
+
+
+def test_openapi_documents_unassigned_and_channel_routes(key):
+    spec = Client(HTTP_AUTHORIZATION=f"Bearer {key.plaintext_token}").get("/api/v1/openapi.json", secure=True).json()
+    schema = spec["components"]["schemas"]["CreatePostRequest"]
+    assert "social_account_id" not in schema.get("required", [])
+    assert "social_account_ids" in schema["properties"]
+    assert "/api/v1/posts/{post_id}/channels" in spec["paths"]
+    assert "delete" in spec["paths"]["/api/v1/posts/{post_id}/channels/{platform_post_id}"]
+
+
+def _concurrent_channel_request(key, method, path, data=None, pid_queue=None):
+    try:
+        reported = False
+
+        def report_connection(execute, sql, params, many, context):
+            nonlocal reported
+            if not reported:
+                reported = True
+                execute("SET lock_timeout = '8s'", None, False, context)
+                if pid_queue is not None:
+                    pid_queue.put(connection.connection.info.backend_pid)
+            return execute(sql, params, many, context)
+
+        with connection.execute_wrapper(report_connection):
+            return api(key, method, path, data)
+    finally:
+        connections.close_all()
+
+
+def _channel_request_waits_on_lock(pid, future):
+    deadline = monotonic() + 5
+    while monotonic() < deadline and not future.done():
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT cardinality(pg_blocking_pids(%s)) > 0", [pid])
+            if cursor.fetchone()[0]:
+                return True
+        Event().wait(0.01)
+    return False
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("method", ["post", "delete"])
+def test_channel_allowlist_is_rechecked_after_concurrent_wider_key(
+    workspace, user, channel, org_owner, monkeypatch, method
+):
+    second = create_manual_channel(workspace, "custom", "Private B")
+    third = create_manual_channel(workspace, "youtube", "Allowed C")
+    post = create_content(workspace, "Concurrent channels", user, social_account_ids=[channel.pk])
+    variant = post.platform_posts.get()
+    wide = make_key(workspace, user, accounts=[channel, second, third])
+    narrow = make_key(workspace, user, accounts=[channel, third])
+    added, release = Event(), Event()
+    original = content_routes.add_content_channel
+
+    def pause_wide(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if args[1] == second.pk:
+            added.set()
+            assert release.wait(8)
+        return result
+
+    monkeypatch.setattr(content_routes, "add_content_channel", pause_wide)
+    path = f"{post.pk}/channels" if method == "post" else f"{post.pk}/channels/{variant.pk}"
+    payload = {"social_account_id": str(third.pk)} if method == "post" else None
+    pids = Queue()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        wide_request = pool.submit(
+            _concurrent_channel_request, wide, "post", f"{post.pk}/channels", {"social_account_id": str(second.pk)}
+        )
+        try:
+            assert added.wait(8), "Wide request did not add its private channel"
+            narrow_request = pool.submit(_concurrent_channel_request, narrow, method, path, payload, pids)
+            blocked = _channel_request_waits_on_lock(pids.get(timeout=8), narrow_request)
+        finally:
+            release.set()
+        assert wide_request.result(timeout=10).status_code == 200
+        response = narrow_request.result(timeout=10)
+    assert blocked, "Narrow request must wait for the parent Post lock"
+    assert response.status_code == 404, response.content
+    assert str(second.pk) not in response.content.decode()
+    assert set(post.platform_posts.values_list("social_account_id", flat=True)) == {channel.pk, second.pk}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("method", ["post", "delete"])
+def test_channel_response_is_materialized_before_releasing_parent_lock(
+    workspace, user, channel, org_owner, monkeypatch, method
+):
+    second = create_manual_channel(workspace, "custom", "Private B")
+    third = create_manual_channel(workspace, "youtube", "Allowed C")
+    post = create_content(workspace, "Response isolation", user, social_account_ids=[channel.pk])
+    variant = post.platform_posts.get()
+    wide = make_key(workspace, user, accounts=[channel, second, third])
+    narrow = make_key(workspace, user, accounts=[channel, third])
+    serializing, release = Event(), Event()
+    original = content_routes._post_to_response
+
+    def pause_response(request, content):
+        if request.api_key.pk == narrow.api_key.pk:
+            serializing.set()
+            assert release.wait(8)
+        return original(request, content)
+
+    monkeypatch.setattr(content_routes, "_post_to_response", pause_response)
+    path = f"{post.pk}/channels" if method == "post" else f"{post.pk}/channels/{variant.pk}"
+    payload = {"social_account_id": str(third.pk)} if method == "post" else None
+    pids = Queue()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        narrow_request = pool.submit(_concurrent_channel_request, narrow, method, path, payload)
+        try:
+            assert serializing.wait(8), "Narrow request did not reach response serialization"
+            wide_request = pool.submit(
+                _concurrent_channel_request,
+                wide,
+                "post",
+                f"{post.pk}/channels",
+                {"social_account_id": str(second.pk)},
+                pids,
+            )
+            blocked = _channel_request_waits_on_lock(pids.get(timeout=8), wide_request)
+        finally:
+            release.set()
+        response = narrow_request.result(timeout=10)
+        assert wide_request.result(timeout=10).status_code == 200
+    assert blocked, "Wider request must wait until the narrow response has been assembled"
+    assert response.status_code == 200, response.content
+    assert str(second.pk) not in response.content.decode()

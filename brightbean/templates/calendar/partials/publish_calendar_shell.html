@@ -75,7 +75,7 @@ Toolbar: nav arrows + period + Today + view dropdown | right: filter dropdowns.
             {% ui_select model="calendarFilters.status" options=status_choices onchange="reloadCalendar()" placeholder="All Posts" icon="status" %}
 
             <!-- Channels filter (multi-select) -->
-            {% ui_select model="calendarFilters.channels" options=social_accounts multiple=True onchange="reloadCalendar()" placeholder="Channels" icon="channel" label_field="display_label" icon_field="platform" %}
+            {% ui_select model="calendarFilters.channels" options=calendar_channels multiple=True onchange="reloadCalendar()" placeholder="Channels" icon="channel" label_field="display_label" icon_field="platform" %}
 
             <!-- Tags filter -->
             {% ui_select model="calendarFilters.tag" options=all_tags onchange="reloadCalendar()" placeholder="Tags" icon="tag" %}

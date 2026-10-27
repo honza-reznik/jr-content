@@ -27,7 +27,12 @@ def channel(workspace):
 
 @pytest.fixture
 def post(workspace, user, channel):
-    return create_content(workspace, "Ella's studio tour", user)
+    return create_content(
+        workspace,
+        "Ella's studio tour",
+        user,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
 
 
 @pytest.fixture
@@ -58,7 +63,12 @@ def approve(post, user):
 @pytest.mark.parametrize("role", ["owner", "manager", "editor", "contributor", "client"])
 def test_members_can_create_content_in_service_and_http(workspace, user, channel, http, role):
     set_role(workspace, user, role)
-    content = create_content(workspace, f"{role} idea", user)
+    content = create_content(
+        workspace,
+        f"{role} idea",
+        user,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     assert content.platform_posts.get().status == "draft"
     response = http.post(reverse("jrc_production:create"), {"workspace": str(workspace.pk), "title": "New idea"})
     assert response.status_code == 302
@@ -84,7 +94,14 @@ def test_creation_rejects_unauthorized_callers_before_writes(workspace, user, ch
         user.is_active = False
         user.save()
     with pytest.raises(PermissionDenied):
-        create_content(workspace, "Forbidden idea", actor)
+        create_content(
+            workspace,
+            "Forbidden idea",
+            actor,
+            social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list(
+                "pk", flat=True
+            ),
+        )
     assert not Post.objects.exists()
     assert not PlatformPost.objects.exists()
 
@@ -107,7 +124,14 @@ def test_foreign_workspace_is_rejected_in_service_and_http(workspace, user, http
     foreign = Workspace.objects.create(organization=organization, name="Foreign client")
     create_manual_channel(foreign, "instagram", "Secret channel")
     with pytest.raises(PermissionDenied):
-        create_content(foreign, "Forbidden content", user)
+        create_content(
+            foreign,
+            "Forbidden content",
+            user,
+            social_account_ids=foreign.social_accounts.filter(jrc_channel__is_enabled=True).values_list(
+                "pk", flat=True
+            ),
+        )
     response = http.post(reverse("jrc_production:create"), {"workspace": str(foreign.id), "title": "Hidden"})
     assert response.status_code == 404
     assert not Post.objects.exists()
@@ -117,7 +141,12 @@ def test_board_filters_and_scope(http, workspace, organization, user, post):
     other = Workspace.objects.create(organization=organization, name="Other client")
     set_role(other, user, "owner")
     custom = create_manual_channel(other, "custom", "Other newsletter")
-    other_post = create_content(other, "Other public idea", user)
+    other_post = create_content(
+        other,
+        "Other public idea",
+        user,
+        social_account_ids=other.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     hidden = Workspace.objects.create(organization=organization, name="Secret client")
     Post.objects.create(workspace=hidden, title="Secret idea")
     url = reverse("jrc_production:board")
@@ -173,9 +202,11 @@ def test_board_does_not_duplicate_multichannel_content(http, post, workspace):
 def test_creation_error_preserves_selected_client_and_title(http, workspace, organization, user):
     other = Workspace.objects.create(organization=organization, name="Another client")
     WorkspaceMembership.objects.create(workspace=other, user=user, workspace_role="owner")
-    response = http.post(reverse("jrc_production:create"), {"workspace": workspace.pk, "title": "Keep my title"})
+    response = http.post(
+        reverse("jrc_production:create"), {"workspace": workspace.pk, "title": "Keep my title", "channels": ["invalid"]}
+    )
     assert response.status_code == 400
-    assert b"Enable at least one channel" in response.content
+    assert b"Choose enabled channels" in response.content
     assert b"Keep my title" in response.content
     assert response.context["selected_client"] == str(workspace.pk)
     assert response.context["new_title"] == "Keep my title"
@@ -186,7 +217,14 @@ def test_creation_error_preserves_selected_client_and_title(http, workspace, org
 
 def test_empty_title_rejected(http, workspace, channel, user):
     with pytest.raises(ValidationError, match="title"):
-        create_content(workspace, "   ", user)
+        create_content(
+            workspace,
+            "   ",
+            user,
+            social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list(
+                "pk", flat=True
+            ),
+        )
     assert http.post(reverse("jrc_production:create"), {"workspace": workspace.pk, "title": " "}).status_code == 400
     assert not Post.objects.exists()
 
@@ -286,7 +324,12 @@ def test_client_can_move_only_own_production(post, workspace, user):
     set_role(workspace, client_user, "client")
     with pytest.raises(PermissionDenied):
         move_content(post, "script", client_user, expected_stage="idea")
-    own = create_content(workspace, "Ella's own idea", client_user)
+    own = create_content(
+        workspace,
+        "Ella's own idea",
+        client_user,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     assert pipeline_stage(move_content(own, "script", client_user, expected_stage="idea")) == "script"
     assert pipeline_stage(move_content(own, "review", client_user, expected_stage="script")) == "review"
 

@@ -144,6 +144,9 @@ async function main() {
     await admin.page.goto(`${base}/board/`);
     await admin.page.getByText('+ New content', { exact: true }).click();
     await admin.page.getByLabel('Content title', { exact: true }).fill('Reel pro Ellu — ranní zahrada');
+    // P1-B06: tento scénář výslovně připravuje obsah pro jediný kanál klientky.
+    await admin.page.locator('#new-client').selectOption(fixture.workspace);
+    await admin.page.locator('.board-new input[name=channels]:enabled').check();
     await admin.page.getByRole('button', { name: 'Add to Idea' }).click();
     await admin.page.waitForLoadState('networkidle');
     const card = admin.page.locator('.board-card').filter({ hasText: 'Reel pro Ellu — ranní zahrada' });

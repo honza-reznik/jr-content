@@ -16,7 +16,12 @@ pytestmark = pytest.mark.django_db
 @pytest.fixture
 def content_with_history(workspace, user):
     create_manual_channel(workspace, "instagram", "Ella Instagram")
-    post = create_content(workspace, "Ella garden reel", user)
+    post = create_content(
+        workspace,
+        "Ella garden reel",
+        user,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     post.caption = "A short story about the garden."
     post.internal_notes = "Team only: confirm the location release."
     post.save(update_fields=["caption", "internal_notes", "updated_at"])

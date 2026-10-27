@@ -26,6 +26,16 @@
             <div><p class="text-xs text-stone-400">Publish date</p><p class="mt-1 text-sm font-medium text-stone-700">{% if post.scheduled_at %}{{ post.scheduled_at|date:"M j, Y · g:i A" }}{% elif post.proposed_publish_at %}Proposed · {{ post.proposed_publish_at|date:"M j, Y · g:i A" }}{% else %}Not set{% endif %}</p></div>
             <div><p class="text-xs text-stone-400">Category</p><p class="mt-1 text-sm font-medium text-stone-700">{{ post.category.name|default:"None" }}</p></div>
         </div>
+        <details id="content-channels" class="mt-5 border-t border-stone-100 pt-4" {% if channel_error %}open{% endif %}>
+            <summary class="text-sm font-medium text-stone-700">Manage channels</summary>
+            {% if channel_error %}<p role="alert" class="mt-3 text-sm text-red-700">{{ channel_error }}</p>{% endif %}
+            {% if can_manage_channels %}
+                <p class="mt-3 text-sm text-stone-500">Add channels explicitly. New client channels never attach to existing content automatically. Move content to Editing to change its channels.</p>
+                {% if addable_channels %}<form method="post" class="mt-3 flex flex-wrap gap-2">{% csrf_token %}<input type="hidden" name="action" value="add_channel"><label for="add-channel" class="sr-only">Channel to add</label><select id="add-channel" name="channel" class="rounded-lg border border-stone-300 px-3 py-2">{% for account in addable_channels %}<option value="{{ account.id }}">{{ account.jrc_channel.display_name|default:account.account_name }}</option>{% endfor %}</select><button class="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white">Add channel</button></form>{% else %}<p class="mt-3 text-sm text-stone-500">No more enabled channels. Enable a channel in the client profile first.</p>{% endif %}
+                {% for variant in post.platform_posts.all %}<form method="post" class="mt-3 flex flex-wrap items-center gap-2">{% csrf_token %}<input type="hidden" name="action" value="remove_channel"><input type="hidden" name="platform_post" value="{{ variant.id }}"><span class="text-sm">{{ variant.social_account.account_name }}</span><button class="rounded-lg border border-stone-300 px-3 py-2 text-sm">Remove channel</button></form>{% endfor %}
+                <p class="mt-3 text-xs text-stone-500">Channels with caption history or video cannot be removed.</p>
+            {% else %}<p class="mt-3 text-sm text-stone-500">Ask an editor to add a channel to this content.</p>{% endif %}
+        </details>
     </header>
 
     <nav aria-label="Content sections" class="mt-5 -mx-3 overflow-x-auto px-3 sm:mx-0 sm:px-0">
@@ -37,7 +47,10 @@
     </nav>
 
     <section class="mt-5 rounded-2xl border border-stone-200 bg-white p-4 sm:p-6" role="tabpanel" aria-label="{{ active_tab|title }}">
-        {% if active_tab == "comments" %}
+        {% if needs_channel %}
+            <p class="text-sm text-stone-500">Add a channel first</p>
+            {% if can_manage_channels %}<a href="#content-channels" data-open-channels class="mt-3 inline-flex rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white">Add channel</a>{% else %}<p class="mt-3 text-sm text-stone-500">Ask an editor to add a channel.</p>{% endif %}
+        {% elif active_tab == "comments" %}
             <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">Comments</h2><p class="mt-1 text-sm text-stone-500">Discuss this content with your team{% if is_client %}.{% else %}. Internal comments are visible to your team only.{% endif %}</p></div>
             <form method="post" action="{% url 'jrc_production:add_content_comment' workspace_id=workspace.id post_id=post.id %}" class="mb-6 rounded-xl border border-stone-200 bg-stone-50 p-3 sm:p-4">
                 {% csrf_token %}
@@ -159,6 +172,11 @@
 </div>
 {% endblock %}
 {% block extra_js %}
+<script nonce="{{ request.csp_nonce }}">
+const channels = document.getElementById('content-channels');
+if (location.hash === '#content-channels') channels.open = true;
+document.querySelectorAll('[data-open-channels]').forEach(button => button.addEventListener('click', () => { channels.open = true; }));
+</script>
 {% if active_tab == "script" %}<script type="module" src="{% static 'jrc_texts/dist/script.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
 {% if active_tab == "caption" %}<script src="{% static 'jrc_production/caption-counter.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
 {% if active_tab == "video" %}<script src="{% static 'jrc_video/upload.js' %}" nonce="{{ request.csp_nonce }}"></script><script src="{% static 'jrc_video/video-tab.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}

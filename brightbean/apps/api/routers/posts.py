@@ -142,9 +142,9 @@ def _get_workspace_post(request: HttpRequest, post_id: uuid.UUID) -> Post:
     )
     allowed_ids = {sa.id for sa in request.api_key.social_accounts.all()}  # type: ignore[attr-defined]
     pp_account_ids = {pp.social_account_id for pp in post.platform_posts.all()}
-    # No platform_posts → nothing this key could legitimately act on.
+    # Content without channels is scoped to the workspace; channel copies must all be allowed.
     # Foreign child → leaking even via a read would be a confused-deputy.
-    if not pp_account_ids or not pp_account_ids.issubset(allowed_ids):
+    if not pp_account_ids.issubset(allowed_ids):
         raise Http404()
     return post
 
@@ -173,28 +173,34 @@ def create(request, payload: CreatePostRequest):
     # Doing all "can this request possibly succeed?" checks pre-claim
     # keeps the claim/release pair tight and confined to the post-claim
     # path (platform quota + create_post).
-    social_account = _resolve_account(request, payload.social_account_id)
+    if payload.social_account_id is not None and payload.social_account_ids is not None:
+        raise HttpError(422, "Use social_account_id or social_account_ids, not both.")
+    account_ids = (
+        payload.social_account_ids
+        if payload.social_account_ids is not None
+        else ([payload.social_account_id] if payload.social_account_id is not None else [])
+    )
+    if len(set(account_ids)) != len(account_ids):
+        raise HttpError(422, "Choose each channel only once.")
+    accounts = [_resolve_account(request, account_id) for account_id in account_ids]
+    for account in accounts:
+        profile = getattr(account, "jrc_channel", None)
+        if profile is not None and not profile.is_enabled:
+            raise HttpError(422, "Choose an enabled channel.")
+    if not accounts and payload.action == "schedule":
+        raise HttpError(422, "Add a channel before scheduling content.")
     if payload.action == "schedule" and payload.scheduled_at is None:
         raise HttpError(422, "scheduled_at is required when action='schedule'.")
 
-    # Build the platform_overrides dict and validate that each override's
-    # social_account_id matches one of the post's target accounts. In the
-    # current single-account API that's only ``payload.social_account_id``;
-    # anything else would silently no-op at publish time, so we reject up
-    # front. The plan's [Gap 2] section calls this out explicitly.
+    # Every override targets an explicitly selected account. JR channel captions
+    # still use the versioned caption API, including on multi-channel content.
     platform_overrides: dict = {}
     for ov in payload.platform_overrides:
         # A channel caption without a version would bypass the history (F9-B01).
-        if ov.caption is not None and _is_jrc_channel(social_account):
+        if ov.caption is not None and any(_is_jrc_channel(a) for a in accounts if a.pk == ov.social_account_id):
             raise _reject_unversioned_caption()
-        if ov.social_account_id != payload.social_account_id:
-            raise HttpError(
-                422,
-                (
-                    f"platform_overrides[*].social_account_id must match the post's "
-                    f"social_account_id ({payload.social_account_id}); got {ov.social_account_id}."
-                ),
-            )
+        if ov.social_account_id not in account_ids:
+            raise HttpError(422, "platform_overrides[*].social_account_id must match a selected social_account_id.")
         platform_overrides[ov.social_account_id] = {
             "title": ov.title,
             "caption": ov.caption,
@@ -240,7 +246,8 @@ def create(request, payload: CreatePostRequest):
     # platform's posting cap.
     if payload.action == "schedule":
         try:
-            check_platform_quota(social_account)
+            for account in accounts:
+                check_platform_quota(account)
         except HttpError:
             release_idempotent_claim(api_key=request.api_key, idempotency_key=idempotency_key)
             raise
@@ -259,7 +266,7 @@ def create(request, payload: CreatePostRequest):
     try:
         post = create_post(
             workspace=request.api_key.workspace,
-            social_account=social_account,
+            social_accounts=accounts,
             caption=payload.caption,
             media_asset_ids=payload.media_asset_ids,
             title=payload.title,
@@ -438,6 +445,8 @@ def schedule(request, post_id: uuid.UUID, payload: ScheduleRequest):
     _require_perm(request, "create_posts")
     _require_perm(request, "publish_directly")
     post = _get_workspace_post(request, post_id)
+    if not post.platform_posts.exists():
+        raise HttpError(422, "Add a channel before scheduling content.")
 
     # Schedule every draft child; a single-account key produces one child,
     # but defensively we apply the transition to all draft children so we

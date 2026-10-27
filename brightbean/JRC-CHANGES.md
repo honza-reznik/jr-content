@@ -1,5 +1,19 @@
 # Úpravy JR Content
 
+## 2026-10-27 — P1-B06
+
+- Obsah lze založit bez kanálu; zapnuté kanály klienta se připojují jen výslovnou volbou.
+  Nástěnka a seznam nabízejí filtr No channel; bez termínu obsah zůstává mimo kalendář,
+  s navrženým termínem se zobrazuje bez publikačního místa a přesouvání myší.
+- Detail dovoluje přidávat/odebírat kanály při přípravě obsahu podle oprávnění autora.
+  Popisek s historií ani video nelze odebráním kanálu smazat. Video, Caption a Publish
+  bez kanálu odkazují na jeho přidání. Review a další fáze vyžadují kanál.
+- REST POST /posts přijímá žádný kanál, social_account_id nebo social_account_ids.
+  POST /posts/{id}/channels a DELETE /posts/{id}/channels/{platform_post_id}
+  sdílejí pravidla detailu a kontrolují oprávnění i seznam kanálů API klíče.
+  Obsah bez kanálu zůstává omezen na pracovní prostor klíče. OpenAPI popisuje nové vstupy a cesty.
+- Ověření P1-B06 používá pouze existující obrazy, bez sestavení, stahování a nových balíčků.
+
 ## 2026-10-27 — P1-B03
 
 - Oprava review: společná kontrola aktuálního přístupu běží před každým

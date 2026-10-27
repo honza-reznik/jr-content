@@ -18,7 +18,12 @@ pytestmark = pytest.mark.django_db
 @pytest.mark.parametrize("stage", ProductionStage.values)
 def test_draft_uses_only_stored_production_stage(workspace, user, stage):
     create_manual_channel(workspace, "instagram", "Test IG")
-    post = create_content(workspace, "Test reel", user)
+    post = create_content(
+        workspace,
+        "Test reel",
+        user,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     PostProduction.objects.filter(post=post).update(stage=stage)
 
     fresh = Post.objects.get(pk=post.pk)
@@ -53,7 +58,12 @@ def test_draft_uses_only_stored_production_stage(workspace, user, stage):
 def test_pipeline_uses_upstream_aggregate(workspace, user, statuses, expected):
     for index in range(len(statuses)):
         create_manual_channel(workspace, "instagram", f"Test IG {index}")
-    post = create_content(workspace, "Test reel", user)
+    post = create_content(
+        workspace,
+        "Test reel",
+        user,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     PostProduction.objects.filter(post=post).update(stage="editing")
     for pp, status in zip(post.platform_posts.order_by("id"), statuses, strict=True):
         PlatformPost.objects.filter(pk=pp.pk).update(status=status)
@@ -79,7 +89,12 @@ def test_legacy_review_needs_no_extension(workspace):
 
 def test_return_to_draft_reveals_production_stage(workspace, user):
     create_manual_channel(workspace, "instagram", "Test IG")
-    post = create_content(workspace, "Test reel", user)
+    post = create_content(
+        workspace,
+        "Test reel",
+        user,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     pp = post.platform_posts.get()
     for status in ("pending_review", "approved"):
         pp.transition_to(status)
@@ -107,7 +122,12 @@ def test_create_content_includes_exactly_enabled_workspace_channels(workspace, o
     upstream.save()
 
     before = timezone.now()
-    post = create_content(workspace, "Test reel", user)
+    post = create_content(
+        workspace,
+        "Test reel",
+        user,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     production = post.jrc_production
     assert post.title == "Test reel"
     assert post.workspace == workspace
@@ -122,24 +142,30 @@ def test_create_content_includes_exactly_enabled_workspace_channels(workspace, o
 
 
 @pytest.mark.parametrize("disabled", [False, True])
-def test_no_enabled_channels_rejects_invisible_content(workspace, user, disabled):
+def test_no_enabled_channels_allows_content(workspace, user, disabled):
     if disabled:
         channel = create_manual_channel(workspace, "instagram", "Disabled IG")
         set_channel_enabled(channel, enabled=False)
-    with pytest.raises(ValidationError, match="Enable at least one channel"):
-        create_content(workspace, "Invisible reel", user)
-    assert not Post.objects.exists()
-    assert not PostProduction.objects.exists()
+    post = create_content(workspace, "Idea without a channel", user)
+    assert Post.objects.get() == post
+    assert PostProduction.objects.get().post == post
     assert not PlatformPost.objects.exists()
 
 
 def test_failure_rolls_back_entire_content(workspace, user):
     create_manual_channel(workspace, "instagram", "Test IG")
     with (
-        patch.object(PlatformPost.objects, "bulk_create", side_effect=IntegrityError("test failure")),
+        patch.object(PlatformPost.objects, "create", side_effect=IntegrityError("test failure")),
         pytest.raises(IntegrityError, match="test failure"),
     ):
-        create_content(workspace, "Test reel", user)
+        create_content(
+            workspace,
+            "Test reel",
+            user,
+            social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list(
+                "pk", flat=True
+            ),
+        )
     assert not Post.objects.exists()
     assert not PostProduction.objects.exists()
     assert not PlatformPost.objects.exists()
@@ -148,7 +174,14 @@ def test_failure_rolls_back_entire_content(workspace, user):
 def test_invalid_title_leaves_no_content(workspace, user):
     create_manual_channel(workspace, "instagram", "Test IG")
     with pytest.raises(ValidationError):
-        create_content(workspace, "x" * 256, user)
+        create_content(
+            workspace,
+            "x" * 256,
+            user,
+            social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list(
+                "pk", flat=True
+            ),
+        )
     assert not Post.objects.exists()
 
 
@@ -161,7 +194,12 @@ def test_database_rejects_nonproduction_stage(workspace, invalid_stage):
 
 def test_history_and_publication_survive_user_deletion_and_follow_content_deletion(workspace, user):
     create_manual_channel(workspace, "instagram", "Test IG")
-    post = create_content(workspace, "Test reel", user)
+    post = create_content(
+        workspace,
+        "Test reel",
+        user,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     change = StageChange.objects.create(
         post=post, from_stage="approved", to_stage="editing", user=user, note="New cut requested"
     )

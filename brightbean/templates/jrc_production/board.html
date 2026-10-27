@@ -69,7 +69,7 @@
   <header class="board-heading"><div><h1>Content board</h1><p>From the first idea to the published post.</p></div><span class="board-count">{{ total }} item{{ total|pluralize }}</span></header>
   <form method="get" class="board-toolbar" aria-label="Filter content">
     <div class="board-filter"><label for="filter-client">Client</label><select id="filter-client" name="client"><option value="">All clients</option>{% for client in clients %}<option value="{{ client.id }}" {% if selected_client == client.id|stringformat:"s" %}selected{% endif %}>{{ client.name }}</option>{% endfor %}</select></div>
-    <div class="board-filter"><label for="filter-channel">Channel</label><select id="filter-channel" name="channel"><option value="">All channels</option>{% for channel in channels %}<option value="{{ channel.id }}" {% if selected_channel == channel.id|stringformat:"s" %}selected{% endif %}>{{ channel.workspace.name }} · {{ channel.jrc_channel.display_name|default:channel.account_name }}</option>{% endfor %}</select></div>
+    <div class="board-filter"><label for="filter-channel">Channel</label><select id="filter-channel" name="channel"><option value="">All channels</option><option value="none" {% if selected_channel == "none" %}selected{% endif %}>No channel</option>{% for channel in channels %}<option value="{{ channel.id }}" {% if selected_channel == channel.id|stringformat:"s" %}selected{% endif %}>{{ channel.workspace.name }} · {{ channel.jrc_channel.display_name|default:channel.account_name }}</option>{% endfor %}</select></div>
     <button class="board-secondary" type="submit">Apply filters</button><a class="board-reset" href="{% url 'jrc_production:board' %}">Clear</a>
   </form>
   {% if error %}<div class="board-error" role="alert">{{ error }}</div>{% endif %}
@@ -78,6 +78,9 @@
     <form method="post" action="{% url 'jrc_production:create' %}">{% csrf_token %}
       <div><label for="new-client">Client</label><select id="new-client" name="workspace" required>{% for client in creatable_clients %}<option value="{{ client.id }}" {% if selected_client == client.id|stringformat:"s" %}selected{% endif %}>{{ client.name }}</option>{% endfor %}</select></div>
       <div class="board-title-field"><label for="new-title">Content title</label><input id="new-title" name="title" placeholder="e.g. A morning in Ella’s studio" value="{{ new_title }}" maxlength="255" required></div>
+      <fieldset style="width:100%"><legend>Channels <span class="board-muted">(optional; leave unchecked for an idea without a channel)</span></legend>
+        {% for channel in creation_channels %}<label data-channel-client="{{ channel.workspace_id }}" style="display:inline-flex;align-items:center;gap:6px;margin-right:16px"><input type="checkbox" name="channels" value="{{ channel.id }}" style="min-height:20px">{{ channel.workspace.name }} · {{ channel.jrc_channel.display_name|default:channel.account_name }}</label>{% endfor %}
+      </fieldset>
       <button class="board-primary" type="submit">Add to Idea</button>
     </form>
   </details>
@@ -100,8 +103,8 @@
     <section class="board-column" data-stage="{{ column.value }}" aria-label="{{ column.label }}"><h2>{{ column.label }} <span class="stage-count">{{ column.cards|length }}</span></h2>
       {% for card in column.cards %}
       <article class="board-card" data-post="{{ card.post.id }}">
-        <span class="board-client">{{ card.post.workspace.name }}</span><h3>{{ card.post.title|default:"Untitled content" }}</h3>
-        <div>{% for variant in card.post.platform_posts.all %}<span class="board-channel">{{ variant.social_account.jrc_channel.display_name|default:variant.social_account.account_name }}</span>{% endfor %}</div>
+        <span class="board-client">{{ card.post.workspace.name }}</span><h3><a href="{% url 'jrc_production:content_detail' workspace_id=card.post.workspace_id post_id=card.post.id %}">{{ card.post.title|default:"Untitled content" }}</a></h3>
+        <div>{% for variant in card.post.platform_posts.all %}<span class="board-channel">{{ variant.social_account.jrc_channel.display_name|default:variant.social_account.account_name }}</span>{% empty %}<span class="board-channel">No channel</span><p class="board-status">Add a channel on the content detail before Review.</p>{% endfor %}</div>
         {% if card.client_review %}<span class="board-status">Awaiting client sign-off</span>{% endif %}
         {% if card.post.scheduled_at %}{% timezone card.post.workspace.effective_timezone %}<time datetime="{{ card.post.scheduled_at|date:'c' }}">Planned: {{ card.post.scheduled_at|date:"M j, Y H:i T" }}</time>{% endtimezone %}{% endif %}
         {% if card.moves %}
@@ -121,6 +124,23 @@
 </div>
 {% endblock %}
 {% block extra_js %}
+<script nonce="{{ request.csp_nonce }}">
+(() => {
+  const client = document.getElementById('new-client');
+  if (!client) return;
+  function updateChannels() {
+    document.querySelectorAll('[data-channel-client]').forEach(label => {
+      const enabled = label.dataset.channelClient === client.value;
+      label.style.display = enabled ? 'inline-flex' : 'none';
+      const checkbox = label.querySelector('input');
+      checkbox.disabled = !enabled;
+      if (!enabled) checkbox.checked = false;
+    });
+  }
+  client.addEventListener('change', updateChannels);
+  updateChannels();
+})();
+</script>
 <script nonce="{{ request.csp_nonce }}">
   const stageSelect = document.getElementById('mobile-stage');
   stageSelect.addEventListener('change', () => {
