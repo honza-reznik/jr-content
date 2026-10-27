@@ -42,34 +42,82 @@ def pipeline_stage(post):
 
 
 @transaction.atomic
-def create_content(workspace, title, user):
-    """Create local content and one draft variant for each enabled client channel.
+def create_content(workspace, title, user, *, social_account_ids=()):
+    """Create an idea with only explicitly selected enabled channels (none by default)."""
+    from apps.composer.services import create_post
 
-    No enabled channel means the upstream lists would hide the content, so reject
-    creation before writing anything. Check authorization here for every caller.
-    """
     membership = content_membership(workspace, user)
     if not can_create_content(membership):
         raise PermissionDenied("You cannot create content for this client.")
     title = title.strip()
     if not title:
         raise ValidationError("Enter a content title.")
+    Post(workspace=workspace, title=title, author=user).full_clean()
+    ids = {str(value) for value in social_account_ids}
     channels = list(
         ChannelProfile.objects.filter(social_account__workspace=workspace, is_enabled=True)
         .select_related("social_account")
         .order_by("created_at", "social_account_id")
     )
-    if not channels:
-        raise ValidationError("Enable at least one channel before creating content.")
-
-    post = Post(workspace=workspace, title=title, author=user)
-    post.full_clean()
-    post.save()
+    selected = [channel.social_account for channel in channels if str(channel.social_account_id) in ids]
+    if {str(account.pk) for account in selected} != ids:
+        raise ValidationError("Choose enabled channels of this client.")
+    post = create_post(workspace=workspace, title=title, author=user, caption="", social_accounts=selected)
     PostProduction.objects.create(post=post, stage_changed_by=user)
-    PlatformPost.objects.bulk_create(
-        [PlatformPost(post=post, social_account=channel.social_account) for channel in channels]
-    )
     return post
+
+
+def can_manage_channels(post, membership):
+    permissions = membership.effective_permissions
+    return permissions.get("create_posts", False) and (
+        post.author_id == membership.user_id or permissions.get("edit_others_posts", False)
+    )
+
+
+def _lock_channel_content(post, user):
+    post = Post.objects.select_for_update(of=("self",)).select_related("workspace").get(pk=post.pk)
+    membership = content_membership(post.workspace, user)
+    if not can_manage_channels(post, membership):
+        raise PermissionDenied("You cannot change channels for this content.")
+    if post.platform_posts.exclude(status="draft").exists():
+        raise ValidationError("Move this content back to Editing before changing channels.")
+    return post
+
+
+@transaction.atomic
+def add_content_channel(post, account_id, user):
+    from apps.composer.services import add_platform_post
+
+    post = _lock_channel_content(post, user)
+    channel = (
+        ChannelProfile.objects.select_for_update(of=("self",))
+        .select_related("social_account")
+        .filter(social_account__workspace=post.workspace, is_enabled=True, social_account_id=account_id)
+        .first()
+    )
+    if channel is None:
+        raise ValidationError("Choose an enabled channel of this client.")
+    existing = post.platform_posts.filter(social_account_id=account_id).first()
+    if existing:
+        return existing
+    variant = add_platform_post(post, channel.social_account)
+    post.save(update_fields=["updated_at"])
+    return variant
+
+
+@transaction.atomic
+def remove_content_channel(post, platform_post_id, user):
+    from apps.jrc_video.models import VideoAsset
+
+    post = _lock_channel_content(post, user)
+    variant = post.platform_posts.select_for_update().filter(pk=platform_post_id).first()
+    if variant is None:
+        raise ValidationError("Choose a channel of this content.")
+    if variant.jrc_texts.exists() or VideoAsset.objects.filter(platform_post=variant).exists():
+        raise ValidationError("A channel with caption history or video cannot be removed.")
+    variant.delete()
+    sync_post_scheduled_at(post)
+    post.save(update_fields=["updated_at"])
 
 
 def content_membership(workspace, user):
@@ -120,8 +168,6 @@ def can_decide(post, membership, statuses=None):
 def available_moves(post, membership):
     """Offer exactly the transitions the service will authorize for this snapshot."""
     children = list(post.platform_posts.all())
-    if not children:
-        return []
     statuses = {pp.status for pp in children}
     permissions = membership.effective_permissions
     can_edit = can_create_content(membership) and (
@@ -130,7 +176,7 @@ def available_moves(post, membership):
     moves = []
     if can_edit and statuses <= {"draft"}:
         moves.extend(stage for stage in ProductionStage.values if stage != pipeline_stage(post))
-    if can_edit and statuses <= {"draft", "changes_requested", "rejected", "approved", "scheduled"}:
+    if children and can_edit and statuses <= {"draft", "changes_requested", "rejected", "approved", "scheduled"}:
         if statuses <= {"draft", "changes_requested", "rejected"}:
             moves.append(PipelineStage.REVIEW)
             if statuses & {"changes_requested", "rejected"}:
@@ -139,7 +185,7 @@ def available_moves(post, membership):
             moves.append(ProductionStage.EDITING)
     if can_decide(post, membership, statuses):
         moves.append(PipelineStage.APPROVED)
-    if permissions.get("publish_directly", False) and statuses <= {"approved"}:
+    if children and permissions.get("publish_directly", False) and statuses <= {"approved"}:
         moves.append(PipelineStage.READY)
     return moves
 
@@ -185,6 +231,8 @@ def move_content(post, stage, user, *, expected_stage, scheduled_at=None):
         raise ValidationError("This content changed. Refresh the board and try again.")
     if stage not in PipelineStage.values:
         raise ValidationError("Choose a valid stage.")
+    if not children and stage not in ProductionStage.values:
+        raise ValidationError("Add a channel before moving content to Review or later stages.")
     if stage not in available_moves(post, membership):
         raise PermissionDenied("You cannot make this move. Check your permissions and the current stage.")
     if stage in ProductionStage.values:

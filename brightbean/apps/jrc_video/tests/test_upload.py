@@ -16,7 +16,7 @@ from django.utils import timezone
 from apps.accounts.models import User
 from apps.composer.models import PlatformPost
 from apps.jrc_channels.services import create_manual_channel
-from apps.jrc_production.services import create_content
+from apps.jrc_production.services import add_content_channel, create_content
 from apps.jrc_video import uploads
 from apps.jrc_video.client import FreeFrameError
 from apps.jrc_video.models import VideoAccount, VideoAsset, VideoProject, VideoVersion
@@ -152,7 +152,12 @@ def setup(workspace, user):
     VideoAccount.objects.create(user=user, ff_user_id=uuid.uuid4(), synced_at=timezone.now())
     VideoProject.objects.create(workspace=workspace, ff_project_id=uuid.uuid4(), synced_at=timezone.now())
     create_manual_channel(workspace, "instagram", "Ella Instagram")
-    post = create_content(workspace, "Ella garden reel", user)
+    post = create_content(
+        workspace,
+        "Ella garden reel",
+        user,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     return post
 
 
@@ -225,7 +230,12 @@ def test_contributor_only_for_own_content(client, ff, workspace, user, setup):
     contributor = make_user(workspace, "contrib@example.com", "contributor")
     client.force_login(contributor)
     assert start(client, workspace, setup).status_code == 403  # content of another author
-    own = create_content(workspace, "Own reel", contributor)
+    own = create_content(
+        workspace,
+        "Own reel",
+        contributor,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     response = post_json(
         client,
         url("upload_start", workspace, own),
@@ -322,7 +332,12 @@ def test_foreign_channel_is_not_found(client, ff, workspace, user, setup, organi
     other = Workspace.objects.create(organization=organization, name="Other client")
     WorkspaceMembership.objects.create(workspace=other, user=user, workspace_role="owner")
     create_manual_channel(other, "instagram", "Other")
-    foreign = create_content(other, "Foreign", user)
+    foreign = create_content(
+        other,
+        "Foreign",
+        user,
+        social_account_ids=other.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     client.force_login(user)
     response = start(client, workspace, setup, channel=channel_key(foreign))
     assert response.status_code == 404 and ff.calls == []
@@ -383,12 +398,20 @@ def test_failed_compensation_keeps_a_local_mirror_of_the_remote_upload(client, f
     assert version.number == 4  # Status reconciliation also replaces the provisional number.
 
 
-def test_enabled_channel_without_copy_gets_one(client, ff, workspace, user, setup):
+def test_enabled_channel_requires_explicit_attachment_before_upload(client, ff, workspace, user, setup):
     from apps.social_accounts.models import SocialAccount
 
     create_manual_channel(workspace, "instagram", "Late channel")
     account = SocialAccount.objects.get(account_name="Late channel")
     client.force_login(user)
+    response = post_json(
+        client,
+        url("upload_start", workspace, setup),
+        {"channel": f"new:{account.pk}", "filename": "a.mp4", "size": 10, "type": "video/mp4"},
+    )
+    assert response.status_code == 409, response.content
+    assert not PlatformPost.objects.filter(post=setup, social_account=account).exists()
+    add_content_channel(setup, account.pk, user)
     response = post_json(
         client,
         url("upload_start", workspace, setup),
@@ -445,7 +468,12 @@ def test_part_rejects_foreign_key_bad_number_and_long_lived_or_foreign_url(clien
 
 def test_part_refused_after_the_user_lost_the_editor_role(client, ff, workspace, user, setup):
     person = make_user(workspace, "ed@example.com", "editor")
-    own = create_content(workspace, "Ed reel", person)
+    own = create_content(
+        workspace,
+        "Ed reel",
+        person,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     client.force_login(person)
     info = post_json(
         client,

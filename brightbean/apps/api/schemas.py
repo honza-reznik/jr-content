@@ -168,17 +168,20 @@ class PlatformOverride(Schema):
 
 
 class CreatePostRequest(Schema):
-    """Create a draft or directly schedule a post against one account.
+    """Create an unassigned draft or target explicitly selected accounts.
 
-    ``social_account_id`` MUST be in the key's allowlist; the auth class
+    Every selected account MUST be in the key's allowlist; the auth class
     raises 403 otherwise.
     """
 
-    social_account_id: uuid.UUID = Field(
-        ...,
-        description="ID of the SocialAccount to target. Must be in the key's allowlist.",
+    social_account_id: uuid.UUID | None = Field(
+        None, description="One target account in the key's allowlist. Omit for content without a channel."
     )
-    caption: str = Field(..., max_length=10_000)
+    social_account_ids: list[uuid.UUID] | None = Field(
+        None,
+        description="Explicit target accounts in the key's allowlist. Use this OR social_account_id; [] means no channel.",
+    )
+    caption: str = Field("", max_length=10_000)
     title: str = Field(
         "",
         max_length=255,
@@ -210,8 +213,7 @@ class CreatePostRequest(Schema):
         default_factory=list,
         description=(
             "Optional per-platform overrides of title / caption / first_comment. "
-            "Each entry's social_account_id must equal the post's social_account_id "
-            "in the current single-account API. Sending a field as ``null`` (or "
+            "Each entry targets one of the explicitly selected accounts. Sending a field as ``null`` (or "
             "omitting it) leaves the post's default in place for that platform."
         ),
     )

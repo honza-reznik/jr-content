@@ -20,7 +20,7 @@ from apps.composer import views as composer_views
 from apps.composer.models import PlatformPost
 from apps.jrc_channels.services import create_manual_channel, set_channel_enabled
 from apps.jrc_production import views as production_views
-from apps.jrc_production.services import create_content
+from apps.jrc_production.services import add_content_channel, create_content
 from apps.jrc_texts.models import TextDocument
 from apps.members.models import WorkspaceMembership
 
@@ -33,7 +33,12 @@ LONG_CAPTION = 'Hi \U0001f331 garden!\n\nSecond line with a dash – and quotes 
 @pytest.fixture
 def content(workspace, user):
     instagram = create_manual_channel(workspace, "instagram", "Ella Instagram")
-    post = create_content(workspace, "Garden reel", user)
+    post = create_content(
+        workspace,
+        "Garden reel",
+        user,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     variant = PlatformPost.objects.get(post=post, social_account=instagram)
     return post, variant, instagram
 
@@ -116,6 +121,7 @@ def test_composer_cannot_delete_caption_history(client, workspace, user, content
         # A composer opened before this new channel was added still selects only Instagram.
         selected = [instagram]
         channel = create_manual_channel(workspace, "linkedin_personal", "Later LinkedIn")
+        add_content_channel(post, channel.pk, user)
         response = client.post(
             _detail(post), {"action": "save_caption", "platform_post": f"new:{channel.pk}", "caption": "New channel"}
         )
@@ -213,7 +219,12 @@ def test_scoped_composer_does_not_require_a_sibling_with_caption_history(client,
 @pytest.mark.parametrize("submitted", [None, "New video title", ""])
 def test_versioned_caption_keeps_title_editable_and_preserves_an_absent_title(client, workspace, user, submitted):
     channel = create_manual_channel(workspace, "youtube", "Video channel")
-    post = create_content(workspace, "Shared title", user)
+    post = create_content(
+        workspace,
+        "Shared title",
+        user,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     variant = PlatformPost.objects.get(post=post, social_account=channel)
     variant.platform_specific_title = 'Original title <b> & "quoted"'
     variant.save(update_fields=["platform_specific_title"])
@@ -333,6 +344,7 @@ def test_stale_composer_waits_for_new_caption_channel_then_rejects_it(
 ):
     post, variant, instagram = content
     channel = create_manual_channel(workspace, "linkedin_personal", "Concurrent new channel")
+    add_content_channel(post, channel.pk, user)
     copy_ready, continue_caption = Event(), Event()
     original = production_views._create_missing_copy
 
@@ -516,7 +528,7 @@ def test_detail_instagram_preview_matches_latest_version(client, user, content):
     assert preview["caption"] == LONG_CAPTION == _latest(variant).text
 
 
-def test_caption_card_hides_disabled_channels_and_offers_other_enabled_ones(client, workspace, user, content):
+def test_caption_card_shows_only_explicitly_attached_enabled_channels(client, workspace, user, content):
     post, variant, instagram = content
     linkedin = create_manual_channel(workspace, "linkedin_personal", "Ella LinkedIn")
     hidden = create_manual_channel(workspace, "tiktok", "Ella TikTok")
@@ -527,19 +539,22 @@ def test_caption_card_hides_disabled_channels_and_offers_other_enabled_ones(clie
 
     channels = response.context["caption_channels"]
     by_account = {item["account"].pk: item for item in channels}
-    assert set(by_account) == {instagram.pk, linkedin.pk}  # disabled TikTok is not shown
+    assert set(by_account) == {instagram.pk}
     assert by_account[instagram.pk]["variant"] == variant
-    assert by_account[linkedin.pk]["variant"] is None  # enabled after the content was created
-    assert by_account[linkedin.pk]["key"] == f"new:{linkedin.pk}"
-    assert by_account[linkedin.pk]["char_limit"] == linkedin.char_limit
-    assert by_account[linkedin.pk]["previews"] == []  # only Instagram has a preview
-    assert response.content.decode().count('<textarea id="caption-') == 2  # one field per shown channel
+    assert linkedin in response.context["addable_channels"]
+    assert hidden not in response.context["addable_channels"]
+    assert response.content.decode().count('<textarea id="caption-') == 1
 
 
 def test_hidden_channel_with_existing_copy_is_not_shown(client, workspace, user):
     kept = create_manual_channel(workspace, "instagram", "Ella Instagram")
     dropped = create_manual_channel(workspace, "linkedin_personal", "Ella LinkedIn")
-    post = create_content(workspace, "Two channels", user)
+    post = create_content(
+        workspace,
+        "Two channels",
+        user,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     set_channel_enabled(dropped, enabled=False)
     client.force_login(user)
 
@@ -549,7 +564,7 @@ def test_hidden_channel_with_existing_copy_is_not_shown(client, workspace, user)
     assert PlatformPost.objects.filter(post=post, social_account=dropped).exists()  # data is kept
 
 
-def test_saving_a_caption_for_a_newly_enabled_channel_creates_its_copy_and_version(client, workspace, user, content):
+def test_saving_caption_cannot_implicitly_attach_a_new_channel(client, workspace, user, content):
     post, variant, instagram = content
     linkedin = create_manual_channel(workspace, "linkedin_personal", "Ella LinkedIn")
     client.force_login(user)
@@ -559,16 +574,14 @@ def test_saving_a_caption_for_a_newly_enabled_channel_creates_its_copy_and_versi
         {"action": "save_caption", "platform_post": f"new:{linkedin.pk}", "caption": "LinkedIn text \U0001f331"},
     )
 
-    assert response.status_code == 302
-    copy = PlatformPost.objects.get(post=post, social_account=linkedin)
-    assert copy.status == PlatformPost.Status.DRAFT
-    assert copy.platform_specific_caption == "LinkedIn text \U0001f331"
-    assert _latest(copy).text == "LinkedIn text \U0001f331"
+    assert response.status_code == 404
+    assert not PlatformPost.objects.filter(post=post, social_account=linkedin).exists()
 
 
 def test_new_channel_caption_respects_the_channel_character_limit(client, workspace, user, content):
     post, variant, instagram = content
     linkedin = create_manual_channel(workspace, "linkedin_personal", "Ella LinkedIn")
+    add_content_channel(post, linkedin.pk, user)
     client.force_login(user)
 
     response = client.post(
@@ -578,7 +591,8 @@ def test_new_channel_caption_respects_the_channel_character_limit(client, worksp
 
     assert response.status_code == 200
     assert f"exceeds the {linkedin.char_limit}-character limit" in response.context["caption_error"]
-    assert not PlatformPost.objects.filter(post=post, social_account=linkedin).exists()
+    copy = PlatformPost.objects.get(post=post, social_account=linkedin)
+    assert not TextDocument.objects.filter(platform_post=copy).exists()
 
 
 def test_new_channel_copy_is_refused_once_content_left_drafting(client, workspace, user, content):
@@ -587,12 +601,10 @@ def test_new_channel_copy_is_refused_once_content_left_drafting(client, workspac
     linkedin = create_manual_channel(workspace, "linkedin_personal", "Ella LinkedIn")
     client.force_login(user)
 
-    response = client.post(
-        _detail(post), {"action": "save_caption", "platform_post": f"new:{linkedin.pk}", "caption": "Late text"}
-    )
+    response = client.post(_detail(post), {"action": "add_channel", "channel": str(linkedin.pk)})
 
     assert response.status_code == 200
-    assert "enabled after this content left drafting" in response.context["caption_error"]
+    assert "back to Editing" in response.context["channel_error"]
     assert not PlatformPost.objects.filter(post=post, social_account=linkedin).exists()
     variant.refresh_from_db()
     assert variant.status == PlatformPost.Status.APPROVED

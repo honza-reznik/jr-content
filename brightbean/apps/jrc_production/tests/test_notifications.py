@@ -95,7 +95,12 @@ def everyone(owner, manager, editor, contributor, ella, viewer):
 @pytest.fixture
 def content(workspace, owner, everyone):
     create_manual_channel(workspace, "instagram", "Ella Instagram")
-    post = create_content(workspace, "Ella garden reel", owner)
+    post = create_content(
+        workspace,
+        "Ella garden reel",
+        owner,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     post.internal_notes = SECRET_NOTE
     post.save(update_fields=["internal_notes", "updated_at"])
     Notification.objects.all().delete()
@@ -187,7 +192,12 @@ def test_script_created_with_text_notifies_but_an_empty_one_does_not(workspace, 
     texts.create_document(content.pk, owner, markdown="")
     assert Notification.objects.count() == 0
 
-    other = create_content(workspace, "Second reel", owner)
+    other = create_content(
+        workspace,
+        "Second reel",
+        owner,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     Notification.objects.all().delete()
     texts.create_document(other.pk, owner, markdown="Real words", source="api")
     assert receivers(EventType.CONTENT_SCRIPT_VERSION) == {"mia", "eddie", "cora"}
@@ -400,7 +410,12 @@ def test_team_request_for_changes_stays_with_the_author_and_hides_the_internal_n
     set_mode(workspace, TWO_STAGE)
     ella = everyone["client"]
     # content created by the client: the client is the author
-    mine = create_content(workspace, "Ella's own idea", ella)
+    mine = create_content(
+        workspace,
+        "Ella's own idea",
+        ella,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     approvals.submit_for_review(mine, ella, workspace)
     Notification.objects.all().delete()
 
@@ -595,7 +610,12 @@ def test_client_step_request_skips_clients_who_cannot_decide_or_are_inactive(wor
 def test_decision_does_not_reach_an_author_who_left(workspace, everyone, content, how):
     set_mode(workspace, SINGLE)
     ella = everyone["client"]
-    mine = create_content(workspace, "Ella's own idea", ella)
+    mine = create_content(
+        workspace,
+        "Ella's own idea",
+        ella,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     approvals.submit_for_review(mine, ella, workspace)
     if how == "removed":
         WorkspaceMembership.objects.filter(user=ella, workspace=workspace).delete()

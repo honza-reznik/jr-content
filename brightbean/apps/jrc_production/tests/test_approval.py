@@ -69,7 +69,12 @@ def viewer(workspace):
 @pytest.fixture
 def content(workspace, team):
     create_manual_channel(workspace, "instagram", "Ella Instagram")
-    post = create_content(workspace, "Ella garden reel", team)
+    post = create_content(
+        workspace,
+        "Ella garden reel",
+        team,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     document = texts.create_document(post.pk, team, markdown="SCENE ONE: Ella waters the roses.")
     draft = texts.edit(document.versions.get(state="final").pk, team)
     texts.save(draft.pk, team, expected_revision=0, markdown="SCENE ONE: Ella waters the roses at dawn.")
@@ -142,7 +147,12 @@ def test_card_summarizes_script_caption_and_final_video(workspace, team, ella, c
 
 def test_card_without_video_or_script_says_so(workspace, team, ella):
     create_manual_channel(workspace, "instagram", "Ella Instagram")
-    post = create_content(workspace, "Empty idea", team)
+    post = create_content(
+        workspace,
+        "Empty idea",
+        team,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     to_review(post, team)
     body = login(ella).get(detail_url(post)).content.decode()
     assert "No script has been saved yet." in body
@@ -421,7 +431,12 @@ def test_waiting_for_you_lists_only_own_client_content_for_clients(workspace, te
     other_ws = Workspace.objects.create(organization=other_org, name="Other client", approval_workflow_mode=SINGLE)
     join(other_ws, team, "owner")
     create_manual_channel(other_ws, "instagram", "Other IG")
-    foreign = create_content(other_ws, "Foreign reel", team)
+    foreign = create_content(
+        other_ws,
+        "Foreign reel",
+        team,
+        social_account_ids=other_ws.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     to_review(foreign, team)
     to_review(content, team)
 

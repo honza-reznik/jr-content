@@ -74,7 +74,8 @@ _INITIAL_STATUSES = {"draft", "scheduled"}
 def create_post(
     *,
     workspace,
-    social_account,
+    social_account=None,
+    social_accounts=None,
     caption: str,
     media_asset_ids: Iterable[Any] | None = None,
     title: str = "",
@@ -86,7 +87,7 @@ def create_post(
     status: str = "draft",
     platform_overrides: dict[Any, dict[str, str | None]] | None = None,
 ):
-    """Create a ``Post`` + one ``PlatformPost`` for ``social_account``.
+    """Create a Post with explicitly selected channel copies, or none for a draft.
 
     The canonical service-layer entry point for the Agent API. The
     composer's HTMX-driven ``save_post`` view will be refactored to call
@@ -114,11 +115,12 @@ def create_post(
       ``media_asset_ids``. They must already live in the workspace's
       media library.
 
-    Returns the persisted ``Post`` with one ``PlatformPost`` child.
+    ``social_account`` preserves single-account callers; ``social_accounts`` selects zero or more.
+    Returns the persisted Post with exactly those PlatformPost children.
     """
     from django.db import transaction
 
-    from apps.composer.models import PlatformPost, Post, PostMedia
+    from apps.composer.models import Post, PostMedia
     from apps.media_library.models import MediaAsset
 
     if status not in _INITIAL_STATUSES:
@@ -128,20 +130,19 @@ def create_post(
         )
     if status == "scheduled" and scheduled_at is None:
         raise ValueError("status='scheduled' requires scheduled_at.")
-    if social_account.workspace_id != workspace.id:
-        raise ValueError(f"SocialAccount {social_account.id} is not in workspace {workspace.id}.")
-
-    # Refuse to queue work against a connection the platform itself has
-    # rejected. ``failed`` rows still count against the platform quota
-    # (see ``QUOTA_CONSUMING_STATUSES`` in apps/api/limits.py), so each
-    # silently-scheduled post against a disconnected/errored account
-    # would burn one slot without ever publishing. Forcing an explicit
-    # error here makes the agent reconnect first.
-    if getattr(social_account, "needs_reconnect", False):
-        raise ValueError(
-            f"SocialAccount {social_account.id} is in connection_status "
-            f"{social_account.connection_status!r}; reconnect it before scheduling."
-        )
+    accounts = list(social_accounts) if social_accounts is not None else ([social_account] if social_account else [])
+    if len({account.pk for account in accounts}) != len(accounts):
+        raise ValueError("Choose each channel only once.")
+    if not accounts and status != "draft":
+        raise ValueError("Add a channel before scheduling content.")
+    for account in accounts:
+        if account.workspace_id != workspace.id:
+            raise ValueError(f"SocialAccount {account.id} is not in workspace {workspace.id}.")
+        if getattr(account, "needs_reconnect", False):
+            raise ValueError(
+                f"SocialAccount {account.id} is in connection_status "
+                f"{account.connection_status!r}; reconnect it before scheduling."
+            )
 
     if status == "scheduled":
         _require_approval_gate_passes(workspace)
@@ -173,17 +174,10 @@ def create_post(
             raise ValueError(f"Media asset(s) not found in workspace {workspace.id}: {missing}")
 
     if status == "scheduled":
-        # A new post has no platform_extra, so a Pinterest pin has no board
-        # yet and is refused here: it can be created as a draft, given a
-        # board in the composer, and scheduled from there.
-        reason = publish_blocker(
-            social_account,
-            media_types=usable_media_types(asset_map.values()),
-        )
-        if reason:
-            raise ValueError(reason)
-
-    override = (platform_overrides or {}).get(social_account.id) or {}
+        for account in accounts:
+            reason = publish_blocker(account, media_types=usable_media_types(asset_map.values()))
+            if reason:
+                raise ValueError(reason)
 
     with transaction.atomic():
         post = Post.objects.create(
@@ -203,15 +197,14 @@ def create_post(
         # means "no platform-specific override; fall back to the post
         # value via ``PlatformPost.effective_*``". Any string —
         # including ``""`` — is treated as an explicit override.
-        PlatformPost.objects.create(
-            post=post,
-            social_account=social_account,
-            status=status,
-            scheduled_at=scheduled_at if status == "scheduled" else None,
-            platform_specific_title=override.get("title"),
-            platform_specific_caption=override.get("caption"),
-            platform_specific_first_comment=override.get("first_comment"),
-        )
+        for account in accounts:
+            add_platform_post(
+                post,
+                account,
+                status=status,
+                scheduled_at=scheduled_at if status == "scheduled" else None,
+                override=(platform_overrides or {}).get(account.id) or {},
+            )
         for position, (_mid, u) in enumerate(resolved):
             # ``u`` is validated non-None and present in ``asset_map`` above
             # (the ``missing`` check raises otherwise); narrow for mypy.
@@ -227,6 +220,24 @@ def create_post(
     # composer view code relies on it.
     sync_post_scheduled_at(post)
     return post
+
+
+def add_platform_post(post, account, *, status="draft", scheduled_at=None, override=None):
+    """Create one explicitly selected copy; never infer a client's other channels."""
+    from apps.composer.models import PlatformPost
+
+    if account.workspace_id != post.workspace_id:
+        raise ValueError("Choose a channel of this client.")
+    override = override or {}
+    return PlatformPost.objects.create(
+        post=post,
+        social_account=account,
+        status=status,
+        scheduled_at=scheduled_at,
+        platform_specific_title=override.get("title"),
+        platform_specific_caption=override.get("caption"),
+        platform_specific_first_comment=override.get("first_comment"),
+    )
 
 
 def transition_platform_post(

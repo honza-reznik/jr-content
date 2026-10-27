@@ -5,6 +5,7 @@ import json
 import uuid
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
+from types import SimpleNamespace
 
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
@@ -135,13 +136,18 @@ def _get_filtered_posts(workspace, request):
             "media_attachments__media_asset",
         )
     )
-    qs = qs.filter(platform_posts__social_account__jrc_channel__is_enabled=True).distinct()
+    qs = qs.filter(
+        Q(platform_posts__social_account__jrc_channel__is_enabled=True) | Q(platform_posts__isnull=True)
+    ).distinct()
 
     # Status filter — editorial status now lives on PlatformPost, so match
     # posts that have at least one child carrying the target state.
     statuses = request.GET.getlist("status")
     if statuses:
-        qs = qs.filter(platform_posts__status__in=statuses).distinct()
+        status_q = Q(platform_posts__status__in=statuses)
+        if "draft" in statuses:
+            status_q |= Q(platform_posts__isnull=True)
+        qs = qs.filter(status_q).distinct()
 
     # Platform filter
     platforms = request.GET.getlist("platform")
@@ -149,11 +155,14 @@ def _get_filtered_posts(workspace, request):
         qs = qs.filter(platform_posts__social_account__platform__in=platforms).distinct()
 
     channels = _get_channel_filters(request)
-    if channels:
-        qs = qs.filter(
-            platform_posts__social_account__jrc_channel__is_enabled=True,
-            platform_posts__social_account_id__in=channels,
-        ).distinct()
+    no_channel = "none" in request.GET.getlist("channel")
+    if channels or no_channel:
+        channel_q = Q(
+            platform_posts__social_account__jrc_channel__is_enabled=True, platform_posts__social_account_id__in=channels
+        )
+        if no_channel:
+            channel_q |= Q(platform_posts__isnull=True)
+        qs = qs.filter(channel_q).distinct()
 
     # Author filter
     authors = request.GET.getlist("author")
@@ -217,6 +226,8 @@ def _get_filtered_platform_posts(workspace, request):
 
     # Channel filter (calendar toolbar sends the selected SocialAccount id).
     channels = _get_channel_filters(request)
+    if "none" in request.GET.getlist("channel") and not channels:
+        return qs.none()
     if channels:
         qs = qs.filter(social_account_id__in=channels)
 
@@ -241,6 +252,30 @@ def _get_filtered_platform_posts(workspace, request):
         qs = qs.filter(tag_q)
 
     return qs
+
+
+def _channel_less_calendar_rows(workspace, request, first_date, last_date):
+    """Render a dated idea without inventing a persisted channel copy or a publication slot."""
+    from django.db.models.functions import Coalesce
+
+    posts = (
+        _get_filtered_posts(workspace, request)
+        .filter(platform_posts__isnull=True)
+        .annotate(effective_at=Coalesce("scheduled_at", "proposed_publish_at"))
+        .filter(effective_at__date__gte=first_date, effective_at__date__lte=last_date)
+    )
+    return [
+        SimpleNamespace(
+            post=post,
+            post_id=post.pk,
+            social_account=None,
+            social_account_id=None,
+            effective_at=post.effective_at,
+            is_reschedulable=False,
+            is_bulk_selectable=False,
+        )
+        for post in posts
+    ]
 
 
 def _enabled_platform_posts():
@@ -343,6 +378,8 @@ def _get_calendar_slot_occurrences(workspace, request, display_tz, visible_dates
         is_active=True,
     )
     channels = _get_channel_filters(request)
+    if "none" in request.GET.getlist("channel") and not channels:
+        slots = slots.none()
     if channels:
         slots = slots.filter(social_account_id__in=channels)
 
@@ -432,6 +469,21 @@ _APPROVAL_TAB_STATUSES = [
 ]
 
 
+def _channel_less_posts(workspace, request):
+    """Unassigned content belongs to its workspace, independently of client channels."""
+    qs = (
+        Post.objects.for_workspace(workspace.id)
+        .filter(platform_posts__isnull=True)
+        .select_related("author", "jrc_production")
+    )
+    if _get_channel_filters(request) and "none" not in request.GET.getlist("channel"):
+        return qs.none()
+    tag = request.GET.get("tag")
+    if tag:
+        qs = qs.filter(tags__contains=[tag])
+    return qs.order_by("-updated_at")
+
+
 def _publish_tab_counts(workspace, request):
     """The four Publish tab-bar badge counts (queue / drafts / approvals / sent).
 
@@ -456,6 +508,8 @@ def _publish_tab_counts(workspace, request):
     # .filter(platform_posts__...) — see the comment in `_get_tab_context`.
     pp_match = PlatformPost.objects.filter(post_id=OuterRef("pk"), status__in=_APPROVAL_TAB_STATUSES)
     channels = _get_channel_filters(request)
+    if "none" in request.GET.getlist("channel") and not channels:
+        pp_match = pp_match.none()
     if channels:
         pp_match = pp_match.filter(social_account_id__in=channels)
     approvals = Post.objects.for_workspace(workspace.id).filter(Exists(pp_match))
@@ -466,7 +520,7 @@ def _publish_tab_counts(workspace, request):
 
     return {
         "queue_count": _pp(status="scheduled"),
-        "drafts_count": _pp(status="draft"),
+        "drafts_count": _pp(status="draft") + _channel_less_posts(workspace, request).count(),
         "approvals_count": approvals.distinct().count(),
         "sent_count": _pp(status__in=["published", "failed"]),
     }
@@ -513,7 +567,7 @@ def _get_publish_context(workspace, request):
     ]
 
     return {
-        "channels_with_posts": channels_with_posts,
+        "channels_with_posts": [*channels_with_posts, {"value": "none", "label": "No channel"}],
         "all_tags": sorted(all_tags),
         "display_timezone": display_timezone,
         "timezone_choices": tz_list,
@@ -526,6 +580,8 @@ def _get_publish_context(workspace, request):
 def _apply_pp_publish_filters(qs, request):
     """Apply channel and tag filters to a PlatformPost queryset."""
     channels = _get_channel_filters(request)
+    if "none" in request.GET.getlist("channel") and not channels:
+        return qs.none()
     if channels:
         qs = qs.filter(social_account_id__in=channels)
 
@@ -609,7 +665,11 @@ def _get_tab_context(request, workspace, tab: str) -> dict:
             .order_by("-post__updated_at")
         )
         platform_posts = _apply_pp_publish_filters(platform_posts, request)
-        return {**base_ctx, "platform_posts": platform_posts[:200]}
+        return {
+            **base_ctx,
+            "platform_posts": platform_posts[:200],
+            "channel_less_posts": _channel_less_posts(workspace, request)[:200],
+        }
 
     if tab == "sent":
         platform_posts = (
@@ -649,6 +709,8 @@ def _get_tab_context(request, workspace, tab: str) -> dict:
     else:
         pp_match = pp_match.filter(status__in=approval_statuses)
     channels = _get_channel_filters(request)
+    if "none" in request.GET.getlist("channel") and not channels:
+        pp_match = pp_match.none()
     if channels:
         pp_match = pp_match.filter(social_account_id__in=channels)
 
@@ -800,6 +862,7 @@ def calendar_view(request, workspace_id):
         "view_type": view_type,
         "target_date": target_date,
         "social_accounts": social_accounts,
+        "calendar_channels": [*social_accounts, {"value": "none", "label": "No channel"}],
         "authors": authors,
         "categories": categories,
         "active_filters": active_filters,
@@ -889,6 +952,8 @@ def _month_view_data(request, workspace, target_date, context):
         )
         .order_by("effective_at")
     )
+
+    platform_posts = [*platform_posts, *_channel_less_calendar_rows(workspace, request, first_day, last_day)]
 
     # Also include drafts without scheduled_at for the current month
     drafts = (
@@ -989,6 +1054,12 @@ def _week_view_data(request, workspace, target_date, context):
         .order_by("effective_at")
     )
 
+    platform_posts.extend(
+        _channel_less_calendar_rows(
+            workspace, request, week_days[0] - timedelta(days=1), week_days[-1] + timedelta(days=1)
+        )
+    )
+
     # Group PlatformPosts by (date, hour) in the display timezone
     week_days_set = set(week_days)
     posts_by_slot = defaultdict(list)
@@ -1063,6 +1134,12 @@ def _day_view_data(request, workspace, target_date, context):
             effective_at__date__lte=target_date + timedelta(days=1),
         )
         .order_by("effective_at")
+    )
+
+    platform_posts.extend(
+        _channel_less_calendar_rows(
+            workspace, request, target_date - timedelta(days=1), target_date + timedelta(days=1)
+        )
     )
 
     # Group by hour in the display timezone, filtering to the target date

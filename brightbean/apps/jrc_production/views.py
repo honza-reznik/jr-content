@@ -28,12 +28,15 @@ from apps.workspaces.models import Workspace
 from .approval import approval_context, is_waiting_for
 from .models import ManualPublication, PipelineStage
 from .services import (
+    add_content_channel,
     available_moves,
     can_create_content,
+    can_manage_channels,
     create_content,
     mark_published_manually,
     move_content,
     pipeline_stage,
+    remove_content_channel,
     request_content_changes,
 )
 
@@ -61,10 +64,12 @@ def _board_context(request, *, error="", title="", selected_client=None):
         .select_related("workspace", "jrc_channel")
         .order_by("workspace__name", "account_name")
     )
-    if channel and channel not in {str(c.pk) for c in channels}:
+    if channel and channel != "none" and channel not in {str(c.pk) for c in channels}:
         raise ValidationError("Choose a channel for the selected client.")
     posts = Post.objects.filter(workspace_id__in=workspace_ids)
-    if channel:
+    if channel == "none":
+        posts = posts.filter(platform_posts__isnull=True)
+    elif channel:
         posts = posts.filter(platform_posts__social_account_id=channel)
     posts = (
         posts.select_related("workspace", "author", "jrc_production")
@@ -127,7 +132,7 @@ def create(request):
         raise Http404
     title = request.POST.get("title", "").strip()
     try:
-        create_content(membership.workspace, title, request.user)
+        create_content(membership.workspace, title, request.user, social_account_ids=request.POST.getlist("channels"))
     except ValidationError as exc:
         return render(
             request,
@@ -200,13 +205,13 @@ def _word_diff(previous, current):
 
 
 def _enabled_caption_accounts(post):
-    """Accounts whose caption belongs on the card: enabled channels of this client (F6-B02).
+    """Only explicitly attached channels; switched-off copies keep their stored work.
 
-    Channels switched off in the client profile are hidden in MVP1, but their copies and
-    saved versions stay in the database. An account without a JR Content profile is kept
-    so that content imported from Brightbean does not lose its caption field.
+    Reading or saving a caption must never attach another client channel implicitly.
     """
-    accounts = SocialAccount.objects.filter(workspace_id=post.workspace_id).select_related("jrc_channel")
+    accounts = SocialAccount.objects.filter(workspace_id=post.workspace_id, platform_posts__post=post).select_related(
+        "jrc_channel"
+    )
     return [
         account
         for account in accounts.order_by("account_name")
@@ -221,8 +226,7 @@ def _caption_channels(post, submitted=None):
     variants = {variant.social_account_id: variant for variant in post.platform_posts.select_related("social_account")}
     for account in _enabled_caption_accounts(post):
         variant = variants.get(account.pk)
-        # A channel enabled after the content was created has no copy yet. The field is
-        # ready; the copy is created by the first save (see _create_missing_copy).
+        # Accounts are already narrowed to copies explicitly attached to this content.
         key = str(variant.pk) if variant else f"new:{account.pk}"
         document = (
             TextDocument.objects.filter(platform_post=variant, kind=TextDocument.Kind.CAPTION).first()
@@ -279,23 +283,11 @@ def _caption_channels(post, submitted=None):
 
 
 def _create_missing_copy(post, account_id):
-    """Create the draft copy for an enabled channel that was added after the content (F6-B02).
-
-    Only while every existing copy is still a draft, so the new copy cannot change the
-    content's stage. Runs inside the caller's transaction with the post row locked.
-    """
-    account = next((a for a in _enabled_caption_accounts(post) if str(a.pk) == account_id), None)
-    if account is None:
-        raise Http404("This channel is not enabled for this client.")
-    existing = PlatformPost.objects.filter(post=post, social_account=account).first()
-    if existing:
-        return existing
-    if post.platform_posts.exclude(status=PlatformPost.Status.DRAFT).exists():
-        raise ValidationError(
-            f"The {account.get_platform_display()} channel was enabled after this content left drafting, "
-            "so it has no copy of this content yet."
-        )
-    return PlatformPost.objects.create(post=post, social_account=account, status=PlatformPost.Status.DRAFT)
+    """Legacy caption/video forms may reference a copy, but never attach a new channel implicitly."""
+    variant = post.platform_posts.filter(social_account_id=account_id).first()
+    if variant is None:
+        raise ValidationError("Add this channel to the content first.")
+    return variant
 
 
 @login_required
@@ -305,7 +297,7 @@ def content_detail(request, workspace_id, post_id):
     workspace = get_object_or_404(Workspace, pk=workspace_id)
     membership = WorkspaceMembership.objects.filter(user=request.user, workspace=workspace).first()
     if membership is None:
-        raise PermissionDenied("You are not a member of this workspace.")
+        raise Http404
 
     post = get_object_or_404(
         Post.objects.filter(workspace=workspace)
@@ -323,7 +315,21 @@ def content_detail(request, workspace_id, post_id):
     )
     can_edit_captions = text_services.can_edit_text(post, membership)
     caption_error = ""
-    if request.method == "POST":
+    channel_error = ""
+    if request.method == "POST" and request.POST.get("action") in {"add_channel", "remove_channel"}:
+        try:
+            if request.POST["action"] == "add_channel":
+                account = get_object_or_404(SocialAccount, pk=request.POST.get("channel"), workspace=workspace)
+                add_content_channel(post, account.pk, request.user)
+            else:
+                variant = get_object_or_404(PlatformPost, pk=request.POST.get("platform_post"), post=post)
+                remove_content_channel(post, variant.pk, request.user)
+        except ValidationError as exc:
+            channel_error = " ".join(exc.messages)
+        else:
+            messages.success(request, "Content channels updated.")
+            return redirect(f"{request.path}?tab={active_tab}#content-channels")
+    elif request.method == "POST":
         if request.POST.get("action") != "save_caption":
             return HttpResponseBadRequest("Unknown action.")
         if not can_edit_captions:
@@ -434,7 +440,7 @@ def content_detail(request, workspace_id, post_id):
     history.sort(key=lambda item: item["created_at"], reverse=True)
 
     video_context = {}
-    if active_tab == "video":
+    if active_tab == "video" and post.platform_posts.exists():
         # F5-B05 / F5-B08: video versions and the embedded player per channel.
         from apps.jrc_video import uploads as video_uploads
         from apps.jrc_video.models import VideoAccount, VideoProject
@@ -531,6 +537,16 @@ def content_detail(request, workspace_id, post_id):
             ),
             "is_client": is_client,
             "can_edit_captions": can_edit_captions,
+            "can_manage_channels": can_manage_channels(post, membership),
+            "channel_error": channel_error,
+            "addable_channels": SocialAccount.objects.filter(
+                workspace=workspace,
+                jrc_channel__is_enabled=True,
+            )
+            .exclude(platform_posts__post=post)
+            .select_related("jrc_channel")
+            .order_by("account_name"),
+            "needs_channel": not post.platform_posts.exists() and active_tab in {"video", "caption", "publish"},
             "caption_channels": caption_channels,
             "caption_media_items": caption_media_items,
             "caption_error": caption_error,

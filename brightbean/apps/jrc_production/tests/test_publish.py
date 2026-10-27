@@ -23,7 +23,12 @@ pytestmark = pytest.mark.django_db
 @pytest.fixture
 def post(workspace, user):
     create_manual_channel(workspace, "instagram", "Publish test channel")
-    return create_content(workspace, "Publish test content", user)
+    return create_content(
+        workspace,
+        "Publish test content",
+        user,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
 
 
 def approved_post(post):

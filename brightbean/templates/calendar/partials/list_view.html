@@ -36,7 +36,7 @@ Context: posts, workspace.
                 <td class="px-4 py-3 text-sm text-stone-600 max-w-xs truncate">
                     <a href="{% url 'jrc_production:content_detail' workspace_id=workspace.id post_id=post.id %}"
                        class="text-inherit hover:text-orange-700 underline decoration-transparent hover:decoration-current">
-                        {{ post.caption_snippet|default:"(no caption)" }}
+                        {{ post.title|default:post.caption_snippet|default:"(no caption)" }}
                     </a>
                 </td>
                 <td class="px-4 py-3">
@@ -45,7 +45,7 @@ Context: posts, workspace.
                         <span class="w-5 h-5 rounded-[5px] flex items-center justify-center">
                             {% include "partials/_platform_icon.html" with platform=pp.social_account.platform size="sm" %}
                         </span>
-                        {% endfor %}
+                        {% empty %}<span class="text-xs text-stone-500">No channel</span>{% endfor %}
                     </div>
                 </td>
                 <td class="px-4 py-3 text-xs text-stone-500">

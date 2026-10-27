@@ -17,7 +17,12 @@ pytestmark = pytest.mark.django_db
 @pytest.fixture
 def instagram_content(workspace, user):
     account = create_manual_channel(workspace, "instagram", "Ella Instagram")
-    post = create_content(workspace, "Garden reel", user)
+    post = create_content(
+        workspace,
+        "Garden reel",
+        user,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     variant = PlatformPost.objects.get(post=post, social_account=account)
     return post, variant
 

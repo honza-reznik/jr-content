@@ -158,7 +158,12 @@ def test_version_of_other_content_is_not_found(client, ff, workspace, user, setu
     from apps.jrc_production.services import create_content
 
     versions = two_versions(client, workspace, setup, user)
-    other = create_content(workspace, "Other reel", user)
+    other = create_content(
+        workspace,
+        "Other reel",
+        user,
+        social_account_ids=workspace.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
+    )
     response = post_json(client, url("video_final", workspace, other, ("version_id", versions[0].pk)), {})
     assert response.status_code == 404
     assert post_json(client, url("video_final", workspace, setup, ("version_id", uuid.uuid4())), {}).status_code == 404

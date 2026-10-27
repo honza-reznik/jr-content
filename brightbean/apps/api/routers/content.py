@@ -28,11 +28,20 @@ from ninja.errors import HttpError
 
 from apps.api.limits import enforce_http_rate_limits
 from apps.api.middleware import log_audit_entry
-from apps.api.routers.posts import _get_workspace_post
+from apps.api.routers.posts import _get_workspace_post, _post_to_response, _require_perm, _resolve_account
+from apps.api.schemas import PostResponse
 from apps.approvals import comments as comment_services
 from apps.composer.models import PlatformPost, Post
 from apps.jrc_production.models import PipelineStage
-from apps.jrc_production.services import available_moves, content_membership, move_content, pipeline_stage
+from apps.jrc_production.services import (
+    add_content_channel,
+    available_moves,
+    can_manage_channels,
+    content_membership,
+    move_content,
+    pipeline_stage,
+    remove_content_channel,
+)
 from apps.jrc_texts import services as text_services
 from apps.jrc_texts.content import MAX_CONTENT_BYTES
 from apps.jrc_texts.models import TextDocument, TextVersion
@@ -450,6 +459,8 @@ def stage_move(request, post_id: uuid.UUID, payload: StageMove):
         raise HttpError(422, "Choose a valid stage.")
     if pipeline_stage(post) != payload.expected_stage:
         raise HttpError(409, "This content changed. Reload the stage and try again.")
+    if not post.platform_posts.exists() and payload.stage not in {"idea", "script", "shooting", "editing"}:
+        raise HttpError(422, "Add a channel before moving content to Review or later stages.")
     if payload.stage not in available_moves(post, membership):
         raise HttpError(403, "You cannot make this move. Check your permissions and the current stage.")
     try:
@@ -561,3 +572,40 @@ def comment_add(request, post_id: uuid.UUID, payload: CommentWrite):
     log_audit_entry(request, action="comment.create", target_id=comment.id, status_code=201)
     # A new comment has no replies yet; the author always sees it.
     return 201, _comment_info(comment)
+
+
+class ChannelWrite(Schema):
+    social_account_id: uuid.UUID = Field(description="Enabled client channel in the key's account allowlist.")
+
+
+@router.post("/{post_id}/channels", response=PostResponse, summary="Explicitly add a channel to draft content")
+def channel_add(request, post_id: uuid.UUID, payload: ChannelWrite):
+    enforce_http_rate_limits(request, is_write=True)
+    _require_perm(request, "create_posts")
+    post = _post(request, post_id)
+    account = _resolve_account(request, payload.social_account_id)
+    if not can_manage_channels(post, _membership(request, post)):
+        raise HttpError(403, "You cannot change channels for this content.")
+    with _http_errors():
+        add_content_channel(post, account.pk, request.user)
+    post.refresh_from_db()
+    log_audit_entry(request, action="content.channel.add", target_id=post.id, status_code=200)
+    return _post_to_response(request, post)
+
+
+@router.delete(
+    "/{post_id}/channels/{platform_post_id}",
+    response=PostResponse,
+    summary="Remove a draft channel copy without caption history or video",
+)
+def channel_remove(request, post_id: uuid.UUID, platform_post_id: uuid.UUID):
+    enforce_http_rate_limits(request, is_write=True)
+    _require_perm(request, "create_posts")
+    post = _post(request, post_id)
+    if not can_manage_channels(post, _membership(request, post)):
+        raise HttpError(403, "You cannot change channels for this content.")
+    with _http_errors():
+        remove_content_channel(post, platform_post_id, request.user)
+    post.refresh_from_db()
+    log_audit_entry(request, action="content.channel.remove", target_id=post.id, status_code=200)
+    return _post_to_response(request, post)
