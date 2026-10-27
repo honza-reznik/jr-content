@@ -183,7 +183,7 @@ def _get_comment(db: Session, comment_id: uuid.UUID) -> Comment:
     return comment
 
 
-def _build_attachment_response(attachment: CommentAttachment) -> AttachmentResponse:
+def _build_attachment_response(attachment: CommentAttachment, file_context=None) -> AttachmentResponse:
     # Pass download_filename so S3 returns Content-Disposition: attachment
     # and the browser downloads instead of rendering. Without it an
     # attacker who uploads an attachment with content_type=text/html gets
@@ -192,7 +192,10 @@ def _build_attachment_response(attachment: CommentAttachment) -> AttachmentRespo
     url = s3_service.generate_presigned_get_url(
         attachment.s3_key,
         expires_in=s3_service.PREVIEW_URL_SECONDS,
-        download_filename=attachment.original_filename or "attachment",
+        # The private gateway obtains ordinary attachment names from the row.
+        download_filename=(attachment.original_filename or "attachment")
+        if not settings.s3_public_path or file_context else None,
+        **(file_context or {}),
     )
     return AttachmentResponse(
         id=attachment.id,
@@ -224,6 +227,7 @@ def _build_comment_response(
     db: Session,
     current_user_id: uuid.UUID | None = None,
     depth: int = COMMENT_TREE_MAX_DEPTH,
+    file_context=None,
 ) -> CommentResponse:
     annotation = db.query(Annotation).filter(Annotation.comment_id == comment.id).first()
     replies_raw = []
@@ -244,7 +248,7 @@ def _build_comment_response(
     attachments_raw = db.query(CommentAttachment).filter(
         CommentAttachment.comment_id == comment.id,
     ).all()
-    attachments = [_build_attachment_response(a) for a in attachments_raw]
+    attachments = [_build_attachment_response(a, file_context) for a in attachments_raw]
 
     # Load reactions
     reactions_raw = db.query(CommentReaction).filter(
@@ -273,7 +277,7 @@ def _build_comment_response(
     resp.guest_author = guest_author_info
     resp.annotation = AnnotationResponse.model_validate(annotation) if annotation else None
     resp.replies = [
-        _build_comment_response(r, db, current_user_id=current_user_id, depth=depth - 1)
+        _build_comment_response(r, db, current_user_id=current_user_id, depth=depth - 1, file_context=file_context)
         for r in replies_raw
     ]
     resp.attachments = attachments
@@ -296,6 +300,7 @@ def _build_comment_responses_batched(
     current_user_id: uuid.UUID | None = None,
     max_depth: int = COMMENT_TREE_MAX_DEPTH,
     exclude_internal: bool = False,
+    file_context=None,
 ) -> list[CommentResponse]:
     """Build the comment tree for `top_level` with a FIXED number of queries
     instead of one-per-comment. Field-for-field equivalent to calling
@@ -376,7 +381,7 @@ def _build_comment_responses_batched(
         ann = annotations.get(comment.id)
         resp.annotation = AnnotationResponse.model_validate(ann) if ann else None
         resp.attachments = [
-            _build_attachment_response(a) for a in attachments_map.get(comment.id, [])
+            _build_attachment_response(a, file_context) for a in attachments_map.get(comment.id, [])
         ]
         resp.reactions = _build_reaction_responses(
             reactions_map.get(comment.id, []), current_user_id
@@ -1181,7 +1186,11 @@ def list_share_comments(
     top_level = query.order_by(Comment.created_at).all()
 
     # Batched build (fixed query count) — guests have no user, so no current_user_id.
-    return _build_comment_responses_batched(asset_id, top_level, db, exclude_internal=True)
+    file_context = {"share_link": link, "share_user": current_user, "share_session": share_session} if settings.s3_public_path else None
+    return _build_comment_responses_batched(
+        asset_id, top_level, db, exclude_internal=True,
+        **({"file_context": file_context} if file_context else {}),
+    )
 
 
 @router.post("/share/{token}/comment", response_model=CommentResponse, status_code=status.HTTP_201_CREATED)
@@ -1352,4 +1361,5 @@ def guest_comment(
             "author": actor_name or "Guest",
         })
 
-    return _build_comment_response(comment, db)
+    file_context = {"share_link": link, "share_user": current_user, "share_session": share_session} if settings.s3_public_path else None
+    return _build_comment_response(comment, db, file_context=file_context)

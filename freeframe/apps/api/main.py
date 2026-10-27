@@ -12,7 +12,7 @@ from .services.s3_service import run_startup_bucket_setup
 from .services.email_service import mail_is_configured
 from .middleware.global_rate_limit import GlobalRateLimitMiddleware
 from .middleware.setup_guard import SetupGuardMiddleware
-from .routers import jrc_auth, jrc_sync
+from .routers import jrc_auth, jrc_sync, files
 
 
 _SENSITIVE_QUERY_KEYS = {
@@ -133,6 +133,7 @@ app.include_router(instance_settings.router)
 app.include_router(instance_branding.router)
 app.include_router(jrc_sync.router)
 app.include_router(jrc_auth.router)
+app.include_router(files.router)
 
 @app.get("/health")
 def health():

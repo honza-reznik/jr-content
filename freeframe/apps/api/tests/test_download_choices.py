@@ -193,6 +193,26 @@ def test_choosing_the_original_downloads_the_master_under_its_own_extension(
 
 @patch("apps.api.routers.assets.generate_presigned_get_url")
 @patch("apps.api.routers.assets.require_asset_access")
+def test_long_media_name_for_original_mp4_is_passed_to_gateway_generator(
+    mock_require_access, mock_presign, client, mock_db, auth_headers, member,
+):
+    media_file = _media_file()
+    media_file.s3_key_raw = "raw/p/a/v/original.mp4"
+    asset = _video_asset(mock_db, media_file)
+    asset.name = "x" * 252
+    mock_presign.return_value = "https://jrc.example.invalid/jrc/files/video/original.mp4?filename=bounded"
+
+    response = client.get(
+        f"/assets/{asset.id}/stream?download=true&rendition=original", headers=auth_headers
+    )
+
+    assert response.status_code == 200, response.text
+    assert mock_presign.call_args[0][0] == "raw/p/a/v/original.mp4"
+    assert mock_presign.call_args.kwargs["download_filename"] == "x" * 252 + ".mp4"
+
+
+@patch("apps.api.routers.assets.generate_presigned_get_url")
+@patch("apps.api.routers.assets.require_asset_access")
 def test_choosing_the_transcode_downloads_the_mp4(
     mock_require_access, mock_presign, client, mock_db, auth_headers, member,
 ):

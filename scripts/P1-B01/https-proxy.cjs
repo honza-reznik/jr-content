@@ -15,7 +15,7 @@ https.createServer({ key: fs.readFileSync(path.join(dir, 'key.pem')),
     'x-forwarded-for': req.headers['x-test-client-ip'] || '203.0.113.9' };
   delete headers['x-test-client-ip'];
   delete headers['x-real-ip'];
-  const upstream = http.request({ host: '127.0.0.1', port: 13443,
+  const upstream = http.request({ host: '127.0.0.1', port: Number(process.env.JRC_APP_PORT || 13443),
     path: req.url, method: req.method, headers }, response => {
     res.writeHead(response.statusCode, response.headers);
     response.pipe(res);
@@ -23,4 +23,4 @@ https.createServer({ key: fs.readFileSync(path.join(dir, 'key.pem')),
   upstream.on('error', () => { res.writeHead(502); res.end(); });
   req.on('aborted', () => upstream.destroy());
   req.pipe(upstream);
-}).listen(14163, '127.0.0.1', () => console.log('Místní HTTPS proxy připravena.'));
+}).listen(Number(process.env.JRC_S3_PORT || 14163), '127.0.0.1', () => console.log('Místní HTTPS proxy připravena.'));

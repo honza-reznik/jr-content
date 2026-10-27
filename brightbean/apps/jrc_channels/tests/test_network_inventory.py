@@ -31,6 +31,9 @@ ALLOWED_HTTP = Counter(
         ("intelligence/services/client.py", "IntelligenceAPIClient._request", "httpx.Client.request"): 2,
         # F5-B01: internal Docker API only (jrc-ff-api:8000), no redirects/proxy.
         ("jrc_video/client.py", "FreeFrameClient._send", "requests.request"): 1,
+        # P1-B03: bounded file streaming from the same internal FreeFrame host;
+        # only an authenticated header, no browser cookies, proxy or redirects.
+        ("jrc_storage/views.py", "_video_file", "requests.request"): 1,
     }
 )
 

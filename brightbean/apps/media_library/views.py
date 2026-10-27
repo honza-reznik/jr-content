@@ -501,6 +501,15 @@ def asset_download(request, workspace_id, asset_id):
         pk=asset_id,
     )
 
+    if getattr(settings, "JRC_PRIVATE_FILES", False):
+        from django.utils.http import content_disposition_header
+
+        from apps.jrc_storage.views import stored_file
+
+        response = stored_file(request, asset.file.name, workspace=workspace)
+        response["Content-Disposition"] = content_disposition_header(True, asset.filename)
+        return response
+
     storage_backend = getattr(settings, "STORAGE_BACKEND", "local")
     if storage_backend == "s3":
         # For S3, redirect to a signed URL
@@ -1087,6 +1096,15 @@ def shared_asset_download(request, asset_id):
     if not org:
         raise Http404
     asset = get_object_or_404(MediaAsset.objects.shared_only(org.id), pk=asset_id)
+
+    if getattr(settings, "JRC_PRIVATE_FILES", False):
+        from django.utils.http import content_disposition_header
+
+        from apps.jrc_storage.views import stored_file
+
+        response = stored_file(request, asset.file.name)
+        response["Content-Disposition"] = content_disposition_header(True, asset.filename)
+        return response
 
     storage_backend = getattr(settings, "STORAGE_BACKEND", "local")
     if storage_backend == "s3":

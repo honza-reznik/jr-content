@@ -261,7 +261,7 @@ class _HlsStreamResponse(StreamingResponse):
 
     async def __call__(self, scope, receive, send):
         try:
-            with anyio.fail_after(settings.hls_stream_timeout_seconds):
+            with anyio.fail_after(getattr(self, "timeout_seconds", settings.hls_stream_timeout_seconds)):
                 await super().__call__(scope, receive, send)
         finally:
             try:
@@ -305,7 +305,7 @@ def hls_proxy(path: str, token: str, db: Session = Depends(get_db)):
     s3_prefix = payload["pfx"]
 
     # Managed and share segments recheck access before reading private S3.
-    proxy_segments = "uid" in payload or "share" in payload
+    proxy_segments = bool(settings.s3_public_path) or "uid" in payload or "share" in payload
     managed_segment = proxy_segments and path.endswith(".ts")
     if not path.endswith(".m3u8") and not managed_segment:
         raise HTTPException(status_code=400, detail="Only .m3u8 files are proxied")

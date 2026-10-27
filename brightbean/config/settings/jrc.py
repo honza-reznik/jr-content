@@ -169,3 +169,6 @@ CACHES["default"] = {  # noqa: F405
 
 # Celkový REST/MCP rozpočet, sdílený přes výše uvedenou Redis cache.
 BB_API_LIMIT = 60000
+
+# P1-B03: all browser reads recheck the session and owning row.
+JRC_PRIVATE_FILES = True

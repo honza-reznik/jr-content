@@ -503,6 +503,24 @@ def build_download_filename(
 
 
 MAX_DOWNLOAD_FILENAME_LEN = 200
+MAX_FILE_GATEWAY_FILENAME_LEN = 255
+
+
+def _limit_filename_with_extension(filename: str, max_length: int) -> str:
+    if len(filename) <= max_length:
+        return filename
+    stem, extension = os.path.splitext(filename)
+    available = max(0, max_length - len(extension))
+    return stem[:available] + extension
+
+
+def limit_file_gateway_filename(filename: str) -> str:
+    """Keep generated download names within the files.py query limit.
+
+    Preserve the extension that identifies the bytes being served and shorten
+    only the stem. FastAPI validates the decoded filename at 255 characters.
+    """
+    return _limit_filename_with_extension(filename, MAX_FILE_GATEWAY_FILENAME_LEN)
 
 # Control characters plus the bidirectional overrides. The latter matter here:
 # a right-to-left override can visually reverse the tail of a name, so
@@ -526,7 +544,7 @@ def build_content_disposition(download_filename: str) -> str:
 
     name = _UNSAFE_FILENAME_CHARS.sub('', download_filename)
     name = name.replace('\\', '_').replace('/', '_').strip()
-    name = name[:MAX_DOWNLOAD_FILENAME_LEN].strip() or "download"
+    name = _limit_filename_with_extension(name.strip(), MAX_DOWNLOAD_FILENAME_LEN).strip() or "download"
     ascii_fallback = name.encode('ascii', 'replace').decode('ascii').replace('"', "'")
     return (
         f'attachment; filename="{ascii_fallback}"; '
@@ -547,8 +565,8 @@ def generate_presigned_put_url(s3_key: str, content_type: str | None = None, exp
     return _browser_url(s3.generate_presigned_url("put_object", Params=params, ExpiresIn=expires_in))
 
 
-def generate_presigned_get_url(s3_key: str, expires_in: int = 3600, download_filename: str | None = None) -> str:
-    """Generate a presigned GET URL for an object.
+def generate_presigned_get_url(s3_key: str, expires_in: int = 3600, download_filename: str | None = None, *, share_link=None, share_user=None, share_session=None) -> str:
+    """Return a session gateway URL in JR Content (a signed URL only standalone).
 
     Args:
         s3_key: The S3 object key.
@@ -556,15 +574,47 @@ def generate_presigned_get_url(s3_key: str, expires_in: int = 3600, download_fil
         download_filename: If set, adds Content-Disposition: attachment header
                           so the browser downloads with this filename.
     """
+    from urllib.parse import quote, urlencode
+    if download_filename:
+        download_filename = limit_file_gateway_filename(download_filename)
+    if settings.s3_public_path:
+        base = settings.s3_public_path.removesuffix("/storage")
+        url = settings.s3_public_endpoint.rstrip("/") + base + "/files/video/"
+        query = {}
+        if download_filename:
+            query["filename"] = download_filename
+        if share_link is not None:
+            import json
+            import uuid
+            from fastapi import HTTPException
+            from ..routers.hls_proxy import _share_security_fingerprint
+            from .redis_service import get_redis
+            if share_user is None:
+                raise HTTPException(403, "Sign in to read files")
+            context_id = uuid.uuid4()
+            try:
+                get_redis().setex(f"files:context:{share_user.id}:{context_id}", 1800, json.dumps({
+                    "key": s3_key, "share_id": str(share_link.id),
+                    "operation": "download" if download_filename else "preview",
+                    "filename": download_filename,
+                    "session": share_session, "security": _share_security_fingerprint(share_link),
+                }))
+            except Exception:
+                raise HTTPException(503, "File service unavailable") from None
+            # The path identifies a user-bound server record, not an access grant.
+            # It contains no raw key or optional permission switches to strip.
+            return url + "_contexts/" + str(context_id)
+        url += quote(s3_key, safe="/")
+        if query:
+            url += "?" + urlencode(query)
+        return url
+    # Standalone upstream deployments retain their configured transport.
     s3 = _get_presign_client()
     params: dict = {"Bucket": settings.s3_bucket, "Key": s3_key}
     if download_filename:
         params["ResponseContentDisposition"] = build_content_disposition(download_filename)
-    return _browser_url(s3.generate_presigned_url(
-        "get_object",
-        Params=params,
-        ExpiresIn=expires_in,
-    ))
+    return _browser_url(s3.generate_presigned_url("get_object", Params=params, ExpiresIn=expires_in))
+
 
 def generate_internal_presigned_get_url(s3_key: str, expires_in: int = 3600) -> str:
     """Generate a presigned GET URL using the API's configured S3 endpoint.

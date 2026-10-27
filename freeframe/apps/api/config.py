@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     hls_max_segment_bytes: int = Field(32 * 1024**2, ge=1)
     hls_s3_connect_timeout_seconds: float = Field(3, gt=0)
     hls_s3_read_timeout_seconds: float = Field(5, gt=0)
+    file_stream_timeout_seconds: float = Field(300, gt=0)
     hls_stream_timeout_seconds: float = Field(30, gt=0)
     # Live event streams (GET /events/{project_id}). Authorization is checked
     # again for as long as a stream stays open, not only when it connects, so a

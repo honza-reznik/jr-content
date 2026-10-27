@@ -7,6 +7,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.http import Http404, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404
+from django.urls import reverse
 from django.utils.text import slugify
 from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_protect
@@ -149,7 +150,7 @@ def final(request, workspace_id, post_id, version_id):
 @_secure
 @require_GET
 def final_download(request, workspace_id, post_id, platform_post_id):
-    """Redirect to a short-lived Garage URL for this channel's selected final version."""
+    """Download this channel's final through the session-authorized file gateway."""
     from apps.composer.models import PlatformPost
 
     from .models import VideoAsset, VideoVersion
@@ -196,8 +197,10 @@ def final_download(request, workspace_id, post_id, platform_post_id):
             f"/assets/{video.ff_asset_id}/stream?{stream_query}",
         )
         signed_url = result.get("url") if isinstance(result, dict) else None
-        uploads._check_signed_url(signed_url)
-        if "token" in parse_qs(urlsplit(signed_url).query):
+        expected = request.build_absolute_uri(reverse("jrc_private_file", kwargs={"path": "video/"}))
+        if not isinstance(signed_url, str) or not signed_url.startswith(expected):
+            raise UploadError("The video service returned an unexpected address.", 502)
+        if set(parse_qs(urlsplit(signed_url).query)) - {"filename", "share"}:
             raise UploadError("The video service returned an unexpected address.", 502)
     except UploadError as exc:
         return HttpResponse("Video download is unavailable.", status=exc.status, content_type="text/plain")

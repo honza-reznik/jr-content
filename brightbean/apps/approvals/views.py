@@ -3,6 +3,7 @@
 import difflib
 import re
 
+from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import get_object_or_404, render
@@ -305,6 +306,11 @@ def comment_attachment(request, workspace_id, post_id, comment_id):
         raise Http404("Comment not found.")
     if not comment.attachment:
         raise Http404("This comment has no attachment.")
+
+    if getattr(settings, "JRC_PRIVATE_FILES", False):
+        from apps.jrc_storage.views import stored_file
+
+        return stored_file(request, comment.attachment.name)
 
     # The stored object can outlive the row (lifecycle rule, manual deletion);
     # opening it then raises a backend error rather than returning an empty

@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const { chromium } = require('playwright');
 const origin = process.env.JRC_PUBLIC_ORIGIN;
 const base = origin + (process.env.JRC_BASE_PATH ?? '/jrc');
-const fixture = JSON.parse(fs.readFileSync('ops/test-output/P1-B01/fixture.json', 'utf8'));
+const fixture = JSON.parse(fs.readFileSync((process.env.JRC_E2E_OUTPUT || 'ops/test-output/P1-B01') + '/fixture.json', 'utf8'));
 (async () => {
   const browser = await chromium.launch({ headless: true });
   try {

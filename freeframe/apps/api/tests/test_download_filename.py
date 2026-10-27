@@ -35,6 +35,16 @@ def test_a_served_original_keeps_its_own_extension():
     ) == "Interview.mov"
 
 
+def test_a_long_original_video_name_keeps_mp4_within_the_file_gateway_limit():
+    from apps.api.services.s3_service import limit_file_gateway_filename
+
+    generated = "x" * 252 + ".mp4"
+    bounded = limit_file_gateway_filename(generated)
+    assert len(bounded) == 255
+    assert bounded.endswith(".mp4")
+    assert bounded == "x" * 251 + ".mp4"
+
+
 def test_a_display_name_without_an_extension_just_gains_one():
     assert build_download_filename(
         "Third act", "processed/p/a/v/processed.mp3", "third_act.wav"
@@ -194,6 +204,17 @@ def test_content_disposition_keeps_contextual_filename_safe_and_utf8_compatible(
     assert "filename*=UTF-8''campaign_%22%C5%BDlu%C5%A5ou%C4%8Dk%C3%BD%22-v2.mp4" == utf8_part
 
 
+def test_long_content_disposition_keeps_extension_when_bounded():
+    from apps.api.services.s3_service import build_content_disposition
+
+    disposition = build_content_disposition("x" * 252 + ".mp4")
+    from urllib.parse import unquote
+    encoded_name = disposition.split("filename*=UTF-8''", 1)[1]
+    name = unquote(encoded_name)
+    assert len(name) == 200
+    assert name.endswith(".mp4")
+
+
 def test_presigned_download_url_signs_the_content_disposition():
     from apps.api.services.s3_service import generate_presigned_get_url
 
@@ -208,6 +229,22 @@ def test_presigned_download_url_signs_the_content_disposition():
     assert params["ResponseContentDisposition"] == (
         f'attachment; filename="{filename}"; filename*=UTF-8\'\'{filename}'
     )
+
+
+def test_gateway_download_url_bounds_long_original_filename(monkeypatch):
+    from urllib.parse import parse_qs, urlparse
+
+    from apps.api.config import settings
+    from apps.api.services.s3_service import generate_presigned_get_url
+
+    monkeypatch.setattr(settings, "s3_public_path", "/jrc/storage")
+    monkeypatch.setattr(settings, "s3_public_endpoint", "https://jrc.example.invalid")
+    url = generate_presigned_get_url(
+        "original/video.mp4", download_filename="x" * 252 + ".mp4"
+    )
+    filename = parse_qs(urlparse(url).query)["filename"][0]
+    assert len(filename) == 255
+    assert filename == "x" * 251 + ".mp4"
 
 
 @patch("apps.api.routers.share._log_share_activity")

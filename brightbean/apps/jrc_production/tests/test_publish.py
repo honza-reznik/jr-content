@@ -153,7 +153,7 @@ def test_mark_published_requires_caption_and_final_video_when_video_exists(user,
     assert mark_published_manually(post, variant.pk, user)
 
 
-def test_final_download_is_scoped_and_redirects_only_to_short_signed_storage_url(client, workspace, user, post):
+def test_final_download_is_scoped_and_redirects_only_to_session_gateway(client, workspace, user, post):
     variant = approved_post(post)
     video = VideoAsset.objects.create(platform_post=variant, ff_asset_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
     version = VideoVersion.objects.create(
@@ -169,7 +169,7 @@ def test_final_download_is_scoped_and_redirects_only_to_short_signed_storage_url
         "jrc_video:final_download",
         kwargs={"workspace_id": workspace.pk, "post_id": post.pk, "platform_post_id": variant.pk},
     )
-    signed = "http://127.0.0.1:14133/jrc-video/file.mp4?X-Amz-Expires=600&X-Amz-Signature=signature"
+    signed = "http://testserver/files/video/raw/file.mp4?filename=final.mp4"
     with (
         override_settings(JRC_S3_PUBLIC_ORIGIN="http://127.0.0.1:14133"),
         patch("apps.jrc_video.uploads._call", return_value={"url": signed}) as call,
@@ -204,7 +204,7 @@ def test_final_download_filename_is_ascii_and_safe(client, workspace, user, post
         "jrc_video:final_download",
         kwargs={"workspace_id": workspace.pk, "post_id": post.pk, "platform_post_id": variant.pk},
     )
-    signed = "http://127.0.0.1:14133/file.mp4?X-Amz-Expires=600&X-Amz-Signature=signed-disposition"
+    signed = "http://testserver/files/video/raw/file.mp4?filename=final.mp4"
     with (
         override_settings(JRC_S3_PUBLIC_ORIGIN="http://127.0.0.1:14133"),
         patch("apps.jrc_video.uploads._call", return_value={"url": signed}) as call,
@@ -297,7 +297,17 @@ def test_client_can_download_even_with_custom_role(client, workspace, user, post
     assert url.encode() in response.content
 
 
-def test_final_download_rejects_foreign_channel_and_freeframe_token_url(client, workspace, organization, user, post):
+@pytest.mark.parametrize(
+    "unsafe_url",
+    [
+        "http://127.0.0.1:14133/file.mp4?X-Amz-Expires=600&X-Amz-Signature=secret",
+        "http://testserver/files/video/raw/file.mp4?token=secret",
+        "http://testserver/files/video/raw/file.mp4?X-Amz-Signature=secret",
+    ],
+)
+def test_final_download_rejects_foreign_channel_and_freeframe_token_url(
+    client, workspace, organization, user, post, unsafe_url
+):
     from apps.composer.models import Post
 
     own_variant = approved_post(post)
@@ -334,10 +344,9 @@ def test_final_download_rejects_foreign_channel_and_freeframe_token_url(client, 
     )
     video.final_version = version
     video.save(update_fields=["final_version"])
-    signed_with_token = "http://127.0.0.1:14133/file.mp4?X-Amz-Expires=600&token=secret"
     with (
         override_settings(JRC_S3_PUBLIC_ORIGIN="http://127.0.0.1:14133"),
-        patch("apps.jrc_video.uploads._call", return_value={"url": signed_with_token}),
+        patch("apps.jrc_video.uploads._call", return_value={"url": unsafe_url}),
     ):
         response = client.get(
             reverse(

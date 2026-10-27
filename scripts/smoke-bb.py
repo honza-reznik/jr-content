@@ -49,7 +49,7 @@ import os  # noqa: E402
 import tarfile  # noqa: E402
 import uuid  # noqa: E402
 from pathlib import Path  # noqa: E402
-from urllib.parse import parse_qs, urlsplit  # noqa: E402
+from urllib.parse import urlsplit  # noqa: E402
 
 sys.path.insert(0, "/app")
 import django  # noqa: E402
@@ -101,12 +101,11 @@ try:
     with default_storage.open(name, "rb") as stored:
         assert stored.read() == payload
     url = urlsplit(default_storage.url(name))
-    assert f"{url.scheme}://{url.netloc}" == os.environ["JRC_S3_PUBLIC_URL"].rstrip("/")
-    assert url.path == os.environ.get("JRC_S3_PUBLIC_PATH", "") + f"/jrc-app/{name}"
-    assert parse_qs(url.query)["X-Amz-Expires"] == ["900"]
+    assert not url.scheme and not url.netloc and not url.query
+    assert url.path == os.environ.get("JRC_BASE_PATH", "/jrc") + f"/files/{name}"
 finally:
     default_storage.delete(name)
-print(f"OK Brightbean {sys.argv[1]}: zápis a čtení v jrc-app, podepsaná adresa na místní bránu S3 (900 s)")
+print(f"OK Brightbean {sys.argv[1]}: zápis a čtení v jrc-app, session adresa aplikace bez čtecího podpisu")
 
 if sys.argv[1] == "web":
     # Migrace médií proběhla při make up (značka v bucketu); další běh už nic nekopíruje,
