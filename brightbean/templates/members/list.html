@@ -39,7 +39,7 @@
         </div>
         <div id="invitations-list">
             {% for invite in pending_invites %}
-                {% include "members/partials/invitation_row.html" %}
+                {% include "members/partials/invitation_row.html" with invite_url=invite.invite_url %}
             {% empty %}
             <div class="px-6 py-8 text-center" id="no-invites-placeholder">
                 <p class="text-sm" style="color: var(--text-tertiary);">No pending invitations.</p>

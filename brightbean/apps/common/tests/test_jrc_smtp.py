@@ -1,3 +1,4 @@
+import smtplib
 from unittest.mock import patch
 
 import pytest
@@ -65,4 +66,37 @@ def test_jrc_smtp_sends_through_local_fake_without_logging_password(caplog):
     assert smtp.login_credentials == ("local-user", password)
     assert smtp.messages[0][0] == "noreply@example.invalid"
     assert smtp.messages[0][1] == ["recipient@example.invalid"]
+    assert password not in caplog.text
+
+
+def test_smtp_error_reply_cannot_leak_password_to_logs_or_caller(caplog):
+    password = "password-echoed-by-test-server"
+    settings = {
+        "EMAIL_BACKEND": "apps.common.mail.BudgetedEmailBackend",
+        "EMAIL_INNER_BACKEND": "django.core.mail.backends.smtp.EmailBackend",
+        "EMAIL_SENDING_ENABLED": True,
+        "EMAIL_DAILY_SEND_LIMIT": -1,
+        "EMAIL_RECIPIENT_HOURLY_LIMIT": -1,
+        "EMAIL_RECIPIENT_DAILY_LIMIT": -1,
+        "EMAIL_HOST": "smtp.invalid",
+        "EMAIL_PORT": 587,
+        "EMAIL_HOST_USER": "local-user",
+        "EMAIL_HOST_PASSWORD": password,
+        "EMAIL_USE_TLS": False,
+        "EMAIL_USE_SSL": False,
+        "DEFAULT_FROM_EMAIL": "noreply@example.invalid",
+    }
+
+    class RejectingSMTP(FakeSMTP):
+        def sendmail(self, sender, recipients, message):
+            raise smtplib.SMTPResponseException(535, f"login failed: {password}".encode())
+
+    with (
+        override_settings(**settings),
+        patch("smtplib.SMTP", RejectingSMTP),
+        pytest.raises(RuntimeError, match="SMTP delivery failed") as error,
+    ):
+        EmailMessage("Test", "Message body", to=["recipient@example.invalid"]).send()
+
+    assert password not in str(error.value)
     assert password not in caplog.text

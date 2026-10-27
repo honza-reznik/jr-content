@@ -35,7 +35,7 @@
     <!-- Actions -->
     {% if is_admin %}
     <div class="flex-shrink-0 flex items-center gap-2">
-        <button type="button" data-copy-text="{{ invite_url|default:invite.accept_url }}"
+        <button type="button" data-copy-text="{{ invite_url }}"
                 class="btn-neutral-surface text-xs px-3 py-1.5 rounded-full font-medium cursor-pointer transition-colors"
                 style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);">
             Copy link

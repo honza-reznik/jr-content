@@ -503,7 +503,10 @@ def content_detail(request, workspace_id, post_id):
                         "jrc_video:final_download",
                         kwargs={"workspace_id": workspace.id, "post_id": post.id, "platform_post_id": variant.id},
                     )
-                    if video_final and can_publish
+                    if video_final
+                    and can_publish
+                    and variant.status in {PlatformPost.Status.APPROVED, PlatformPost.Status.SCHEDULED}
+                    and bool(caption.strip())
                     else "",
                 }
             )

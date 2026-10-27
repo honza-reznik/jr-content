@@ -87,7 +87,7 @@ def member_list(request):
             .order_by("-created_at")
         )
         for invite in pending_invites:
-            invite.accept_url = _invite_url(invite)
+            invite.invite_url = _invite_url(invite)
 
     # Role choices for forms: only owners may assign Admin (see helper).
     org_role_choices = _org_role_choices_for(request.org_membership)
@@ -261,6 +261,7 @@ def accept_invite(request, token):
                     "invitation": invitation,
                     "ws_display": ws_display,
                     "error": str(e),
+                    "accept_url": reverse("members:accept_invite", kwargs={"token": token}),
                 },
             )
 
@@ -278,7 +279,7 @@ def accept_invite(request, token):
         {
             "invitation": invitation,
             "ws_display": ws_display,
-            "accept_url": f"/members/invite/{token}/accept/",
+            "accept_url": reverse("members:accept_invite", kwargs={"token": token}),
         },
     )
 

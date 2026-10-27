@@ -103,8 +103,11 @@ class RBACMiddleware:
             .select_related("workspace__organization", "custom_role")
             .first()
         )
+        hide_unavailable_workspace = request.resolver_match.namespace in ("jrc_production", "jrc_texts") or (
+            request.resolver_match.namespace == "jrc_video" and request.resolver_match.url_name == "final_download"
+        )
         if not ws_membership:
-            if request.resolver_match.namespace in ("jrc_production", "jrc_texts"):
+            if hide_unavailable_workspace:
                 raise Http404
             raise PermissionDenied("You do not have access to this workspace.")
 

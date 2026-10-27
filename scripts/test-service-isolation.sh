@@ -21,6 +21,9 @@ for container in $containers; do
       case "$service:$network" in
         "jrc-proxy:${project}_ingress"|"jrc-ff-gate:${project}_ingress")
           test "$(docker network inspect --format '{{index .Options "com.docker.network.bridge.enable_ip_masquerade"}}' "$network")" = false ;;
+        "jrc-smtp-relay:${project}_smtp-egress")
+          # The dedicated relay is the only service allowed onto the SMTP egress network.
+          test "$(docker network inspect --format '{{.Internal}}' "$network")" = false ;;
         *) echo "CHYBA: $service má síť s internetem: $network"; exit 1 ;;
       esac
     fi
@@ -52,13 +55,24 @@ for container in $containers; do
       }
       ;;
   esac
-  for setting in NEXT_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 NPM_CONFIG_AUDIT=false \
-    NPM_CONFIG_FUND=false NPM_CONFIG_UPDATE_NOTIFIER=false PIP_DISABLE_PIP_VERSION_CHECK=1; do
-    docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container" | grep -Fxq "$setting" || {
-      echo "CHYBA: $service nemá $setting"; exit 1;
-    }
-  done
-  if [ "$(docker inspect --format '{{.State.Running}}' "$container")" = true ]; then
+  case "$service" in
+    jrc-smtp-relay|jrc-smtp-test) ;;
+    *)
+      for setting in NEXT_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 NPM_CONFIG_AUDIT=false \
+        NPM_CONFIG_FUND=false NPM_CONFIG_UPDATE_NOTIFIER=false PIP_DISABLE_PIP_VERSION_CHECK=1; do
+        docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container" | grep -Fxq "$setting" || {
+          echo "CHYBA: $service nemá $setting"; exit 1;
+        }
+      done
+      ;;
+  esac
+  if [ "$service" = jrc-smtp-relay ]; then
+    environment=$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container")
+    printf '%s\n' "$environment" | grep -Eq '^SMTP_TARGET_HOST=.+$'
+    printf '%s\n' "$environment" | grep -Eq '^SMTP_TARGET_PORT=[0-9]+$'
+    printf '%s\n' "$environment" | grep -Eq '^SMTP_LISTEN_PORT=[0-9]+$'
+    echo "OK $service: jediná služba s řízeným SMTP výstupem"
+  elif [ "$(docker inspect --format '{{.State.Running}}' "$container")" = true ]; then
     # Sdílený síťový prostor ověří i služby bez Node.js (Garage, Redis, Caddy).
     docker run --rm --pull never --network "container:$container" \
       --user "$(id -u):$(id -g)" --volume "$PWD/scripts/probe-isolation.cjs:/probe.cjs:ro" \

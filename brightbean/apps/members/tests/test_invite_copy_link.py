@@ -1,4 +1,5 @@
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.test import TestCase, override_settings
 from django.urls import reverse
@@ -52,3 +53,24 @@ class InvitationCopyLinkTests(TestCase):
         response = self.client.get(reverse("members:list"), follow=True)
         self.assertNotContains(response, "test-invite-token")
         self.assertNotContains(response, "data-copy-text=")
+
+    def test_htmx_create_and_resend_render_copy_link_without_missing_attribute(self):
+        self.client.force_login(self.user)
+        with override_settings(APP_URL="https://public.example", JRC_BASE_PATH="/jrc", FORCE_SCRIPT_NAME="/jrc"):
+            with patch("apps.members.views.services.create_invitation", return_value=self.invite):
+                created = self.client.post(
+                    reverse("members:invite"),
+                    {"email": self.invite.email},
+                    HTTP_HX_REQUEST="true",
+                )
+            with patch("apps.members.views.services.resend_invitation", return_value=None):
+                resent = self.client.post(
+                    reverse("members:resend_invite", kwargs={"invitation_id": self.invite.pk}),
+                    HTTP_HX_REQUEST="true",
+                )
+
+        expected = "https://public.example/jrc/members/invite/test-invite-token/accept/"
+        self.assertEqual(created.status_code, 200)
+        self.assertContains(created, expected)
+        self.assertEqual(resent.status_code, 200)
+        self.assertContains(resent, expected)

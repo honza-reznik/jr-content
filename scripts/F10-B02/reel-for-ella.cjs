@@ -5,9 +5,9 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { chromium } = require('playwright');
 
-const project = process.env.JRC_E2E_PROJECT || 'jrc-f10b02';
-const appPort = process.env.JRC_E2E_APP_PORT || '13433';
-const s3Port = process.env.JRC_E2E_S3_PORT || '14153';
+const project = process.env.JRC_E2E_PROJECT || process.env.JRC_PROJECT || 'jrc-f10b02';
+const appPort = process.env.JRC_E2E_APP_PORT || process.env.JRC_APP_PORT || '13433';
+const s3Port = process.env.JRC_E2E_S3_PORT || process.env.JRC_S3_PORT || '14153';
 const output = path.resolve(process.env.JRC_E2E_OUTPUT || 'ops/test-output/F10-B02');
 const shots = path.resolve(process.env.JRC_E2E_SCREENSHOTS || 'ops/screenshoty/F10-B02');
 assert.equal(process.env.JRC_PROJECT, project);

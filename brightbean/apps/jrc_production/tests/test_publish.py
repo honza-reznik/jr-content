@@ -154,7 +154,7 @@ def test_mark_published_requires_caption_and_final_video_when_video_exists(user,
 
 
 def test_final_download_is_scoped_and_redirects_only_to_short_signed_storage_url(client, workspace, user, post):
-    variant = post.platform_posts.get()
+    variant = approved_post(post)
     video = VideoAsset.objects.create(platform_post=variant, ff_asset_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
     version = VideoVersion.objects.create(
         video=video,
@@ -185,9 +185,9 @@ def test_final_download_is_scoped_and_redirects_only_to_short_signed_storage_url
 
 
 def test_final_download_filename_is_ascii_and_safe(client, workspace, user, post):
+    variant = approved_post(post)
     post.title = 'Žluťoučký / teaser "one"'
     post.save(update_fields=["title"])
-    variant = post.platform_posts.get()
     variant.social_account.account_name = 'Kanál / "A"'
     variant.social_account.save(update_fields=["account_name"])
     video = VideoAsset.objects.create(platform_post=variant, ff_asset_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
@@ -255,7 +255,7 @@ def test_final_download_requires_publish_permission_and_hides_link(client, works
 
 
 def test_client_can_download_even_with_custom_role(client, workspace, user, post):
-    variant = post.platform_posts.get()
+    variant = approved_post(post)
     video = VideoAsset.objects.create(platform_post=variant, ff_asset_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
     version = VideoVersion.objects.create(
         video=video,
@@ -300,7 +300,7 @@ def test_client_can_download_even_with_custom_role(client, workspace, user, post
 def test_final_download_rejects_foreign_channel_and_freeframe_token_url(client, workspace, organization, user, post):
     from apps.composer.models import Post
 
-    own_variant = post.platform_posts.get()
+    own_variant = approved_post(post)
     foreign_workspace = Workspace.objects.create(organization=organization, name="Foreign download client")
     foreign_channel = create_manual_channel(foreign_workspace, "instagram", "Foreign channel")
     foreign_post = Post.objects.create(workspace=foreign_workspace, title="Foreign")
@@ -347,6 +347,57 @@ def test_final_download_rejects_foreign_channel_and_freeframe_token_url(client, 
         )
     assert response.status_code == 502
     assert b"secret" not in response.content
+
+
+def test_final_download_hides_a_foreign_workspace_as_not_found(client, workspace, organization, user):
+    from apps.composer.models import Post
+
+    foreign_workspace = Workspace.objects.create(organization=organization, name="Unrelated client")
+    channel = create_manual_channel(foreign_workspace, "instagram", "Foreign channel")
+    foreign_post = Post.objects.create(workspace=foreign_workspace, title="Private content")
+    variant = PlatformPost.objects.create(post=foreign_post, social_account=channel)
+    client.force_login(user)
+    url = reverse(
+        "jrc_video:final_download",
+        kwargs={"workspace_id": foreign_workspace.pk, "post_id": foreign_post.pk, "platform_post_id": variant.pk},
+    )
+
+    assert client.get(url).status_code == 404
+
+
+@pytest.mark.parametrize("invalid_state", ["unapproved", "empty-caption", "not-ready"])
+def test_final_download_requires_approved_caption_and_ready_final(client, workspace, user, post, invalid_state):
+    variant = approved_post(post)
+    video = VideoAsset.objects.create(platform_post=variant, ff_asset_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+    version = VideoVersion.objects.create(
+        video=video,
+        number=1,
+        ff_version_id="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        status=VideoVersion.Status.READY,
+    )
+    video.final_version = version
+    video.save(update_fields=["final_version"])
+    if invalid_state == "unapproved":
+        PlatformPost.objects.filter(pk=variant.pk).update(status=PlatformPost.Status.PENDING_REVIEW)
+    elif invalid_state == "empty-caption":
+        PlatformPost.objects.filter(pk=variant.pk).update(platform_specific_caption="")
+        post.caption = ""
+        post.save(update_fields=["caption"])
+    else:
+        version.status = VideoVersion.Status.PROCESSING
+        version.save(update_fields=["status"])
+
+    client.force_login(user)
+    download = reverse(
+        "jrc_video:final_download",
+        kwargs={"workspace_id": workspace.pk, "post_id": post.pk, "platform_post_id": variant.pk},
+    )
+    with patch("apps.jrc_video.uploads._call") as call:
+        assert client.get(download).status_code == 404
+        call.assert_not_called()
+
+    detail = reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.pk, "post_id": post.pk})
+    assert download.encode() not in client.get(detail, {"tab": "publish"}).content
 
 
 def test_ready_or_scheduled_time_is_rendered_using_workspace_timezone(client, workspace, user, post):
