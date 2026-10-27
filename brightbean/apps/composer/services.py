@@ -18,6 +18,53 @@ import uuid
 from collections.abc import Iterable
 from typing import Any
 
+from django.apps import apps
+from django.core.exceptions import ValidationError
+from django.db import transaction
+
+
+class ChannelRemovalError(ValidationError):
+    """A channel copy contains work that must survive channel selection changes."""
+
+    def __init__(self, variants):
+        self.variants = variants
+        super().__init__("A channel with caption history or video cannot be removed.")
+
+
+def channel_removal_blocker(variant):
+    """Shared preflight for every channel-removal entry point."""
+    if apps.is_installed("apps.jrc_texts") and variant.jrc_texts.exists():
+        return "caption history"
+    if apps.is_installed("apps.jrc_video"):
+        from apps.jrc_video.models import VideoAsset
+
+        if VideoAsset.objects.filter(platform_post=variant).exists():
+            return "video"
+    return None
+
+
+@transaction.atomic
+def remove_platform_posts(variants):
+    """Remove copies atomically, keeping their parents and all saved work.
+
+    Lock parents before checking history, matching caption saves, video uploads
+    and channel additions. Reevaluate the selection under those locks so a stale
+    request cannot bypass the guard or remove newly protected publication rows.
+    """
+    from .models import Post
+
+    parents = list(Post.objects.filter(pk__in=variants.values("post_id")).order_by("pk").select_for_update())
+    selected = list(variants.select_for_update(of=("self",)))
+    blocked = [variant for variant in selected if channel_removal_blocker(variant)]
+    if blocked:
+        raise ChannelRemovalError(blocked)
+    for variant in selected:
+        variant.delete()
+    for post in parents:
+        sync_post_scheduled_at(post)
+        post.save(update_fields=["updated_at"])
+    return selected
+
 
 def sync_post_scheduled_at(post):
     """Keep ``Post.scheduled_at`` in sync with the earliest child time.

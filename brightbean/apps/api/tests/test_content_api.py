@@ -3,12 +3,18 @@
 
 import json
 import pathlib
+from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
+from threading import Event
+from time import monotonic
 
 import pytest
 from django.core.cache import cache
+from django.db import connection, connections
 from django.test import Client, override_settings
 
 from apps.accounts.models import User
+from apps.api.routers import content as content_routes
 from apps.api_keys.services import issue_api_key
 from apps.approvals.models import PostComment
 from apps.composer.models import PlatformPost, Post
@@ -606,3 +612,122 @@ def test_openapi_documents_unassigned_and_channel_routes(key):
     assert "social_account_ids" in schema["properties"]
     assert "/api/v1/posts/{post_id}/channels" in spec["paths"]
     assert "delete" in spec["paths"]["/api/v1/posts/{post_id}/channels/{platform_post_id}"]
+
+
+def _concurrent_channel_request(key, method, path, data=None, pid_queue=None):
+    try:
+        reported = False
+
+        def report_connection(execute, sql, params, many, context):
+            nonlocal reported
+            if not reported:
+                reported = True
+                execute("SET lock_timeout = '8s'", None, False, context)
+                if pid_queue is not None:
+                    pid_queue.put(connection.connection.info.backend_pid)
+            return execute(sql, params, many, context)
+
+        with connection.execute_wrapper(report_connection):
+            return api(key, method, path, data)
+    finally:
+        connections.close_all()
+
+
+def _channel_request_waits_on_lock(pid, future):
+    deadline = monotonic() + 5
+    while monotonic() < deadline and not future.done():
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT cardinality(pg_blocking_pids(%s)) > 0", [pid])
+            if cursor.fetchone()[0]:
+                return True
+        Event().wait(0.01)
+    return False
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("method", ["post", "delete"])
+def test_channel_allowlist_is_rechecked_after_concurrent_wider_key(
+    workspace, user, channel, org_owner, monkeypatch, method
+):
+    second = create_manual_channel(workspace, "custom", "Private B")
+    third = create_manual_channel(workspace, "youtube", "Allowed C")
+    post = create_content(workspace, "Concurrent channels", user, social_account_ids=[channel.pk])
+    variant = post.platform_posts.get()
+    wide = make_key(workspace, user, accounts=[channel, second, third])
+    narrow = make_key(workspace, user, accounts=[channel, third])
+    added, release = Event(), Event()
+    original = content_routes.add_content_channel
+
+    def pause_wide(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if args[1] == second.pk:
+            added.set()
+            assert release.wait(8)
+        return result
+
+    monkeypatch.setattr(content_routes, "add_content_channel", pause_wide)
+    path = f"{post.pk}/channels" if method == "post" else f"{post.pk}/channels/{variant.pk}"
+    payload = {"social_account_id": str(third.pk)} if method == "post" else None
+    pids = Queue()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        wide_request = pool.submit(
+            _concurrent_channel_request, wide, "post", f"{post.pk}/channels", {"social_account_id": str(second.pk)}
+        )
+        try:
+            assert added.wait(8), "Wide request did not add its private channel"
+            narrow_request = pool.submit(_concurrent_channel_request, narrow, method, path, payload, pids)
+            blocked = _channel_request_waits_on_lock(pids.get(timeout=8), narrow_request)
+        finally:
+            release.set()
+        assert wide_request.result(timeout=10).status_code == 200
+        response = narrow_request.result(timeout=10)
+    assert blocked, "Narrow request must wait for the parent Post lock"
+    assert response.status_code == 404, response.content
+    assert str(second.pk) not in response.content.decode()
+    assert set(post.platform_posts.values_list("social_account_id", flat=True)) == {channel.pk, second.pk}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("method", ["post", "delete"])
+def test_channel_response_is_materialized_before_releasing_parent_lock(
+    workspace, user, channel, org_owner, monkeypatch, method
+):
+    second = create_manual_channel(workspace, "custom", "Private B")
+    third = create_manual_channel(workspace, "youtube", "Allowed C")
+    post = create_content(workspace, "Response isolation", user, social_account_ids=[channel.pk])
+    variant = post.platform_posts.get()
+    wide = make_key(workspace, user, accounts=[channel, second, third])
+    narrow = make_key(workspace, user, accounts=[channel, third])
+    serializing, release = Event(), Event()
+    original = content_routes._post_to_response
+
+    def pause_response(request, content):
+        if request.api_key.pk == narrow.api_key.pk:
+            serializing.set()
+            assert release.wait(8)
+        return original(request, content)
+
+    monkeypatch.setattr(content_routes, "_post_to_response", pause_response)
+    path = f"{post.pk}/channels" if method == "post" else f"{post.pk}/channels/{variant.pk}"
+    payload = {"social_account_id": str(third.pk)} if method == "post" else None
+    pids = Queue()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        narrow_request = pool.submit(_concurrent_channel_request, narrow, method, path, payload)
+        try:
+            assert serializing.wait(8), "Narrow request did not reach response serialization"
+            wide_request = pool.submit(
+                _concurrent_channel_request,
+                wide,
+                "post",
+                f"{post.pk}/channels",
+                {"social_account_id": str(second.pk)},
+                pids,
+            )
+            blocked = _channel_request_waits_on_lock(pids.get(timeout=8), wide_request)
+        finally:
+            release.set()
+        response = narrow_request.result(timeout=10)
+        assert wide_request.result(timeout=10).status_code == 200
+    assert blocked, "Wider request must wait until the narrow response has been assembled"
+    assert response.status_code == 200, response.content
+    assert str(second.pk) not in response.content.decode()

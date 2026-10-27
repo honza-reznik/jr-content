@@ -10,6 +10,7 @@ from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.approvals.models import PostComment
+from apps.calendar.models import PostingSlot
 from apps.calendar.views import _get_filtered_platform_posts, _get_filtered_posts, _get_tab_context, _publish_tab_counts
 from apps.composer.models import PlatformPost, Post
 from apps.jrc_channels.services import create_manual_channel, set_channel_enabled
@@ -25,6 +26,7 @@ from apps.jrc_production.services import (
 from apps.jrc_texts import services as texts
 from apps.jrc_video.models import VideoAsset
 from apps.members.models import WorkspaceMembership
+from apps.workspaces.models import Workspace
 
 pytestmark = pytest.mark.django_db
 
@@ -223,6 +225,64 @@ def test_dated_unassigned_content_in_calendar_has_no_publication_slot(client, wo
     assert post.title.encode() in page.content and b"No channel" in page.content
     assert b'draggable="true"' not in page.content
     assert not post.platform_posts.exists()
+
+    channel = create_manual_channel(workspace, "instagram", "Explicit IG")
+    variant = add_content_channel(post, channel.pk, user)
+    PostingSlot.objects.create(
+        social_account=channel,
+        day_of_week=post.proposed_publish_at.weekday(),
+        time=post.proposed_publish_at.time().replace(second=0, microsecond=0),
+    )
+    # The dated calendar cell must survive adding the first channel, with all
+    # normal filters; the No channel filter intentionally no longer matches.
+    for filters in ({}, {"channel": str(channel.pk)}, {"status": "draft"}):
+        page = client.get(
+            reverse("calendar:calendar", args=[workspace.pk]),
+            {"mode": "calendar", "view": view, "date": post.proposed_publish_at.date().isoformat(), **filters},
+        )
+        assert page.status_code == 200
+        if view == "month":
+            cells = [cell for week in page.context["calendar_weeks"] for cell in week]
+        elif view == "week":
+            cells = [cell for _, day_cells in page.context["week_slots"] for cell in day_cells]
+        else:
+            cells = page.context["day_slots"]
+        assert any(pp.pk == variant.pk for cell in cells for pp in cell["posts"])
+        assert not any(getattr(pp, "takes_calendar_slot", False) for cell in cells for pp in cell["posts"])
+        if view != "month":
+            assert any(slot["account"].pk == channel.pk for cell in cells for slot in cell["slots"])
+    post.refresh_from_db()
+    variant.refresh_from_db()
+    assert post.proposed_publish_at is not None
+    assert post.scheduled_at is None and variant.scheduled_at is None
+    assert variant.status == "draft"
+
+
+def test_filtered_board_can_create_for_another_client(client, workspace, user, organization):
+    first = create_manual_channel(workspace, "instagram", "Filtered IG")
+    other = Workspace.objects.create(organization=organization, name="Another client")
+    WorkspaceMembership.objects.create(workspace=other, user=user, workspace_role="editor")
+    second = create_manual_channel(other, "youtube", "Other YT")
+    disabled = create_manual_channel(other, "custom", "Disabled")
+    set_channel_enabled(disabled, enabled=False)
+    readonly = Workspace.objects.create(organization=organization, name="Read only client")
+    WorkspaceMembership.objects.create(workspace=readonly, user=user, workspace_role="viewer")
+    hidden = create_manual_channel(readonly, "instagram", "Viewer IG")
+    client.force_login(user)
+    page = client.get(reverse("jrc_production:board"), {"client": workspace.pk})
+    assert page.status_code == 200
+    assert {c.pk for c in page.context["channels"]} == {first.pk}
+    assert {c.pk for c in page.context["creation_channels"]} == {first.pk, second.pk}
+    form = page.content.decode().split('<details class="board-new"', 1)[1].split("</details>", 1)[0]
+    assert str(second.pk) in form and str(hidden.pk) not in form and str(disabled.pk) not in form
+    response = client.post(
+        reverse("jrc_production:create"),
+        {"workspace": other.pk, "title": "Created for another client", "channels": [second.pk]},
+    )
+    assert response.status_code == 302
+    created = Post.objects.get(title="Created for another client")
+    assert created.workspace_id == other.pk
+    assert list(created.platform_posts.values_list("social_account_id", flat=True)) == [second.pk]
 
 
 def test_video_upload_does_not_implicitly_attach_channel(workspace, user):

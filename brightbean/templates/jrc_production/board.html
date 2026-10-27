@@ -79,7 +79,7 @@
       <div><label for="new-client">Client</label><select id="new-client" name="workspace" required>{% for client in creatable_clients %}<option value="{{ client.id }}" {% if selected_client == client.id|stringformat:"s" %}selected{% endif %}>{{ client.name }}</option>{% endfor %}</select></div>
       <div class="board-title-field"><label for="new-title">Content title</label><input id="new-title" name="title" placeholder="e.g. A morning in Ella’s studio" value="{{ new_title }}" maxlength="255" required></div>
       <fieldset style="width:100%"><legend>Channels <span class="board-muted">(optional; leave unchecked for an idea without a channel)</span></legend>
-        {% for channel in channels %}{% if channel.jrc_channel.is_enabled %}<label data-channel-client="{{ channel.workspace_id }}" style="display:inline-flex;align-items:center;gap:6px;margin-right:16px"><input type="checkbox" name="channels" value="{{ channel.id }}" style="min-height:20px">{{ channel.workspace.name }} · {{ channel.jrc_channel.display_name|default:channel.account_name }}</label>{% endif %}{% endfor %}
+        {% for channel in creation_channels %}<label data-channel-client="{{ channel.workspace_id }}" style="display:inline-flex;align-items:center;gap:6px;margin-right:16px"><input type="checkbox" name="channels" value="{{ channel.id }}" style="min-height:20px">{{ channel.workspace.name }} · {{ channel.jrc_channel.display_name|default:channel.account_name }}</label>{% endfor %}
       </fieldset>
       <button class="board-primary" type="submit">Add to Idea</button>
     </form>

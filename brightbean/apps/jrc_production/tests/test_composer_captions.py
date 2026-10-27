@@ -2,6 +2,7 @@
 
 import json
 import re
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 from socket import getaddrinfo as resolve_database
@@ -22,6 +23,7 @@ from apps.jrc_channels.services import create_manual_channel, set_channel_enable
 from apps.jrc_production import views as production_views
 from apps.jrc_production.services import add_content_channel, create_content
 from apps.jrc_texts.models import TextDocument
+from apps.jrc_video.models import VideoAsset, VideoVersion
 from apps.members.models import WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -107,7 +109,7 @@ def _assert_selection_rejected(response, endpoint):
         events = json.loads(response.headers["HX-Trigger"])
         assert "autosaved" not in events
         message = events["captionSelectionConflict"]["message"]
-    assert "caption history cannot be removed" in message
+    assert "caption history or video cannot be removed" in message
     assert "Reload the composer" in message
 
 
@@ -294,6 +296,44 @@ def _wait_for_post_lock(pid, future):
                 return True
         Event().wait(0.01)
     return False
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("endpoint", ["save", "autosave", "autosave_fallback"])
+def test_composer_waits_for_first_video_upload_then_rejects_deselection(user, content, endpoint, concurrent_database):
+    post, variant, _ = content
+    uploading, release = Event(), Event()
+
+    def first_upload(_http):
+        # Match start_upload: it locks the channel copy before creating video
+        # metadata. No call to FreeFrame or file transfer is needed here.
+        with transaction.atomic():
+            locked = PlatformPost.objects.select_for_update().get(pk=variant.pk)
+            video = VideoAsset.objects.create(platform_post=locked, ff_asset_id=uuid.uuid4())
+            VideoVersion.objects.create(video=video, number=1, ff_version_id=uuid.uuid4(), uploaded_by=user)
+            uploading.set()
+            assert release.wait(8)
+
+    def deselect(http):
+        if endpoint == "save":
+            return _composer_save(http, post, [])
+        return _composer_autosave(http, post, [], fallback=endpoint == "autosave_fallback")
+
+    pids = Queue()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        upload = pool.submit(_thread_request, user, first_upload)
+        try:
+            assert uploading.wait(8)
+            composer = pool.submit(_thread_request, user, deselect, pids)
+            blocked = _wait_for_post_lock(pids.get(timeout=8), composer)
+        finally:
+            release.set()
+        upload.result(timeout=10)
+        response = composer.result(timeout=10)
+    assert blocked, "Composer must check the first video only after the upload transaction commits"
+    _assert_selection_rejected(response, endpoint)
+    variant.refresh_from_db()
+    assert VideoVersion.objects.filter(video__platform_post=variant).count() == 1
 
 
 @pytest.mark.django_db(transaction=True)

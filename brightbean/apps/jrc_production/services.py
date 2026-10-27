@@ -6,7 +6,7 @@ from django.utils import timezone
 
 from apps.approvals import services as approvals
 from apps.composer.models import PlatformPost, Post
-from apps.composer.services import sync_post_scheduled_at
+from apps.composer.services import remove_platform_posts, sync_post_scheduled_at
 from apps.jrc_channels.models import ChannelProfile
 from apps.members.models import WorkspaceMembership
 from apps.members.note_visibility import note_audience
@@ -107,17 +107,11 @@ def add_content_channel(post, account_id, user):
 
 @transaction.atomic
 def remove_content_channel(post, platform_post_id, user):
-    from apps.jrc_video.models import VideoAsset
-
     post = _lock_channel_content(post, user)
-    variant = post.platform_posts.select_for_update().filter(pk=platform_post_id).first()
-    if variant is None:
+    variants = post.platform_posts.filter(pk=platform_post_id)
+    if not variants.exists():
         raise ValidationError("Choose a channel of this content.")
-    if variant.jrc_texts.exists() or VideoAsset.objects.filter(platform_post=variant).exists():
-        raise ValidationError("A channel with caption history or video cannot be removed.")
-    variant.delete()
-    sync_post_scheduled_at(post)
-    post.save(update_fields=["updated_at"])
+    remove_platform_posts(variants)
 
 
 def content_membership(workspace, user):

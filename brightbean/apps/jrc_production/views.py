@@ -98,11 +98,17 @@ def _board_context(request, *, error="", title="", selected_client=None):
         )
         total += 1
     creatable = [m.workspace for m in memberships if can_create_content(m)]
+    creation_channels = (
+        SocialAccount.objects.filter(workspace__in=creatable, jrc_channel__is_enabled=True)
+        .select_related("workspace", "jrc_channel")
+        .order_by("workspace__name", "account_name")
+    )
     return {
         "columns": list(columns.values()),
         "waiting_for_you": waiting,
         "clients": [m.workspace for m in memberships],
         "creatable_clients": creatable,
+        "creation_channels": creation_channels,
         "selected_client": selected,
         "selected_channel": channel,
         "channels": channels,

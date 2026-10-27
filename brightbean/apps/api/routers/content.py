@@ -23,6 +23,7 @@ from contextlib import contextmanager
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.http import Http404, HttpRequest
+from django.shortcuts import get_object_or_404
 from ninja import Field, Router, Schema
 from ninja.errors import HttpError
 
@@ -90,7 +91,11 @@ def _require_write_key(request: HttpRequest) -> None:
         raise HttpError(403, "Permission denied: this key is read-only (it needs create_posts or approve_posts).")
 
 
-def _post(request: HttpRequest, post_id: uuid.UUID):
+def _post(request: HttpRequest, post_id: uuid.UUID, *, lock=False):
+    if lock:
+        # The allowlist check and response must see the same set of copies as
+        # the mutation. All channel writers serialize on this parent lock.
+        get_object_or_404(Post.objects.select_for_update(), pk=post_id, workspace_id=request.api_key.workspace_id)
     post = _get_workspace_post(request, post_id)
     # The workspace relation is needed by the services; load it once.
     post.workspace = request.api_key.workspace  # type: ignore[attr-defined]
@@ -582,15 +587,16 @@ class ChannelWrite(Schema):
 def channel_add(request, post_id: uuid.UUID, payload: ChannelWrite):
     enforce_http_rate_limits(request, is_write=True)
     _require_perm(request, "create_posts")
-    post = _post(request, post_id)
-    account = _resolve_account(request, payload.social_account_id)
-    if not can_manage_channels(post, _membership(request, post)):
-        raise HttpError(403, "You cannot change channels for this content.")
-    with _http_errors():
-        add_content_channel(post, account.pk, request.user)
-    post.refresh_from_db()
-    log_audit_entry(request, action="content.channel.add", target_id=post.id, status_code=200)
-    return _post_to_response(request, post)
+    with transaction.atomic():
+        post = _post(request, post_id, lock=True)
+        account = _resolve_account(request, payload.social_account_id)
+        if not can_manage_channels(post, _membership(request, post)):
+            raise HttpError(403, "You cannot change channels for this content.")
+        with _http_errors():
+            add_content_channel(post, account.pk, request.user)
+        post.refresh_from_db()
+        log_audit_entry(request, action="content.channel.add", target_id=post.id, status_code=200)
+        return _post_to_response(request, post)
 
 
 @router.delete(
@@ -601,11 +607,12 @@ def channel_add(request, post_id: uuid.UUID, payload: ChannelWrite):
 def channel_remove(request, post_id: uuid.UUID, platform_post_id: uuid.UUID):
     enforce_http_rate_limits(request, is_write=True)
     _require_perm(request, "create_posts")
-    post = _post(request, post_id)
-    if not can_manage_channels(post, _membership(request, post)):
-        raise HttpError(403, "You cannot change channels for this content.")
-    with _http_errors():
-        remove_content_channel(post, platform_post_id, request.user)
-    post.refresh_from_db()
-    log_audit_entry(request, action="content.channel.remove", target_id=post.id, status_code=200)
-    return _post_to_response(request, post)
+    with transaction.atomic():
+        post = _post(request, post_id, lock=True)
+        if not can_manage_channels(post, _membership(request, post)):
+            raise HttpError(403, "You cannot change channels for this content.")
+        with _http_errors():
+            remove_content_channel(post, platform_post_id, request.user)
+        post.refresh_from_db()
+        log_audit_entry(request, action="content.channel.remove", target_id=post.id, status_code=200)
+        return _post_to_response(request, post)

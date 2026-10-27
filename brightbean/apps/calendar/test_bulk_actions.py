@@ -263,13 +263,14 @@ class BulkPlatformActionDeleteTests(BulkActionBase):
         self.assertTrue(PlatformPost.objects.filter(id=ordinary.id).exists())
         self.assertTrue(TextVersion.objects.filter(document=document).exists())
 
-    def test_deleting_the_last_row_deletes_the_orphaned_post(self):
+    def test_deleting_the_last_row_preserves_content_without_channels(self):
         pp = self._pp("draft")
         post_id = pp.post_id
 
         self._bulk("delete", pp)
 
-        self.assertFalse(Post.objects.filter(id=post_id).exists())
+        self.assertTrue(Post.objects.filter(id=post_id).exists())
+        self.assertFalse(PlatformPost.objects.filter(post_id=post_id).exists())
 
     def test_post_with_a_surviving_sibling_is_kept_and_resynced(self):
         soon = timezone.now() + timedelta(days=1)

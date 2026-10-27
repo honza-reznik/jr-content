@@ -55,10 +55,13 @@ from .models import (
     Tag,
 )
 from .services import (
+    ChannelRemovalError,
+    channel_removal_blocker,
     media_blocker,
     media_change_blocker,
     post_media_types,
     publish_blocker,
+    remove_platform_posts,
     require_publishable,
     usable_media_types,
 )
@@ -138,29 +141,19 @@ def _deselected_platform_posts(request, post, selected_ids):
 
 def _caption_selection_error(request, post):
     """Reject stale selections before any writes, while holding the Post lock."""
-    from django.apps import apps
-
-    if not apps.is_installed("apps.jrc_texts"):
-        return None
     selected_ids = _parse_selected_account_ids(request.POST.get("selected_accounts", ""))
-    if _deselected_platform_posts(request, post, selected_ids).filter(jrc_texts__isnull=False).exists():
+    deselected = _deselected_platform_posts(request, post, selected_ids).select_for_update(of=("self",))
+    if any(channel_removal_blocker(pp) for pp in deselected):
         return (
-            "Not saved: a channel with caption history cannot be removed in the composer. "
+            "Not saved: a channel with caption history or video cannot be removed in the composer. "
             "Reload the composer to include all channels, then save again. "
-            "Your saved captions and their history are unchanged."
+            "Your saved captions, videos and their history are unchanged."
         )
     return None
 
 
 def _remove_deselected_platform_posts(request, post, selected_ids):
-    from django.apps import apps
-
-    qs = _deselected_platform_posts(request, post, selected_ids)
-    # Defence in depth: never delete a caption document through composer sync,
-    # even if a future caller forgets the preflight check above.
-    if apps.is_installed("apps.jrc_texts"):
-        qs = qs.filter(jrc_texts__isnull=True)
-    qs.delete()
+    remove_platform_posts(_deselected_platform_posts(request, post, selected_ids))
 
 
 def _scoped_platform_post_ids(request, post):
@@ -2627,8 +2620,8 @@ def post_delete(request, workspace_id, post_id):
     """Delete a post or a single platform post via HTMX.
 
     When an ``account`` query parameter is provided, only the PlatformPost for
-    that social account is removed.  If it was the last PlatformPost the parent
-    Post is deleted as well.  Without the parameter the entire Post (and all
+    that social account is removed, preserving the parent even without channels.
+    Without the parameter the entire Post (and all
     its PlatformPosts) is deleted.
     """
     workspace = _get_workspace(request, workspace_id)
@@ -2639,11 +2632,8 @@ def post_delete(request, workspace_id, post_id):
         pp = get_object_or_404(PlatformPost, post=post, social_account_id=account_id)
         try:
             with transaction.atomic():
-                pp.delete()
-                # If no platform posts remain, clean up the parent post too.
-                if not post.platform_posts.exists():
-                    post.delete()
-        except RestrictedError:
+                remove_platform_posts(PlatformPost.objects.filter(pk=pp.pk, post=post))
+        except (ChannelRemovalError, RestrictedError):
             from django.urls import reverse
 
             caption_url = (
@@ -2655,7 +2645,7 @@ def post_delete(request, workspace_id, post_id):
             )
             return JsonResponse(
                 {
-                    "error": "This channel has caption history and can't be deleted. Review its caption in the Caption tab.",
+                    "error": "This channel has caption history or video and can't be deleted. Review its saved work on the content detail.",
                     "links": [{"label": "Open Caption", "url": caption_url}],
                 },
                 status=409,
