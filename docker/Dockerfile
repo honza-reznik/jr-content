@@ -5,7 +5,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/opt/jrc-tools/node_modules/.bin:$PATH
 RUN printf 'Acquire::Retries "3";\n' > /etc/apt/apt.conf.d/80-jrc-retries \
     && apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates git make ffmpeg python3 python3-venv python3-pip \
+    ca-certificates age git make ffmpeg python3 python3-venv python3-pip \
     python3-boto3 postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 RUN npm install --prefix /opt/jrc-tools --no-audit --no-fund playwright@1.64.0 \

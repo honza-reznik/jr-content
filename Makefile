@@ -45,11 +45,11 @@ export JRC_SOURCE_VERSION := $(shell git rev-parse --short HEAD)
 # Změna bind mountu sama službu nerestartuje; otisk v labelu vynutí novou konfiguraci.
 export JRC_CADDYFILE_SHA256 := $(shell sha256sum docker/Caddyfile | cut -d ' ' -f 1)
 # Buildx zapisuje provozní údaje pouze do worktree, i v omezené relaci agenta.
-export BUILDX_CONFIG := $(CURDIR)/.cache/docker-buildx
+export BUILDX_CONFIG ?= $(CURDIR)/.cache/docker-buildx
 CMD ?= bash
 export CMD
 
-.PHONY: test-https-proxy restore-lock-check backup backup-verify restore test-backup test-backup-guards build build-bb env check-project-ports up down shell test test-fast test-e2e test-restore-e2e test-smoke test-proxy test-s3 test-bb test-bb-fast test-ff test-ff-smoke test-isolation test-ff-offline test-ff-vitest test-ff-tsc test-ff-lint test-f5-b06-embed test-f5-b05-upload test-f5-b08-video test-f7-b02-approval ff-account build-ff reset logs ps test-smtp-relay
+.PHONY: test-https-proxy restore-lock-check backup backup-verify restore backup-offsite restore-offsite test-backup test-offsite test-backup-guards build build-bb env check-project-ports up down shell test test-fast test-e2e test-restore-e2e test-smoke test-proxy test-s3 test-bb test-bb-fast test-ff test-ff-smoke test-isolation test-ff-offline test-ff-vitest test-ff-tsc test-ff-lint test-f5-b06-embed test-f5-b05-upload test-f5-b08-video test-f7-b02-approval ff-account build-ff reset logs ps test-smtp-relay
 .PHONY: check-clean-worktree test-build-source test-up test-p1b02-regressions
 check-clean-worktree:
 	sh scripts/P1-B02/check-clean-worktree.sh
@@ -75,6 +75,14 @@ test-up: env check-project-ports
 	@set -eu; version="$$(git rev-parse --short HEAD)"; \
 	  git archive --format=tar.gz --prefix="jr-content-$$version/" --output=brightbean/.jrc-source.tar.gz HEAD
 	$(COMPOSE) up --detach --build --wait --wait-timeout 120
+	# Zdrojový bind mount skryje CSS sestavené v obrazu; přeneseme oba artefakty jako v build-bb.
+	@set -eu; container="$(JRC_PROJECT)-test-css-$$$$"; \
+	  docker create --name "$$container" jrc-bb:$(JRC_PROJECT) >/dev/null; \
+	  trap 'docker rm "$$container" >/dev/null 2>&1 || true' EXIT HUP INT TERM; \
+	  mkdir -p brightbean/theme/static/css/dist brightbean/apps/jrc_texts/static/jrc_texts/dist; \
+	  docker cp "$$container:/app/theme/static/css/dist/styles.css" brightbean/theme/static/css/dist/styles.css; \
+	  docker cp "$$container:/opt/jrc-texts/script.js" brightbean/apps/jrc_texts/static/jrc_texts/dist/script.js; \
+	  docker rm "$$container" >/dev/null; trap - EXIT HUP INT TERM
 	@sh scripts/workspace.sh remember
 
 build:
@@ -133,7 +141,7 @@ shell:
 
 test: check-project-ports
 	@failed=0; \
-	for suite in test-smoke test-build-source test-bb test-ff test-backup-guards test-smtp-relay; do \
+	for suite in test-smoke test-build-source test-bb test-ff test-backup-guards test-smtp-relay test-offsite; do \
 	  printf '\n=== %s ===\n' "$$suite"; \
 	  if $(MAKE) --no-print-directory "$$suite"; then \
 	    printf 'VÝSLEDEK: %s OK\n' "$$suite"; \
@@ -307,6 +315,14 @@ backup:
 backup-verify:
 	@sh scripts/backup/backup.sh verify "$(BACKUP)"
 
+# P1-B04: z ověřené místní zálohy uloží jen manifest a oba databázové dumpy, celé šifrované.
+backup-offsite:
+	@sh scripts/backup/offsite.sh backup
+
+# Dešifruje databázovou zálohu do backups/ ve formátu F2-B09, poté lze spustit make restore.
+restore-offsite:
+	@sh scripts/backup/offsite.sh restore "$(BACKUP)" "$(AGE_KEY_FILE)"
+
 # Obnova jen do PRÁZDNÉHO projektu. jrc jen s JRC_RESTORE_MAIN=yes-empty (nic z jrc neexistuje či je prázdné);
 # neprázdné svazky odmítne vždy.
 restore:
@@ -322,3 +338,6 @@ test-backup-guards:
 # Úplný průchod: vlastní data, záloha, obnova do jiného prázdného projektu, porovnání, Chromium.
 test-backup: check-project-ports
 	sh scripts/backup/test-backup.sh
+
+test-offsite:
+	sh scripts/backup/test-offsite.sh
