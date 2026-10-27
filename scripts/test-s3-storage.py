@@ -9,6 +9,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from urllib.parse import urlsplit
 
 import boto3
 from botocore.config import Config
@@ -52,13 +53,15 @@ try:
     # 1. Každý klíč smí jen do svého bucketu.
     for owner, s3 in keys.items():
         for bucket in keys:
+            failure_code = None
             try:
                 s3.put_object(Bucket=bucket, Key=name, Body=body, ContentType="text/plain")
                 allowed = True
             except ClientError as error:
                 assert error.response["ResponseMetadata"]["HTTPStatusCode"] == 403, error.response["Error"]
+                failure_code = error.response.get("Error", {}).get("Code")
                 allowed = False
-            assert allowed == (owner == bucket), f"klíč {owner} → bucket {bucket}: {allowed}"
+            assert allowed == (owner == bucket), f"klíč {owner} → bucket {bucket}: {allowed}, chyba {failure_code}"
     print("OK S3: klíče jrc-local, jrc-video a jrc-app mají přístup jen ke svému bucketu")
 
     # 2. jrc-app je soukromý: bez podpisu nebo s upraveným podpisem 403, prošlá adresa odmítnuta.
@@ -74,6 +77,23 @@ try:
     # Garage odmítá prošlou adresu jako 400 „Date is too old“.
     assert status(short)[0] in (400, 403)
     print("OK S3: jrc-app bez podpisu i s upraveným podpisem 403, prošlá adresa odmítnuta; podepsaná 200")
+
+    # P1-B03: ani platný podpis nesmí číst přes veřejný vstup aplikace.
+    base = os.environ.get("JRC_BASE_PATH", "/jrc")
+    for bucket, access, secret in (
+        ("jrc-app", "JRC_BB_S3_ACCESS_KEY", "JRC_BB_S3_SECRET_KEY"),
+        ("jrc-video", "JRC_FF_S3_ACCESS_KEY", "JRC_FF_S3_SECRET_KEY"),
+    ):
+        public = boto3.client("s3", endpoint_url=app_origin, region_name="garage", config=config,
+            aws_access_key_id=os.environ[access], aws_secret_access_key=os.environ[secret])
+        signed_read = public.generate_presigned_url("get_object", Params={"Bucket": bucket, "Key": name}, ExpiresIn=60)
+        parts = urlsplit(signed_read)
+        # Důkaz, že jde o skutečně platný podpis existujícího objektu.
+        assert status(s3_origin + parts.path + "?" + parts.query, headers={"Host": parts.netloc})[0] == 200
+        address = app_origin + base + "/storage" + parts.path + "?" + parts.query
+        for method in ("GET", "HEAD"):
+            assert status(address, method=method)[0] == 404
+    print("OK P1-B03: platné čtecí podpisy obou bucketů přes /storage GET/HEAD vracejí 404")
 
     # 3. CORS: jen původ aplikace. Cizímu původu Garage předběžný dotaz (preflight)
     # odmítne 403, takže prohlížeč požadavek nepošle; chybové odpovědi Garage nesou

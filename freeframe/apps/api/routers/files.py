@@ -117,7 +117,8 @@ def authorize_share_file(db, user, share_id, asset, media, filename):
             raise HTTPException(404, "Version is no longer shared")
 
 
-@router.api_route("/files/{key:path}", methods=["GET", "HEAD"])
+@router.get("/files/{key:path}")
+@router.head("/files/{key:path}", include_in_schema=False)
 def file_bytes(
     key: str, request: Request, filename: str | None = Query(None, max_length=200),
     share: uuid.UUID | None = None, db: Session = Depends(get_db), user: User = Depends(get_current_user),

@@ -18,6 +18,7 @@ from django.views.decorators.http import require_safe
 from apps.approvals.comments import can_view_comment
 from apps.approvals.models import PostComment
 from apps.jrc_video.client import FreeFrameError, FreeFrameUserClient
+from apps.jrc_video.models import VideoAccount
 from apps.media_library.models import MediaAsset
 from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.workspaces.models import Workspace
@@ -30,11 +31,13 @@ TIMEOUT = 300
 
 
 def _authorized(user, key):
-    workspaces = WorkspaceMembership.objects.filter(user=user, workspace__organization__deleted_at__isnull=True)
+    workspaces = WorkspaceMembership.objects.filter(
+        user=user, workspace__organization__deleted_at__isnull=True, workspace__is_archived=False
+    )
     organizations = OrgMembership.objects.filter(user=user, organization__deleted_at__isnull=True)
     if key.startswith("comment_attachments/"):
         comment = PostComment.objects.select_related("post").filter(attachment=key, deleted_at__isnull=True).first()
-        if not comment or not can_view_comment(comment, user):
+        if not comment or comment.post.workspace.organization.deleted_at or not can_view_comment(comment, user):
             raise Http404
         return
     access = Q(workspace_id__in=workspaces.values("workspace_id")) | Q(
@@ -70,7 +73,7 @@ class FileStream(StreamingHttpResponse):
         self._resource_closers.extend([close, release])
 
 
-def _stream(body, read, close, release, *, status=200, content_type=None, headers=None):
+def _stream(read, close, release, *, status=200, content_type=None, headers=None):
     deadline = time.monotonic() + TIMEOUT
 
     def chunks():
@@ -150,7 +153,6 @@ def stored_file(request, key):
             return _headers(HttpResponse(status=206 if window else 200, content_type=content_type, headers=headers))
         body = client.get_object(**params)["Body"]
         return _stream(
-            body,
             body.read,
             body.close,
             release,
@@ -172,24 +174,30 @@ def stored_file(request, key):
 
 
 def _video_file(request, key):
+    if not VideoAccount.objects.filter(user=request.user).exists():
+        raise Http404
     api = FreeFrameUserClient(request.user)
     upstream = None
     try:
-        api._authenticate()
-        headers = {"Authorization": f"Bearer {api.token}"}
-        if request.headers.get("Range"):
-            headers["Range"] = request.headers["Range"]
-        # Fixed internal host, exact key; cookies never leave the application.
-        upstream = requests.request(
-            request.method,
-            api.base_url + "/files/" + quote(key, safe="/"),
-            params={k: request.GET[k] for k in ("filename", "share") if k in request.GET},
-            headers=headers,
-            stream=True,
-            timeout=(3, 5),
-            allow_redirects=False,
-            proxies={"http": "", "https": ""},
-        )
+        for renew in (False, True):
+            api._authenticate(renew=renew)
+            headers = {"Authorization": f"Bearer {api.token}"}
+            if request.headers.get("Range"):
+                headers["Range"] = request.headers["Range"]
+            # Fixed internal host, exact key; cookies never leave the application.
+            upstream = requests.request(
+                request.method,
+                api.base_url + "/files/" + quote(key, safe="/"),
+                params={k: request.GET[k] for k in ("filename", "share") if k in request.GET},
+                headers=headers,
+                stream=True,
+                timeout=(3, 5),
+                allow_redirects=False,
+                proxies={"http": "", "https": ""},
+            )
+            if upstream.status_code != 401 or renew:
+                break
+            upstream.close()
         passed = {
             k: v
             for k, v in upstream.headers.items()
@@ -202,9 +210,12 @@ def _video_file(request, key):
             )
         }
         if upstream.status_code not in (200, 206):
-            status = upstream.status_code if upstream.status_code in (401, 403, 404, 416, 429, 503, 504) else 502
+            status = upstream.status_code if upstream.status_code in (401, 403, 404, 410, 416, 429, 503, 504) else 502
             upstream.close()
-            return _headers(HttpResponse(status=status, headers=passed))
+            # The error body is deliberately empty. Its length must not claim
+            # the upstream JSON body's bytes or the proxy will reset the socket.
+            error_headers = {k: v for k, v in passed.items() if k.lower() in ("retry-after", "content-range")}
+            return _headers(HttpResponse(status=status, headers=error_headers))
         if request.method == "HEAD":
             upstream.close()
             return _headers(
@@ -213,7 +224,6 @@ def _video_file(request, key):
                 )
             )
         return _stream(
-            upstream,
             upstream.raw.read,
             upstream.close,
             lambda: None,

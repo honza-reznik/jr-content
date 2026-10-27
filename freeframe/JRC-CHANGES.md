@@ -1,5 +1,23 @@
 # JR Content: změny FreeFrame
 
+## 2026-10-27 — P1-B03
+
+- Při `S3_PUBLIC_PATH` vracejí všechny čtecí adresy session cestu Brightbean
+  `/files/video/`, bez čtecího podpisu. Vnitřní API `/files/` ověřuje uživatele,
+  živé členství, přesný objekt a viditelnost interních příloh před otevřením S3.
+- Náhledy, miniatury, originály, finály, přílohy i branding se přenášejí po
+  64 KiB bez přesměrování na úložiště, s `Range`, `HEAD` a soukromou cache.
+  Stažení zachovává bezpečný název v `Content-Disposition`.
+- Adresy vydané sdílením vážou aktuálního uživatele na relaci uloženou v Redis;
+  URL obsahuje jen ID odkazu. Každé čtení znovu ověřuje heslo, platnost,
+  rozsah, viditelnost verzí a povolení stahování, stejně jako přehrávání HLS.
+- Soubory a HLS sdílejí atomické limity v Redis podle účtu a celkové instance.
+  Soubor má nejvýše 300 s na přenos, připojení 3 s a čtení úložiště 5 s;
+  chyba, uzavření i odpojení uvolní kapacitu. PUT nahrávání dál používá podpis
+  konkrétního objektu/části; podpis neopravňuje k GET a Caddy čtení blokuje.
+- Regrese: `tests/test_private_files.py`, celý E2E, obnova a HTTPS průchod,
+  včetně samostatného ověření souborů z více prohlížečových relací.
+
 ## 2026-10-26 — P1-B01
 
 - Review2: limit loginu i magic code vychází ze stejného validovaného `EmailStr`

@@ -548,7 +548,7 @@ def generate_presigned_put_url(s3_key: str, content_type: str | None = None, exp
 
 
 def generate_presigned_get_url(s3_key: str, expires_in: int = 3600, download_filename: str | None = None, *, share_link=None, share_user=None, share_session=None) -> str:
-    """Generate a presigned GET URL for an object.
+    """Return a session gateway URL in JR Content (a signed URL only standalone).
 
     Args:
         s3_key: The S3 object key.

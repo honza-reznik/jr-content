@@ -192,7 +192,7 @@ def final_download(request, workspace_id, post_id, platform_post_id):
         expected = request.build_absolute_uri(reverse("jrc_private_file", kwargs={"path": "video/"}))
         if not isinstance(signed_url, str) or not signed_url.startswith(expected):
             raise UploadError("The video service returned an unexpected address.", 502)
-        if "token" in parse_qs(urlsplit(signed_url).query):
+        if set(parse_qs(urlsplit(signed_url).query)) - {"filename", "share"}:
             raise UploadError("The video service returned an unexpected address.", 502)
     except UploadError as exc:
         return HttpResponse("Video download is unavailable.", status=exc.status, content_type="text/plain")

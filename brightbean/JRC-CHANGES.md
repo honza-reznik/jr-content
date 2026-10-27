@@ -1,5 +1,23 @@
 # Úpravy JR Content
 
+## 2026-10-27 — P1-B03
+
+- Média, jejich verze a náhledy, avatary, ikony a přílohy komentářů vydává `/files/`
+  až po kontrole aktuálního přihlášení a práv k přesnému objektu. Klient ani čtenář
+  nemůže otevřít přílohu interního vlákna; zrušené členství přestává platit ihned.
+- Stažení médií, příloh a finálního videa používá stejnou soukromou cestu; finál
+  přechází pouze na session cestu aplikace s názvem souboru, bez podpisu úložiště.
+- Přenos čte nejvýše 64 KiB najednou, podporuje `Range` a `HEAD`, nastavuje
+  `Cache-Control: private, no-store` a při uzavření uvolňuje spojení i kapacitu.
+  Sdílený Redis rozpočet je stejný jako u HLS/FreeFrame: 4 přenosy a 240 požadavků
+  za minutu na uživatele, 32 přenosů a 6000 požadavků celkem.
+- Caddy odmítá GET/HEAD `/storage/` i s dosud platným podpisem. Zůstává pouze
+  podepsaný PUT konkrétního uploadu a OPTIONS; cookies se do úložiště neposílají.
+  Podpis části uploadu platí 900 s: umožní opakování přerušeného nahrávání,
+  je omezený na klíč, ID nahrávání, číslo části a metodu PUT a nedovolí čtení.
+- Regrese: `apps/jrc_storage/tests/`, testy finálního stažení a živý průchod
+  čtyř relací v Chromiu `scripts/P1-B03/` (také za místní HTTPS proxy).
+
 ## 2026-10-26 — P1-B01
 
 - Review2: Redis cache omezuje spojení i čtení na 1 s; výpadek ochrany vrací 503

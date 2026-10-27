@@ -19,3 +19,6 @@ docker run --rm --pull never --network host --user "$(id -u):$(id -g)" \
 docker run --rm --pull never --network host --user "$(id -u):$(id -g)" \
   --env-file .env --env JRC_E2E_OUTPUT="ops/test-output/$block" --volume "$PWD:/jrc" --workdir /jrc \
   jrc-dev:"$JRC_PROJECT" node scripts/P1-B01/check-paths.cjs
+if [ "$JRC_PROJECT" = jrc-p1b03 ]; then
+  sh scripts/P1-B03/test-files.sh
+fi
