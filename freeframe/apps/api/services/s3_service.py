@@ -503,6 +503,24 @@ def build_download_filename(
 
 
 MAX_DOWNLOAD_FILENAME_LEN = 200
+MAX_FILE_GATEWAY_FILENAME_LEN = 255
+
+
+def _limit_filename_with_extension(filename: str, max_length: int) -> str:
+    if len(filename) <= max_length:
+        return filename
+    stem, extension = os.path.splitext(filename)
+    available = max(0, max_length - len(extension))
+    return stem[:available] + extension
+
+
+def limit_file_gateway_filename(filename: str) -> str:
+    """Keep generated download names within the files.py query limit.
+
+    Preserve the extension that identifies the bytes being served and shorten
+    only the stem. FastAPI validates the decoded filename at 255 characters.
+    """
+    return _limit_filename_with_extension(filename, MAX_FILE_GATEWAY_FILENAME_LEN)
 
 # Control characters plus the bidirectional overrides. The latter matter here:
 # a right-to-left override can visually reverse the tail of a name, so
@@ -526,7 +544,7 @@ def build_content_disposition(download_filename: str) -> str:
 
     name = _UNSAFE_FILENAME_CHARS.sub('', download_filename)
     name = name.replace('\\', '_').replace('/', '_').strip()
-    name = name[:MAX_DOWNLOAD_FILENAME_LEN].strip() or "download"
+    name = _limit_filename_with_extension(name.strip(), MAX_DOWNLOAD_FILENAME_LEN).strip() or "download"
     ascii_fallback = name.encode('ascii', 'replace').decode('ascii').replace('"', "'")
     return (
         f'attachment; filename="{ascii_fallback}"; '
@@ -557,6 +575,8 @@ def generate_presigned_get_url(s3_key: str, expires_in: int = 3600, download_fil
                           so the browser downloads with this filename.
     """
     from urllib.parse import quote, urlencode
+    if download_filename:
+        download_filename = limit_file_gateway_filename(download_filename)
     if settings.s3_public_path:
         base = settings.s3_public_path.removesuffix("/storage")
         url = settings.s3_public_endpoint.rstrip("/") + base + "/files/video/"

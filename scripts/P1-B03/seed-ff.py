@@ -19,8 +19,8 @@ files = []
 s3 = get_s3_client()
 payload = b"0123456789" * 30000
 
-def store(kind, internal=False, *, prefix=None):
-    key = f"{prefix or kind}/{uuid.uuid4()}/{kind}.bin"
+def store(kind, internal=False, *, prefix=None, suffix=".bin"):
+    key = f"{prefix or kind}/{uuid.uuid4()}/{kind}{suffix}"
     s3.put_object(Bucket=settings.s3_bucket, Key=key, Body=payload, ContentType="application/octet-stream")
     files.append({"url": generate_presigned_get_url(key), "internal": internal})
     return key
@@ -33,7 +33,7 @@ with SessionLocal() as db:
     db.add(version)
     db.flush()
     media = MediaFile(version_id=version.id, file_type=FileType.video, original_filename="Final.mp4",
-        mime_type="video/mp4", file_size_bytes=len(payload), s3_key_raw=store("original"),
+        mime_type="video/mp4", file_size_bytes=len(payload), s3_key_raw=store("original", suffix=".mp4"),
         s3_key_processed=store("preview"), s3_key_download=store("final"), s3_key_thumbnail=store("thumbnail"))
     db.add(media)
     for visibility in ("public", "internal"):
@@ -50,4 +50,7 @@ with SessionLocal() as db:
     fixture["files"].extend(files)
     fixture["video_range"] = generate_presigned_get_url(media.s3_key_raw)
     fixture["video_download"] = generate_presigned_get_url(media.s3_key_download, download_filename="Final.mp4")
+    fixture["long_video_download"] = generate_presigned_get_url(
+        media.s3_key_raw, download_filename="x" * 252 + ".mp4"
+    )
 print(json.dumps(fixture))

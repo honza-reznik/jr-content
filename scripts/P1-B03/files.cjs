@@ -45,9 +45,15 @@ const url = value => new URL(value, origin).href;
       assert.equal(response.status(), 200);
       assert.match(response.headers()['content-disposition'], /attachment;.*filename/);
     }
+    const longVideoDownload = await contexts.owner.request.get(url(fixture.long_video_download), { maxRedirects: 0 });
+    assert.equal(longVideoDownload.status(), 200, 'Původní MP4 s názvem média dlouhým 252 znaků přes bránu BB');
+    const longDisposition = longVideoDownload.headers()['content-disposition'];
+    const longFilename = decodeURIComponent(longDisposition.match(/filename\*=UTF-8''([^;]+)/)[1]);
+    assert.equal(longFilename.length, 200, 'Název stažení zůstane pod limitem hlavičky');
+    assert(longFilename.endsWith('.mp4'), 'Přípona původního videa zůstane zachovaná');
     const longAttachment = await contexts.owner.request.get(url(fixture.long_attachment));
     assert.equal(longAttachment.status(), 200, 'Příloha s názvem dlouhým 255 znaků');
-    assert.match(longAttachment.headers()['content-disposition'], /attachment; filename="a{200}"/);
+    assert.match(longAttachment.headers()['content-disposition'], /attachment; filename="a{196}\.txt"/);
     console.log(`OK P1-B03: ${fixture.files.length} typů/variant souborů; owner 200, bez přihlášení 403, nečlen 404, interní přílohy klientovi 404; Range a názvy stažení.`);
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });
