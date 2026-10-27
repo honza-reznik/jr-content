@@ -45,6 +45,9 @@ const url = value => new URL(value, origin).href;
       assert.equal(response.status(), 200);
       assert.match(response.headers()['content-disposition'], /attachment;.*filename/);
     }
+    const longAttachment = await contexts.owner.request.get(url(fixture.long_attachment));
+    assert.equal(longAttachment.status(), 200, 'Příloha s názvem dlouhým 255 znaků');
+    assert.match(longAttachment.headers()['content-disposition'], /attachment; filename="a{200}"/);
     console.log(`OK P1-B03: ${fixture.files.length} typů/variant souborů; owner 200, bez přihlášení 403, nečlen 404, interní přílohy klientovi 404; Range a názvy stažení.`);
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -559,24 +559,32 @@ def generate_presigned_get_url(s3_key: str, expires_in: int = 3600, download_fil
     from urllib.parse import quote, urlencode
     if settings.s3_public_path:
         base = settings.s3_public_path.removesuffix("/storage")
-        url = settings.s3_public_endpoint.rstrip("/") + base + "/files/video/" + quote(s3_key, safe="/")
+        url = settings.s3_public_endpoint.rstrip("/") + base + "/files/video/"
         query = {}
         if download_filename:
             query["filename"] = download_filename
         if share_link is not None:
             import json
+            import uuid
             from fastapi import HTTPException
             from ..routers.hls_proxy import _share_security_fingerprint
             from .redis_service import get_redis
             if share_user is None:
                 raise HTTPException(403, "Sign in to read files")
+            context_id = uuid.uuid4()
             try:
-                get_redis().setex(f"files:share:{share_user.id}:{share_link.id}", 1800, json.dumps({
+                get_redis().setex(f"files:context:{share_user.id}:{context_id}", 1800, json.dumps({
+                    "key": s3_key, "share_id": str(share_link.id),
+                    "operation": "download" if download_filename else "preview",
+                    "filename": download_filename,
                     "session": share_session, "security": _share_security_fingerprint(share_link),
                 }))
             except Exception:
                 raise HTTPException(503, "File service unavailable") from None
-            query["share"] = str(share_link.id)
+            # The path identifies a user-bound server record, not an access grant.
+            # It contains no raw key or optional permission switches to strip.
+            return url + "_contexts/" + str(context_id)
+        url += quote(s3_key, safe="/")
         if query:
             url += "?" + urlencode(query)
         return url

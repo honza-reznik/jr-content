@@ -8,9 +8,13 @@
 - Náhledy, miniatury, originály, finály, přílohy i branding se přenášejí po
   64 KiB bez přesměrování na úložiště, s `Range`, `HEAD` a soukromou cache.
   Stažení zachovává bezpečný název v `Content-Disposition`.
-- Adresy vydané sdílením vážou aktuálního uživatele na relaci uloženou v Redis;
-  URL obsahuje jen ID odkazu. Každé čtení znovu ověřuje heslo, platnost,
+- Adresy vydané sdílením vážou uživatele, přesný soubor, operaci a relaci
+  do serverového záznamu v Redis; URL obsahuje jen ID tohoto záznamu, bez
+  odstranitelných přepínačů oprávnění. Vazbu mají také přílohy komentářů
+  a jejich odpovědí. Každé čtení znovu ověřuje heslo, platnost,
   rozsah, viditelnost verzí a povolení stahování, stejně jako přehrávání HLS.
+- Název přílohy se při čtení přebírá z databáze; platné názvy do 255 znaků
+  tak nezablokuje kratší limit parametru URL. Hlavička nadále název bezpečně upraví.
 - Soubory a HLS sdílejí atomické limity v Redis podle účtu a celkové instance.
   Soubor má nejvýše 300 s na přenos, připojení 3 s a čtení úložiště 5 s;
   chyba, uzavření i odpojení uvolní kapacitu. PUT nahrávání dál používá podpis

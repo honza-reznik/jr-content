@@ -200,6 +200,37 @@ def test_head_returns_length_and_releases_capacity(client, user, files, storage)
     storage[2].assert_called_once()
 
 
+@pytest.mark.parametrize("route", ["media_library:asset_download", "composer:media_stream"])
+@pytest.mark.parametrize("shared", [False, True])
+@pytest.mark.parametrize("change", ["archived", "deleted_organization", "revoked"])
+def test_legacy_routes_recheck_access_including_shared_library(
+    client, user, files, storage, settings, route, shared, change
+):
+    settings.JRC_PRIVATE_FILES = True
+    membership, _, _ = files
+    asset = MediaAsset.objects.get(file="media_library/a.mp4")
+    if shared:
+        asset.workspace = None
+        asset.save()
+    url = reverse(route, kwargs={"workspace_id": membership.workspace_id, "asset_id": asset.pk})
+    client.force_login(user)
+    response = client.get(url)
+    assert response.status_code == 200
+    assert b"".join(response.streaming_content) == b"0123456789"
+    if change == "archived":
+        membership.workspace.is_archived = True
+        membership.workspace.save()
+    elif change == "deleted_organization":
+        membership.workspace.organization.deleted_at = timezone.now()
+        membership.workspace.organization.save()
+    else:
+        membership.delete()
+    storage[0].reset_mock()
+    assert client.get(url).status_code in (403, 404)
+    storage[0].head_object.assert_not_called()
+    storage[0].get_object.assert_not_called()
+
+
 def test_redis_identity_matches_freeframe_and_leases_release_independently(user, monkeypatch):
     import hashlib
     import uuid

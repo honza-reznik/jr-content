@@ -50,7 +50,7 @@ def authorize_file(db, user, key):
         _member(db, asset.project_id, user)
         if hides_internal_comments(db, asset.project_id, user) and thread_is_internal(db, comment):
             raise HTTPException(404, "File not found")
-        return asset, None, attachment.original_filename
+        return asset, None, attachment.original_filename, comment.version_id
 
     row = db.query(MediaFile, Asset).join(AssetVersion, AssetVersion.id == MediaFile.version_id).join(
         Asset, Asset.id == AssetVersion.asset_id,
@@ -63,16 +63,16 @@ def authorize_file(db, user, key):
     if row:
         media, asset = row
         _member(db, asset.project_id, user)
-        return asset, media, None
+        return asset, media, None, media.version_id
 
     project = db.query(Project).filter(Project.poster_s3_key == key, Project.deleted_at.is_(None)).first()
     if project:
         _member(db, project.id, user)
-        return None, None, None
+        return None, None, None, None
     branding = db.query(ProjectBranding).filter(ProjectBranding.logo_s3_key == key).first()
     if branding:
         _member(db, branding.project_id, user)
-        return None, None, None
+        return None, None, None, None
     owner = db.query(User).filter(User.avatar_url == key, User.deleted_at.is_(None)).first()
     if owner:
         shared = db.query(ProjectMember.project_id).filter(
@@ -83,51 +83,69 @@ def authorize_file(db, user, key):
             ProjectMember.project_id.in_(db.query(shared.c.project_id)), Project.deleted_at.is_(None),
         ).first()
         if owner.id == user.id or peer:
-            return None, None, None
+            return None, None, None, None
     branding = db.query(InstanceBranding).filter(or_(
         InstanceBranding.logo_light_key == key, InstanceBranding.logo_dark_key == key,
         InstanceBranding.favicon_key == key, InstanceBranding.apple_icon_key == key,
         InstanceBranding.login_logo_key == key,
     )).first()
     if branding:
-        return None, None, None
+        return None, None, None, None
     raise HTTPException(404, "File not found")
 
 
-def authorize_share_file(db, user, share_id, asset, media, filename):
+def authorize_share_file(db, user, binding, asset, version_id):
     from .share import _share_media_file
 
-    link = db.query(ShareLink).filter(ShareLink.id == share_id).first()
+    link = db.query(ShareLink).filter(ShareLink.id == uuid.UUID(binding["share_id"])).first()
     if not link or not asset:
         raise HTTPException(404, "File not found")
-    try:
-        stored = get_redis().get(f"files:share:{user.id}:{share_id}")
-        binding = json.loads(stored) if stored else None
-    except Exception:
-        raise HTTPException(503, "File service unavailable") from None
-    if not binding or binding["security"] != _share_security_fingerprint(link):
+    if binding["security"] != _share_security_fingerprint(link):
         raise HTTPException(403, "Reopen the share link")
     link = validate_share_link_with_session(db, link.token, share_session=binding["session"], current_user=user)
     validate_asset_in_share(db, link, asset)
-    if filename and not link.allow_download:
+    if binding["operation"] == "download" and not link.allow_download:
         raise HTTPException(403, "Downloads are disabled")
-    if media:
-        selected = _share_media_file(db, link, asset, media.version_id)
-        if selected.version_id != media.version_id:
+    if version_id:
+        selected = _share_media_file(db, link, asset, version_id)
+        if selected.version_id != version_id:
             raise HTTPException(404, "Version is no longer shared")
+
+
+def _file_context(user, context_id):
+    try:
+        context_id = uuid.UUID(context_id)
+    except ValueError:
+        raise HTTPException(404, "File not found") from None
+    try:
+        stored = get_redis().get(f"files:context:{user.id}:{context_id}")
+        binding = json.loads(stored) if stored else None
+    except Exception:
+        raise HTTPException(503, "File service unavailable") from None
+    if not binding:
+        raise HTTPException(404, "File context not found; reopen the share link")
+    return binding
 
 
 @router.get("/files/{key:path}")
 @router.head("/files/{key:path}", include_in_schema=False)
 def file_bytes(
-    key: str, request: Request, filename: str | None = Query(None, max_length=200),
+    key: str, request: Request, filename: str | None = Query(None, max_length=255),
     share: uuid.UUID | None = None, db: Session = Depends(get_db), user: User = Depends(get_current_user),
 ):
     if "\\" in key or posixpath.normpath(key) != key or key.startswith("/"):
         raise HTTPException(404, "File not found")
-    asset, media, attachment_name = authorize_file(db, user, key)
+    binding = None
+    if key.startswith("_contexts/"):
+        binding = _file_context(user, key.removeprefix("_contexts/"))
+        key = binding["key"]
+        filename = binding["filename"]
+    # Old optional-share addresses cannot fall back to ordinary member access.
     if share:
-        authorize_share_file(db, user, share, asset, media, filename)
+        raise HTTPException(404, "Reopen the share link")
+    asset, media, attachment_name, version_id = authorize_file(db, user, key)
+    if binding:
+        authorize_share_file(db, user, binding, asset, version_id)
     release = hls_limits.acquire(f"user:{user.id}")
     try:
         s3 = _stream_s3_client()

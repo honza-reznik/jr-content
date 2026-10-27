@@ -1826,7 +1826,7 @@ def media_stream(request, workspace_id, asset_id):
     if getattr(settings, "JRC_PRIVATE_FILES", False):
         from apps.jrc_storage.views import stored_file
 
-        return stored_file(request, asset.file.name)
+        return stored_file(request, asset.file.name, workspace=workspace)
     from apps.media_library.storage import is_s3_backend, open_object_range
 
     # On object storage, ask for exactly the window the browser asked for.

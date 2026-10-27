@@ -506,7 +506,7 @@ def asset_download(request, workspace_id, asset_id):
 
         from apps.jrc_storage.views import stored_file
 
-        response = stored_file(request, asset.file.name)
+        response = stored_file(request, asset.file.name, workspace=workspace)
         response["Content-Disposition"] = content_disposition_header(True, asset.filename)
         return response
 

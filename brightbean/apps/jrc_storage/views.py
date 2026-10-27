@@ -30,11 +30,13 @@ CHUNK_BYTES = 64 * 1024
 TIMEOUT = 300
 
 
-def _authorized(user, key):
+def _authorized(user, key, workspace=None):
     workspaces = WorkspaceMembership.objects.filter(
         user=user, workspace__organization__deleted_at__isnull=True, workspace__is_archived=False
     )
     organizations = OrgMembership.objects.filter(user=user, organization__deleted_at__isnull=True)
+    if workspace is not None and not workspaces.filter(workspace=workspace).exists():
+        raise Http404
     if key.startswith("comment_attachments/"):
         comment = PostComment.objects.select_related("post").filter(attachment=key, deleted_at__isnull=True).first()
         if not comment or comment.post.workspace.organization.deleted_at or not can_view_comment(comment, user):
@@ -127,8 +129,11 @@ def _storage():
     ), bucket
 
 
-def stored_file(request, key):
-    """Called only after the owning row has authorized this exact key."""
+def stored_file(request, key, *, workspace=None):
+    """Every entry point checks current access before reserving or reading bytes."""
+    if not request.user.is_authenticated or not request.user.is_active:
+        return _headers(HttpResponse(status=403))
+    _authorized(request.user, key, workspace)
     try:
         release = acquire(request.user)
     except TransferUnavailableError as exc:
@@ -245,5 +250,4 @@ def private_file(request, path):
         raise Http404
     if path.startswith("video/"):
         return _video_file(request, path.removeprefix("video/"))
-    _authorized(request.user, path)
     return stored_file(request, path)

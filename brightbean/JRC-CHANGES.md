@@ -2,6 +2,9 @@
 
 ## 2026-10-27 — P1-B03
 
+- Oprava review: společná kontrola aktuálního přístupu běží před každým
+  přenosem i na původních cestách knihovny a přehrávače v editoru. Archivovaný
+  pracovní prostor a smazaná organizace se odmítají také u sdílené knihovny.
 - Média, jejich verze a náhledy, avatary, ikony a přílohy komentářů vydává `/files/`
   až po kontrole aktuálního přihlášení a práv k přesnému objektu. Klient ani čtenář
   nemůže otevřít přílohu interního vlákna; zrušené členství přestává platit ihned.

@@ -121,18 +121,8 @@ def test_identity_and_branding_files_require_session_and_live_access(client, liv
         assert client.get("/files/" + key, headers=ctx.headers).status_code == 404
 
 
-@pytest.mark.parametrize("change,status", [
-    ("disabled", 403), ("expired", 410), ("deleted", 404),
-    ("password", 403), ("permission", 403), ("visibility", 403),
-    ("token", 403), ("download", 403), ("scope", 403), ("membership", 404), ("versions", 404),
-])
-def test_issued_file_url_rechecks_share_and_membership(client, live_project, storage, monkeypatch, change, status):
-    import json
-    from datetime import timedelta
-    from urllib.parse import urlsplit
-    from .test_jrc_live_membership import _link
-    ctx = live_project
-    link = _link(ctx, "asset")
+@pytest.fixture
+def share_gateway(monkeypatch):
     cache = {}
     redis = Mock()
     redis.setex.side_effect = lambda key, ttl, value: cache.__setitem__(key, value)
@@ -142,6 +132,28 @@ def test_issued_file_url_rechecks_share_and_membership(client, live_project, sto
     monkeypatch.setattr("apps.api.middleware.global_rate_limit.check_rate_limit", lambda *a, **kw: (True, 0))
     monkeypatch.setattr(settings, "s3_public_path", "/jrc/storage")
     monkeypatch.setattr(settings, "s3_public_endpoint", "https://jrc.example.invalid")
+    return cache
+
+
+def gateway_path(issued):
+    from urllib.parse import urlsplit
+    parts = urlsplit(issued)
+    return "/files" + parts.path.removeprefix("/jrc/files/video") + ("?" + parts.query if parts.query else "")
+
+
+@pytest.mark.parametrize("remove", ["share", "filename", "both"])
+@pytest.mark.parametrize("change,status", [
+    ("disabled", 403), ("expired", 410), ("deleted", 404),
+    ("password", 403), ("permission", 403), ("visibility", 403),
+    ("token", 403), ("download", 403), ("scope", 403), ("membership", 404), ("versions", 404),
+])
+def test_issued_file_url_rechecks_share_and_membership(client, live_project, storage, share_gateway, change, status, remove):
+    import json
+    from datetime import timedelta
+    from urllib.parse import urlsplit, parse_qs, urlencode
+    from .test_jrc_live_membership import _link
+    ctx = live_project
+    link = _link(ctx, "asset")
     response = client.get(f"/share/{link.token}/stream/{ctx.asset.id}?download=true", headers=ctx.headers)
     assert response.status_code == 200, response.text
     issued = response.json()["url"]
@@ -149,7 +161,7 @@ def test_issued_file_url_rechecks_share_and_membership(client, live_project, sto
     url = parts.path.removeprefix("/jrc/files/video")
     url = "/files" + url + "?" + parts.query
     assert "token" not in parts.query and "X-Amz" not in issued
-    assert json.loads(next(iter(cache.values())))["session"] is None
+    assert json.loads(next(iter(share_gateway.values())))["session"] is None
     assert client.get(url, headers=ctx.headers).status_code == 200
     assert client.get(url).status_code in (401, 403)
     if change == "versions":
@@ -182,7 +194,13 @@ def test_issued_file_url_rechecks_share_and_membership(client, live_project, sto
                 {"password": "changed", "permission": "view", "visibility": "secure", "token": uuid.uuid4().hex}[change])
     ctx.db.flush()
     storage[0].reset_mock()
-    assert client.get(url, headers=ctx.headers).status_code == status
+    # Removing either old permission switch, or the entire query, cannot
+    # remove the context from this server-bound URL.
+    query = parse_qs(urlsplit(url).query)
+    for name in (("share", "filename") if remove == "both" else (remove,)):
+        query.pop(name, None)
+    stripped = urlsplit(url).path + ("?" + urlencode(query, doseq=True) if query else "")
+    assert client.get(stripped, headers=ctx.headers).status_code == status
     storage[0].get_object.assert_not_called()
 
 
@@ -192,6 +210,126 @@ def test_head_releases_storage_and_capacity(client, live_project, storage):
     assert response.headers["content-length"] == "10"
     assert storage[1][0]._raw_stream.closed
     storage[2].assert_called_once()
+
+
+@pytest.mark.parametrize("change", ["disabled", "password", "scope", "versions", "download"])
+def test_share_comment_attachment_and_reply_keep_server_context(client, live_project, storage, share_gateway, change):
+    from .test_jrc_live_membership import _link
+    ctx = live_project
+    link = _link(ctx, "asset")
+    parent = Comment(asset_id=ctx.asset.id, version_id=ctx.version.id, author_id=ctx.user.id,
+                     body="shared", visibility="public")
+    ctx.db.add(parent)
+    ctx.db.flush()
+    reply = Comment(asset_id=ctx.asset.id, version_id=ctx.version.id, author_id=ctx.user.id,
+                    parent_id=parent.id, body="reply", visibility="public")
+    ctx.db.add(reply)
+    ctx.db.flush()
+    for comment in (parent, reply):
+        ctx.db.add(CommentAttachment(comment_id=comment.id, s3_key=f"comment-attachments/{comment.id}",
+                                    original_filename="attachment.png", file_type="image/png", file_size_bytes=10))
+    ctx.db.flush()
+    response = client.get(f"/share/{link.token}/comments", headers=ctx.headers)
+    assert response.status_code == 200, response.text
+    tree = response.json()[0]
+    urls = [gateway_path(c["attachments"][0]["url"]) for c in (tree, tree["replies"][0])]
+    for url in urls:
+        assert "_contexts/" in url and "?" not in url
+        assert client.get(url, headers=ctx.headers).status_code == 200
+        assert client.get(url).status_code in (401, 403)
+    if change == "disabled":
+        link.is_enabled = False
+    elif change == "password":
+        link.password_hash = "changed"
+    elif change == "download":
+        link.allow_download = False
+    elif change == "scope":
+        from apps.api.models.asset import Asset, AssetType
+        other = Asset(project_id=ctx.project.id, name="Other", created_by=ctx.user.id, asset_type=AssetType.video)
+        ctx.db.add(other)
+        ctx.db.flush()
+        link.asset_id = other.id
+    else:
+        from apps.api.models.asset import AssetVersion, FileType, MediaFile, ProcessingStatus
+        newer = AssetVersion(asset_id=ctx.asset.id, version_number=2, created_by=ctx.user.id,
+                             processing_status=ProcessingStatus.ready)
+        ctx.db.add(newer)
+        ctx.db.flush()
+        ctx.db.add(MediaFile(version_id=newer.id, file_type=FileType.video, original_filename="new.mp4",
+                            mime_type="video/mp4", file_size_bytes=10, s3_key_raw="raw/new"))
+        link.show_versions = False
+    ctx.db.flush()
+    storage[0].reset_mock()
+    for url in urls:
+        assert client.get(url, headers=ctx.headers).status_code in (403, 404)
+    storage[0].get_object.assert_not_called()
+
+
+def test_context_cannot_change_key_operation_or_user(client, live_project, storage, share_gateway):
+    from .test_jrc_live_membership import _link
+    from apps.api.models.user import User, UserStatus
+    from apps.api.models.project import ProjectMember
+    from apps.api.services.auth_service import create_access_token
+    ctx = live_project
+    link = _link(ctx, "asset")
+    issued = client.get(f"/share/{link.token}/stream/{ctx.asset.id}?download=true", headers=ctx.headers).json()["url"]
+    url = gateway_path(issued)
+    assert "?" not in url and ctx.media.s3_key_raw not in url
+    response = client.get(url + "?filename=changed&share=" + str(uuid.uuid4()), headers=ctx.headers)
+    assert response.status_code == 404
+    response = client.get(url + "?filename=changed", headers=ctx.headers)
+    assert response.status_code == 200
+    assert "changed" not in response.headers["content-disposition"]
+    assert client.get(url + "/" + ctx.media.s3_key_raw, headers=ctx.headers).status_code == 404
+    other = User(email=f"{uuid.uuid4().hex}@example.com", name="Other", jrc_managed=True,
+                 token_version=1, status=UserStatus.active)
+    ctx.db.add(other)
+    ctx.db.flush()
+    ctx.db.add(ProjectMember(project_id=ctx.project.id, user_id=other.id, role=ProjectRole.editor))
+    ctx.db.flush()
+    headers = {"Authorization": "Bearer " + create_access_token(str(other.id), token_version=1)}
+    assert client.get(url, headers=headers).status_code == 404
+    # Ordinary member rights remain independent of the share context.
+    assert client.get("/files/" + ctx.media.s3_key_raw, headers=headers).status_code == 200
+
+
+@pytest.mark.parametrize("failure,expected", [("expired", 404), ("unavailable", 503)])
+def test_context_without_server_record_fails_before_storage(client, live_project, storage, share_gateway, monkeypatch, failure, expected):
+    from .test_jrc_live_membership import _link
+    ctx = live_project
+    link = _link(ctx, "asset")
+    issued = client.get(f"/share/{link.token}/stream/{ctx.asset.id}?download=true", headers=ctx.headers).json()["url"]
+    if failure == "expired":
+        share_gateway.clear()
+    else:
+        redis = Mock()
+        redis.get.side_effect = ConnectionError("unavailable")
+        monkeypatch.setattr(files, "get_redis", lambda: redis)
+    assert client.get(gateway_path(issued), headers=ctx.headers).status_code == expected
+    storage[0].get_object.assert_not_called()
+
+
+@pytest.mark.parametrize("length", [201, 255])
+def test_long_attachment_name_comes_from_database(client, live_project, storage, share_gateway, length):
+    from apps.api.routers.comments import _build_attachment_response
+    ctx = live_project
+    comment = Comment(asset_id=ctx.asset.id, version_id=ctx.version.id, author_id=ctx.user.id,
+                      body="long name", visibility="public")
+    ctx.db.add(comment)
+    ctx.db.flush()
+    name = "a" * (length - 4) + ".png"
+    attachment = CommentAttachment(comment_id=comment.id, s3_key=f"comment-attachments/{comment.id}",
+                                   original_filename=name, file_type="image/png", file_size_bytes=10)
+    ctx.db.add(attachment)
+    ctx.db.flush()
+    url = gateway_path(_build_attachment_response(attachment).url)
+    assert "filename=" not in url
+    for address in (url, url + "?filename=wrong.png"):
+        response = client.get(address, headers=ctx.headers)
+        assert response.status_code == 200
+        assert response.content == b"0123456789"
+        from apps.api.services.s3_service import build_content_disposition
+        assert response.headers["content-disposition"] == build_content_disposition(name)
 
 
 @pytest.mark.parametrize("value", ["bytes=0-1,4-5", "bytes=", "other", "bytes=-"])

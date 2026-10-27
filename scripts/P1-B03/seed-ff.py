@@ -40,8 +40,12 @@ with SessionLocal() as db:
         comment = Comment(asset_id=asset.id, version_id=version.id, author_id=owner, body=visibility, visibility=visibility)
         db.add(comment)
         db.flush()
-        db.add(CommentAttachment(comment_id=comment.id, s3_key=store("attachment", visibility == "internal", prefix=f"comment-attachments/{comment.id}"),
-            original_filename="Attachment.txt", file_type="text/plain", file_size_bytes=len(payload)))
+        key = store("attachment", visibility == "internal", prefix=f"comment-attachments/{comment.id}")
+        name = "a" * 251 + ".txt" if visibility == "public" else "Attachment.txt"
+        db.add(CommentAttachment(comment_id=comment.id, s3_key=key,
+            original_filename=name, file_type="text/plain", file_size_bytes=len(payload)))
+        if visibility == "public":
+            fixture["long_attachment"] = generate_presigned_get_url(key)
     db.commit()
     fixture["files"].extend(files)
     fixture["video_range"] = generate_presigned_get_url(media.s3_key_raw)
