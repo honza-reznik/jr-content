@@ -28,6 +28,10 @@ const values = {
   JRC_POSTGRES_PORT: process.env.JRC_POSTGRES_PORT || '5432',
   JRC_S3_PORT: process.env.JRC_S3_PORT || '13900',
   JRC_BB_PORT: process.env.JRC_BB_PORT || '18011',
+  JRC_BACKUP_AGE_RECIPIENT: '',
+  JRC_BACKUP_GIT_DIR: '/home/honza/jr-content-backup-git',
+  JRC_BACKUP_GIT_REMOTE: '',
+  JRC_BACKUP_KEEP_OFFSITE: '14',
 };
 const template = fs.readFileSync('.env.example', 'utf8');
 const exists = fs.existsSync('.env');

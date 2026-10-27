@@ -1,0 +1,10 @@
+[Unit]
+Description=JR Content: šifrovaná offsite záloha databází
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/honza/jr-content
+ExecStart=/home/honza/jr-content/ops/backup-nightly.sh
+Environment=PATH=/home/honza/.local/bin:/usr/local/bin:/usr/bin:/bin
+TimeoutStartSec=2h
