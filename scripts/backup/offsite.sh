@@ -19,8 +19,6 @@ case "$repo" in /*) ;; *) repo="$workdir/$repo" ;; esac
 [ ! -L "$repo" ] || die 'JRC_BACKUP_GIT_DIR nesmí být symbolický odkaz.'
 mkdir -p "$repo"
 age_recipient=$(config_value JRC_BACKUP_AGE_RECIPIENT)
-remote=$(config_value JRC_BACKUP_GIT_REMOTE)
-case "$remote" in "$workdir"/*) remote="/workspace/${remote#"$workdir"/}" ;; esac
 keep=$(config_value JRC_BACKUP_KEEP_OFFSITE)
 [ -n "$keep" ] || keep=14
 case "$keep" in *[!0-9]*|'') die 'JRC_BACKUP_KEEP_OFFSITE musí být celé kladné číslo.' ;; esac
@@ -34,9 +32,9 @@ case "$operation" in
         latest=$(find "backups/$project" -mindepth 1 -maxdepth 1 -type d -name '[0-9]*' -printf '%f\n' | sort | tail -n 1)
         [ -n "$latest" ] || die 'Nevznikla místní záloha.'
         make --no-print-directory JRC_PROJECT="$project" backup-verify BACKUP="backups/$project/$latest"
-        docker run --rm --pull never --user "$(id -u):$(id -g)" \
+        docker run --rm --pull never --network none --user "$(id -u):$(id -g)" \
             --env-file .env --env JRC_OFFSITE_OPERATION=backup --env JRC_OFFSITE_BACKUP="/workspace/backups/$project/$latest" \
-            --env JRC_BACKUP_GIT_DIR=/offsite --env JRC_BACKUP_GIT_REMOTE="$remote" --env JRC_BACKUP_KEEP_OFFSITE="$keep" \
+            --env JRC_BACKUP_GIT_DIR=/offsite --env JRC_BACKUP_KEEP_OFFSITE="$keep" \
             --volume "$workdir:/workspace" --volume "$repo:/offsite" --workdir /workspace \
             "$dev_image" python3 scripts/backup/offsite.py backup
         ;;

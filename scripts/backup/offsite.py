@@ -32,7 +32,33 @@ def run(*args, **kwargs):
     return subprocess.run(args, check=True, **kwargs)
 
 
-def make_archive(backup, repo, recipient, keep, remote):
+def git(repo, *args, check_clean=False):
+    result = subprocess.run(["git", "-C", str(repo), *args], text=True, capture_output=True)
+    if check_clean and result.stdout.strip():
+        fail("JRC_BACKUP_GIT_DIR obsahuje neuložené změny; nic jsem nepřepsal.")
+    if result.returncode:
+        fail(f"git {args[0]} selhal (kód {result.returncode}).")
+    return result.stdout
+
+
+def prepare_branch(repo):
+    git_dir = repo / ".git"
+    if not git_dir.exists():
+        if any(repo.iterdir()):
+            fail("JRC_BACKUP_GIT_DIR není prázdný klon git repozitáře.")
+        run("git", "init", "--quiet", "--initial-branch=zalohy", str(repo))
+
+    git(repo, "status", "--porcelain", check_clean=True)
+    branch = subprocess.run(["git", "-C", str(repo), "branch", "--show-current"],
+                            capture_output=True, text=True, check=True).stdout.strip()
+    if branch != "zalohy":
+        if branch and branch not in {"main", "master"}:
+            fail("JRC_BACKUP_GIT_DIR musí být na větvi main, master nebo zalohy.")
+        git(repo, "switch", "--orphan", "zalohy")
+        git(repo, "rm", "-rf", "--ignore-unmatch", ".")
+
+
+def make_archive(backup, repo, recipient, keep):
     backup = Path(backup).resolve(strict=True)
     manifest = json.loads((backup / "manifest.json").read_text(encoding="utf-8"))
     stamp = manifest.get("stamp")
@@ -46,33 +72,7 @@ def make_archive(backup, repo, recipient, keep, remote):
     archive = repo / f"{stamp}.age"
     if archive.exists() or archive.is_symlink():
         fail(f"Offsite soubor již existuje: {archive.name}")
-    if (repo / ".git").exists():
-        git(repo, "status", "--porcelain", check_clean=True)
-        branch = subprocess.check_output(["git", "-C", str(repo), "branch", "--show-current"], text=True).strip()
-        if branch != "zalohy":
-            if branch not in {"main", "master"}:
-                fail("JRC_BACKUP_GIT_DIR musí být na větvi main, master nebo zalohy.")
-            run("git", "-C", str(repo), "switch", "--orphan", "zalohy")
-            run("git", "-C", str(repo), "rm", "-rf", "--ignore-unmatch", ".")
-        if remote and "origin" not in subprocess.check_output(["git", "-C", str(repo), "remote"], text=True).split():
-            git(repo, "remote", "add", "origin", remote)
-    elif remote:
-        if any(repo.iterdir()):
-            fail("JRC_BACKUP_GIT_DIR není prázdný klon git repozitáře.")
-        # Klonování zachová hlavní větev kódu; zálohy se zapisují do samostatné historie.
-        with tempfile.TemporaryDirectory(prefix="jrc-backup-clone-") as temporary:
-            clone = Path(temporary) / "clone"
-            run("git", "clone", remote, str(clone))
-            shutil.copytree(clone, repo, symlinks=True, dirs_exist_ok=True)
-    else:
-        if any(repo.iterdir()):
-            fail("JRC_BACKUP_GIT_DIR musí být prázdný nebo git repozitář.")
-        run("git", "init", "--initial-branch=zalohy", str(repo))
-    if (repo / ".git").exists():
-        branch = subprocess.check_output(["git", "-C", str(repo), "branch", "--show-current"], text=True).strip()
-        if branch != "zalohy":
-            run("git", "-C", str(repo), "switch", "--orphan", "zalohy")
-            run("git", "-C", str(repo), "rm", "-rf", "--ignore-unmatch", ".")
+    prepare_branch(repo)
     git(repo, "config", "user.name", "JR Content backups")
     git(repo, "config", "user.email", "backups@localhost")
 
@@ -91,18 +91,7 @@ def make_archive(backup, repo, recipient, keep, remote):
     git(repo, "add", "--", "*.age")
     git(repo, "add", "-u", "--", "*.age")
     git(repo, "commit", "--allow-empty", "-m", f"Záloha databází {stamp}")
-    if remote:
-        git(repo, "push", "--set-upstream", "origin", "zalohy")
     print(f"Uložena šifrovaná databázová záloha {stamp}.age; historie git zachována.")
-
-
-def git(repo, *args, check_clean=False):
-    result = subprocess.run(["git", "-C", str(repo), *args], text=True, capture_output=True)
-    if check_clean and result.stdout.strip():
-        fail("JRC_BACKUP_GIT_DIR obsahuje neuložené změny; nic jsem nepřepsal.")
-    if result.returncode:
-        fail(f"git {args[0]} selhal: {result.stderr.strip()}")
-    return result.stdout
 
 
 def safe_members(tar):
@@ -177,8 +166,7 @@ def main():
     args = parser.parse_args()
     if args.operation == "backup":
         make_archive(os.environ["JRC_OFFSITE_BACKUP"], os.environ["JRC_BACKUP_GIT_DIR"],
-                     os.environ["JRC_BACKUP_AGE_RECIPIENT"], int(os.environ["JRC_BACKUP_KEEP_OFFSITE"]),
-                     os.environ.get("JRC_BACKUP_GIT_REMOTE", ""))
+                     os.environ["JRC_BACKUP_AGE_RECIPIENT"], int(os.environ["JRC_BACKUP_KEEP_OFFSITE"]))
     else:
         if not args.identity:
             fail("Obnova potřebuje soukromý klíč age.")

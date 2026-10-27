@@ -45,7 +45,7 @@ export JRC_SOURCE_VERSION := $(shell git rev-parse --short HEAD)
 # Změna bind mountu sama službu nerestartuje; otisk v labelu vynutí novou konfiguraci.
 export JRC_CADDYFILE_SHA256 := $(shell sha256sum docker/Caddyfile | cut -d ' ' -f 1)
 # Buildx zapisuje provozní údaje pouze do worktree, i v omezené relaci agenta.
-export BUILDX_CONFIG := $(CURDIR)/.cache/docker-buildx
+export BUILDX_CONFIG ?= $(CURDIR)/.cache/docker-buildx
 CMD ?= bash
 export CMD
 
@@ -75,6 +75,14 @@ test-up: env check-project-ports
 	@set -eu; version="$$(git rev-parse --short HEAD)"; \
 	  git archive --format=tar.gz --prefix="jr-content-$$version/" --output=brightbean/.jrc-source.tar.gz HEAD
 	$(COMPOSE) up --detach --build --wait --wait-timeout 120
+	# Zdrojový bind mount skryje CSS sestavené v obrazu; přeneseme oba artefakty jako v build-bb.
+	@set -eu; container="$(JRC_PROJECT)-test-css-$$$$"; \
+	  docker create --name "$$container" jrc-bb:$(JRC_PROJECT) >/dev/null; \
+	  trap 'docker rm "$$container" >/dev/null 2>&1 || true' EXIT HUP INT TERM; \
+	  mkdir -p brightbean/theme/static/css/dist brightbean/apps/jrc_texts/static/jrc_texts/dist; \
+	  docker cp "$$container:/app/theme/static/css/dist/styles.css" brightbean/theme/static/css/dist/styles.css; \
+	  docker cp "$$container:/opt/jrc-texts/script.js" brightbean/apps/jrc_texts/static/jrc_texts/dist/script.js; \
+	  docker rm "$$container" >/dev/null; trap - EXIT HUP INT TERM
 	@sh scripts/workspace.sh remember
 
 build:
