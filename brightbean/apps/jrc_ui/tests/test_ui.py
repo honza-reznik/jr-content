@@ -118,13 +118,14 @@ def test_disabling_features_is_reversible(client, user, workspace, settings):
 
 
 @pytest.mark.django_db
-def test_local_about_and_license(client, monkeypatch):
+def test_local_about_and_license(client, user, monkeypatch):
     monkeypatch.setenv("JRC_SOURCE_VERSION", "test1234")
+    client.force_login(user)
     response = client.get("/about/")
     assert response.status_code == 200
     assert b"github.com/brightbeanxyz/brightbean-studio" in response.content
-    assert b"Source code available on request" in response.content
-    assert b"Version:" in response.content
+    assert b">Source code</a>" in response.content
+    assert b"tar.gz" in response.content
     assert b"<code>test1234</code>" in response.content
     response = client.get("/about/license/")
     assert response.status_code == 200

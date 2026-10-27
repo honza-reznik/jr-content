@@ -1,7 +1,10 @@
 from unittest.mock import patch
 
+import pytest
 from django.core.mail import EmailMessage
 from django.test import override_settings
+
+pytestmark = pytest.mark.django_db
 
 
 class FakeSMTP:

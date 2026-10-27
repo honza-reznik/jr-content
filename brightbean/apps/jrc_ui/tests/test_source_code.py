@@ -1,7 +1,6 @@
+import pytest
 from django.test import override_settings
 from django.urls import reverse
-
-import pytest
 
 pytestmark = pytest.mark.django_db
 

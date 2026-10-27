@@ -3,8 +3,8 @@ from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from django.core.exceptions import PermissionDenied, ValidationError
 from django.conf import settings
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -278,12 +278,15 @@ def test_client_can_download_even_with_custom_role(client, workspace, user, post
         "jrc_video:final_download",
         kwargs={"workspace_id": workspace.pk, "post_id": post.pk, "platform_post_id": variant.pk},
     )
-    with patch(
-        "apps.jrc_video.uploads._call",
-        return_value={
-            "url": f"{settings.JRC_S3_PUBLIC_ORIGIN}/storage/jrc-video/final.mp4?X-Amz-Expires=900&X-Amz-Signature=local-test"
-        },
-    ) as call:
+    with (
+        override_settings(JRC_S3_PUBLIC_ORIGIN="http://127.0.0.1:13453"),
+        patch(
+            "apps.jrc_video.uploads._call",
+            return_value={
+                "url": f"{settings.JRC_S3_PUBLIC_ORIGIN}/storage/jrc-video/final.mp4?X-Amz-Expires=900&X-Amz-Signature=local-test"
+            },
+        ) as call,
+    ):
         response = client.get(url)
         assert response.status_code == 302
         call.assert_called_once()

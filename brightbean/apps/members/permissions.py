@@ -6,8 +6,5 @@ def can_publish_directly(membership):
     return bool(
         membership
         and membership.workspace_role != "viewer"
-        and (
-            membership.workspace_role == "client"
-            or membership.effective_permissions.get("publish_directly", False)
-        )
+        and (membership.workspace_role == "client" or membership.effective_permissions.get("publish_directly", False))
     )
