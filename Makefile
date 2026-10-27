@@ -60,6 +60,7 @@ test-build-source:
 	  jrc-dev:$(JRC_PROJECT) sh /test/test-build-source.sh /test/check-clean-worktree.sh
 
 test-smtp-relay:
+	@sh scripts/P1-B02/test-smtp-relay-scope.sh
 	@sh scripts/P1-B02/test-smtp-relay.sh
 
 test-p1b02-regressions:
