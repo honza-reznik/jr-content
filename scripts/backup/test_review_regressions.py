@@ -111,6 +111,7 @@ class IntegrityRegressions(Base):
         class Missing(Exception):
             pass
         client.exceptions.NoSuchKey = Missing
+        client.head_object.return_value = {"ContentLength": 4, "ETag": '"gone"'}
         client.get_object.side_effect = Missing
         with mock.patch.object(jb, 'merged_env', return_value=RestoreEmptinessGuards.ENV), \
                 mock.patch.object(jb, 's3_client', return_value=client), \
