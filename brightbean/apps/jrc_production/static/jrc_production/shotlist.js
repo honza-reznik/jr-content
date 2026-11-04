@@ -75,6 +75,7 @@
     const item = data.get('item');
     root.setAttribute('aria-busy', 'true');
     let response = null;
+    let html;
     try {
       // Not form.action: the hidden input named "action" shadows that property.
       response = await fetch(form.getAttribute('action'), {
@@ -83,6 +84,8 @@
         credentials: 'same-origin',
         headers: { 'X-JRC-Shotlist': '1' },
       });
+      // Reading the body can fail too, after the server has already saved the change.
+      html = await response.text();
     } catch (error) {
       response = null;
     }
@@ -98,7 +101,7 @@
       window.location.assign(response.redirected ? response.url : `${window.location.pathname}?tab=shotlist`);
       return;
     }
-    showList(await response.text());
+    showList(html);
     restoreFocus(action, item);
   });
 })();

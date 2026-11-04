@@ -69,10 +69,10 @@ const out = 'ops/screenshoty/P1-B09';
       const { context, page } = await open(width, 'owner');
       console.log(`Owner ${width}: nástěnka`);
       await page.goto(`${base}/board/?client=${seed.workspace}`, { waitUntil: 'networkidle' });
+      await page.screenshot({ path: `${out}/board-${width}.png`, fullPage: width === 1440 });
       const card = page.locator(`[data-post="${post}"]`);
       assert.equal((await card.locator('[data-shotlist-progress]').innerText()).trim(), 'Shotlist 1/3 done');
       assert(await noOverflow(page), `board overflow ${width}`);
-      await page.screenshot({ path: `${out}/board-${width}.png`, fullPage: width === 1440 });
       checks.push(`owner ${width}: karta nástěnky ukazuje Shotlist 1/3 done`);
 
       console.log(`Owner ${width}: záložka Shotlist`);
@@ -172,6 +172,34 @@ const out = 'ops/screenshoty/P1-B09';
       });
       assert.equal((await progress(page)).trim(), '2/4 done');
       checks.push(`owner ${width}: ztracená odpověď neodešle přidání znovu, načte seznam a upozorní`);
+
+      // Spojení může selhat také při čtení těla odpovědi, až po přijetí hlaviček.
+      await page.evaluate(() => {
+        const original = window.fetch;
+        window.shotlistBodyFailurePosts = 0;
+        window.fetch = async (...args) => {
+          const response = await original(...args);
+          if (args[1]?.method === 'POST') {
+            window.shotlistBodyFailurePosts += 1;
+            response.text = async () => { throw new TypeError('Interrupted response body'); };
+          }
+          return response;
+        };
+      });
+      await page.locator('#shotlist-new-text').fill('Interrupted body shot');
+      await page.locator('#shotlist-new-text').press('Enter');
+      await page.locator('[data-shotlist] [role=alert]', { hasText: 'may or may not have been saved' }).waitFor();
+      assert.equal(await page.evaluate(() => window.shotlistBodyFailurePosts), 1);
+      assert.equal((await texts(page)).filter((t) => t === 'Interrupted body shot').length, 1);
+      assert.equal(await page.locator('[data-shotlist]').getAttribute('aria-busy'), null);
+      await page.screenshot({ path: `${out}/shotlist-body-dropped-${width}.png`, fullPage: width === 1440 });
+      await page.reload({ waitUntil: 'networkidle' });
+      page.once('dialog', (dialog) => dialog.accept());
+      const interrupted = page.locator('.shotlist-row').filter({ hasText: 'Interrupted body shot' });
+      await interrupted.locator('summary').click();
+      await interrupted.getByRole('button', { name: 'Delete item' }).click();
+      await page.waitForFunction(() => !document.querySelector('[data-shotlist]').textContent.includes('Interrupted body shot'));
+      checks.push(`owner ${width}: přerušené čtení odpovědi načte seznam bez opakování POST`);
 
       // Po obnovení stránky zůstane stav uložený a historie ho ukazuje.
       await page.reload({ waitUntil: 'networkidle' });

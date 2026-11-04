@@ -8,6 +8,9 @@
 - Záložka Shotlist za Script, změny v History, „Shotlist x/y done“ na kartě nástěnky.
 - REST `/api/v1/posts/{id}/shotlist` (GET, POST) a `/shotlist/{item_id}` (PATCH, DELETE); upstream
   `apps/api/api.py` jen registruje nový router.
+- Opravy kontroly: zápis REST ověřuje povolené kanály pod zámkem obsahu a aktuální oprávnění člena,
+  přesun ukládá autora a čas změny. Při ztracené odpovědi (včetně přerušeného čtení jejího těla)
+  rozhraní načte aktuální seznam bez automatického opakování zápisu.
 
 ## 2026-10-27 — P1-B06
 
