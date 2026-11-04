@@ -108,7 +108,21 @@
                         {% if item.published %}<span class="w-fit rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800">Published manually</span>{% else %}<span class="w-fit rounded-full bg-stone-100 px-3 py-1 text-xs font-medium text-stone-700">{{ item.variant.get_status_display }}</span>{% endif %}
                     </div>
                     <p class="mt-3 text-xs font-medium uppercase tracking-wide text-stone-500">Scheduled publication</p>
-                    <p class="mt-1 text-sm text-stone-800">{% if item.scheduled_label %}{{ item.scheduled_label }}{% else %}No date or time scheduled{% if can_edit_posts and not item.published %} · <a href="{% url 'composer:compose_edit' workspace_id=workspace.id post_id=post.id %}?account={{ item.variant.social_account_id }}&amp;set_date=1" class="text-orange-700 underline">Set date</a>{% endif %}{% endif %}</p>
+                    {% if item.date_error %}<p role="alert" class="text-sm text-red-700">{{ item.date_error }}</p>{% endif %}
+                    <p class="mt-1 text-sm text-stone-800">{% if item.scheduled_label %}{{ item.scheduled_label }}{% else %}No date or time scheduled{% endif %}</p>
+                    {% if item.can_schedule %}
+                    <details class="mt-3" {% if item.date_open %}open{% endif %}>
+                        <summary class="cursor-pointer text-sm text-orange-700 underline">{% if item.scheduled_at %}Change date{% else %}Set date{% endif %}</summary>
+                        <form method="post" action="?tab=publish" class="mt-3 max-w-sm space-y-3">
+                            {% csrf_token %}<input type="hidden" name="action" value="set_date"><input type="hidden" name="platform_post" value="{{ item.variant.pk }}">
+                            <label for="{{ item.date_form.scheduled_at.id_for_label }}" class="block text-sm font-medium">Publication date and time ({{ workspace.effective_timezone }})</label>
+                            {{ item.date_form.scheduled_at }}
+                            {% for error in item.date_form.scheduled_at.errors %}<p role="alert" class="text-sm text-red-700">{{ error }}</p>{% endfor %}
+                            <p class="text-xs text-stone-500">This channel will wait for you to publish it manually.</p>
+                            <button class="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white">Save date</button>
+                        </form>
+                    </details>
+                    {% endif %}
                     <div class="mt-4">
                         <label for="publish-caption-{{ forloop.counter }}" class="mb-1 block text-xs font-medium uppercase tracking-wide text-stone-500">Saved caption</label>
                         <textarea id="publish-caption-{{ forloop.counter }}" readonly rows="5" class="block w-full rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-stone-800">{{ item.caption }}</textarea>

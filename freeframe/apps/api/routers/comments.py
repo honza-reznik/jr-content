@@ -18,7 +18,8 @@ from ..database import get_db
 from ..middleware.auth import get_current_user, get_optional_user
 from ..middleware.share_auth import get_share_link
 from ..services import event_service
-from ..services.jrc_comment_notifications import notify_jrc_comment
+from ..services.jrc_comment_notifications import queue_jrc_comment
+from ..tasks.jrc_comment_tasks import deliver_jrc_comment_events
 from ..models.asset import Asset, AssetType, AssetVersion, MediaFile, ProcessingStatus
 from ..models.project import ProjectMember, ProjectRole
 from ..models.comment import (
@@ -586,8 +587,15 @@ def create_comment(
     activity = ActivityLog(user_id=current_user.id, asset_id=asset_id, action=ActivityAction.commented)
     db.add(activity)
 
+    jrc_event = (
+        current_user.jrc_managed is True
+        and not thread_is_internal(db, comment)
+        and queue_jrc_comment(db, comment, current_user)
+    )
     db.commit()
     db.refresh(comment)
+    if jrc_event:
+        send_task_safe(deliver_jrc_comment_events)
 
     if not thread_is_internal(db, comment):
         event_service.publish_sync(asset.project_id, "new_comment", {
@@ -596,7 +604,6 @@ def create_comment(
             "author": current_user.name,
         })
 
-    notify_jrc_comment(comment, current_user)
     return _build_comment_response(comment, db, current_user_id=current_user.id)
 
 
@@ -655,8 +662,15 @@ def reply_to_comment(
 
     _notify_parent_author_about_reply(db, parent, reply, asset, current_user.id)
 
+    jrc_event = (
+        current_user.jrc_managed is True
+        and not thread_is_internal(db, reply)
+        and queue_jrc_comment(db, reply, current_user)
+    )
     db.commit()
     db.refresh(reply)
+    if jrc_event:
+        send_task_safe(deliver_jrc_comment_events)
 
     if not thread_is_internal(db, reply):
         event_service.publish_sync(asset.project_id, "new_comment", {
@@ -665,7 +679,6 @@ def reply_to_comment(
             "author": current_user.name,
         })
 
-    notify_jrc_comment(reply, current_user)
     return _build_comment_response(reply, db, current_user_id=current_user.id)
 
 
@@ -1338,8 +1351,16 @@ def guest_comment(
         )
         db.add(annotation)
 
+    jrc_event = (
+        current_user is not None
+        and current_user.jrc_managed is True
+        and not thread_is_internal(db, comment)
+        and queue_jrc_comment(db, comment, current_user)
+    )
     db.commit()
     db.refresh(comment)
+    if jrc_event:
+        send_task_safe(deliver_jrc_comment_events)
 
     # Log share link activity
     actor_email = current_user.email if current_user else (body.guest_email or "anonymous")

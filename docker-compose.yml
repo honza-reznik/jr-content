@@ -231,7 +231,7 @@ services:
     command: ["sh", "/jrc-scripts/start-api.sh"]
     environment:
       <<: *ff-environment
-      # F5-B02: klíč vstupenek jen pro API (ověřuje), workery ho nedostávají.
+      # API ověřuje vstupenky; maintenance stejným klíčem podepisuje místní upozornění.
       JRC_FF_SSO_SECRET: ${JRC_FF_SSO_SECRET:?Spusťte make env}
     networks: [internal]
     healthcheck:
@@ -244,6 +244,10 @@ services:
     command: ["celery", "-A", "apps.api.tasks.celery_app", "worker", "-Q", "transcoding", "-c", "1", "--loglevel=info"]
   jrc-ff-maintenance:
     <<: *ff
+    environment:
+      <<: *ff-environment
+      # Signs only local notification deliveries; other workers do not receive this key.
+      JRC_FF_SSO_SECRET: ${JRC_FF_SSO_SECRET:?Spusťte make env}
     command: ["celery", "-A", "apps.api.tasks.celery_app", "worker", "-Q", "maintenance", "-c", "1", "--loglevel=info"]
   jrc-ff-beat:
     <<: *ff

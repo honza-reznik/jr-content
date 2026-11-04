@@ -132,9 +132,14 @@ async function mobileVideo(page, role) {
       for (const width of [1440, 390]) {
         await owner.page.setViewportSize({width, height: width === 390 ? 844 : 900});
         await openTab(owner.page, 'publish');
-        await owner.page.getByRole('link', {name: 'Set date'}).first().click();
-        await owner.page.locator('#publish-schedule-view input[placeholder="Select date…"]').waitFor({state: 'visible'});
+        const article = owner.page.locator('article').filter({has: owner.page.locator('input[name=action][value=set_date]')}).first();
+        await article.locator('summary').click();
+        await article.getByLabel('Publication date and time', {exact: false}).fill(`2097-01-0${width === 390 ? 3 : 2}T14:30`);
         await snap(owner.page, `owner-set-date-${width}`);
+        await article.getByRole('button', {name: 'Save date'}).click();
+        await owner.page.getByText('Publication date saved.', {exact: false}).waitFor();
+        await owner.page.reload();
+        await owner.page.getByText(`Jan ${width === 390 ? 3 : 2}, 2097`, {exact: false}).first().waitFor();
       }
       await owner.page.setViewportSize({width: 1440, height: 900});
       await openTab(owner.page, 'publish');

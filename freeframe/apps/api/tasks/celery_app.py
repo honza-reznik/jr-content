@@ -18,6 +18,7 @@ celery_app = Celery(
         "apps.api.tasks.reminder_tasks",
         "apps.api.tasks.email_tasks",
         "apps.api.tasks.cleanup_tasks",
+        "apps.api.tasks.jrc_comment_tasks",
     ],
 )
 
@@ -73,6 +74,10 @@ celery_app.conf.update(
 )
 
 celery_app.conf.beat_schedule = {
+    "jrc-comment-events": {
+        "task": "deliver_jrc_comment_events",
+        "schedule": 30.0,
+    },
     "due-date-reminders": {
         "task": "send_due_date_reminders",
         "schedule": crontab(minute="0"),  # every hour
