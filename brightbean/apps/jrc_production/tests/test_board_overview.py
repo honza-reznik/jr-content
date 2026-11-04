@@ -73,11 +73,13 @@ def test_compact_card_shows_only_useful_details(http, workspace, organization, u
     PostComment.objects.create(post=with_channel, author=user, body="Gone", deleted_at=timezone.now())
     other = Workspace.objects.create(organization=organization, name="Other client")
     WorkspaceMembership.objects.create(workspace=other, user=user, workspace_role="owner")
+    create_content(other, "Other client idea", user)
 
     html = http.get(reverse(BOARD), {"client": ""}).content.decode()
     first, second = card_html(html, with_channel), card_html(html, without)
-    # several clients on the board: the client name helps
-    assert "Production test</span>" in first
+    # cards of several clients on the board: the client name helps
+    assert '<div class="board-grid show-clients">' in html
+    assert '<span class="board-client">Production test</span>' in first
     assert ">Ella Instagram</span>" in first and "No channel" not in first
     assert "board-channel board-channel-none" in second and ">No channel</span>" in second
     assert '3<span class="board-sr"> comments</span>' in first
@@ -85,8 +87,7 @@ def test_compact_card_shows_only_useful_details(http, workspace, organization, u
     assert "Proposed " in second and "<time" not in first
 
     filtered = http.get(reverse(BOARD), {"client": workspace.pk}).content.decode()
-    assert "Production test</span>" not in card_html(filtered, with_channel)
-    assert "board-client" not in card_html(filtered, with_channel)
+    assert '<div class="board-grid">' in filtered and "board-grid show-clients" not in filtered
 
 
 def test_clients_count_only_comments_they_may_read(client, workspace, user):
@@ -111,7 +112,25 @@ def test_single_client_member_does_not_see_client_name(http, workspace, user):
     post = create_content(workspace, "One client", user)
     response = http.get(reverse(BOARD))
     assert response.context["show_client"] is False
-    assert "board-client" not in card_html(response.content.decode(), post)
+    assert f'data-client="{workspace.pk}"' in card_html(response.content.decode(), post)
+    assert '<div class="board-grid">' in response.content.decode()
+
+
+def test_client_names_follow_cards_on_screen_not_memberships(http, workspace, organization, user):
+    # Member of two clients, but only one of them has content (also with "All clients"): no names.
+    other = Workspace.objects.create(organization=organization, name="Empty client")
+    WorkspaceMembership.objects.create(workspace=other, user=user, workspace_role="owner")
+    create_content(workspace, "Only client with content", user)
+    response = http.get(reverse(BOARD), {"client": ""})
+    assert response.context["show_client"] is False
+    assert "board-grid show-clients" not in response.content.decode()
+    create_content(other, "Now two clients", user)
+    response = http.get(reverse(BOARD), {"client": ""})
+    assert response.context["show_client"] is True
+    # A channel filter that leaves one client's cards hides the names again.
+    channel = create_manual_channel(other, "instagram", "Other IG")
+    create_content(other, "Other with channel", user, social_account_ids=[channel.pk])
+    assert http.get(reverse(BOARD), {"client": "", "channel": channel.pk}).context["show_client"] is False
 
 
 def test_columns_sort_by_publication_date_then_latest_change(http, workspace, user):
@@ -129,7 +148,8 @@ def test_columns_sort_by_publication_date_then_latest_change(http, workspace, us
     response = http.get(reverse(BOARD), {"client": workspace.pk})
     assert column_order(response, "idea") == ["Dated soon", "Dated later", "New undated", "Old undated"]
     html = response.content.decode()
-    assert html.index(f'data-post="{soon.pk}" data-dated="1"') < html.index(f'data-post="{new.pk}" data-dated="0"')
+    assert html.index(f'data-post="{soon.pk}"') < html.index(f'data-post="{new.pk}"')
+    assert 'data-dated="1"' in card_html(html, soon) and 'data-dated="0"' in card_html(html, new)
 
 
 def test_published_column_shows_newest_first(http, workspace, user):
@@ -187,7 +207,7 @@ def test_three_quick_ideas_in_a_row_stay_on_the_board(http, workspace, user):
         html = response.content.decode()
         assert html.strip().startswith('<article class="board-card"') and title in html
         assert 'data-dated="0"' in html and ">No channel</span>" in html and "Move…" in html
-        assert "board-client" not in html
+        assert response["X-Board-Match"] == "1"
     posts = Post.objects.filter(workspace=workspace).order_by("created_at")
     assert [p.title for p in posts] == ["First idea", "Second idea", "Third idea"]
     for post in posts:
@@ -235,7 +255,7 @@ def test_client_sees_quick_idea_for_own_workspace_only(client, workspace, organi
     client.force_login(ella)
     html = client.get(reverse(BOARD)).content.decode()
     form = html.split('id="quick-idea"', 1)[1].split("</form>", 1)[0]
-    assert f'<input type="hidden" name="workspace" value="{workspace.pk}">' in form
+    assert f'<input type="hidden" name="workspace" value="{workspace.pk}" data-client-name="Production test">' in form
     assert 'placeholder="Idea…"' in form
     assert client.post(reverse(IDEA), {"workspace": foreign.pk, "title": "Leak"}, **XHR).status_code == 404
     assert not Post.objects.filter(title="Leak").exists()
@@ -294,3 +314,25 @@ def test_moved_quick_idea_keeps_working(http, workspace, user):
     move_content(post, "script", user, expected_stage="idea")
     response = http.get(reverse(BOARD), {"client": workspace.pk})
     assert column_order(response, "script") == ["Grows up"]
+
+
+@pytest.mark.parametrize(
+    "board,match",
+    [
+        ({"board_client": "", "board_channel": ""}, "1"),
+        ({"board_client": "same", "board_channel": "none"}, "1"),
+        ({"board_client": "other", "board_channel": ""}, "0"),
+        ({"board_client": "same", "board_channel": "channel"}, "0"),
+    ],
+)
+def test_quick_idea_reports_whether_active_filters_show_it(http, workspace, organization, user, board, match):
+    other = Workspace.objects.create(organization=organization, name="Other client")
+    WorkspaceMembership.objects.create(workspace=other, user=user, workspace_role="owner")
+    channel = create_manual_channel(workspace, "instagram", "Ella Instagram")
+    values = {"same": str(workspace.pk), "other": str(other.pk), "channel": str(channel.pk)}
+    data = {key: values.get(value, value) for key, value in board.items()}
+    response = http.post(reverse(IDEA), {"workspace": workspace.pk, "title": "Filtered idea", **data}, **XHR)
+    assert response.status_code == 201
+    assert response["X-Board-Match"] == match
+    # Saved either way, always without channel.
+    assert not Post.objects.get(title="Filtered idea").platform_posts.exists()

@@ -1,6 +1,6 @@
 {% load tz %}{% with post=card.post title=card.post.title|default:"Untitled content" %}
-<article class="board-card" data-post="{{ post.id }}" data-dated="{% if card.date %}1{% else %}0{% endif %}">
-  {% if show_client %}<span class="board-client">{{ post.workspace.name }}</span>{% endif %}
+<article class="board-card" data-post="{{ post.id }}" data-client="{{ post.workspace_id }}" data-dated="{% if card.date %}1{% else %}0{% endif %}">
+  <span class="board-client">{{ post.workspace.name }}</span>
   <h3><a class="board-card-link" href="{% url 'jrc_production:content_detail' workspace_id=post.workspace_id post_id=post.id %}" title="{{ title }}">{{ title }}</a></h3>
   <div class="board-meta">
     <span class="board-channels">{% for variant in post.platform_posts.all %}<span class="board-channel" title="{{ variant.social_account.jrc_channel.display_name|default:variant.social_account.account_name }}">{{ variant.social_account.jrc_channel.display_name|default:variant.social_account.account_name }}</span>{% empty %}<span class="board-channel board-channel-none" title="Add a channel on the content detail before Review.">No channel</span>{% endfor %}</span>

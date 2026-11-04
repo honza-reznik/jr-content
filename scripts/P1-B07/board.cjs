@@ -54,7 +54,7 @@ const note = (name, value) => { results.push({ name, value }); console.log(`${na
       await Promise.all([page.waitForURL(/client=/), page.getByRole('button', { name: 'Apply filters' }).click()]);
       await page.goto(base + '/board/', { waitUntil: 'networkidle' });
       assert.equal(await page.locator('#filter-client').inputValue(), seed.ella_ws, 'pamatovaný klient');
-      assert.equal(await page.locator('.board-card .board-client').count(), 0, 'filtr na klienta skryje jméno');
+      assert.equal(await page.locator('.board-card .board-client:visible').count(), 0, 'filtr na klienta skryje jméno');
       assert(await noOverflow(), `stránka bez vodorovného přetečení ${width}`);
       await page.screenshot({ path: `${shots}/board-${width}.png`, fullPage: false });
 
@@ -167,6 +167,28 @@ const note = (name, value) => { results.push({ name, value }); console.log(`${na
       assert.equal(await saved.getByText('No channel', { exact: true }).count(), 1, 'nápad bez kanálu');
       assert.equal(await saved.locator('time').count(), 0, 'nápad bez data');
       assert(await noOverflow(), `po nápadech bez přetečení ${width}`);
+
+      // Nález review: nápad pro jiného klienta, než ukazuje filtr, se uloží, ale na nástěnku se nevloží.
+      if (mobile) await page.getByRole('button', { name: '+ Idea' }).click();
+      const shownBefore = await page.locator('.board-card').count();
+      const countBefore = await ideaCount();
+      await page.locator('#idea-client').selectOption(seed.other_ws);
+      await field.fill(`Hidden idea ${width} ${runId}`);
+      await field.press('Enter');
+      await page.getByText(`Saved to Second Client (hidden by the current filter): Hidden idea ${width} ${runId}`).waitFor();
+      assert.equal(await page.locator('.board-card').count(), shownBefore, 'skrytý nápad se nevloží');
+      assert.equal(await ideaCount(), countBefore, 'počty beze změny');
+      // Bez filtru: karty dvou klientů → jména klientů viditelná, i u nově vložené karty.
+      await page.goto(base + '/board/?client=', { waitUntil: 'networkidle' });
+      assert(await page.locator('.board-card').filter({ hasText: `Hidden idea ${width} ${runId}` }).isVisible(), 'nápad uložen');
+      if (mobile) await page.getByRole('button', { name: '+ Idea' }).click();
+      await page.locator('#idea-client').selectOption(seed.ella_ws);
+      await field.fill(`Visible idea ${width} ${runId}`);
+      await field.press('Enter');
+      const visibleCard = page.locator('.board-card').filter({ hasText: `Visible idea ${width} ${runId}` });
+      await visibleCard.waitFor();
+      assert(await visibleCard.locator('.board-client').isVisible(), 'jméno klienta u nové karty');
+      await page.goto(base + `/board/?client=${seed.ella_ws}`, { waitUntil: 'networkidle' });
       await context.close();
 
       // Klient: vlastní workspace, vidí jen externí komentáře, smí přidat nápad.

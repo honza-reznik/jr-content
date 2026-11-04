@@ -160,7 +160,8 @@ def _board_context(request, *, error="", title="", selected_client=None):
         "creation_channels": creation_channels,
         "selected_client": selected,
         "selected_channel": channel,
-        "show_client": not selected and len(memberships) > 1,
+        # Client names only help when the cards on screen belong to more than one client.
+        "show_client": len({post.workspace_id for post in posts}) > 1,
         "idea_client": idea_client,
         "channels": channels,
         "total": len(posts),
@@ -242,11 +243,14 @@ def quick_idea(request):
     )
     context = {
         "card": _board_card(post, membership),
-        "show_client": not board_client and len(memberships) > 1,
         "selected_client": board_client,
         "selected_channel": board_channel,
     }
-    return render(request, "jrc_production/_board_card.html", context, status=201)
+    response = render(request, "jrc_production/_board_card.html", context, status=201)
+    # A new idea has no channel; it belongs on the open board only if the active filters include it.
+    matches = board_client in ("", str(membership.workspace_id)) and board_channel in ("", "none")
+    response["X-Board-Match"] = "1" if matches else "0"
+    return response
 
 
 @login_required

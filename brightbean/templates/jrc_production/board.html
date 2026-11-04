@@ -58,6 +58,7 @@
   .board-card-link:focus-visible { outline:none; }
   /* The title link covers the whole card, so the card opens on click, tap or Enter. */
   .board-card-link::after { content:""; position:absolute; inset:0; border-radius:7px; }
+  .board-grid:not(.show-clients) .board-card .board-client { display:none; }
   .board-client { display:block; font-size:10px; color:#78716c; margin-bottom:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .board-meta { display:flex; flex-wrap:wrap; align-items:center; gap:3px 6px; margin-top:5px; font-size:10.5px; color:#78716c; line-height:1.4; }
   .board-channels { display:inline-flex; flex-wrap:wrap; gap:3px; min-width:0; }
@@ -107,7 +108,7 @@
   {% if creatable_clients %}
   <form id="quick-idea" class="quick-idea" method="post" action="{% url 'jrc_production:quick_idea' %}" aria-label="Quick idea">{% csrf_token %}
     <input type="hidden" name="board_client" value="{{ selected_client }}"><input type="hidden" name="board_channel" value="{{ selected_channel }}">
-    {% if creatable_clients|length > 1 %}<label class="board-sr" for="idea-client">Client of the idea</label><select id="idea-client" name="workspace" required>{% for client in creatable_clients %}<option value="{{ client.id }}" {% if idea_client == client.id|stringformat:"s" %}selected{% endif %}>{{ client.name }}</option>{% endfor %}</select>{% else %}<input type="hidden" name="workspace" value="{{ creatable_clients.0.id }}">{% endif %}
+    {% if creatable_clients|length > 1 %}<label class="board-sr" for="idea-client">Client of the idea</label><select id="idea-client" name="workspace" required>{% for client in creatable_clients %}<option value="{{ client.id }}" {% if idea_client == client.id|stringformat:"s" %}selected{% endif %}>{{ client.name }}</option>{% endfor %}</select>{% else %}<input type="hidden" name="workspace" value="{{ creatable_clients.0.id }}" data-client-name="{{ creatable_clients.0.name }}">{% endif %}
     <label class="board-sr" for="idea-title">New idea</label><input id="idea-title" name="title" placeholder="Idea…" maxlength="255" autocomplete="off" enterkeyhint="send" required>
     <button class="board-primary" type="submit">Add</button>
     <p class="quick-idea-status" role="status" aria-live="polite"></p>
@@ -146,7 +147,7 @@
   {% endif %}
   <p class="board-help">Click a card to open it. “Move…” changes its stage; approval and planning follow your permissions. Dates use each client’s time zone.</p>
   <div class="mobile-stage"><label for="mobile-stage">Show stage</label><select id="mobile-stage"><option value="">All stages</option>{% for column in columns %}<option value="{{ column.value }}" data-label="{{ column.label }}">{{ column.label }} ({{ column.cards|length }})</option>{% endfor %}</select></div>
-  <div class="board-grid">
+  <div class="board-grid{% if show_client %} show-clients{% endif %}">
   {% for column in columns %}
     <section class="board-column{% if not column.cards %} is-empty{% endif %}" data-stage="{{ column.value }}" aria-label="{{ column.label }}"><h2>{{ column.label }} <span class="stage-count" data-stage-count>{{ column.cards|length }}</span></h2>
       <div class="board-cards">
@@ -197,6 +198,10 @@
     element.textContent = String(count);
     return count;
   }
+  function clientName() {
+    const field = form.elements.workspace;
+    return field.tagName === 'SELECT' ? field.selectedOptions[0].textContent : field.dataset.clientName;
+  }
   function addCard(html) {
     const column = document.querySelector('.board-column[data-stage="idea"]');
     const list = column.querySelector('.board-cards');
@@ -207,6 +212,9 @@
     column.classList.remove('is-empty');
     // Keep the board order: dated cards first, then the most recently changed.
     list.insertBefore(card, list.querySelector('.board-card[data-dated="0"]'));
+    const grid = document.querySelector('.board-grid');
+    const shown = new Set([...grid.querySelectorAll('.board-card')].map(c => c.dataset.client));
+    grid.classList.toggle('show-clients', shown.size > 1);
     const count = increment(column.querySelector('[data-stage-count]'));
     const option = document.querySelector('#mobile-stage option[value="idea"]');
     if (option) option.textContent = `${option.dataset.label} (${count})`;
@@ -232,8 +240,14 @@
         const plain = (response.headers.get('Content-Type') || '').startsWith('text/plain');
         throw new Error(plain ? await response.text() : 'The idea was not saved. Reload the page and try again.');
       }
-      addCard(await response.text());
-      report(`Saved to Idea: ${title}`, false);
+      const html = await response.text();
+      if (response.headers.get('X-Board-Match') === '1') {
+        addCard(html);
+        report(`Saved to Idea: ${title}`, false);
+      } else {
+        // Saved, but the active filters hide it (another client or a channel filter).
+        report(`Saved to ${clientName()} (hidden by the current filter): ${title}`, false);
+      }
     } catch (error) {
       if (!input.value) input.value = title;
       report(error.message || 'The idea was not saved. Check the connection and try again.', true);
