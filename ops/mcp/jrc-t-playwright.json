@@ -2,7 +2,9 @@
   "mcpServers": {
     "jrc-playwright": {
       "command": "docker",
-      "args": ["exec", "-i", "jrc-t-dev", "jrc-playwright-mcp"]
+      "args": ["run", "--rm", "-i", "--pull", "never", "--network", "host", "--user", "1000:1000",
+               "-v", "/home/honza/jr-content-wt/TEST:/workspace", "-w", "/workspace",
+               "jrc-dev:jrc-t", "jrc-playwright-mcp"]
     }
   }
 }
