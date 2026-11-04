@@ -466,6 +466,19 @@ wake_or_resume_pm() {
   local s=$PM_TMUX_SESSION cur
   local msg="PM BUDÍK z tick.sh ($(date -d "@$NOW" '+%d.%m. %H:%M')): značka interaktivního PM byla stará. Pokračuj podle KB vyvoj/stav.md a vyvoj/sprint-mvp-2026-11.md, obnov si budík session (CronCreate každých 20 min), zkontroluj agenty a zadej další práci."
   cur=$(tmux list-panes -t "$s" -F '#{pane_current_command}' 2>/dev/null | head -1)
+  # Budit jen session s naším ID (po restartu může v tmux běžet jiná konverzace Claude, 4. 11.).
+  local pane_pid ours=0 cp
+  pane_pid=$(tmux list-panes -t "$s" -F '#{pane_pid}' 2>/dev/null | head -1)
+  if [[ -n $pane_pid ]]; then
+    for cp in $pane_pid $(pgrep -P "$pane_pid"); do
+      tr '\0' ' ' < "/proc/$cp/cmdline" 2>/dev/null | grep -q -- "--resume $PM_RESUME_SESSION" && ours=1
+    done
+  fi
+  if [[ $cur == claude* ]] && (( ! ours )); then
+    s="${s}-pm"
+    log "v tmux $PM_TMUX_SESSION běží jiná konverzace Claude → používám tmux $s"
+    cur=$(tmux list-panes -t "$s" -F '#{pane_current_command}' 2>/dev/null | head -1)
+  fi
   if [[ $cur == claude* ]]; then
     log "session tmux $s běží ($cur) → posílám budík"
     (( DRY_RUN )) || { tmux send-keys -t "$s" -l "$msg"; sleep 1; tmux send-keys -t "$s" Enter; }

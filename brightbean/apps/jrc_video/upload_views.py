@@ -161,7 +161,11 @@ def final_download(request, workspace_id, post_id, platform_post_id):
     if post.workspace.is_archived:
         raise Http404
     variant = get_object_or_404(PlatformPost.objects.select_related("social_account"), pk=platform_post_id, post=post)
-    if variant.status not in {PlatformPost.Status.APPROVED, PlatformPost.Status.SCHEDULED}:
+    if variant.status not in {
+        PlatformPost.Status.APPROVED,
+        PlatformPost.Status.SCHEDULED,
+        PlatformPost.Status.PUBLISHED,
+    }:
         raise Http404
     document = TextDocument.objects.filter(platform_post=variant, kind=TextDocument.Kind.CAPTION).first()
     latest_caption = document.versions.filter(state="final").order_by("-number").first() if document else None

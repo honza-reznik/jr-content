@@ -23,6 +23,8 @@ MCP_URL = "/api/v1/mcp/"
 CONTENT_TOOLS = {
     "jrc_get_script",
     "jrc_save_script",
+    "jrc_get_concept",
+    "jrc_save_concept",
     "jrc_get_caption",
     "jrc_save_caption",
     "jrc_list_comments",
@@ -133,6 +135,38 @@ def test_content_tools_are_registered_and_stage_is_readable(owner_client, owner)
     stage = _result(_call(owner_client, "jrc_get_stage", {"post_id": str(post.pk)}))
     assert stage["post_id"] == str(post.pk)
     assert stage["stage"] == "idea"
+
+
+@pytest.mark.django_db
+def test_concept_read_write_like_the_script_p1_b08(owner_client, owner):
+    _, workspace, _, account, post, _ = owner
+    assert _result(_call(owner_client, "jrc_get_concept", {"post_id": str(post.pk)}))["version"] is None
+    saved = _result(_call(owner_client, "jrc_save_concept", {"post_id": str(post.pk), "markdown": "# Idea"}))
+    assert saved["status"] == 201 and saved["version"]["source"] == "mcp"
+    first_id = saved["version"]["id"]
+    second = _result(
+        _call(
+            owner_client,
+            "jrc_save_concept",
+            {"post_id": str(post.pk), "markdown": "# Idea 2", "base_version": first_id},
+        )
+    )
+    assert second["status"] == 201 and second["version"]["number"] == 2
+    stale = _call(
+        owner_client, "jrc_save_concept", {"post_id": str(post.pk), "markdown": "x", "base_version": first_id}
+    )
+    assert stale["error"]["data"]["status"] == 409
+    old = _result(_call(owner_client, "jrc_get_concept", {"post_id": str(post.pk), "version_id": first_id}))
+    assert "Idea" in old["markdown"] and old["version"]["number"] == 1
+    missing = _call(
+        owner_client, "jrc_get_concept", {"post_id": str(post.pk), "version_id": "00000000-0000-0000-0000-000000000000"}
+    )
+    assert missing["error"]["data"]["status"] == 404
+    assert not TextDocument.objects.filter(post=post, kind=TextDocument.Kind.SCRIPT).exists()
+    client, _ = _role_client(workspace, account, owner[0], "client")
+    denied = _call(client, "jrc_save_concept", {"post_id": str(post.pk), "markdown": "Nope"})
+    assert denied["error"]["data"]["status"] == 403
+    assert _result(_call(client, "jrc_get_concept", {"post_id": str(post.pk)}))["can_edit"] is False
 
 
 @pytest.mark.django_db

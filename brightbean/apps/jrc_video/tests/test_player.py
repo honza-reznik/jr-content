@@ -51,6 +51,30 @@ def final(client, workspace, post, version, **data):
     return post_json(client, url("video_final", workspace, post, ("version_id", version.pk)), data)
 
 
+def test_history_keeps_uploads_and_final_decisions_for_owner_and_client(client, ff, workspace, user, setup):
+    from apps.jrc_video.models import VideoActivity
+
+    versions = two_versions(client, workspace, setup, user)
+    assert final(client, workspace, setup, versions[1]).status_code == 200
+    assert final(client, workspace, setup, versions[1]).status_code == 200  # repeat is not a new decision
+    assert final(client, workspace, setup, versions[1], final=False).status_code == 200
+    assert list(VideoActivity.objects.values_list("action", flat=True)) == ["final", "unfinal"]
+    detail = reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.id, "post_id": setup.id})
+    for person in [user, make_user(workspace, "ella-history@example.invalid", "client")]:
+        client.force_login(person)
+        page = client.get(detail, {"tab": "history"})
+        assert page.status_code == 200
+        events = [item for item in page.context["history"] if item["kind"] == "video"]
+        assert len(events) == 4
+        assert all(item["created_at"] and item["actor"] == user for item in events)
+        assert {item["label"].split(" · ")[0] for item in events} == {
+            "Uploaded video v1",
+            "Uploaded video v2",
+            "Marked video as final",
+            "Removed final video mark",
+        }
+
+
 # --- the tab ---------------------------------------------------------------------------
 
 

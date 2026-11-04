@@ -96,6 +96,11 @@ def create_comment(post, author, body, visibility=None, parent_id=None, attachme
         attachment=attachment,
     )
 
+    if membership.workspace_role == WorkspaceMembership.WorkspaceRole.CLIENT:
+        from apps.jrc_production.notifications import notify_client_comment
+
+        notify_client_comment(post, author)
+
     # Parse @mentions and notify
     workspace = post.workspace
     mentions = MENTION_REGEX.findall(body)

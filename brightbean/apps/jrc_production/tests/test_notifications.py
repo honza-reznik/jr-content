@@ -1,5 +1,9 @@
 """In-app notifications about content (F7-B03): who is told, what they read and where it links."""
 
+import hashlib
+import hmac
+import json
+import time
 import uuid
 from unittest.mock import patch
 
@@ -27,6 +31,136 @@ from apps.notifications.models import Channel, EventType, Notification, Notifica
 from apps.workspaces.models import Workspace
 
 pytestmark = pytest.mark.django_db
+
+
+def test_client_comments_and_replies_notify_only_the_content_team(workspace, everyone, content):
+    from apps.approvals.comments import create_comment
+
+    root = create_comment(content, everyone["client"], "Private feedback text")
+    create_comment(content, everyone["client"], "Reply text", parent_id=root.pk)
+    alerts = Notification.objects.filter(event_type=EventType.CONTENT_CLIENT_COMMENT)
+    assert alerts.count() == 8
+    assert set(alerts.values_list("user_id", flat=True)) == {
+        everyone[role].pk for role in ["owner", "manager", "editor", "contributor"]
+    }
+    assert all(alert.data["action_url"] == content_path(content, "comments") for alert in alerts)
+    assert NotificationDelivery.objects.filter(notification__in=alerts, channel=Channel.IN_APP).count() == 8
+    assert not NotificationDelivery.objects.filter(notification__in=alerts, channel=Channel.EMAIL).exists()
+    assert all("feedback text" not in alert.body and "Reply text" not in alert.body for alert in alerts)
+    create_comment(content, everyone["owner"], "Team comment")
+    assert alerts.count() == 8
+
+
+def video_comment_event(client, content, actor, *, signature=True, timestamp=None, data=None):
+    from apps.jrc_video.models import VideoAccount
+
+    secret = "test-local-comment-signature-key-123456789"
+    video = VideoAsset.objects.create(platform_post=content.platform_posts.get(), ff_asset_id=uuid.uuid4())
+    account, _ = VideoAccount.objects.update_or_create(
+        user=actor, defaults={"ff_user_id": uuid.uuid4(), "synced_at": timezone.now()}
+    )
+    payload = json.dumps(
+        data
+        if data is not None
+        else {
+            "comment_id": str(uuid.uuid4()),
+            "asset_id": str(video.ff_asset_id),
+            "author_id": str(account.ff_user_id),
+            "timestamp": timestamp or int(time.time()),
+        }
+    ).encode()
+    digest = hmac.new(secret.encode(), b"jrc-video-comment.v1." + payload, hashlib.sha256).hexdigest()
+    with override_settings(JRC_FF_SSO_SECRET=secret):
+        return (
+            client.post(
+                reverse("jrc_video:comment_event"),
+                payload,
+                content_type="application/json",
+                HTTP_X_JRC_SIGNATURE=digest if signature else "invalid",
+            ),
+            payload,
+            digest,
+            secret,
+        )
+
+
+def test_video_comment_event_notifies_team_once_with_link(client, workspace, everyone, content):
+    from apps.jrc_video.models import VideoCommentReceipt
+
+    response, payload, digest, secret = video_comment_event(client, content, everyone["client"])
+    assert response.status_code == 204
+    with override_settings(JRC_FF_SSO_SECRET=secret):
+        assert (
+            client.post(
+                reverse("jrc_video:comment_event"),
+                payload,
+                content_type="application/json",
+                HTTP_X_JRC_SIGNATURE=digest,
+            ).status_code
+            == 204
+        )
+    alerts = Notification.objects.filter(event_type=EventType.CONTENT_CLIENT_COMMENT)
+    assert alerts.count() == 4 and VideoCommentReceipt.objects.count() == 1
+    assert set(alerts.values_list("user_id", flat=True)) == {
+        everyone[role].pk for role in ["owner", "manager", "editor", "contributor"]
+    }
+    assert all(alert.data["action_url"] == content_path(content, "video") for alert in alerts)
+
+
+def test_failed_video_comment_event_can_be_retried_without_partial_alerts(client, workspace, everyone, content):
+    from apps.jrc_video.models import VideoCommentReceipt
+
+    response, payload, digest, secret = video_comment_event(client, content, everyone["client"])
+    assert response.status_code == 204
+    VideoCommentReceipt.objects.all().delete()
+    Notification.objects.filter(event_type=EventType.CONTENT_CLIENT_COMMENT).delete()
+    with override_settings(JRC_FF_SSO_SECRET=secret):
+        with (
+            patch("apps.jrc_production.notifications._send", side_effect=RuntimeError("temporary failure")),
+            pytest.raises(RuntimeError),
+        ):
+            client.post(
+                reverse("jrc_video:comment_event"),
+                payload,
+                content_type="application/json",
+                HTTP_X_JRC_SIGNATURE=digest,
+            )
+        assert not VideoCommentReceipt.objects.exists()
+        assert not Notification.objects.filter(event_type=EventType.CONTENT_CLIENT_COMMENT).exists()
+        assert (
+            client.post(
+                reverse("jrc_video:comment_event"),
+                payload,
+                content_type="application/json",
+                HTTP_X_JRC_SIGNATURE=digest,
+            ).status_code
+            == 204
+        )
+    assert Notification.objects.filter(event_type=EventType.CONTENT_CLIENT_COMMENT).count() == 4
+
+
+@pytest.mark.parametrize("case", ["unsigned", "stale", "malformed", "team", "inactive", "removed", "archived"])
+def test_video_comment_event_rejects_invalid_or_unauthorized_events(client, workspace, everyone, content, case):
+    actor = everyone["owner"] if case == "team" else everyone["client"]
+    if case == "inactive":
+        actor.is_active = False
+        actor.save(update_fields=["is_active"])
+    if case == "removed":
+        WorkspaceMembership.objects.filter(user=actor, workspace=workspace).delete()
+    if case == "archived":
+        workspace.is_archived = True
+        workspace.save(update_fields=["is_archived"])
+    response, *_ = video_comment_event(
+        client,
+        content,
+        actor,
+        signature=case != "unsigned",
+        timestamp=int(time.time()) - 120 if case == "stale" else None,
+        data=[] if case == "malformed" else None,
+    )
+    assert response.status_code == ({"unsigned": 403, "stale": 403, "malformed": 400}.get(case, 204))
+    assert not Notification.objects.filter(event_type=EventType.CONTENT_CLIENT_COMMENT).exists()
+
 
 SINGLE = "required_internal"
 TWO_STAGE = "required_internal_and_client"

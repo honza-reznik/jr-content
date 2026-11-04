@@ -11,6 +11,17 @@
 - Opravy kontroly: zápis REST ověřuje povolené kanály pod zámkem obsahu a aktuální oprávnění člena,
   přesun ukládá autora a čas změny. Při ztracené odpovědi (včetně přerušeného čtení jejího těla)
   rozhraní načte aktuální seznam bez automatického opakování zápisu.
+- Integrace s P1-B07/B08: ukazatel je ve sdílené kartě i u rychlého nápadu; Concept zůstává
+  výchozí bez scénáře, pořadí záložek Concept, Script, Shotlist, Video, Caption, Approval,
+  Comments, Publish, History. Historie zachovává také události videa z P1-B13.
+
+## 2026-11-04 — P1-B13, oprava review 1
+
+- Set date v Publish otevírá vlastní formulář pro jednu schválenou ruční kanálovou kopii,
+  ukládá budoucí termín v pásmu klienta a zachovává ostatní kopie. Oprávnění odpovídá
+  plánování na nástěnce; ruční kanály zůstávají vyloučené z automatického publikování.
+- Formulář podporuje video z FreeFrame bez příloh PostMedia, hlásí neplatný čas
+  včetně nejednoznačného času při změně letního času a vyžaduje ochranu CSRF.
 
 ## 2026-10-27 — P1-B06
 
@@ -701,3 +712,26 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
 - Po review: SMTP výjimky nezobrazují přihlašovací údaje, stažení videa ověřuje schválení, popisek a stav finální verze, pozvánky fungují i v HTMX odpovědích a odkazy i skryté odpovědi respektují veřejnou předponu a hranice workspace. Přidány regresní testy pro všech sedm nálezů.
 - Role `client` může na kartě Publish stáhnout hotové finální video, kopírovat popisek a zaznamenat ruční publikaci schváleného příspěvku s popiskem a případným hotovým videem. Role `viewer` zůstává bez těchto oprávnění.
 - Přidány regrese pro archiv a přihlášení, odkazy pozvánek, klientská oprávnění i SMTP nastavení.
+
+## 2026-11-04 · P1-B08 — záložka Concept (rozpracování nápadu ve verzích)
+
+- `jrc_texts`: nový druh `TextDocument.Kind.CONCEPT` (migrace `0004_concept`: jeden koncept na obsah, nikdy na kopii kanálu).
+  Verzování, průběžné ukládání, neměnné uložené verze, porovnání a souběh 409 sdílí se scénářem (`views._text_editor`).
+- Adresy `…/content/<id>/concept/` (editor) a `…/concept/to-script/` (POST „Use as script draft“: poslední uložený koncept
+  jako nová verze scénáře; služba `copy_concept_to_script`, nikdy přes otevřený koncept scénáře jiného člověka).
+- Detail obsahu: záložky `concept, script, video, caption, approval, comments, publish, history`; bez `?tab=` se otevře
+  Concept, dokud scénář nemá uloženou verzi s textem. Šablona `jrc_texts/script.html` slouží oběma záložkám
+  (`text_kind`); `editor/script.mjs` bere názvy textu z `data-noun`/`data-empty` (projeví se po `make build-bb`).
+- REST `GET/POST /api/v1/posts/{id}/concept` (stejné schéma jako `/script`, audit `concept.write`), MCP `jrc_get_concept`,
+  `jrc_save_concept`. Upozornění: typ `content_script_version`, nadpis „New concept version“, odkaz `?tab=concept`.
+
+## 2026-11-04 · P1-B11 — bez obrazovky souhlasu Brightbean („Almost there“)
+
+- `jrc_ui`: nový vypínač funkce `terms` (cesta `/accounts/accept-terms/`), v `MVP_FEATURES` vypnutý → stránka souhlasu vrací 404.
+  `configure_ui` nahrazuje upstream `TosAcceptanceMiddleware` obalem `jrc_ui.middleware.TermsAcceptanceMiddleware`, který
+  přesměrování na souhlas provede jen při zapnuté funkci; noví uživatelé (pozvánka, `createsuperuser`) jdou rovnou do aplikace.
+  `tos_accepted_at` se nemění (vratné: `JRC_FEATURES["terms"] = True` vrátí upstream chování; regresní sada `jrc_test` ho dál ověřuje).
+- `templates/account/signup.html`: odstavec s odkazy na brightbean.xyz Terms of Service / Privacy Policy jen při zapnuté funkci `terms`.
+  About & license beze změny.
+- Test: `apps/jrc_ui/tests/test_terms.py` (přihlášení nového uživatele, registrace přes pozvánku, 404 stránky souhlasu,
+  vratnost, statická kontrola šablon s brightbean.xyz – zbylé jsou jen za vypnutými funkcemi `terms`, `reviews`, `intelligence`).

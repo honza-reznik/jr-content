@@ -1,0 +1,14 @@
+.jrc-content-tabs { position: relative; }
+.jrc-content-tabs nav { scrollbar-width: thin; scroll-padding-inline: 32px; }
+.jrc-tabs-arrow {
+    position: absolute;
+    top: 0;
+    bottom: 1px;
+    width: 28px;
+    border: 0;
+    color: #9a3412;
+    font-size: 24px;
+    cursor: pointer;
+}
+.jrc-tabs-previous { left: 0; background: linear-gradient(to right, #fafaf9 70%, transparent); }
+.jrc-tabs-next { right: 0; background: linear-gradient(to left, #fafaf9 70%, transparent); }

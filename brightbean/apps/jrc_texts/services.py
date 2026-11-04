@@ -102,10 +102,10 @@ def create_document(
         created_by=user,
         finalized_at=timezone.now(),
     )
-    # A script created with real text is a new version for the team (F7-B03). An empty script
-    # (the editor creates one before the first edit) and the copy a caption history starts from
-    # are not: the version saved on top of them is what changes something.
-    if kind == TextDocument.Kind.SCRIPT and text.strip():
+    # A script (or concept, P1-B08) created with real text is a new version for the team (F7-B03).
+    # An empty one (the editor creates it before the first edit) and the copy a caption history
+    # starts from are not: the version saved on top of them is what changes something.
+    if kind in (TextDocument.Kind.SCRIPT, TextDocument.Kind.CONCEPT) and text.strip():
         notify_text_version(version, user)
     return document
 
@@ -242,6 +242,37 @@ def save_caption(post_id, platform_post_id, user, text, *, base_version_id=None,
     variant.platform_specific_caption = saved.text
     variant.save(update_fields=["platform_specific_caption", "updated_at"])
     return saved, created or saved.pk != base.pk
+
+
+@transaction.atomic
+def copy_concept_to_script(post_id, user, *, source="editor"):
+    """Save the newest saved concept as a new script version (P1-B08, "Use as script draft").
+
+    Same rules as any other script write: only text editors, never over somebody's open
+    script draft (``ConflictError``), saved versions stay as they are. Copying a text the
+    script already has creates no version. Returns ``(version, changed)``.
+    """
+    post = Post.objects.select_for_update().select_related("workspace").get(pk=post_id)
+    _authorize(TextDocument(post=post), user, write=True)
+    concept = (
+        TextVersion.objects.filter(
+            document__post=post, document__kind=TextDocument.Kind.CONCEPT, state=TextVersion.State.FINAL
+        )
+        .order_by("-number")
+        .first()
+    )
+    if concept is None or not concept.text.strip():
+        raise ValidationError("Save a concept version first.")
+    script = TextDocument.objects.filter(post=post, kind=TextDocument.Kind.SCRIPT).first()
+    if script is None:
+        document = create_document(post.pk, user, content=concept.content, source=source)
+        return document.versions.get(state=TextVersion.State.FINAL), True
+    base = script.versions.filter(state=TextVersion.State.FINAL).order_by("-number").first()
+    if script.versions.filter(state=TextVersion.State.DRAFT).exists():
+        raise ConflictError("Someone is editing the script. Try again after their draft is saved or discarded.")
+    draft = edit(base.pk, user, source=source)
+    saved = save(draft.pk, user, expected_revision=0, content=concept.content)
+    return saved, saved.pk != base.pk
 
 
 def latest_saved_captions(platform_post_ids):

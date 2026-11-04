@@ -1,4 +1,5 @@
 # JR Content: přidáno 2026-10-23 (blok F2-B10), AGPL-3.0.
+# JR Content: upraveno 2026-11-04 (blok P1-B11): vypínač souhlasu s podmínkami Brightbean.
 """Společné vypínače webu, REST API a MCP; vyhodnocují se při každém požadavku."""
 
 import re
@@ -44,6 +45,8 @@ FEATURE_SURFACES = {
     "unsplash": FeatureSurface(r"^/workspace/[^/]+/compose/(?:[^/]+/)?unsplash-(?:search|import)(?:/|$)"),
     "external_login": FeatureSurface(r"^/accounts/(?:google|3rdparty)(?:/|$)"),
     "rss": FeatureSurface(r"^/workspace/[^/]+/feeds(?:/|$)"),
+    # Souhlas s podmínkami brightbean.xyz („Almost there“); místní instalace Brightbeanu nic neposílá.
+    "terms": FeatureSurface(r"^/accounts/accept-terms(?:/|$)"),
 }
 MVP_FEATURES = dict.fromkeys(FEATURE_SURFACES, False)
 
@@ -72,7 +75,12 @@ def mcp_tool_enabled(name):
 
 def configure_ui(namespace):
     namespace["JRC_UI_ENABLED"] = True
-    namespace["MIDDLEWARE"] = ["apps.jrc_ui.middleware.FeatureMiddleware", *namespace["MIDDLEWARE"]]
+    upstream_terms = "apps.accounts.middleware.TosAcceptanceMiddleware"
+    middleware = [
+        "apps.jrc_ui.middleware.TermsAcceptanceMiddleware" if item == upstream_terms else item
+        for item in namespace["MIDDLEWARE"]
+    ]
+    namespace["MIDDLEWARE"] = ["apps.jrc_ui.middleware.FeatureMiddleware", *middleware]
     processors = namespace["TEMPLATES"][0]["OPTIONS"]["context_processors"]
     replacements = {
         "apps.common.context_processors.sidebar_context": "apps.jrc_ui.context_processors.sidebar_context",

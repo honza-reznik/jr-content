@@ -45,17 +45,18 @@ def _send(post, users, *, event_type, title, body, tab):
 
 
 def notify_text_version(version, actor):
-    """A new saved version of a script or a channel caption."""
+    """A new saved version of a script, a concept (P1-B08) or a channel caption."""
     try:
         with transaction.atomic():
             document = version.document
             post = document.post
             label = content_label(post)
             who = actor.display_name if actor else "Someone"
-            if document.kind == "script":
-                event, tab = EventType.CONTENT_SCRIPT_VERSION, "script"
-                title = "New script version"
-                body = f'{who} saved version {version.number} of the script for "{label}".'
+            if document.kind in ("script", "concept"):
+                # P1-B08: a concept version uses the script's event type (and its preference).
+                event, tab = EventType.CONTENT_SCRIPT_VERSION, document.kind
+                title = f"New {document.kind} version"
+                body = f'{who} saved version {version.number} of the {document.kind} for "{label}".'
             else:
                 account = document.platform_post.social_account
                 event, tab = EventType.CONTENT_CAPTION_VERSION, "caption"
@@ -90,3 +91,26 @@ def notify_video_version(version):
             )
     except Exception:  # noqa: BLE001 - a notification problem must not block the status copy
         logger.exception("Could not send the new-video notification for version %s", version.pk)
+
+
+def notify_client_comment(post, actor, *, tab="comments", isolate=True):
+    """The content team sees client feedback without exposing the comment in alerts."""
+
+    def send():
+        _send(
+            post,
+            team_members(post.workspace, actor),
+            event_type=EventType.CONTENT_CLIENT_COMMENT,
+            title="New client comment",
+            body=f'{actor.display_name} commented on "{content_label(post)}".',
+            tab=tab,
+        )
+
+    if not isolate:
+        send()
+        return
+    try:
+        with transaction.atomic():
+            send()
+    except Exception:  # noqa: BLE001 - saving a comment must succeed even if an alert fails
+        logger.exception("Could not send client comment notification for post %s", post.pk)

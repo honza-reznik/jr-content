@@ -1,61 +1,96 @@
 {% extends "base.html" %}
-{% load tz %}
 {% block title %}Content board · JR Content{% endblock %}
 {% block extra_head %}
 <style>
-  .content-board-page { color: #292524; font-size: 14px; }
-  .board-heading { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:22px; }
-  .board-heading h1 { font-size:28px; font-weight:700; letter-spacing:-.7px; margin:0 0 5px; }
-  .board-heading p, .board-muted { color:#78716c; }
-  .board-count { white-space:nowrap; background:#f5f5f4; border-radius:20px; padding:7px 12px; font-size:12px; }
-  .board-toolbar { display:flex; align-items:end; flex-wrap:wrap; gap:12px; padding:16px; background:#fafaf9; border:1px solid #e7e5e4; border-radius:12px; margin-bottom:14px; }
+  /* The board fills the rest of the window, so its own scrollbars stay in view. */
+  .content-board-page { color:#292524; font-size:14px; min-width:0; display:flex; flex-direction:column; flex:1 0 auto; }
+  .board-heading { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+  .board-heading h1 { font-size:24px; font-weight:700; letter-spacing:-.6px; margin:0; }
+  .board-muted { color:#78716c; }
+  .board-count { white-space:nowrap; background:#f5f5f4; border-radius:20px; padding:5px 10px; font-size:12px; color:#57534e; }
+  .board-sr { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
   .content-board-page label { display:block; font-size:12px; font-weight:600; margin-bottom:6px; }
-  .content-board-page input, .content-board-page select { background:white; border:1px solid #d6d3d1; border-radius:7px; padding:9px 10px; min-height:42px; max-width:100%; font-size:13px; color:#292524; }
-  .content-board-page button, .board-reset { min-height:42px; display:inline-flex; align-items:center; justify-content:center; padding:8px 14px; border-radius:7px; font-weight:600; font-size:13px; cursor:pointer; }
+  .content-board-page input, .content-board-page select { background:white; border:1px solid #d6d3d1; border-radius:7px; padding:8px 10px; min-height:40px; max-width:100%; font-size:13px; color:#292524; }
+  .content-board-page button, .board-reset { min-height:40px; display:inline-flex; align-items:center; justify-content:center; padding:8px 14px; border-radius:7px; font-weight:600; font-size:13px; cursor:pointer; }
   .board-primary { background:#30584b; color:white; border:1px solid #30584b; }
   .board-secondary { background:white; border:1px solid #d6d3d1; }
   .board-reset { color:#57534e; text-decoration:underline; }
-  .board-new { border:1px solid #e7e5e4; border-radius:10px; padding:12px 16px; margin-bottom:20px; }
-  .board-new summary { cursor:pointer; font-weight:600; color:#30584b; }
-  .board-new form { display:flex; flex-wrap:wrap; gap:12px; align-items:end; padding-top:16px; }
+  /* Quick idea: one line, Enter saves, the field stays for the next idea. */
+  .quick-idea-toggle { display:none !important; margin-left:auto; }
+  .quick-idea { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:10px; background:#f3f7f5; border:1px solid #d5e3dd; border-radius:10px; margin-bottom:10px; }
+  .quick-idea select { flex:0 1 200px; }
+  .quick-idea input[name=title] { flex:1 1 260px; font-size:14px; }
+  .quick-idea-status { flex-basis:100%; margin:0; font-size:12px; color:#30584b; }
+  .quick-idea-status:empty { display:none; }
+  .quick-idea-status[data-state="error"] { color:#991b1b; }
+  .board-tools { display:flex; flex-wrap:wrap; align-items:flex-start; gap:10px; margin-bottom:10px; }
+  .board-toolbar { display:flex; align-items:end; flex-wrap:wrap; gap:10px; padding:10px 12px; background:#fafaf9; border:1px solid #e7e5e4; border-radius:10px; }
+  .board-new { border:1px solid #e7e5e4; border-radius:10px; padding:10px 14px; flex:1 1 220px; }
+  .board-new summary { cursor:pointer; font-weight:600; color:#30584b; min-height:22px; }
+  .board-new form { display:flex; flex-wrap:wrap; gap:12px; align-items:end; padding-top:14px; }
   .board-title-field { flex:1; min-width:200px; }
   .board-title-field input { width:100%; }
-  .board-grid { display:grid; grid-template-columns:repeat(8,minmax(0,1fr)); gap:8px; align-items:start; padding-bottom:20px; }
-  .board-column { min-width:0; background:#f5f5f4; border-radius:9px; padding:8px; min-height:330px; border-top:3px solid #d6d3d1; }
+  .board-help { color:#78716c; font-size:12px; margin:0 0 10px; line-height:1.5; }
+  .board-error { border:1px solid #fecaca; background:#fef2f2; color:#991b1b; padding:12px; border-radius:8px; margin-bottom:12px; }
+  .board-waiting { border:1px solid #f0d9a8; background:#fffaf0; border-radius:10px; padding:12px 14px; margin-bottom:12px; }
+  .board-waiting h2 { font-size:15px; font-weight:700; margin:0 0 8px; }
+  .board-waiting ul { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:8px; }
+  .board-waiting li { background:white; border:1px solid #e7e5e4; border-radius:8px; padding:10px 12px; overflow-wrap:anywhere; }
+  .board-waiting a { display:inline-flex; align-items:center; min-height:40px; font-weight:600; color:#30584b; text-decoration:underline; }
+  .board-waiting .board-client { display:inline; }
+  /* Columns scroll on their own; the header with the count stays visible. */
+  .board-grid { display:flex; gap:8px; align-items:stretch; overflow-x:auto; flex:1 1 0; min-height:380px; padding-bottom:6px; }
+  .board-column { flex:1 0 220px; max-width:330px; display:flex; flex-direction:column; min-height:0; overflow-y:auto; background:#f5f5f4; border-radius:9px; padding:0 7px 7px; border-top:3px solid #d6d3d1; }
+  .board-column.is-empty { flex:0 0 108px; background:#fafaf9; }
   .board-column[data-stage="review"] { border-top-color:#d6a04e; }
   .board-column[data-stage="approved"] { border-top-color:#76a796; }
   .board-column[data-stage="ready"] { border-top-color:#809dbc; }
   .board-column[data-stage="published"] { border-top-color:#30584b; }
-  .board-column h2 { display:flex; gap:5px; align-items:center; justify-content:space-between; font-size:12px; font-weight:700; padding:3px 1px 12px; line-height:1.4; }
-  .stage-count { color:#78716c; font-weight:400; }
-  .board-card { background:white; border:1px solid #e7e5e4; border-radius:7px; padding:10px; margin-bottom:9px; box-shadow:0 1px 2px #00000005; overflow-wrap:anywhere; }
-  .board-card h3 { font-size:13px; line-height:1.5; font-weight:600; margin:8px 0 10px; }
-  .board-client { font-size:10px; color:#78716c; }
-  .board-channel { display:inline-block; border-radius:4px; background:#f5f5f4; padding:3px 5px; margin:0 2px 4px 0; font-size:10px; color:#57534e; }
-  .board-card time, .board-status { display:block; font-size:10px; color:#78716c; margin:6px 0; }
-  .board-card summary { cursor:pointer; padding-top:8px; border-top:1px solid #f5f5f4; font-size:11px; color:#30584b; }
-  .board-card form { padding-top:12px; }
-  .board-card select, .board-card input, .board-card button { width:100%; margin-bottom:9px; }
-  .board-empty { font-size:11px; color:#a8a29e; text-align:center; margin:20px 0; }
-  .board-help { color:#78716c; font-size:12px; margin-bottom:14px; line-height:1.6; }
-  .board-error { border:1px solid #fecaca; background:#fef2f2; color:#991b1b; padding:12px; border-radius:8px; margin-bottom:12px; }
-  .board-waiting { border:1px solid #f0d9a8; background:#fffaf0; border-radius:10px; padding:14px 16px; margin-bottom:18px; }
-  .board-waiting h2 { font-size:15px; font-weight:700; margin:0 0 10px; }
-  .board-waiting ul { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:10px; }
-  .board-waiting li { background:white; border:1px solid #e7e5e4; border-radius:8px; padding:12px; overflow-wrap:anywhere; }
-  .board-waiting a { display:inline-flex; align-items:center; min-height:44px; font-weight:600; color:#30584b; text-decoration:underline; }
+  .board-column h2 { position:sticky; top:0; z-index:2; display:flex; gap:5px; align-items:center; justify-content:space-between; margin:0 -7px 4px; padding:9px 9px 7px; font-size:12px; font-weight:700; line-height:1.3; background:inherit; }
+  .board-column.is-empty h2 { color:#a8a29e; }
+  .stage-count { color:#78716c; font-weight:600; background:white; border-radius:10px; padding:1px 7px; font-size:11px; }
+  .board-empty { font-size:11px; color:#a8a29e; text-align:center; margin:12px 0; }
+  .board-card { position:relative; background:white; border:1px solid #e7e5e4; border-radius:7px; padding:7px 9px; margin-bottom:6px; box-shadow:0 1px 2px #00000005; }
+  .board-card:hover { border-color:#a8a29e; box-shadow:0 1px 4px #0000000f; }
+  .board-card:has(.board-card-link:focus-visible) { outline:2px solid #30584b; outline-offset:1px; }
+  .board-card h3 { margin:0; font-size:13px; line-height:1.35; font-weight:600; overflow-wrap:anywhere; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; line-clamp:3; overflow:hidden; }
+  .board-card-link { color:inherit; text-decoration:none; }
+  .board-card-link:focus-visible { outline:none; }
+  /* The title link covers the whole card, so the card opens on click, tap or Enter. */
+  .board-card-link::after { content:""; position:absolute; inset:0; border-radius:7px; }
+  .board-grid:not(.show-clients) .board-card .board-client { display:none; }
+  .board-client { display:block; font-size:10px; color:#78716c; margin-bottom:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .board-meta { display:flex; flex-wrap:wrap; align-items:center; gap:3px 6px; margin-top:5px; font-size:10.5px; color:#78716c; line-height:1.4; }
+  .board-channels { display:inline-flex; flex-wrap:wrap; gap:3px; min-width:0; }
+  .board-channel { max-width:100px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; border-radius:4px; background:#f0efed; padding:0 5px; font-size:10px; color:#57534e; }
+  .board-channel-none { background:none; color:#a8a29e; padding:0 2px 0 0; font-style:italic; overflow:visible; max-width:none; }
+  .board-comments { display:inline-flex; align-items:center; gap:3px; }
+  .board-status { color:#a16207; }
+  .board-move { margin-left:auto; position:relative; z-index:1; }
+  .board-move summary { list-style:none; cursor:pointer; font-size:11px; color:#30584b; background:white; border:1px solid #e7e5e4; border-radius:5px; padding:0 7px; line-height:18px; }
+  .board-move summary::-webkit-details-marker { display:none; }
+  .board-move summary:hover { border-color:#30584b; }
+  .board-move[open] { flex-basis:100%; }
+  .board-move[open] summary { width:max-content; margin-left:auto; }
+  .board-move form { padding-top:8px; color:#292524; }
+  .board-move select, .board-move input, .board-move button { width:100%; margin-bottom:6px; }
   .mobile-stage { display:none; }
-  @media(min-width:768px) and (max-width:1199px) { .board-grid { grid-template-columns:repeat(4,minmax(0,1fr)); } }
   @media(max-width:767px) {
-    .board-heading { margin-bottom:16px; } .board-heading h1 { font-size:24px; }
-    .board-count { padding:6px 9px; }
-    .board-toolbar { gap:10px; padding:12px; } .board-filter { flex:1; min-width:125px; } .board-filter select { width:100%; }
+    .board-heading h1 { font-size:21px; }
+    .quick-idea-toggle { display:inline-flex !important; }
+    .quick-idea { display:none; } .quick-idea.is-open { display:flex; }
+    .quick-idea select, .quick-idea input[name=title] { flex:1 1 100%; font-size:16px; }
+    .quick-idea button { flex:1 1 100%; }
+    .board-toolbar { gap:8px; padding:10px; flex:1 1 100%; } .board-filter { flex:1; min-width:125px; } .board-filter select { width:100%; }
     .board-new form > div { width:100%; } .board-new select { width:100%; }
-    .board-grid { display:block; } .board-column { min-height:180px; margin-bottom:14px; padding:12px; }
-    .board-column h2 { font-size:14px; } .board-card { padding:14px; } .board-card h3 { font-size:16px; }
-    .board-client, .board-channel, .board-card time, .board-status { font-size:12px; }
-    .board-card summary { font-size:13px; padding:10px 0; min-height:44px; }
-    .mobile-stage { display:block; margin-bottom:14px; } .mobile-stage select { width:100%; }
+    .board-grid { display:block; flex:none; min-height:0; overflow:visible; }
+    .board-column { overflow:visible; max-width:none; margin-bottom:10px; padding:0 10px 8px; }
+    .board-column.is-empty { padding-bottom:0; } .board-column.is-empty .board-empty { display:none; }
+    .board-column h2 { font-size:14px; margin:0 -10px 6px; padding:10px; border-radius:9px 9px 0 0; }
+    .board-card { padding:10px 12px; } .board-card h3 { font-size:15px; }
+    .board-client, .board-meta { font-size:12px; } .board-channel { font-size:11px; max-width:140px; }
+    .board-move summary { font-size:13px; line-height:28px; padding:0 12px; }
+    .mobile-stage { display:block; margin-bottom:10px; } .mobile-stage select { width:100%; }
     .board-grid[data-mobile-stage] .board-column { display:none; }
     .board-grid[data-mobile-stage="idea"] [data-stage="idea"], .board-grid[data-mobile-stage="script"] [data-stage="script"],
     .board-grid[data-mobile-stage="shooting"] [data-stage="shooting"], .board-grid[data-mobile-stage="editing"] [data-stage="editing"],
@@ -63,28 +98,42 @@
     .board-grid[data-mobile-stage="ready"] [data-stage="ready"], .board-grid[data-mobile-stage="published"] [data-stage="published"] { display:block; }
   }
 </style>
+<noscript><style>.quick-idea { display:flex !important; }</style></noscript>
 {% endblock %}
 {% block content %}
 <div class="content-board-page">
-  <header class="board-heading"><div><h1>Content board</h1><p>From the first idea to the published post.</p></div><span class="board-count">{{ total }} item{{ total|pluralize }}</span></header>
-  <form method="get" class="board-toolbar" aria-label="Filter content">
-    <div class="board-filter"><label for="filter-client">Client</label><select id="filter-client" name="client"><option value="">All clients</option>{% for client in clients %}<option value="{{ client.id }}" {% if selected_client == client.id|stringformat:"s" %}selected{% endif %}>{{ client.name }}</option>{% endfor %}</select></div>
-    <div class="board-filter"><label for="filter-channel">Channel</label><select id="filter-channel" name="channel"><option value="">All channels</option><option value="none" {% if selected_channel == "none" %}selected{% endif %}>No channel</option>{% for channel in channels %}<option value="{{ channel.id }}" {% if selected_channel == channel.id|stringformat:"s" %}selected{% endif %}>{{ channel.workspace.name }} · {{ channel.jrc_channel.display_name|default:channel.account_name }}</option>{% endfor %}</select></div>
-    <button class="board-secondary" type="submit">Apply filters</button><a class="board-reset" href="{% url 'jrc_production:board' %}">Clear</a>
-  </form>
-  {% if error %}<div class="board-error" role="alert">{{ error }}</div>{% endif %}
+  <header class="board-heading"><h1>Content board</h1><span class="board-count" data-board-total="{{ total }}">{{ total }} item{{ total|pluralize }}</span>
+    {% if creatable_clients %}<button type="button" class="board-primary quick-idea-toggle" aria-expanded="false" aria-controls="quick-idea">+ Idea</button>{% endif %}
+  </header>
   {% if creatable_clients %}
-  <details class="board-new" {% if error %}open{% endif %}><summary>+ New content</summary>
-    <form method="post" action="{% url 'jrc_production:create' %}">{% csrf_token %}
-      <div><label for="new-client">Client</label><select id="new-client" name="workspace" required>{% for client in creatable_clients %}<option value="{{ client.id }}" {% if selected_client == client.id|stringformat:"s" %}selected{% endif %}>{{ client.name }}</option>{% endfor %}</select></div>
-      <div class="board-title-field"><label for="new-title">Content title</label><input id="new-title" name="title" placeholder="e.g. A morning in Ella’s studio" value="{{ new_title }}" maxlength="255" required></div>
-      <fieldset style="width:100%"><legend>Channels <span class="board-muted">(optional; leave unchecked for an idea without a channel)</span></legend>
-        {% for channel in creation_channels %}<label data-channel-client="{{ channel.workspace_id }}" style="display:inline-flex;align-items:center;gap:6px;margin-right:16px"><input type="checkbox" name="channels" value="{{ channel.id }}" style="min-height:20px">{{ channel.workspace.name }} · {{ channel.jrc_channel.display_name|default:channel.account_name }}</label>{% endfor %}
-      </fieldset>
-      <button class="board-primary" type="submit">Add to Idea</button>
-    </form>
-  </details>
+  <form id="quick-idea" class="quick-idea" method="post" action="{% url 'jrc_production:quick_idea' %}" aria-label="Quick idea">{% csrf_token %}
+    <input type="hidden" name="board_client" value="{{ selected_client }}"><input type="hidden" name="board_channel" value="{{ selected_channel }}">
+    {% if creatable_clients|length > 1 %}<label class="board-sr" for="idea-client">Client of the idea</label><select id="idea-client" name="workspace" required>{% for client in creatable_clients %}<option value="{{ client.id }}" {% if idea_client == client.id|stringformat:"s" %}selected{% endif %}>{{ client.name }}</option>{% endfor %}</select>{% else %}<input type="hidden" name="workspace" value="{{ creatable_clients.0.id }}" data-client-name="{{ creatable_clients.0.name }}">{% endif %}
+    <label class="board-sr" for="idea-title">New idea</label><input id="idea-title" name="title" placeholder="Idea…" maxlength="255" autocomplete="off" enterkeyhint="send" required>
+    <button class="board-primary" type="submit">Add</button>
+    <p class="quick-idea-status" role="status" aria-live="polite"></p>
+  </form>
   {% endif %}
+  <div class="board-tools">
+    <form method="get" class="board-toolbar" aria-label="Filter content">
+      <div class="board-filter"><label for="filter-client">Client</label><select id="filter-client" name="client"><option value="">All clients</option>{% for client in clients %}<option value="{{ client.id }}" {% if selected_client == client.id|stringformat:"s" %}selected{% endif %}>{{ client.name }}</option>{% endfor %}</select></div>
+      <div class="board-filter"><label for="filter-channel">Channel</label><select id="filter-channel" name="channel"><option value="">All channels</option><option value="none" {% if selected_channel == "none" %}selected{% endif %}>No channel</option>{% for channel in channels %}<option value="{{ channel.id }}" {% if selected_channel == channel.id|stringformat:"s" %}selected{% endif %}>{{ channel.workspace.name }} · {{ channel.jrc_channel.display_name|default:channel.account_name }}</option>{% endfor %}</select></div>
+      <button class="board-secondary" type="submit">Apply filters</button><a class="board-reset" href="{% url 'jrc_production:board' %}?client=">Clear</a>
+    </form>
+    {% if creatable_clients %}
+    <details class="board-new" {% if error %}open{% endif %}><summary>+ New content</summary>
+      <form method="post" action="{% url 'jrc_production:create' %}">{% csrf_token %}
+        <div><label for="new-client">Client</label><select id="new-client" name="workspace" required>{% for client in creatable_clients %}<option value="{{ client.id }}" {% if selected_client == client.id|stringformat:"s" %}selected{% endif %}>{{ client.name }}</option>{% endfor %}</select></div>
+        <div class="board-title-field"><label for="new-title">Content title</label><input id="new-title" name="title" placeholder="e.g. A morning in Ella’s studio" value="{{ new_title }}" maxlength="255" required></div>
+        <fieldset style="width:100%"><legend>Channels <span class="board-muted">(optional; leave unchecked for an idea without a channel)</span></legend>
+          {% for channel in creation_channels %}<label data-channel-client="{{ channel.workspace_id }}" style="display:inline-flex;align-items:center;gap:6px;margin-right:16px"><input type="checkbox" name="channels" value="{{ channel.id }}" style="min-height:20px">{{ channel.workspace.name }} · {{ channel.jrc_channel.display_name|default:channel.account_name }}</label>{% endfor %}
+        </fieldset>
+        <button class="board-primary" type="submit">Add to Idea</button>
+      </form>
+    </details>
+    {% endif %}
+  </div>
+  {% if error %}<div class="board-error" role="alert">{{ error }}</div>{% endif %}
   {% if waiting_for_you %}
   <section class="board-waiting" aria-label="Waiting for you" data-waiting-for-you>
     <h2>Waiting for you <span class="stage-count">({{ waiting_for_you|length }})</span></h2>
@@ -96,28 +145,14 @@
     </ul>
   </section>
   {% endif %}
-  <p class="board-help">Use “Move” on a card to change its stage. Approval and planning follow your permissions. Dates use each client’s time zone.</p>
-  <div class="mobile-stage"><label for="mobile-stage">Show stage</label><select id="mobile-stage"><option value="">All stages</option>{% for column in columns %}<option value="{{ column.value }}">{{ column.label }} ({{ column.cards|length }})</option>{% endfor %}</select></div>
-  <div class="board-grid">
+  <p class="board-help">Click a card to open it. “Move…” changes its stage; approval and planning follow your permissions. Dates use each client’s time zone.</p>
+  <div class="mobile-stage"><label for="mobile-stage">Show stage</label><select id="mobile-stage"><option value="">All stages</option>{% for column in columns %}<option value="{{ column.value }}" data-label="{{ column.label }}">{{ column.label }} ({{ column.cards|length }})</option>{% endfor %}</select></div>
+  <div class="board-grid{% if show_client %} show-clients{% endif %}">
   {% for column in columns %}
-    <section class="board-column" data-stage="{{ column.value }}" aria-label="{{ column.label }}"><h2>{{ column.label }} <span class="stage-count">{{ column.cards|length }}</span></h2>
-      {% for card in column.cards %}
-      <article class="board-card" data-post="{{ card.post.id }}">
-        <span class="board-client">{{ card.post.workspace.name }}</span><h3><a href="{% url 'jrc_production:content_detail' workspace_id=card.post.workspace_id post_id=card.post.id %}">{{ card.post.title|default:"Untitled content" }}</a></h3>
-        <div>{% for variant in card.post.platform_posts.all %}<span class="board-channel">{{ variant.social_account.jrc_channel.display_name|default:variant.social_account.account_name }}</span>{% empty %}<span class="board-channel">No channel</span><p class="board-status">Add a channel on the content detail before Review.</p>{% endfor %}</div>
-        {% if card.post.shotlist_total %}<span class="board-status" data-shotlist-progress>Shotlist {{ card.post.shotlist_done }}/{{ card.post.shotlist_total }} done</span>{% endif %}
-        {% if card.client_review %}<span class="board-status">Awaiting client sign-off</span>{% endif %}
-        {% if card.post.scheduled_at %}{% timezone card.post.workspace.effective_timezone %}<time datetime="{{ card.post.scheduled_at|date:'c' }}">Planned: {{ card.post.scheduled_at|date:"M j, Y H:i T" }}</time>{% endtimezone %}{% endif %}
-        {% if card.moves %}
-        <details><summary>Move…</summary><form method="post" action="{% url 'jrc_production:move' workspace_id=card.post.workspace_id post_id=card.post.id %}">{% csrf_token %}
-          <input type="hidden" name="expected_stage" value="{{ card.stage }}"><input type="hidden" name="client" value="{{ selected_client }}"><input type="hidden" name="channel" value="{{ selected_channel }}">
-          <label for="move-{{ card.post.id }}">Move to</label><select id="move-{{ card.post.id }}" name="stage" required>{% for value,label in card.moves %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
-          {% if card.stage == "approved" %}<label for="date-{{ card.post.id }}">Publication date &amp; time<br>({{ card.post.workspace.effective_timezone }})</label><input id="date-{{ card.post.id }}" name="scheduled_at" type="datetime-local">{% endif %}
-          <button class="board-primary" type="submit">Confirm move</button>
-        </form></details>
-        {% endif %}
-      </article>
-      {% empty %}<p class="board-empty">No content yet</p>{% endfor %}
+    <section class="board-column{% if not column.cards %} is-empty{% endif %}" data-stage="{{ column.value }}" aria-label="{{ column.label }}"><h2>{{ column.label }} <span class="stage-count" data-stage-count>{{ column.cards|length }}</span></h2>
+      <div class="board-cards">
+      {% for card in column.cards %}{% include "jrc_production/_board_card.html" %}{% empty %}<p class="board-empty">Empty</p>{% endfor %}
+      </div>
     </section>
   {% endfor %}
   </div>
@@ -140,6 +175,84 @@
   }
   client.addEventListener('change', updateChannels);
   updateChannels();
+})();
+</script>
+<script nonce="{{ request.csp_nonce }}">
+(() => {
+  const form = document.getElementById('quick-idea');
+  if (!form) return;
+  const input = document.getElementById('idea-title');
+  const status = form.querySelector('.quick-idea-status');
+  const toggle = document.querySelector('.quick-idea-toggle');
+  toggle.addEventListener('click', () => {
+    const open = form.classList.toggle('is-open');
+    toggle.setAttribute('aria-expanded', String(open));
+    if (open) input.focus();
+  });
+  function report(message, isError) {
+    status.textContent = message;
+    if (isError) status.dataset.state = 'error'; else delete status.dataset.state;
+  }
+  function increment(element) {
+    const count = Number(element.textContent) + 1;
+    element.textContent = String(count);
+    return count;
+  }
+  function clientName() {
+    const field = form.elements.workspace;
+    return field.tagName === 'SELECT' ? field.selectedOptions[0].textContent : field.dataset.clientName;
+  }
+  function addCard(html) {
+    const column = document.querySelector('.board-column[data-stage="idea"]');
+    const list = column.querySelector('.board-cards');
+    const template = document.createElement('template');
+    template.innerHTML = html.trim();
+    const card = template.content.querySelector('.board-card');
+    list.querySelector('.board-empty')?.remove();
+    column.classList.remove('is-empty');
+    // Keep the board order: dated cards first, then the most recently changed.
+    list.insertBefore(card, list.querySelector('.board-card[data-dated="0"]'));
+    const grid = document.querySelector('.board-grid');
+    const shown = new Set([...grid.querySelectorAll('.board-card')].map(c => c.dataset.client));
+    grid.classList.toggle('show-clients', shown.size > 1);
+    const count = increment(column.querySelector('[data-stage-count]'));
+    const option = document.querySelector('#mobile-stage option[value="idea"]');
+    if (option) option.textContent = `${option.dataset.label} (${count})`;
+    const total = document.querySelector('[data-board-total]');
+    const items = Number(total.dataset.boardTotal) + 1;
+    total.dataset.boardTotal = String(items);
+    total.textContent = `${items} item${items === 1 ? '' : 's'}`;
+  }
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const title = input.value.trim();
+    if (!title) { report('Write the idea first.', true); input.focus(); return; }
+    const body = new FormData(form);
+    // Free the field at once so the next idea can be typed while this one saves.
+    input.value = '';
+    input.focus();
+    report('Saving…', false);
+    try {
+      const response = await fetch(form.action, {
+        method: 'POST', body, credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      });
+      if (!response.ok) {
+        const plain = (response.headers.get('Content-Type') || '').startsWith('text/plain');
+        throw new Error(plain ? await response.text() : 'The idea was not saved. Reload the page and try again.');
+      }
+      const html = await response.text();
+      if (response.headers.get('X-Board-Match') === '1') {
+        addCard(html);
+        report(`Saved to Idea: ${title}`, false);
+      } else {
+        // Saved, but the active filters hide it (another client or a channel filter).
+        report(`Saved to ${clientName()} (hidden by the current filter): ${title}`, false);
+      }
+    } catch (error) {
+      if (!input.value) input.value = title;
+      report(error.message || 'The idea was not saved. Check the connection and try again.', true);
+    }
+  });
 })();
 </script>
 <script nonce="{{ request.csp_nonce }}">

@@ -14,7 +14,7 @@ EXTERNAL_ROLES = (
     WorkspaceMembership.WorkspaceRole.VIEWER,
 )
 
-CONTENT_TABS = ("script", "video", "caption", "approval", "comments", "history")
+CONTENT_TABS = ("concept", "script", "video", "caption", "approval", "comments", "history")
 
 
 def is_external(membership):

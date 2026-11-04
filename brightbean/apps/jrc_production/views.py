@@ -1,5 +1,6 @@
 import difflib
 import re
+from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 from django.contrib import messages
@@ -27,6 +28,7 @@ from apps.workspaces.models import Workspace
 
 from . import shotlist as shotlist_services
 from .approval import approval_context, is_waiting_for
+from .forms import PublicationDateForm
 from .models import ManualPublication, PipelineStage, ShotlistChange
 from .services import (
     add_content_channel,
@@ -39,7 +41,12 @@ from .services import (
     pipeline_stage,
     remove_content_channel,
     request_content_changes,
+    set_publication_date,
 )
+
+BOARD_CLIENT_KEY = "jrc_board_client"
+IDEA_CLIENT_KEY = "jrc_board_idea_client"
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 
 def _memberships(user):
@@ -50,10 +57,56 @@ def _memberships(user):
     )
 
 
+def _visible_comment_counts(posts, user):
+    """Count comments the viewer may read (clients see external threads only)."""
+    by_workspace = {}
+    for post in posts:
+        by_workspace.setdefault(post.workspace_id, []).append(post)
+    counts = {}
+    for group in by_workspace.values():
+        pending = list(comment_services.get_visible_comments(group, user, group[0].workspace))
+        while pending:
+            comment = pending.pop()
+            counts[comment.post_id] = counts.get(comment.post_id, 0) + 1
+            pending.extend(comment.visible_replies)
+    return counts
+
+
+def _board_card(post, membership, comment_count=0):
+    stage = pipeline_stage(post)
+    variants = post.platform_posts.all()
+    planned = post.scheduled_at
+    return {
+        "post": post,
+        "stage": stage,
+        "moves": [(value, PipelineStage(value).label) for value in available_moves(post, membership)],
+        "client_review": any(pp.status == "pending_client" for pp in variants),
+        "date": planned or post.proposed_publish_at,
+        "date_label": "Planned" if planned else "Proposed",
+        "comment_count": comment_count,
+    }
+
+
+def _sort_cards(cards, *, newest_first=False):
+    """Publication date first (dated cards before undated), then the latest change."""
+    cards.sort(key=lambda card: card["post"].updated_at, reverse=True)
+    dated = [card for card in cards if card["date"]]
+    dated.sort(key=lambda card: card["date"], reverse=newest_first)
+    return dated + [card for card in cards if not card["date"]]
+
+
 def _board_context(request, *, error="", title="", selected_client=None):
     memberships = _memberships(request.user)
     by_workspace = {str(m.workspace_id): m for m in memberships}
-    selected = request.GET.get("client", "") if selected_client is None else str(selected_client)
+    if selected_client is not None:
+        selected = str(selected_client)
+    elif "client" in request.GET or "channel" in request.GET:
+        selected = request.GET.get("client", "")
+    else:
+        # No explicit filter: reopen the board on the client chosen last in this session.
+        selected = request.session.get(BOARD_CLIENT_KEY, "")
+        if selected not in by_workspace:
+            selected = ""
     channel = request.GET.get("channel", "")
     workspace_ids = list(by_workspace)
     if selected:
@@ -67,12 +120,14 @@ def _board_context(request, *, error="", title="", selected_client=None):
     )
     if channel and channel != "none" and channel not in {str(c.pk) for c in channels}:
         raise ValidationError("Choose a channel for the selected client.")
+    if request.session.get(BOARD_CLIENT_KEY, "") != selected:
+        request.session[BOARD_CLIENT_KEY] = selected
     posts = Post.objects.filter(workspace_id__in=workspace_ids)
     if channel == "none":
         posts = posts.filter(platform_posts__isnull=True)
     elif channel:
         posts = posts.filter(platform_posts__social_account_id=channel)
-    posts = (
+    posts = list(
         posts.select_related("workspace", "author", "jrc_production")
         # P1-B09: shotlist progress on the card ("3/7 done").
         .annotate(
@@ -84,26 +139,22 @@ def _board_context(request, *, error="", title="", selected_client=None):
         )
         .order_by("-updated_at", "id")
     )
+    comment_counts = _visible_comment_counts(posts, request.user)
     columns = {value: {"value": value, "label": label, "cards": []} for value, label in PipelineStage.choices}
-    total = 0
     waiting = []
     for post in posts:
-        stage = pipeline_stage(post)
         membership = by_workspace[str(post.workspace_id)]
-        moves = available_moves(post, membership)
         if is_waiting_for(post, membership):
             waiting.append(post)
-        columns[stage]["cards"].append(
-            {
-                "post": post,
-                "stage": stage,
-                "moves": [(value, PipelineStage(value).label) for value in moves],
-                "client_review": post.platform_posts.all()
-                and any(pp.status == "pending_client" for pp in post.platform_posts.all()),
-            }
-        )
-        total += 1
+        card = _board_card(post, membership, comment_counts.get(post.pk, 0))
+        columns[card["stage"]]["cards"].append(card)
+    for column in columns.values():
+        column["cards"] = _sort_cards(column["cards"], newest_first=column["value"] == PipelineStage.PUBLISHED)
     creatable = [m.workspace for m in memberships if can_create_content(m)]
+    creatable_ids = {str(client.id) for client in creatable}
+    idea_client = selected if selected in creatable_ids else request.session.get(IDEA_CLIENT_KEY, "")
+    if idea_client not in creatable_ids:
+        idea_client = str(creatable[0].id) if creatable else ""
     creation_channels = (
         SocialAccount.objects.filter(workspace__in=creatable, jrc_channel__is_enabled=True)
         .select_related("workspace", "jrc_channel")
@@ -117,8 +168,11 @@ def _board_context(request, *, error="", title="", selected_client=None):
         "creation_channels": creation_channels,
         "selected_client": selected,
         "selected_channel": channel,
+        # Client names only help when the cards on screen belong to more than one client.
+        "show_client": len({post.workspace_id for post in posts}) > 1,
+        "idea_client": idea_client,
         "channels": channels,
-        "total": total,
+        "total": len(posts),
         "error": error,
         "new_title": title,
     }
@@ -163,6 +217,56 @@ def create(request):
 
 @login_required
 @require_POST
+def quick_idea(request):
+    """Save a one-line idea without channel or date; the board stays open for the next one."""
+    memberships = {str(m.workspace_id): m for m in _memberships(request.user)}
+    membership = memberships.get(request.POST.get("workspace", ""))
+    if membership is None:
+        raise Http404
+    in_place = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+    board_client = request.POST.get("board_client", "")
+    board_client = board_client if board_client in memberships else ""
+    board_channel = request.POST.get("board_channel", "")
+    board_channel = board_channel if board_channel == "none" or _UUID_RE.match(board_channel) else ""
+    try:
+        post = create_content(membership.workspace, request.POST.get("title", ""), request.user)
+    except ValidationError as exc:
+        error = " ".join(exc.messages)
+        if in_place:
+            return HttpResponseBadRequest(error, content_type="text/plain; charset=utf-8")
+        messages.error(request, error)
+        return redirect(reverse("jrc_production:board") + "?" + urlencode({"client": board_client}))
+    request.session[IDEA_CLIENT_KEY] = str(membership.workspace_id)
+    if not in_place:
+        messages.success(request, "Idea saved.")
+        return redirect(
+            reverse("jrc_production:board") + "?" + urlencode({"client": board_client, "channel": board_channel})
+        )
+    post = (
+        Post.objects.select_related("workspace", "jrc_production")
+        .annotate(
+            shotlist_total=Count("jrc_shotlist_items", distinct=True),
+            shotlist_done=Count("jrc_shotlist_items", filter=Q(jrc_shotlist_items__is_done=True), distinct=True),
+        )
+        .prefetch_related(
+            Prefetch("platform_posts", queryset=PlatformPost.objects.select_related("social_account__jrc_channel"))
+        )
+        .get(pk=post.pk)
+    )
+    context = {
+        "card": _board_card(post, membership),
+        "selected_client": board_client,
+        "selected_channel": board_channel,
+    }
+    response = render(request, "jrc_production/_board_card.html", context, status=201)
+    # A new idea has no channel; it belongs on the open board only if the active filters include it.
+    matches = board_client in ("", str(membership.workspace_id)) and board_channel in ("", "none")
+    response["X-Board-Match"] = "1" if matches else "0"
+    return response
+
+
+@login_required
+@require_POST
 def move(request, workspace_id, post_id):
     workspace = get_object_or_404(Workspace, pk=workspace_id, is_archived=False)
     post = get_object_or_404(Post, pk=post_id, workspace=workspace)
@@ -189,13 +293,24 @@ def move(request, workspace_id, post_id):
         label = PipelineStage(pipeline_stage(moved)).label
         messages.success(request, f"Content moved to {label}.")
     # Preserve only validated board filter values, never redirect to caller-supplied URLs.
-    from urllib.parse import urlencode
-
     filters = {key: request.POST.get(key, "") for key in ("client", "channel")}
     return redirect(reverse("jrc_production:board") + "?" + urlencode(filters))
 
 
-TABS = ("script", "shotlist", "video", "caption", "approval", "publish", "comments", "history")
+# P1-B08: Concept (the idea worked out in versions) comes before the Script.
+TABS = ("concept", "script", "shotlist", "video", "caption", "approval", "comments", "publish", "history")
+
+
+def _default_tab(post):
+    """A content without a script opens on its Concept (e.g. a quick idea); otherwise on the Script."""
+    from apps.jrc_texts.models import TextVersion
+
+    has_script = (
+        TextVersion.objects.filter(document__post=post, document__kind=TextDocument.Kind.SCRIPT, state="final")
+        .exclude(text="")
+        .exists()
+    )
+    return "script" if has_script else "concept"
 
 
 def _word_diff(previous, current):
@@ -317,9 +432,9 @@ def content_detail(request, workspace_id, post_id):
         .prefetch_related("platform_posts__social_account"),
         pk=post_id,
     )
-    active_tab = request.GET.get("tab", "script")
+    active_tab = request.GET.get("tab", "")
     if active_tab not in TABS:
-        active_tab = "script"
+        active_tab = _default_tab(post)
 
     is_client = membership.workspace_role in (
         WorkspaceMembership.WorkspaceRole.CLIENT,
@@ -328,7 +443,30 @@ def content_detail(request, workspace_id, post_id):
     can_edit_captions = text_services.can_edit_text(post, membership)
     caption_error = ""
     channel_error = ""
-    if request.method == "POST" and request.POST.get("action") in {"add_channel", "remove_channel"}:
+    date_form = None
+    date_target = ""
+    date_error = ""
+    if request.method == "POST" and request.POST.get("action") == "set_date":
+        if membership.workspace_role == "viewer" or not membership.effective_permissions.get("publish_directly", False):
+            raise PermissionDenied("You cannot schedule content.")
+        active_tab = "publish"
+        try:
+            variant = get_object_or_404(PlatformPost, pk=request.POST.get("platform_post"), post=post)
+        except ValidationError:
+            raise Http404 from None
+        date_target = str(variant.pk)
+        date_form = PublicationDateForm(request.POST, auto_id=f"date-{variant.pk}-%s")
+        with timezone.override(ZoneInfo(workspace.effective_timezone)):
+            valid = date_form.is_valid()
+        if valid:
+            try:
+                set_publication_date(post, variant.pk, request.user, date_form.cleaned_data["scheduled_at"])
+            except ValidationError as exc:
+                date_error = " ".join(exc.messages)
+            else:
+                messages.success(request, "Publication date saved. Publish this channel manually at the planned time.")
+                return redirect(f"{request.path}?tab=publish")
+    elif request.method == "POST" and request.POST.get("action") in {"add_channel", "remove_channel"}:
         try:
             if request.POST["action"] == "add_channel":
                 account = get_object_or_404(SocialAccount, pk=request.POST.get("channel"), workspace=workspace)
@@ -460,6 +598,34 @@ def content_detail(request, workspace_id, post_id):
         }
         for change in post.jrc_shotlist_changes.select_related("user").all()
     )
+    from apps.jrc_video.models import VideoActivity, VideoVersion
+
+    history.extend(
+        {
+            "kind": "video",
+            "created_at": version.uploaded_at,
+            "label": f"Uploaded video v{version.number} · {version.video.platform_post.social_account.account_name}",
+            "actor": version.uploaded_by,
+            "note": "",
+            "can_view_note": True,
+        }
+        for version in VideoVersion.objects.filter(video__platform_post__post=post)
+        .exclude(status=VideoVersion.Status.UPLOADING)
+        .select_related("uploaded_by", "video__platform_post__social_account")
+    )
+    history.extend(
+        {
+            "kind": "video",
+            "created_at": event.created_at,
+            "label": f"{event.get_action_display()} · v{event.version.number} · {event.version.video.platform_post.social_account.account_name}",
+            "actor": event.actor,
+            "note": "",
+            "can_view_note": True,
+        }
+        for event in VideoActivity.objects.filter(version__video__platform_post__post=post).select_related(
+            "actor", "version__video__platform_post__social_account"
+        )
+    )
     history.sort(key=lambda item: item["created_at"], reverse=True)
 
     video_context = {}
@@ -523,7 +689,21 @@ def content_detail(request, workspace_id, post_id):
                     "caption": caption,
                     "scheduled_at": scheduled_at,
                     "scheduled_label": (scheduled_at.strftime("%b %-d, %Y · %-I:%M %p %Z") if scheduled_at else ""),
+                    "can_schedule": membership.workspace_role != "viewer"
+                    and membership.effective_permissions.get("publish_directly", False)
+                    and variant.status in {PlatformPost.Status.APPROVED, PlatformPost.Status.SCHEDULED}
+                    and getattr(getattr(account, "jrc_channel", None), "is_enabled", False)
+                    and account.jrc_channel.kind in {"manual", "custom"},
+                    "date_open": date_target == str(variant.pk),
+                    "date_error": date_error if date_target == str(variant.pk) else "",
+                    "date_form": date_form
+                    if date_target == str(variant.pk)
+                    else PublicationDateForm(
+                        initial={"scheduled_at": scheduled_at.strftime("%Y-%m-%dT%H:%M") if scheduled_at else ""},
+                        auto_id=f"date-{variant.pk}-%s",
+                    ),
                     "video_final": video_final,
+                    "video_number": video.final_version.number if video_final else None,
                     "has_video": bool(video),
                     "published": publication is not None,
                     "publication_url": publication.post_url if publication else "",
@@ -537,7 +717,8 @@ def content_detail(request, workspace_id, post_id):
                     )
                     if video_final
                     and can_publish
-                    and variant.status in {PlatformPost.Status.APPROVED, PlatformPost.Status.SCHEDULED}
+                    and variant.status
+                    in {PlatformPost.Status.APPROVED, PlatformPost.Status.SCHEDULED, PlatformPost.Status.PUBLISHED}
                     and bool(caption.strip())
                     else "",
                 }

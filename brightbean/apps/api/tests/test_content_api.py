@@ -144,6 +144,44 @@ def test_script_validation_and_editor_draft(key, content, user):
     assert [v["number"] for v in api(key, "get", f"{content.pk}/script").json()["versions"]] == [1]
 
 
+def test_concept_versions_like_the_script_p1_b08(key, content, workspace, user, org_owner):
+    """P1-B08: /concept has the script's shape and rules and never touches the script."""
+    from apps.api_keys.models import ApiKeyAuditLog
+
+    assert api(key, "get", f"{content.pk}/concept").json()["version"] is None
+    first = api(key, "post", f"{content.pk}/concept", {"markdown": "Idea: three plants"})
+    assert first.status_code == 201, first.content
+    v1 = first.json()["version"]
+    assert v1["number"] == 1 and v1["source"] == "api"
+    assert api(key, "post", f"{content.pk}/concept", {"markdown": "No base"}).status_code == 409
+    second = api(key, "post", f"{content.pk}/concept", {"markdown": "Idea: four", "base_version": v1["id"]})
+    assert second.status_code == 201 and second.json()["version"]["number"] == 2
+    same = api(
+        key, "post", f"{content.pk}/concept", {"markdown": "Idea: four", "base_version": second.json()["version"]["id"]}
+    )
+    assert same.status_code == 200
+    old = api(key, "get", f"{content.pk}/concept?version={v1['id']}").json()
+    assert "three plants" in old["markdown"]
+    assert api(key, "get", f"{content.pk}/script").json()["versions"] == []
+    assert TextDocument.objects.get(post=content, kind="concept").versions.filter(state="final").count() == 2
+    # An open editor draft blocks the write; the concept draft never appears in the API.
+    texts.edit(second.json()["version"]["id"], user)
+    blocked = api(
+        key, "post", f"{content.pk}/concept", {"markdown": "x", "base_version": second.json()["version"]["id"]}
+    )
+    assert blocked.status_code == 409
+    assert [v["number"] for v in api(key, "get", f"{content.pk}/concept").json()["versions"]] == [2, 1]
+    actions = set(ApiKeyAuditLog.objects.filter(api_key=key.api_key).values_list("action", flat=True))
+    assert {"concept.write", "concept.write.409"} <= actions
+    # A client key reads the concept but cannot write it (same as the script).
+    ella = User.objects.create_user(email="concept-client@example.com", password="x")
+    WorkspaceMembership.objects.create(workspace=workspace, user=ella, workspace_role="client")
+    OrgMembership.objects.create(user=ella, organization=workspace.organization, org_role="owner")
+    client_key = make_key(workspace, ella)
+    assert api(client_key, "get", f"{content.pk}/concept").json()["can_edit"] is False
+    assert api(client_key, "post", f"{content.pk}/concept", {"markdown": "Nope"}).status_code == 403
+
+
 # ---------------------------------------------------------------------------
 # AK2 captions
 # ---------------------------------------------------------------------------
@@ -434,6 +472,7 @@ def test_openapi_documents_the_content_routes(key):
     paths = spec["paths"]
     for suffix, methods in {
         "/script": {"get", "post"},
+        "/concept": {"get", "post"},
         "/captions": {"get"},
         "/captions/{platform_post_id}": {"get", "post", "patch"},
         "/stage": {"get", "post"},

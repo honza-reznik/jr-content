@@ -1,0 +1,23 @@
+{% load tz %}{% with post=card.post title=card.post.title|default:"Untitled content" %}
+<article class="board-card" data-post="{{ post.id }}" data-client="{{ post.workspace_id }}" data-dated="{% if card.date %}1{% else %}0{% endif %}">
+  <span class="board-client">{{ post.workspace.name }}</span>
+  <h3><a class="board-card-link" href="{% url 'jrc_production:content_detail' workspace_id=post.workspace_id post_id=post.id %}" title="{{ title }}">{{ title }}</a></h3>
+  <div class="board-meta">
+    <span class="board-channels">{% for variant in post.platform_posts.all %}<span class="board-channel" title="{{ variant.social_account.jrc_channel.display_name|default:variant.social_account.account_name }}">{{ variant.social_account.jrc_channel.display_name|default:variant.social_account.account_name }}</span>{% empty %}<span class="board-channel board-channel-none" title="Add a channel on the content detail before Review.">No channel</span>{% endfor %}</span>
+    {% if card.date %}{% timezone post.workspace.effective_timezone %}<time datetime="{{ card.date|date:'c' }}" title="{{ card.date_label }} publication: {{ card.date|date:'M j, Y H:i T' }}">{% if card.date_label == "Proposed" %}Proposed {{ card.date|date:"M j" }}{% else %}{{ card.date|date:"M j, H:i" }}{% endif %}</time>{% endtimezone %}{% endif %}
+    {% if card.comment_count %}<span class="board-comments" title="{{ card.comment_count }} comment{{ card.comment_count|pluralize }}"><svg aria-hidden="true" viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M2 3.5A1.5 1.5 0 0 1 3.5 2h9A1.5 1.5 0 0 1 14 3.5v6a1.5 1.5 0 0 1-1.5 1.5H7l-3 3v-3h-.5A1.5 1.5 0 0 1 2 9.5z"/></svg>{{ card.comment_count }}<span class="board-sr"> comment{{ card.comment_count|pluralize }}</span></span>{% endif %}
+    {% if post.shotlist_total %}<span class="board-status" data-shotlist-progress>Shotlist {{ post.shotlist_done }}/{{ post.shotlist_total }} done</span>{% endif %}
+    {% if card.client_review %}<span class="board-status">Awaiting client sign-off</span>{% endif %}
+    {% if card.moves %}
+    <details class="board-move"><summary aria-label="Move “{{ title }}”">Move…</summary>
+      <form method="post" action="{% url 'jrc_production:move' workspace_id=post.workspace_id post_id=post.id %}">{% csrf_token %}
+        <input type="hidden" name="expected_stage" value="{{ card.stage }}"><input type="hidden" name="client" value="{{ selected_client }}"><input type="hidden" name="channel" value="{{ selected_channel }}">
+        <label for="move-{{ post.id }}">Move to</label><select id="move-{{ post.id }}" name="stage" required>{% for value,label in card.moves %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
+        {% if card.stage == "approved" %}<label for="date-{{ post.id }}">Publication date &amp; time<br>({{ post.workspace.effective_timezone }})</label><input id="date-{{ post.id }}" name="scheduled_at" type="datetime-local">{% endif %}
+        <button class="board-primary" type="submit">Confirm move</button>
+      </form>
+    </details>
+    {% endif %}
+  </div>
+</article>
+{% endwith %}

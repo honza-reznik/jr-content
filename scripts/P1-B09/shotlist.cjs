@@ -78,7 +78,14 @@ const out = 'ops/screenshoty/P1-B09';
       console.log(`Owner ${width}: záložka Shotlist`);
       await page.goto(`${detail}?tab=shotlist`, { waitUntil: 'networkidle' });
       const tabs = await page.locator('[role=tab]').allInnerTexts();
-      assert.equal(tabs.map((t) => t.trim().toLowerCase()).indexOf('shotlist'), 1, 'Shotlist za Script');
+      assert.deepEqual(tabs.map((t) => t.trim().toLowerCase()), [
+        'concept', 'script', 'shotlist', 'video', 'caption', 'approval', 'comments', 'publish', 'history',
+      ], 'Concept a Shotlist v integrovaném pořadí');
+      await page.goto(detail, { waitUntil: 'networkidle' });
+      assert.equal((await page.locator('[role=tab][aria-selected=true]').innerText()).trim().toLowerCase(), 'concept');
+      await page.goto(`${detail}?tab=script`, { waitUntil: 'networkidle' });
+      assert.equal((await page.locator('[role=tab][aria-selected=true]').innerText()).trim().toLowerCase(), 'script');
+      await page.goto(`${detail}?tab=shotlist`, { waitUntil: 'networkidle' });
       assert.equal((await progress(page)).trim(), '1/3 done');
       assert.deepEqual(await texts(page), [
         'Thumbnail photo',
