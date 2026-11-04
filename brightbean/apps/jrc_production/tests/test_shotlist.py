@@ -120,6 +120,43 @@ def test_add_edit_check_move_delete_and_history(workspace, user, content):
     assert shotlist.progress(shotlist.items_for(content)) == (0, 2)
 
 
+def test_move_records_who_moved_the_item_and_when(workspace, user, content):
+    item = shotlist.add_item(content, user, "Wide shot")
+    thumbnail = content.jrc_shotlist_items.get(kind="thumbnail")
+    editor = _member(workspace, "editor", "mover@example.test")
+    before = ShotlistItem.objects.get(pk=item.pk).updated_at
+
+    moved = shotlist.move_item(content, item.pk, editor, offset=-1)
+
+    assert (moved.position, moved.updated_by_id) == (0, editor.pk)
+    assert moved.updated_at > before
+    # The neighbour only renumbers; it keeps its own author (nobody yet).
+    thumbnail.refresh_from_db()
+    assert (thumbnail.position, thumbnail.updated_by_id) == (1, None)
+    # Already at the top: no move, so nothing is recorded.
+    again = shotlist.move_item(content, item.pk, user, offset=-1)
+    assert (again.updated_by_id, again.updated_at) == (editor.pk, moved.updated_at)
+
+
+def test_write_uses_the_current_role_even_with_an_older_membership(workspace, user, content):
+    """A role lowered while a request waited for the lock wins over what the request read before."""
+    editor = _member(workspace, "editor", "demoted@example.test")
+    stale = WorkspaceMembership.objects.get(workspace=workspace, user=editor)
+    assert shotlist.can_edit_shotlist(content, stale)
+    WorkspaceMembership.objects.filter(pk=stale.pk).update(workspace_role="viewer")
+    thumbnail = content.jrc_shotlist_items.get(kind="thumbnail")
+
+    with pytest.raises(PermissionDenied):
+        shotlist.add_item(content, editor, "Late shot", membership=stale)
+    with pytest.raises(PermissionDenied):
+        shotlist.update_item(content, thumbnail.pk, editor, is_done=True, membership=stale)
+    with pytest.raises(PermissionDenied):
+        shotlist.move_item(content, thumbnail.pk, editor, offset=1, membership=stale)
+    assert not ShotlistItem.objects.filter(post=content, text="Late shot").exists()
+    thumbnail.refresh_from_db()
+    assert not thumbnail.is_done
+
+
 def test_validation_and_items_of_other_content(workspace, user, content):
     with pytest.raises(ValidationError):
         shotlist.add_item(content, user, "   ")

@@ -1,12 +1,24 @@
 # JR Content: přidáno 2026-11-04 (blok P1-B09), AGPL-3.0.
 """REST API for the shotlist of a content (P1-B09)."""
 
+from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
+from threading import Event
+
 import pytest
 from django.core.cache import cache
 from django.test import Client, override_settings
 
 from apps.accounts.models import User
-from apps.api.tests.test_content_api import ROLES, api, make_key
+from apps.api.routers import content as content_routes
+from apps.api.routers import shotlist as shotlist_routes
+from apps.api.tests.test_content_api import (
+    ROLES,
+    _channel_request_waits_on_lock,
+    _concurrent_channel_request,
+    api,
+    make_key,
+)
 from apps.composer.models import Post
 from apps.jrc_channels.services import create_manual_channel
 from apps.jrc_production.models import ShotlistChange, ShotlistItem
@@ -126,6 +138,74 @@ def test_key_permissions_narrow_the_issuer_and_foreign_workspace(workspace, user
     assert api(key, "get", f"{foreign.pk}/shotlist").status_code == 404
     assert api(key, "post", f"{foreign.pk}/shotlist", {"text": "x"}).status_code == 404
     assert Client().get(f"/api/v1/posts/{content.pk}/shotlist", secure=True).status_code == 401
+
+
+def test_role_lowered_during_the_request_is_rechecked_under_the_lock(workspace, user, org_owner, content, monkeypatch):
+    """The key and membership are read first; an editor demoted to viewer meanwhile must not write."""
+    editor = user
+    WorkspaceMembership.objects.filter(workspace=workspace, user=editor).update(workspace_role="editor")
+    key = make_key(workspace, editor)
+    thumbnail = content.jrc_shotlist_items.get(kind="thumbnail")
+    original = shotlist_routes._membership
+
+    def demote_after_read(request, post):
+        membership = original(request, post)
+        WorkspaceMembership.objects.filter(workspace=workspace, user=editor).update(workspace_role="viewer")
+        return membership
+
+    monkeypatch.setattr(shotlist_routes, "_membership", demote_after_read)
+    assert api(key, "post", f"{content.pk}/shotlist", {"text": "Late shot"}).status_code == 403
+    WorkspaceMembership.objects.filter(workspace=workspace, user=editor).update(workspace_role="editor")
+    assert api(key, "patch", f"{content.pk}/shotlist/{thumbnail.pk}", {"is_done": True}).status_code == 403
+    assert not ShotlistItem.objects.filter(post=content, text="Late shot").exists()
+    thumbnail.refresh_from_db()
+    assert not thumbnail.is_done
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("method", ["post", "patch", "delete"])
+def test_channel_allowlist_is_checked_under_the_content_lock(workspace, user, org_owner, monkeypatch, method):
+    """A channel the key cannot see, added while the write waits, turns the write into 404."""
+    channel = create_manual_channel(workspace, "instagram", "IG")
+    private = create_manual_channel(workspace, "custom", "Private")
+    post = create_content(workspace, "Concurrent shotlist", user, social_account_ids=[channel.pk])
+    extra = ShotlistItem.objects.create(post=post, text="Existing shot", position=1)
+    wide = make_key(workspace, user, accounts=[channel, private])
+    narrow = make_key(workspace, user, accounts=[channel])
+    added, release = Event(), Event()
+    original = content_routes.add_content_channel
+
+    def pause_after_add(*args, **kwargs):
+        result = original(*args, **kwargs)
+        added.set()
+        assert release.wait(8)
+        return result
+
+    monkeypatch.setattr(content_routes, "add_content_channel", pause_after_add)
+    path, payload = {
+        "post": (f"{post.pk}/shotlist", {"text": "Narrow shot"}),
+        "patch": (f"{post.pk}/shotlist/{extra.pk}", {"is_done": True, "position": 0}),
+        "delete": (f"{post.pk}/shotlist/{extra.pk}", None),
+    }[method]
+    pids = Queue()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        wide_request = pool.submit(
+            _concurrent_channel_request, wide, "post", f"{post.pk}/channels", {"social_account_id": str(private.pk)}
+        )
+        try:
+            assert added.wait(8), "Wide request did not add its private channel"
+            narrow_request = pool.submit(_concurrent_channel_request, narrow, method, path, payload, pids)
+            blocked = _channel_request_waits_on_lock(pids.get(timeout=8), narrow_request)
+        finally:
+            release.set()
+        assert wide_request.result(timeout=10).status_code == 200
+        response = narrow_request.result(timeout=10)
+    assert blocked, "The shotlist write must wait for the content lock"
+    assert response.status_code == 404, response.content
+    assert "Existing shot" not in response.content.decode()
+    extra.refresh_from_db()
+    assert (extra.is_done, extra.position) == (False, 1)
+    assert not ShotlistItem.objects.filter(post=post, text="Narrow shot").exists()
 
 
 def test_openapi_documents_the_shotlist_routes(key):

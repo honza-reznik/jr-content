@@ -48,7 +48,10 @@ const out = 'ops/screenshoty/P1-B09';
     page.setDefaultTimeout(10000);
     page.on('pageerror', (error) => errors.push(`${role} ${width}: ${error.message}`));
     page.on('console', (message) => {
-      if (message.type() === 'error') errors.push(`${role} ${width} console: ${message.text()}`);
+      // The dropped-connection step aborts one request on purpose.
+      if (message.type() === 'error' && !message.text().includes('ERR_CONNECTION_RESET')) {
+        errors.push(`${role} ${width} console: ${message.text()}`);
+      }
     });
     return { context, page };
   }
@@ -141,6 +144,34 @@ const out = 'ops/screenshoty/P1-B09';
       assert.equal((await progress(page)).trim(), '2/4 done');
       assert(await noOverflow(page), `detail overflow after edits ${width}`);
       checks.push(`owner ${width}: smazání s potvrzením`);
+
+      // Výpadek spojení: server přidání uloží, odpověď se ztratí. Žádné nové odeslání, jen načtení seznamu.
+      let posts = 0;
+      await page.route('**/shotlist/', async (route) => {
+        if (route.request().method() !== 'POST') return route.continue();
+        posts += 1;
+        await route.fetch();
+        return route.abort('connectionreset');
+      });
+      await page.locator('#shotlist-new-text').fill('Lost answer shot');
+      await page.locator('#shotlist-new-text').press('Enter');
+      await page.locator('[data-shotlist] [role=alert]', { hasText: 'may or may not have been saved' }).waitFor();
+      await page.unroute('**/shotlist/');
+      assert.equal(posts, 1, 'POST odeslán jen jednou');
+      assert.equal((await texts(page)).filter((t) => t === 'Lost answer shot').length, 1);
+      assert.equal(await page.locator('#shotlist-new-text').inputValue(), 'Lost answer shot');
+      assert.equal(await page.evaluate(() => document.activeElement.id), 'shotlist-new-text');
+      await page.screenshot({ path: `${out}/shotlist-dropped-${width}.png`, fullPage: width === 1440 });
+      page.once('dialog', (dialog) => dialog.accept());
+      const lost = page.locator('.shotlist-row').filter({ hasText: 'Lost answer shot' });
+      await lost.locator('summary').click();
+      await lost.getByRole('button', { name: 'Delete item' }).click();
+      await page.waitForFunction(() => {
+        const root = document.querySelector('[data-shotlist]');
+        return root && !root.textContent.includes('Lost answer shot');
+      });
+      assert.equal((await progress(page)).trim(), '2/4 done');
+      checks.push(`owner ${width}: ztracená odpověď neodešle přidání znovu, načte seznam a upozorní`);
 
       // Po obnovení stránky zůstane stav uložený a historie ho ukazuje.
       await page.reload({ waitUntil: 'networkidle' });

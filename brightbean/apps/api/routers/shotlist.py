@@ -85,9 +85,12 @@ def _response(post, membership, item_id=None) -> ShotlistResponse:
 
 
 def _writer(request, post_id):
-    enforce_http_rate_limits(request, is_write=True)
-    _require_write_key(request)
-    post = _post(request, post_id)
+    """Lock the content, then check the key's channels and the member's rights.
+
+    Call inside ``transaction.atomic()`` that also covers the change and the response: a
+    concurrent channel change waits, so the allowlist seen here holds until the commit.
+    """
+    post = _post(request, post_id, lock=True)
     membership = _membership(request, post)
     if not shotlist_services.can_edit_shotlist(post, membership):
         raise HttpError(403, "You cannot change the shotlist of this content.")
@@ -122,11 +125,15 @@ def shotlist_get(request, post_id: uuid.UUID):
 )
 def shotlist_add(request, post_id: uuid.UUID, payload: ShotlistItemCreate):
     """Writers are owner, manager, editor and (own content only) contributor. 422 for an empty or too long text."""
-    post, membership = _writer(request, post_id)
-    with _http_errors():
-        item = shotlist_services.add_item(post, request.user, payload.text, payload.note, membership=membership)
+    enforce_http_rate_limits(request, is_write=True)
+    _require_write_key(request)
+    with transaction.atomic():
+        post, membership = _writer(request, post_id)
+        with _http_errors():
+            item = shotlist_services.add_item(post, request.user, payload.text, payload.note, membership=membership)
+        result = _response(post, membership, item.pk)
     log_audit_entry(request, action="shotlist.create", target_id=item.id, status_code=201)
-    return 201, _response(post, membership, item.pk)
+    return 201, result
 
 
 @router.patch(
@@ -137,26 +144,30 @@ def shotlist_add(request, post_id: uuid.UUID, payload: ShotlistItemCreate):
 )
 def shotlist_update(request, post_id: uuid.UUID, item_id: uuid.UUID, payload: ShotlistItemUpdate):
     """Send only the fields to change. 404 for an item of another content, 422 for renaming the thumbnail item."""
-    post, membership = _writer(request, post_id)
-    with _http_errors(), transaction.atomic():
+    enforce_http_rate_limits(request, is_write=True)
+    _require_write_key(request)
+    with transaction.atomic():
+        post, membership = _writer(request, post_id)
         try:
-            item = shotlist_services.update_item(
-                post,
-                item_id,
-                request.user,
-                text=payload.text,
-                note=payload.note,
-                is_done=payload.is_done,
-                membership=membership,
-            )
-            if payload.position is not None:
-                item = shotlist_services.move_item(
-                    post, item_id, request.user, index=payload.position, membership=membership
+            with _http_errors():
+                item = shotlist_services.update_item(
+                    post,
+                    item_id,
+                    request.user,
+                    text=payload.text,
+                    note=payload.note,
+                    is_done=payload.is_done,
+                    membership=membership,
                 )
+                if payload.position is not None:
+                    item = shotlist_services.move_item(
+                        post, item_id, request.user, index=payload.position, membership=membership
+                    )
         except shotlist_services.ItemNotFoundError as exc:
             raise _not_found(exc) from exc
+        result = _response(post, membership, item.pk)
     log_audit_entry(request, action="shotlist.update", target_id=item.id, status_code=200)
-    return _response(post, membership, item.pk)
+    return result
 
 
 @router.delete(
@@ -167,11 +178,15 @@ def shotlist_update(request, post_id: uuid.UUID, item_id: uuid.UUID, payload: Sh
 )
 def shotlist_delete(request, post_id: uuid.UUID, item_id: uuid.UUID):
     """The automatic thumbnail item cannot be deleted (422); check it off instead."""
-    post, membership = _writer(request, post_id)
-    with _http_errors():
+    enforce_http_rate_limits(request, is_write=True)
+    _require_write_key(request)
+    with transaction.atomic():
+        post, membership = _writer(request, post_id)
         try:
-            shotlist_services.delete_item(post, item_id, request.user, membership=membership)
+            with _http_errors():
+                shotlist_services.delete_item(post, item_id, request.user, membership=membership)
         except shotlist_services.ItemNotFoundError as exc:
             raise _not_found(exc) from exc
+        result = _response(post, membership)
     log_audit_entry(request, action="shotlist.delete", target_id=item_id, status_code=200)
-    return _response(post, membership)
+    return result

@@ -69,10 +69,14 @@ def _clean_note(note):
 
 
 def _lock(post, user, membership=None):
-    """Lock the content, then authorize. ``membership`` lets the API pass a key-narrowed one."""
+    """Lock the content, then authorize against the member's current role.
+
+    ``membership`` is the API's key-narrowed one, read before the lock: it must allow the
+    change too, but a role lowered while the request waited still wins.
+    """
     post = Post.objects.select_for_update(of=("self",)).select_related("workspace").get(pk=post.pk)
     real = content_membership(post.workspace, user)
-    if not can_edit_shotlist(post, membership or real):
+    if not can_edit_shotlist(post, real) or (membership is not None and not can_edit_shotlist(post, membership)):
         raise PermissionDenied("You cannot change the shotlist of this content.")
     return post
 
@@ -162,6 +166,10 @@ def move_item(post, item_id, user, *, index=None, offset=None, membership=None):
             changed.append(other)
     if changed:
         ShotlistItem.objects.bulk_update(changed, ["position"])
+    if item in changed:
+        # Only the moved item records who moved it; its neighbours just renumber.
+        item.updated_by = user
+        item.save(update_fields=["updated_by", "updated_at"])
     item.refresh_from_db()
     return item
 
