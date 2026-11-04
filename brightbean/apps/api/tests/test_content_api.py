@@ -240,10 +240,12 @@ def test_no_other_api_path_rewrites_or_deletes_a_versioned_caption(key, content)
     )
 
     # A whole post has no delete route; a versioned copy cannot be removed (P1-B06).
+    # Shotlist items (P1-B09) are separate rows and never touch captions.
     spec = Client(HTTP_AUTHORIZATION=f"Bearer {key.plaintext_token}").get("/api/v1/openapi.json", secure=True)
     paths = spec.json()["paths"]
     assert {p for p, ops in paths.items() if "delete" in ops and "/posts" in p} == {
-        "/api/v1/posts/{post_id}/channels/{platform_post_id}"
+        "/api/v1/posts/{post_id}/channels/{platform_post_id}",
+        "/api/v1/posts/{post_id}/shotlist/{item_id}",
     }
     assert api(key, "delete", f"{content.pk}/channels/{variant.pk}").status_code == 422
     assert api(key, "delete", f"{content.pk}").status_code in (404, 405)
