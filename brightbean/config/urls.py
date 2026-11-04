@@ -100,6 +100,8 @@ if getattr(settings, "JRC_UI_ENABLED", False):
         # JR Content: upraveno 2026-10-24 (blok F5-B05), AGPL-3.0: nahrání verze videa.
         path("", include("apps.jrc_video.urls")),
         path("", include("apps.jrc_texts.urls")),
+        # JR Content: upraveno 2026-11-04 (blok P1-B10), AGPL-3.0: náhled kanálu.
+        path("", include("apps.jrc_thumbnails.urls")),
     ]
 
 # ---------------------------------------------------------------------------

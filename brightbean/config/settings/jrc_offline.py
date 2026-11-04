@@ -30,4 +30,6 @@ JRC_APPS = [
     "apps.jrc_texts.apps.JrcTextsConfig",
     "apps.jrc_video.apps.JrcVideoConfig",
     "apps.jrc_storage.apps.JrcStorageConfig",
+    # P1-B10: náhledový obrázek každé kanálové kopie.
+    "apps.jrc_thumbnails.apps.JrcThumbnailsConfig",
 ]

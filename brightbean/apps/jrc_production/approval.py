@@ -79,6 +79,8 @@ def _caption_summaries(post, accounts):
                 "label": f"{account.get_platform_display()} · {account.account_name}",
                 "text": text,
                 "number": version.number if version else None,
+                # P1-B10: the channel's thumbnail is shown next to its caption.
+                "variant": variant,
             }
         )
     return rows

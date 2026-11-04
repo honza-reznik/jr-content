@@ -1,7 +1,8 @@
 {% extends "base.html" %}
-{% load static %}
+{% load static jrc_thumbnails %}
 {% block title %}{{ post.title|default:"Content" }} · {{ workspace.name }}{% endblock %}
 {% block page_header %}{% endblock %}
+{% block extra_head %}{% if active_tab == "caption" or active_tab == "publish" or active_tab == "approval" %}<link rel="stylesheet" href="{% static 'jrc_thumbnails/thumbnail.css' %}">{% endif %}{% endblock %}
 {% block content %}
 <div class="mx-auto w-full max-w-5xl pb-8">
     <a href="{% url 'composer:compose_edit' workspace_id=workspace.id post_id=post.id %}" class="inline-flex items-center gap-2 text-sm font-medium text-stone-500 hover:text-stone-800 mb-5" {% if not can_edit_posts %}hidden{% endif %}>
@@ -94,7 +95,7 @@
         {% elif active_tab == "video" %}
             {% include "jrc_video/_upload_tab.html" %}
         {% elif active_tab == "publish" %}
-            <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">Publish channels</h2><p class="mt-1 text-sm text-stone-500">Download the final video, copy the saved caption, then record when you publish it manually.</p></div>
+            <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">Publish channels</h2><p class="mt-1 text-sm text-stone-500">Download the final video and the thumbnail, copy the saved caption, then record when you publish it manually.</p></div>
             <div class="space-y-4">
                 {% for item in publish_channels %}
                 <article class="rounded-xl border border-stone-200 p-4 sm:p-5" aria-labelledby="publish-channel-{{ forloop.counter }}">
@@ -112,6 +113,7 @@
                             {% if item.download_url %}<a href="{{ item.download_url }}" class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">Download final video</a>{% elif item.has_video %}<span class="text-sm text-amber-700">No final video selected.</span>{% endif %}
                         </div>
                     </div>
+                    {% channel_thumbnail item.variant "publish" item.label %}
                     {% if item.published %}
                         {% if item.publication_url %}<a href="{{ item.publication_url }}" target="_blank" rel="noopener noreferrer" class="mt-4 inline-block break-all text-sm text-orange-700 underline">View published post</a>{% endif %}
                     {% elif item.can_mark %}
@@ -148,6 +150,7 @@
                             {% if can_edit_captions %}<button type="submit" class="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-300">Save version</button>{% endif %}
                         </div>
                     </form>
+                    {% channel_thumbnail item.variant "caption" %}
                     {% if item.previews %}
                     <section class="mt-4 border-t border-stone-100 pt-3" aria-label="Instagram preview of the saved caption" data-caption-preview>
                         <h4 class="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">Instagram preview of the saved caption</h4>
@@ -183,4 +186,5 @@ document.querySelectorAll('[data-open-channels]').forEach(button => button.addEv
 {% if active_tab == "caption" %}<script src="{% static 'jrc_production/caption-counter.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
 {% if active_tab == "video" %}<script src="{% static 'jrc_video/upload.js' %}" nonce="{{ request.csp_nonce }}"></script><script src="{% static 'jrc_video/video-tab.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
 {% if active_tab == "publish" %}<script src="{% static 'jrc_production/publish.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
+{% if active_tab == "caption" or active_tab == "publish" %}<script src="{% static 'jrc_thumbnails/thumbnail.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
 {% endblock %}
