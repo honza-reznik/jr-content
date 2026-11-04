@@ -701,3 +701,14 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
   (`text_kind`); `editor/script.mjs` bere názvy textu z `data-noun`/`data-empty` (projeví se po `make build-bb`).
 - REST `GET/POST /api/v1/posts/{id}/concept` (stejné schéma jako `/script`, audit `concept.write`), MCP `jrc_get_concept`,
   `jrc_save_concept`. Upozornění: typ `content_script_version`, nadpis „New concept version“, odkaz `?tab=concept`.
+
+## 2026-11-04 · P1-B11 — bez obrazovky souhlasu Brightbean („Almost there“)
+
+- `jrc_ui`: nový vypínač funkce `terms` (cesta `/accounts/accept-terms/`), v `MVP_FEATURES` vypnutý → stránka souhlasu vrací 404.
+  `configure_ui` nahrazuje upstream `TosAcceptanceMiddleware` obalem `jrc_ui.middleware.TermsAcceptanceMiddleware`, který
+  přesměrování na souhlas provede jen při zapnuté funkci; noví uživatelé (pozvánka, `createsuperuser`) jdou rovnou do aplikace.
+  `tos_accepted_at` se nemění (vratné: `JRC_FEATURES["terms"] = True` vrátí upstream chování; regresní sada `jrc_test` ho dál ověřuje).
+- `templates/account/signup.html`: odstavec s odkazy na brightbean.xyz Terms of Service / Privacy Policy jen při zapnuté funkci `terms`.
+  About & license beze změny.
+- Test: `apps/jrc_ui/tests/test_terms.py` (přihlášení nového uživatele, registrace přes pozvánku, 404 stránky souhlasu,
+  vratnost, statická kontrola šablon s brightbean.xyz – zbylé jsou jen za vypnutými funkcemi `terms`, `reviews`, `intelligence`).
