@@ -689,3 +689,15 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
 - Po review: SMTP výjimky nezobrazují přihlašovací údaje, stažení videa ověřuje schválení, popisek a stav finální verze, pozvánky fungují i v HTMX odpovědích a odkazy i skryté odpovědi respektují veřejnou předponu a hranice workspace. Přidány regresní testy pro všech sedm nálezů.
 - Role `client` může na kartě Publish stáhnout hotové finální video, kopírovat popisek a zaznamenat ruční publikaci schváleného příspěvku s popiskem a případným hotovým videem. Role `viewer` zůstává bez těchto oprávnění.
 - Přidány regrese pro archiv a přihlášení, odkazy pozvánek, klientská oprávnění i SMTP nastavení.
+
+## 2026-11-04 · P1-B08 — záložka Concept (rozpracování nápadu ve verzích)
+
+- `jrc_texts`: nový druh `TextDocument.Kind.CONCEPT` (migrace `0004_concept`: jeden koncept na obsah, nikdy na kopii kanálu).
+  Verzování, průběžné ukládání, neměnné uložené verze, porovnání a souběh 409 sdílí se scénářem (`views._text_editor`).
+- Adresy `…/content/<id>/concept/` (editor) a `…/concept/to-script/` (POST „Use as script draft“: poslední uložený koncept
+  jako nová verze scénáře; služba `copy_concept_to_script`, nikdy přes otevřený koncept scénáře jiného člověka).
+- Detail obsahu: záložky `concept, script, video, caption, approval, comments, publish, history`; bez `?tab=` se otevře
+  Concept, dokud scénář nemá uloženou verzi s textem. Šablona `jrc_texts/script.html` slouží oběma záložkám
+  (`text_kind`); `editor/script.mjs` bere názvy textu z `data-noun`/`data-empty` (projeví se po `make build-bb`).
+- REST `GET/POST /api/v1/posts/{id}/concept` (stejné schéma jako `/script`, audit `concept.write`), MCP `jrc_get_concept`,
+  `jrc_save_concept`. Upozornění: typ `content_script_version`, nadpis „New concept version“, odkaz `?tab=concept`.

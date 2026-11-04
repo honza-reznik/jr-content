@@ -285,7 +285,20 @@ def move(request, workspace_id, post_id):
     return redirect(reverse("jrc_production:board") + "?" + urlencode(filters))
 
 
-TABS = ("script", "video", "caption", "approval", "publish", "comments", "history")
+# P1-B08: Concept (the idea worked out in versions) comes before the Script.
+TABS = ("concept", "script", "video", "caption", "approval", "comments", "publish", "history")
+
+
+def _default_tab(post):
+    """A content without a script opens on its Concept (e.g. a quick idea); otherwise on the Script."""
+    from apps.jrc_texts.models import TextVersion
+
+    has_script = (
+        TextVersion.objects.filter(document__post=post, document__kind=TextDocument.Kind.SCRIPT, state="final")
+        .exclude(text="")
+        .exists()
+    )
+    return "script" if has_script else "concept"
 
 
 def _word_diff(previous, current):
@@ -407,9 +420,9 @@ def content_detail(request, workspace_id, post_id):
         .prefetch_related("platform_posts__social_account"),
         pk=post_id,
     )
-    active_tab = request.GET.get("tab", "script")
+    active_tab = request.GET.get("tab", "")
     if active_tab not in TABS:
-        active_tab = "script"
+        active_tab = _default_tab(post)
 
     is_client = membership.workspace_role in (
         WorkspaceMembership.WorkspaceRole.CLIENT,

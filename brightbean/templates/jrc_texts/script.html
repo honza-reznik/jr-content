@@ -1,9 +1,19 @@
 {% load static %}
+{% comment %}P1-B08: the same editor serves the Script tab and the Concept tab (text_kind="concept").
+The element ids stay script-* because the built editor (dist/script.js) looks them up.{% endcomment %}
 <link rel="stylesheet" href="{% static 'jrc_texts/script.css' %}">
-<div id="script-panel" data-url="{% url 'jrc_texts:script' workspace_id=workspace.id post_id=post.id %}">
+{% if text_kind == "concept" %}
+<div id="script-panel" data-noun="concept" data-empty="No concept yet. Write down the idea: the angle, the hook and the key points." data-url="{% url 'jrc_texts:concept' workspace_id=workspace.id post_id=post.id %}">
+{% else %}
+<div id="script-panel" data-noun="script" data-empty="No script yet. Add an outline, talking points or a full script." data-url="{% url 'jrc_texts:script' workspace_id=workspace.id post_id=post.id %}">
+{% endif %}
     {% csrf_token %}
     <div class="script-heading">
+        {% if text_kind == "concept" %}
+        <div><h2 class="text-lg font-semibold text-stone-900">Concept</h2><p class="mt-1 text-sm text-stone-600">Work out the idea here until it is ready for a script. Every saved version is kept.</p><p id="script-version" class="mt-1 text-sm text-stone-500">Loading concept…</p></div>
+        {% else %}
         <div><h2 class="text-lg font-semibold text-stone-900">Script</h2><p id="script-version" class="mt-1 text-sm text-stone-500">Loading script…</p></div>
+        {% endif %}
         <div class="script-actions">
             <button id="script-edit" type="button" hidden>Edit text</button>
             <button id="script-resume" type="button" hidden>Resume editing</button>
@@ -15,9 +25,9 @@
     <p id="script-message" role="status" aria-live="polite">Loading…</p>
     <div class="script-actions script-recovery">
         <button id="script-retry" type="button" hidden>Retry draft save</button>
-        <button id="script-reload" type="button">Reload script</button>
+        <button id="script-reload" type="button">Reload {% if text_kind == "concept" %}concept{% else %}script{% endif %}</button>
     </div>
-    <noscript><p>Enable JavaScript to read and edit the script.</p></noscript>
+    <noscript><p>Enable JavaScript to read and edit the {% if text_kind == "concept" %}concept{% else %}script{% endif %}.</p></noscript>
     <div class="script-layout">
         <div class="script-paper">
             <div id="script-toolbar" role="toolbar" aria-label="Text formatting" hidden>
@@ -33,7 +43,7 @@
             </div>
             <div id="script-editor" aria-busy="true"></div>
         </div>
-        <aside class="script-versions" aria-label="Script versions"><h3>Saved versions</h3><p class="script-version-help">Choose a version to read it.</p><ol id="script-versions"></ol></aside>
+        <aside class="script-versions" aria-label="{% if text_kind == "concept" %}Concept{% else %}Script{% endif %} versions"><h3>Saved versions</h3><p class="script-version-help">Choose a version to read it.</p><ol id="script-versions"></ol></aside>
     </div>
     <section id="script-compare" class="script-compare" aria-labelledby="script-compare-title" hidden>
         <h3 id="script-compare-title">Compare versions</h3>
@@ -47,4 +57,12 @@
         <div class="script-diff-legend" aria-label="Difference colors"><span><i class="script-diff-added"></i> Added</span><span><i class="script-diff-removed"></i> Removed</span></div>
         <div id="script-diff" class="script-diff" aria-live="polite"></div>
     </section>
+    {% if text_kind == "concept" and can_edit_posts %}
+    <form method="post" action="{% url 'jrc_texts:concept_to_script' workspace_id=workspace.id post_id=post.id %}" class="script-compare script-to-script">
+        {% csrf_token %}
+        <h3>Ready for the script?</h3>
+        <p class="script-version-help">Copies the latest saved concept into the script as a new version. Older script versions stay available.</p>
+        <button type="submit">Use as script draft</button>
+    </form>
+    {% endif %}
 </div>

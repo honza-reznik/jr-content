@@ -236,24 +236,33 @@ def _content_membership(post: Post, context: dict[str, Any]):
     return _KeyMembership(membership, context["membership"].effective_permissions)
 
 
-def _get_script(args: dict, context: dict[str, Any]) -> dict:
+def _get_script(args: dict, context: dict[str, Any], kind: str = "script") -> dict:
     from apps.api.routers.content import _script_response
 
     post = _content_post(context, args["post_id"])
     version = args.get("version_id")
     selected = _parse_uuid(version, "version_id") if version else None
     try:
-        result = _script_response(post, _content_membership(post, context), selected)
+        result = _script_response(post, _content_membership(post, context), selected, kind=kind)
     except Exception as exc:
         from django.http import Http404
 
         if isinstance(exc, Http404):
-            raise _content_error("Script version not found", 404) from exc
+            raise _content_error(f"{kind.capitalize()} version not found", 404) from exc
         raise
     return _wrap_text(result.model_dump(mode="json"))
 
 
-def _save_script(args: dict, context: dict[str, Any]) -> dict:
+def _get_concept(args: dict, context: dict[str, Any]) -> dict:
+    """P1-B08: the concept has the same shape and rules as the script."""
+    return _get_script(args, context, "concept")
+
+
+def _save_concept(args: dict, context: dict[str, Any]) -> dict:
+    return _save_script(args, context, "concept")
+
+
+def _save_script(args: dict, context: dict[str, Any], kind: str = "script") -> dict:
     from django.core.exceptions import PermissionDenied, ValidationError
     from django.db import transaction
 
@@ -269,16 +278,16 @@ def _save_script(args: dict, context: dict[str, Any]) -> dict:
     try:
         with transaction.atomic():
             Post.objects.select_for_update().get(pk=post.pk)
-            document = TextDocument.objects.filter(post=post, kind=TextDocument.Kind.SCRIPT).first()
+            document = TextDocument.objects.filter(post=post, kind=kind).first()
             if document is None:
                 if base_id is not None:
-                    raise text_services.ConflictError("The script has no saved version yet. Reload the text.")
-                text_services.create_document(post.pk, actor, markdown=args["markdown"], source="mcp")
+                    raise text_services.ConflictError(f"The {kind} has no saved version yet. Reload the text.")
+                text_services.create_document(post.pk, actor, kind=kind, markdown=args["markdown"], source="mcp")
                 status = 201
             else:
                 base = document.versions.filter(pk=base_id, state=TextVersion.State.FINAL).first() if base_id else None
                 if base is None:
-                    raise text_services.ConflictError("The script changed. Reload the text and send base_version.")
+                    raise text_services.ConflictError(f"The {kind} changed. Reload the text and send base_version.")
                 draft = text_services.edit(base.pk, actor, source="mcp")
                 saved = text_services.save(draft.pk, actor, expected_revision=0, markdown=args["markdown"])
                 status = 200 if saved.pk == base.pk else 201
@@ -288,7 +297,7 @@ def _save_script(args: dict, context: dict[str, Any]) -> dict:
         raise _content_error(str(exc), 403) from exc
     except ValidationError as exc:
         raise _content_error(" ".join(exc.messages), 422) from exc
-    result = _script_response(post, _content_membership(post, context))
+    result = _script_response(post, _content_membership(post, context), kind=kind)
     return _wrap_text({**result.model_dump(mode="json"), "status": status})
 
 
@@ -434,6 +443,42 @@ def _register_content_tools() -> None:
                 "additionalProperties": False,
             },
             handler=_save_script,
+        )
+    )
+    # P1-B08: concept (rozpracování nápadu ve verzích) se stejnými pravidly jako scénář.
+    register_tool(
+        Tool(
+            name="jrc_get_concept",
+            description="Načte koncept contentu (rozpracování nápadu před scénářem) v Markdownu a seznam uložených verzí. Rozpracované koncepty v editoru se nikdy nevracejí. Volitelně vyber starší uloženou verzi.",
+            input_schema={
+                "type": "object",
+                "properties": {"post_id": post_id, "version_id": {"type": "string", "format": "uuid"}},
+                "required": ["post_id"],
+                "additionalProperties": False,
+            },
+            handler=_get_concept,
+            read_only=True,
+        )
+    )
+    register_tool(
+        Tool(
+            name="jrc_save_concept",
+            description="Uloží celý koncept contentu jako novou Markdown verzi (stejná pravidla jako `jrc_save_script`). Po první verzi je povinné `base_version` z nejnovější verze; zastaralá verze nebo rozpracovaná verze v editoru vrátí konflikt 409.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "post_id": post_id,
+                    "markdown": {"type": "string", "maxLength": 1000000},
+                    "base_version": {
+                        "type": ["string", "null"],
+                        "format": "uuid",
+                        "description": "ID aktuální uložené verze; vynechat jen při první verzi.",
+                    },
+                },
+                "required": ["post_id", "markdown"],
+                "additionalProperties": False,
+            },
+            handler=_save_concept,
         )
     )
     register_tool(

@@ -275,6 +275,7 @@ def _action_for_path(method: str, path: str, *, status_code: int) -> str:
     if "/posts/" in path:
         for part, label in (
             ("/script", "script"),
+            ("/concept", "concept"),
             ("/captions", "caption"),
             ("/stage", "stage"),
             ("/comments", "comment"),

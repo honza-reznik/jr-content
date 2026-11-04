@@ -10,6 +10,8 @@ class TextDocument(models.Model):
     class Kind(models.TextChoices):
         SCRIPT = "script", "Script"
         CAPTION = "caption", "Caption"
+        # P1-B08: the idea worked out in versions before it becomes a script (one per post).
+        CONCEPT = "concept", "Concept"
 
     class Format(models.TextChoices):
         RICH = "rich", "Rich text"
@@ -37,10 +39,12 @@ class TextDocument(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=["post", "kind"], condition=Q(kind="script"), name="jrc_text_one_script"),
+            models.UniqueConstraint(fields=["post", "kind"], condition=Q(kind="concept"), name="jrc_text_one_concept"),
             models.UniqueConstraint(fields=["platform_post"], condition=Q(kind="caption"), name="jrc_text_one_caption"),
             models.CheckConstraint(
                 condition=(
-                    Q(kind="script", platform_post__isnull=True) | Q(kind="caption", platform_post__isnull=False)
+                    Q(kind__in=["script", "concept"], platform_post__isnull=True)
+                    | Q(kind="caption", platform_post__isnull=False)
                 ),
                 name="jrc_text_document_kind",
             ),
