@@ -461,6 +461,26 @@ run_pm() {
   rm -f "$out"
 }
 
+# Sprint P-023: místo nového PM vzbudí (nebo obnoví) interaktivní session v tmux.
+wake_or_resume_pm() {
+  local s=$PM_TMUX_SESSION cur
+  local msg="PM BUDÍK z tick.sh ($(date -d "@$NOW" '+%d.%m. %H:%M')): značka interaktivního PM byla stará. Pokračuj podle KB vyvoj/stav.md a vyvoj/sprint-mvp-2026-11.md, obnov si budík session (CronCreate každých 20 min), zkontroluj agenty a zadej další práci."
+  cur=$(tmux list-panes -t "$s" -F '#{pane_current_command}' 2>/dev/null | head -1)
+  if [[ $cur == claude* ]]; then
+    log "session tmux $s běží ($cur) → posílám budík"
+    (( DRY_RUN )) || { tmux send-keys -t "$s" -l "$msg"; sleep 1; tmux send-keys -t "$s" Enter; }
+  elif [[ -n $cur ]]; then
+    log "session tmux $s existuje, ale neběží v ní claude ($cur) → obnovuji claude --resume $PM_RESUME_SESSION"
+    (( DRY_RUN )) || { tmux send-keys -t "$s" -l "cd $PROJECT_DIR && $CLAUDE_BIN --resume $PM_RESUME_SESSION"; tmux send-keys -t "$s" Enter
+                       sleep 30; tmux send-keys -t "$s" -l "$msg"; sleep 1; tmux send-keys -t "$s" Enter; }
+  else
+    log "session tmux $s neexistuje → zakládám a obnovuji claude --resume $PM_RESUME_SESSION"
+    (( DRY_RUN )) || { tmux new-session -d -s "$s" -c "$PROJECT_DIR" "$CLAUDE_BIN --resume $PM_RESUME_SESSION"
+                       sleep 30; tmux send-keys -t "$s" -l "$msg"; sleep 1; tmux send-keys -t "$s" Enter; }
+  fi
+  PM_RESULT=ok
+}
+
 # --- Záložní Codex ----------------------------------------------------------------
 
 codex_running_for() {   # vypíše PID běžícího `codex exec` pro daný worktree
@@ -586,7 +606,9 @@ main() {
     exit 0
   fi
 
-  if (( ok )); then
+  if (( ok )) && [[ -n ${PM_RESUME_SESSION:-} ]]; then
+    wake_or_resume_pm
+  elif (( ok )); then
     run_pm
     if (( DRY_RUN )); then
       run_codex_fallback hypoteticky
