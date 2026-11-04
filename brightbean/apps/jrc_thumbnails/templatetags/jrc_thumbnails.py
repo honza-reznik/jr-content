@@ -7,8 +7,6 @@ from ..models import ChannelThumbnail
 
 register = template.Library()
 
-HISTORY_LIMIT = 20
-
 
 def _membership(context):
     """One lookup per page even when several channels render a thumbnail."""
@@ -30,9 +28,7 @@ def channel_thumbnail(context, variant, mode="caption", label=""):
     post = context.get("post")
     membership = _membership(context)
     versions = list(
-        ChannelThumbnail.objects.filter(platform_post=variant)
-        .select_related("uploaded_by")
-        .order_by("-number")[:HISTORY_LIMIT]
+        ChannelThumbnail.objects.filter(platform_post=variant).select_related("uploaded_by").order_by("-number")
     )
     current = versions[0] if versions else None
     may_download = services.can_download(membership)
@@ -54,9 +50,6 @@ def channel_thumbnail(context, variant, mode="caption", label=""):
         "history": [
             {"thumbnail": item, "url": item.image.url, "download_url": download_url(item)} for item in versions[1:]
         ],
-        "older_count": max(0, ChannelThumbnail.objects.filter(platform_post=variant).count() - HISTORY_LIMIT)
-        if len(versions) == HISTORY_LIMIT
-        else 0,
         "can_upload": mode != "approval" and post is not None and services.can_upload(post, membership),
         "upload_url": reverse("jrc_thumbnails:upload", kwargs=kwargs),
         "max_bytes": services.MAX_BYTES,

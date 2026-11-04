@@ -109,7 +109,7 @@ def _assert_selection_rejected(response, endpoint):
         events = json.loads(response.headers["HX-Trigger"])
         assert "autosaved" not in events
         message = events["captionSelectionConflict"]["message"]
-    assert "caption history or video cannot be removed" in message
+    assert "caption history, video or thumbnails cannot be removed" in message
     assert "Reload the composer" in message
 
 

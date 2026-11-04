@@ -13,12 +13,12 @@ from PIL import Image, UnidentifiedImageError
 
 from apps.jrc_texts.services import can_edit_text
 from apps.members.models import WorkspaceMembership
+from apps.members.permissions import can_publish_directly
 
 from .models import ChannelThumbnail
 
 MAX_BYTES = 20 * 1024 * 1024
-# A 20 MB file can still declare enormous dimensions (decompression bomb). 100 Mpx is
-# above any phone camera today and far below what would exhaust the web worker.
+# Bound decoded dimensions as well as compressed bytes to limit memory usage.
 MAX_PIXELS = 100_000_000
 # Pillow format -> (stored content type, canonical extension). The sniffed format decides
 # the stored name, so a file is never served under a misleading suffix.
@@ -32,17 +32,30 @@ def member(workspace, user):
     """The active membership, or None: callers answer 404 so other workspaces stay invisible."""
     if not user.is_authenticated or not user.is_active or workspace.is_archived:
         return None
-    return WorkspaceMembership.objects.filter(user=user, workspace=workspace).select_related("custom_role").first()
+    return (
+        WorkspaceMembership.objects.filter(
+            user=user, workspace=workspace, workspace__organization__deleted_at__isnull=True
+        )
+        .select_related("custom_role")
+        .first()
+    )
 
 
 def can_upload(post, membership):
     """Owner, manager and editor; a contributor only on their own content (same as captions)."""
-    return bool(membership) and can_edit_text(post, membership)
+    if not membership or membership.workspace_id != post.workspace_id:
+        return False
+    role = membership.workspace_role
+    if role not in {"owner", "manager", "editor", "contributor"}:
+        return False
+    if role == "contributor" and post.author_id != membership.user_id:
+        return False
+    return can_edit_text(post, membership)
 
 
 def can_download(membership):
     """The team and the client download; a viewer only sees the thumbnail."""
-    return bool(membership) and membership.workspace_role != WorkspaceMembership.WorkspaceRole.VIEWER
+    return can_publish_directly(membership)
 
 
 def validate_image(upload):
@@ -70,6 +83,11 @@ def validate_image(upload):
                 if width * height > MAX_PIXELS:
                     raise ValidationError("The image has too many pixels.")
                 image.verify()
+            # JPEG.verify() alone does not decode the pixels and can accept a
+            # truncated upload. Check that the whole image can actually be read.
+            upload.seek(0)
+            with Image.open(upload) as image:
+                image.load()
     except ValidationError:
         raise
     except (UnidentifiedImageError, Image.DecompressionBombError, OSError, SyntaxError, ValueError):

@@ -46,7 +46,9 @@ def _authorized(user, key, workspace=None):
         # P1-B10: a channel thumbnail is visible to every member of its workspace (viewer included).
         from apps.jrc_thumbnails.models import ChannelThumbnail
 
-        if ChannelThumbnail.objects.filter(image=key, post__workspace_id__in=workspaces.values("workspace_id")).exists():
+        if ChannelThumbnail.objects.filter(
+            image=key, post__workspace_id__in=workspaces.values("workspace_id")
+        ).exists():
             return
         raise Http404
     access = Q(workspace_id__in=workspaces.values("workspace_id")) | Q(

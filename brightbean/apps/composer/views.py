@@ -145,9 +145,9 @@ def _caption_selection_error(request, post):
     deselected = _deselected_platform_posts(request, post, selected_ids).select_for_update(of=("self",))
     if any(channel_removal_blocker(pp) for pp in deselected):
         return (
-            "Not saved: a channel with caption history or video cannot be removed in the composer. "
+            "Not saved: a channel with caption history, video or thumbnails cannot be removed in the composer. "
             "Reload the composer to include all channels, then save again. "
-            "Your saved captions, videos and their history are unchanged."
+            "Your saved captions, videos, thumbnails and their history are unchanged."
         )
     return None
 
@@ -2645,7 +2645,7 @@ def post_delete(request, workspace_id, post_id):
             )
             return JsonResponse(
                 {
-                    "error": "This channel has caption history or video and can't be deleted. Review its saved work on the content detail.",
+                    "error": "This channel has caption history, video or thumbnails and can't be deleted. Review its saved work on the content detail.",
                     "links": [{"label": "Open Caption", "url": caption_url}],
                 },
                 status=409,

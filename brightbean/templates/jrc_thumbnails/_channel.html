@@ -38,7 +38,7 @@
             </div>
             {% if history %}
             <details class="mt-3" data-thumbnail-history>
-                <summary class="cursor-pointer text-sm font-medium text-stone-700">Earlier versions ({{ history|length }}{% if older_count %}+{% endif %})</summary>
+                <summary class="cursor-pointer text-sm font-medium text-stone-700">Earlier versions ({{ history|length }})</summary>
                 <ul class="mt-2 space-y-1">
                     {% for item in history %}
                     <li class="text-sm text-stone-600"><a href="{{ item.url }}" target="_blank" rel="noopener" class="text-orange-700 underline">Version {{ item.thumbnail.number }}</a> · {{ item.thumbnail.created_at|date:"M j, Y · g:i A" }}{% if item.download_url %} · <a href="{{ item.download_url }}" class="text-stone-600 underline">Download</a>{% endif %}</li>

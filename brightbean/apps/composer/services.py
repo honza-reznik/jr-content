@@ -28,7 +28,7 @@ class ChannelRemovalError(ValidationError):
 
     def __init__(self, variants):
         self.variants = variants
-        super().__init__("A channel with caption history or video cannot be removed.")
+        super().__init__("A channel with caption history, video or thumbnails cannot be removed.")
 
 
 def channel_removal_blocker(variant):

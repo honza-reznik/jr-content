@@ -13,6 +13,16 @@ document.querySelectorAll("[data-thumbnail-form]").forEach((form) => {
     input.addEventListener("change", () => {
         const file = input.files && input.files[0];
         if (!file) return;
+        // Uploading navigates back to this tab. Keep unsaved captions in every
+        // channel intact instead of silently discarding them during that reload.
+        const unsavedCaption = Array.from(document.querySelectorAll("[data-caption-counter]"))
+            .some((field) => field.value !== field.defaultValue);
+        if (unsavedCaption) {
+            status.textContent = "Save caption changes before uploading a thumbnail.";
+            status.classList.add("text-red-700");
+            input.value = "";
+            return;
+        }
         if (maxBytes && file.size > maxBytes) {
             status.textContent = "The image is larger than 20 MB.";
             status.classList.add("text-red-700");
