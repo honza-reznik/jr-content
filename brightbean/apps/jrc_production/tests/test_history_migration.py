@@ -35,4 +35,6 @@ def test_old_history_migrates_to_internal_without_guessing_current_role(workspac
             assert row.note_visibility == "internal"
             assert row.actor_role == ""
     finally:
-        MigrationExecutor(connection).migrate(new)
+        # Back to the latest schema: later migrations (e.g. P1-B09 shotlist) are needed by other tests.
+        latest = MigrationExecutor(connection)
+        latest.migrate(latest.loader.graph.leaf_nodes())

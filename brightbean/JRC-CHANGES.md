@@ -1,5 +1,20 @@
 # Úpravy JR Content
 
+## 2026-11-04 — P1-B09
+
+- Shotlist u obsahu: `ShotlistItem` (text, poznámka, hotovo, pořadí, kdo/kdy změnil) a historie
+  `ShotlistChange` v `apps/jrc_production` (migrace 0003, datová 0004). Každý obsah má automatickou
+  položku „Thumbnail photo“ (signál `post_save` u `composer.Post`), odškrtává se ručně a nejde smazat.
+- Záložka Shotlist za Script, změny v History, „Shotlist x/y done“ na kartě nástěnky.
+- REST `/api/v1/posts/{id}/shotlist` (GET, POST) a `/shotlist/{item_id}` (PATCH, DELETE); upstream
+  `apps/api/api.py` jen registruje nový router.
+- Opravy kontroly: zápis REST ověřuje povolené kanály pod zámkem obsahu a aktuální oprávnění člena,
+  přesun ukládá autora a čas změny. Při ztracené odpovědi (včetně přerušeného čtení jejího těla)
+  rozhraní načte aktuální seznam bez automatického opakování zápisu.
+- Integrace s P1-B07/B08: ukazatel je ve sdílené kartě i u rychlého nápadu; Concept zůstává
+  výchozí bez scénáře, pořadí záložek Concept, Script, Shotlist, Video, Caption, Approval,
+  Comments, Publish, History. Historie zachovává také události videa z P1-B13.
+
 ## 2026-11-04 — P1-B13, oprava review 1
 
 - Set date v Publish otevírá vlastní formulář pro jednu schválenou ruční kanálovou kopii,

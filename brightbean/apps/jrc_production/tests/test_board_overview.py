@@ -204,6 +204,7 @@ def test_three_quick_ideas_in_a_row_stay_on_the_board(http, workspace, user):
             **XHR,
         )
         assert response.status_code == 201
+        assert b"Shotlist 0/1 done" in response.content
         html = response.content.decode()
         assert html.strip().startswith('<article class="board-card"') and title in html
         assert 'data-dated="0"' in html and ">No channel</span>" in html and "Move…" in html

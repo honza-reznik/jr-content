@@ -1,0 +1,71 @@
+{# JR Content P1-B09: the shotlist; re-rendered whole after each change (see shotlist.js). #}
+{% url 'jrc_production:shotlist_action' workspace_id=workspace.id post_id=post.id as shotlist_url %}
+<div class="shotlist-head">
+    <div>
+        <h2 class="shotlist-title">Shotlist</h2>
+        <p class="shotlist-help">{% if can_edit_shotlist %}What needs to be shot or created. Check items off as you go.{% else %}What the team needs to shoot or create for this content.{% endif %}</p>
+    </div>
+    <p class="shotlist-progress" data-shotlist-progress>{{ shotlist_done }}/{{ shotlist_total }} done</p>
+</div>
+{% if shotlist_error %}<p role="alert" class="shotlist-error">{{ shotlist_error }}</p>{% endif %}
+<ol class="shotlist-list" aria-label="Shotlist items">
+    {% for item in shotlist_items %}
+    <li id="shotlist-item-{{ item.id }}" class="shotlist-row{% if item.is_done %} is-done{% endif %}" data-kind="{{ item.kind }}">
+        {% if can_edit_shotlist %}
+        <form method="post" action="{{ shotlist_url }}" class="shotlist-check">{% csrf_token %}
+            <input type="hidden" name="action" value="done"><input type="hidden" name="item" value="{{ item.id }}"><input type="hidden" name="done" value="{% if item.is_done %}0{% else %}1{% endif %}">
+            <button type="submit" class="shotlist-box" role="checkbox" aria-checked="{% if item.is_done %}true{% else %}false{% endif %}" aria-label="{{ item.text }}" data-shotlist-focus><span aria-hidden="true">✓</span></button>
+        </form>
+        {% else %}
+        <span class="shotlist-box" role="checkbox" aria-checked="{% if item.is_done %}true{% else %}false{% endif %}" aria-disabled="true" aria-label="{{ item.text }}"><span aria-hidden="true">✓</span></span>
+        {% endif %}
+        <div class="shotlist-body">
+            <p class="shotlist-text">{{ item.text }}{% if item.kind == "thumbnail" %} <span class="shotlist-badge">Automatic</span>{% endif %}</p>
+            {% if item.kind == "thumbnail" %}<p class="shotlist-hint">One photo for all channels; channel versions are made in post-production.</p>{% endif %}
+            {% if item.note %}<p class="shotlist-note">{{ item.note }}</p>{% endif %}
+            {% if item.updated_by %}<p class="shotlist-meta">{% if item.is_done %}Checked off{% else %}Updated{% endif %} by {{ item.updated_by.display_name|default:item.updated_by.email }} · <time datetime="{{ item.updated_at|date:'c' }}">{{ item.updated_at|date:"M j, g:i A" }}</time></p>{% endif %}
+            {% if can_edit_shotlist %}
+            <div class="shotlist-tools">
+                <form method="post" action="{{ shotlist_url }}">{% csrf_token %}<input type="hidden" name="action" value="up"><input type="hidden" name="item" value="{{ item.id }}"><button type="submit" class="shotlist-tool" aria-label="Move “{{ item.text }}” up" {% if forloop.first %}disabled{% endif %} data-shotlist-focus-up><span aria-hidden="true">↑</span></button></form>
+                <form method="post" action="{{ shotlist_url }}">{% csrf_token %}<input type="hidden" name="action" value="down"><input type="hidden" name="item" value="{{ item.id }}"><button type="submit" class="shotlist-tool" aria-label="Move “{{ item.text }}” down" {% if forloop.last %}disabled{% endif %} data-shotlist-focus-down><span aria-hidden="true">↓</span></button></form>
+                <details class="shotlist-edit">
+                    <summary class="shotlist-tool shotlist-tool-text">Edit</summary>
+                    <form method="post" action="{{ shotlist_url }}" class="shotlist-edit-form">{% csrf_token %}
+                        <input type="hidden" name="action" value="update"><input type="hidden" name="item" value="{{ item.id }}">
+                        {% if item.kind == "thumbnail" %}<input type="hidden" name="text" value="{{ item.text }}">{% else %}
+                        <label for="shotlist-text-{{ item.id }}">Item</label>
+                        <input id="shotlist-text-{{ item.id }}" name="text" value="{{ item.text }}" maxlength="{{ shotlist_max_text }}" required>{% endif %}
+                        <label for="shotlist-note-{{ item.id }}">Note <span class="shotlist-optional">(optional)</span></label>
+                        <textarea id="shotlist-note-{{ item.id }}" name="note" rows="2" maxlength="{{ shotlist_max_note }}">{{ item.note }}</textarea>
+                        <div class="shotlist-edit-actions">
+                            <button type="submit" class="shotlist-primary">Save</button>
+                        </div>
+                    </form>
+                    {% if item.kind != "thumbnail" %}
+                    <form method="post" action="{{ shotlist_url }}" class="shotlist-delete" data-confirm="Delete “{{ item.text }}” from the shotlist?">{% csrf_token %}
+                        <input type="hidden" name="action" value="delete"><input type="hidden" name="item" value="{{ item.id }}">
+                        <button type="submit" class="shotlist-danger">Delete item</button>
+                    </form>
+                    {% else %}<p class="shotlist-hint">This reminder cannot be deleted.</p>{% endif %}
+                </details>
+            </div>
+            {% endif %}
+        </div>
+    </li>
+    {% empty %}<li class="shotlist-empty">Nothing on the shotlist yet.</li>{% endfor %}
+</ol>
+{% if can_edit_shotlist %}
+<form id="shotlist-add" method="post" action="{{ shotlist_url }}" class="shotlist-add">{% csrf_token %}
+    <input type="hidden" name="action" value="add">
+    <div class="shotlist-add-field">
+        <label for="shotlist-new-text">New item</label>
+        <input id="shotlist-new-text" name="text" value="{{ shotlist_new_text }}" maxlength="{{ shotlist_max_text }}" required placeholder="e.g. Close-up of hands shaping the clay" autocomplete="off" enterkeyhint="next" data-shotlist-new {% if shotlist_focus == "add" %}autofocus{% endif %}>
+    </div>
+    <div class="shotlist-add-field">
+        <label for="shotlist-new-note">Note <span class="shotlist-optional">(optional)</span></label>
+        <input id="shotlist-new-note" name="note" value="{{ shotlist_new_note }}" maxlength="{{ shotlist_max_note }}" placeholder="e.g. Window light, slow motion" autocomplete="off" enterkeyhint="next">
+    </div>
+    <button type="submit" class="shotlist-primary">Add</button>
+    <p class="shotlist-help shotlist-add-help">Press Enter to add the item and type the next one.</p>
+</form>
+{% endif %}
