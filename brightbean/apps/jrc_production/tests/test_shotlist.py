@@ -193,8 +193,8 @@ def test_tab_flow_with_and_without_script(client, workspace, user, content):
 
     plain = client.post(url, {"action": "add", "text": "B-roll of the kiln", "note": "Slow motion"})
     assert plain.status_code == 302
-    assert plain["Location"].endswith("?tab=shotlist&focus=add#shotlist-add")
-    page = client.get(plain["Location"].split("#")[0])
+    assert plain["Location"].endswith("?tab=shotlist&focus=add")
+    page = client.get(plain["Location"])
     assert b"B-roll of the kiln" in page.content and b"Slow motion" in page.content
     assert b"0/2 done" in page.content and b"autofocus" in page.content
     assert b'href="?tab=shotlist"' in page.content

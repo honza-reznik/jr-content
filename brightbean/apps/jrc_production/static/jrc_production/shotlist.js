@@ -30,7 +30,8 @@
     root.setAttribute('aria-busy', 'true');
     let response;
     try {
-      response = await fetch(form.action, {
+      // Not form.action: the hidden input named "action" shadows that property.
+      response = await fetch(form.getAttribute('action'), {
         method: 'POST',
         body: data,
         credentials: 'same-origin',

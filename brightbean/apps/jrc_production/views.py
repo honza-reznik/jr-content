@@ -664,8 +664,11 @@ def shotlist_action(request, workspace_id, post_id):
     if error:
         messages.error(request, error)
     url = reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.id, "post_id": post.id})
+    if focus == "add" and not error:
+        # No fragment here: browsers skip autofocus when the URL targets an element.
+        return redirect(f"{url}?tab=shotlist&focus=add")
     anchor = f"#shotlist-{focus}" if focus and not error else "#shotlist"
-    return redirect(f"{url}?tab=shotlist" + ("&focus=add" if focus == "add" and not error else "") + anchor)
+    return redirect(f"{url}?tab=shotlist{anchor}")
 
 
 @login_required
