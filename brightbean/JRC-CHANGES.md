@@ -1,5 +1,14 @@
 # Úpravy JR Content
 
+## 2026-11-04 — P1-B09
+
+- Shotlist u obsahu: `ShotlistItem` (text, poznámka, hotovo, pořadí, kdo/kdy změnil) a historie
+  `ShotlistChange` v `apps/jrc_production` (migrace 0003, datová 0004). Každý obsah má automatickou
+  položku „Thumbnail photo“ (signál `post_save` u `composer.Post`), odškrtává se ručně a nejde smazat.
+- Záložka Shotlist za Script, změny v History, „Shotlist x/y done“ na kartě nástěnky.
+- REST `/api/v1/posts/{id}/shotlist` (GET, POST) a `/shotlist/{item_id}` (PATCH, DELETE); upstream
+  `apps/api/api.py` jen registruje nový router.
+
 ## 2026-10-27 — P1-B06
 
 - Obsah lze založit bez kanálu; zapnuté kanály klienta se připojují jen výslovnou volbou.
