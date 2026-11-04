@@ -25,6 +25,7 @@ class EventType(models.TextChoices):
     CLIENT_CONNECTED_ACCOUNTS = "client_connected_accounts", "Client connected accounts"
     CONTENT_SCRIPT_VERSION = "content_script_version", "New script version"
     CONTENT_CAPTION_VERSION = "content_caption_version", "New caption version"
+    CONTENT_CLIENT_COMMENT = "content_client_comment", "New client comment"
     CONTENT_VIDEO_VERSION = "content_video_version", "New video version"
 
 

@@ -41,6 +41,45 @@ def approved_post(post):
     return variant
 
 
+@pytest.mark.parametrize("role", ["owner", "client"])
+def test_published_video_keeps_final_version_and_download(client, workspace, user, post, role):
+    import uuid
+
+    variant = approved_post(post)
+    video = VideoAsset.objects.create(platform_post=variant, ff_asset_id=uuid.uuid4())
+    version = VideoVersion.objects.create(
+        video=video, number=2, ff_version_id=uuid.uuid4(), status=VideoVersion.Status.READY
+    )
+    video.final_version = version
+    video.save(update_fields=["final_version"])
+    WorkspaceMembership.objects.filter(workspace=workspace, user=user).update(workspace_role=role)
+    client.force_login(user)
+    mark = reverse("jrc_production:mark_published", kwargs={"workspace_id": workspace.pk, "post_id": post.pk})
+    assert client.post(mark, {"platform_post": variant.pk}).status_code == 302
+    detail = reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.pk, "post_id": post.pk})
+    page = client.get(detail, {"tab": "publish"})
+    assert b"Published manually" in page.content
+    assert b"Final video \xc2\xb7 v2" in page.content
+    assert b"Download final video" in page.content
+    download = reverse(
+        "jrc_video:final_download",
+        kwargs={"workspace_id": workspace.pk, "post_id": post.pk, "platform_post_id": variant.pk},
+    )
+    assert download.encode() in page.content
+    with patch("apps.jrc_video.uploads._call", return_value={"url": "http://testserver/files/video/raw/final.mp4"}):
+        assert client.get(download).status_code == 302
+
+
+def test_publish_without_date_offers_existing_scheduler_and_confirmation(client, workspace, user, post):
+    variant = approved_post(post)
+    client.force_login(user)
+    detail = reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.pk, "post_id": post.pk})
+    page = client.get(detail, {"tab": "publish"}).content.decode()
+    schedule = reverse("composer:compose_edit", kwargs={"workspace_id": workspace.pk, "post_id": post.pk})
+    assert f'href="{schedule}?account={variant.social_account_id}&amp;set_date=1"' in page
+    assert "Set date" in page and "data-confirm-publication=" in page
+
+
 def test_mark_published_manually_records_channel_actor_time_url_and_history(client, workspace, user, post):
     variant = approved_post(post)
     publication = mark_published_manually(post, variant.pk, user, post_url="https://social.example/post/123")

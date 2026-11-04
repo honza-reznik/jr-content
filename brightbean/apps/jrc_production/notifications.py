@@ -90,3 +90,26 @@ def notify_video_version(version):
             )
     except Exception:  # noqa: BLE001 - a notification problem must not block the status copy
         logger.exception("Could not send the new-video notification for version %s", version.pk)
+
+
+def notify_client_comment(post, actor, *, tab="comments", isolate=True):
+    """The content team sees client feedback without exposing the comment in alerts."""
+
+    def send():
+        _send(
+            post,
+            team_members(post.workspace, actor),
+            event_type=EventType.CONTENT_CLIENT_COMMENT,
+            title="New client comment",
+            body=f'{actor.display_name} commented on "{content_label(post)}".',
+            tab=tab,
+        )
+
+    if not isolate:
+        send()
+        return
+    try:
+        with transaction.atomic():
+            send()
+    except Exception:  # noqa: BLE001 - saving a comment must succeed even if an alert fails
+        logger.exception("Could not send client comment notification for post %s", post.pk)

@@ -443,6 +443,34 @@ def content_detail(request, workspace_id, post_id):
             "published_by", "platform_post__social_account"
         )
     )
+    from apps.jrc_video.models import VideoActivity, VideoVersion
+
+    history.extend(
+        {
+            "kind": "video",
+            "created_at": version.uploaded_at,
+            "label": f"Uploaded video v{version.number} · {version.video.platform_post.social_account.account_name}",
+            "actor": version.uploaded_by,
+            "note": "",
+            "can_view_note": True,
+        }
+        for version in VideoVersion.objects.filter(video__platform_post__post=post)
+        .exclude(status=VideoVersion.Status.UPLOADING)
+        .select_related("uploaded_by", "video__platform_post__social_account")
+    )
+    history.extend(
+        {
+            "kind": "video",
+            "created_at": event.created_at,
+            "label": f"{event.get_action_display()} · v{event.version.number} · {event.version.video.platform_post.social_account.account_name}",
+            "actor": event.actor,
+            "note": "",
+            "can_view_note": True,
+        }
+        for event in VideoActivity.objects.filter(version__video__platform_post__post=post).select_related(
+            "actor", "version__video__platform_post__social_account"
+        )
+    )
     history.sort(key=lambda item: item["created_at"], reverse=True)
 
     video_context = {}
@@ -504,6 +532,7 @@ def content_detail(request, workspace_id, post_id):
                     "scheduled_at": scheduled_at,
                     "scheduled_label": (scheduled_at.strftime("%b %-d, %Y · %-I:%M %p %Z") if scheduled_at else ""),
                     "video_final": video_final,
+                    "video_number": video.final_version.number if video_final else None,
                     "has_video": bool(video),
                     "published": publication is not None,
                     "publication_url": publication.post_url if publication else "",
@@ -517,7 +546,8 @@ def content_detail(request, workspace_id, post_id):
                     )
                     if video_final
                     and can_publish
-                    and variant.status in {PlatformPost.Status.APPROVED, PlatformPost.Status.SCHEDULED}
+                    and variant.status
+                    in {PlatformPost.Status.APPROVED, PlatformPost.Status.SCHEDULED, PlatformPost.Status.PUBLISHED}
                     and bool(caption.strip())
                     else "",
                 }

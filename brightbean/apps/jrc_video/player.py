@@ -7,7 +7,7 @@ who may mark a version as the one to publish and remembers the choice in Brightb
 from django.db import transaction
 from django.utils import timezone
 
-from .models import VideoAsset, VideoVersion
+from .models import VideoActivity, VideoAsset, VideoVersion
 from .uploads import UploadError
 
 
@@ -36,6 +36,8 @@ def set_final(user, post, membership, version_id, *, final=True):
         # One decision at a time per channel video: the latest click wins, never two finals.
         video = VideoAsset.objects.select_for_update().get(pk=version.video_id)
         if final:
+            if video.final_version_id == version.pk:
+                return {"final": str(version.pk)}
             version.refresh_from_db()
             if version.status != VideoVersion.Status.READY:
                 raise UploadError("Only a converted version can be marked as final.", 409)
@@ -48,5 +50,10 @@ def set_final(user, post, membership, version_id, *, final=True):
             video.final_at = None
         else:
             return {"final": None}
+        VideoActivity.objects.create(
+            version=version,
+            actor=user,
+            action=VideoActivity.Action.FINAL if final else VideoActivity.Action.UNFINAL,
+        )
         video.save(update_fields=["final_version", "final_by", "final_at"])
     return {"final": str(version.pk) if final else None}

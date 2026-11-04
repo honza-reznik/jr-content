@@ -18,6 +18,7 @@ from ..database import get_db
 from ..middleware.auth import get_current_user, get_optional_user
 from ..middleware.share_auth import get_share_link
 from ..services import event_service
+from ..services.jrc_comment_notifications import notify_jrc_comment
 from ..models.asset import Asset, AssetType, AssetVersion, MediaFile, ProcessingStatus
 from ..models.project import ProjectMember, ProjectRole
 from ..models.comment import (
@@ -595,6 +596,7 @@ def create_comment(
             "author": current_user.name,
         })
 
+    notify_jrc_comment(comment, current_user)
     return _build_comment_response(comment, db, current_user_id=current_user.id)
 
 
@@ -663,6 +665,7 @@ def reply_to_comment(
             "author": current_user.name,
         })
 
+    notify_jrc_comment(reply, current_user)
     return _build_comment_response(reply, db, current_user_id=current_user.id)
 
 

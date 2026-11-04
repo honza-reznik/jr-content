@@ -694,13 +694,13 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
         <CompareOverlay asset={asset} versions={versions} rightVersion={currentVersion} onClose={closeCompare} canComment={canComment} allowInternal={canPostInternal} />
       ) : (
       <>
-      {/* pb-14 (3.5rem = PEEK_PX) reserves the sheet's peek band so the
-          player's transport row stays on screen and tappable underneath it.
-          Without it the media column runs to the bottom and the sheet, which
-          is opaque and present in every state, sits on those controls. */}
+      {/* Embedded review starts with Comments open. Reserve its measured height
+          so the player's transport row remains tappable above the sheet, even
+          while dragging it. The normal review keeps its existing peek band. */}
       <div
         ref={reviewRootRef}
-        className={cn("relative flex flex-1 overflow-hidden min-h-0", useSheet && "pb-14")}
+        className={cn("relative flex flex-1 overflow-hidden min-h-0", useSheet && !isEmbed && "pb-14")}
+        style={useSheet && isEmbed ? { paddingBottom: sheetHeight } : undefined}
       >
         {/* Left: viewer column */}
         <div

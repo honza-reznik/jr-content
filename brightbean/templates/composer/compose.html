@@ -3015,6 +3015,16 @@ function composerApp() {
         });
     });
 
+    if (new URLSearchParams(window.location.search).get('set_date') === '1') {
+        document.addEventListener('DOMContentLoaded', function() {
+            showPopover();
+            showSchedule();
+            anchor.scrollIntoView({block: 'center'});
+            var date = scheduleView.querySelector('input[name="scheduled_date"]');
+            (date._flatpickr ? date._flatpickr.altInput : date).focus();
+        });
+    }
+
     // Schedule sub-view: back button
     if (backBtn) {
         backBtn.addEventListener('click', function(e) {
