@@ -1,5 +1,5 @@
 # JR Content: přidáno 2026-10-24 (blok F9-B01), AGPL-3.0.
-"""``/api/v1/posts/{id}/script|captions|stage|comments``: texts, stage and comments of one content.
+"""``/api/v1/posts/{id}/script|concept|captions|stage|comments``: texts, stage and comments of one content.
 
 The REST twin of the content detail page. Nothing here decides anything on its own:
 scripts and captions go through ``apps.jrc_texts.services`` (versions, ``base_version``,
@@ -170,8 +170,8 @@ class ScriptWrite(Schema):
     )
 
 
-def _script_response(post, membership, selected_id=None) -> ScriptResponse:
-    document = TextDocument.objects.filter(post=post, kind=TextDocument.Kind.SCRIPT).first()
+def _script_response(post, membership, selected_id=None, *, kind=TextDocument.Kind.SCRIPT) -> ScriptResponse:
+    document = TextDocument.objects.filter(post=post, kind=kind).first()
     versions = _saved_versions(document)
     shown = None
     if selected_id is not None:
@@ -218,6 +218,11 @@ def script_save(request, post_id: uuid.UUID, payload: ScriptWrite):
     409 when `base_version` is not the newest version or somebody has an unsaved draft in the editor,
     422 when the Markdown does not fit the editor schema.
     """
+    return _save_rich_text(request, post_id, payload, "script")
+
+
+def _save_rich_text(request, post_id: uuid.UUID, payload: ScriptWrite, kind: str):
+    """Shared write of the script and the concept (P1-B08): one new saved version or nothing."""
     enforce_http_rate_limits(request, is_write=True)
     _require_write_key(request)
     post = _post(request, post_id)
@@ -227,11 +232,11 @@ def script_save(request, post_id: uuid.UUID, payload: ScriptWrite):
     status = 201
     with _http_errors(), transaction.atomic():
         Post.objects.select_for_update().get(pk=post.pk)
-        document = TextDocument.objects.filter(post=post, kind=TextDocument.Kind.SCRIPT).first()
+        document = TextDocument.objects.filter(post=post, kind=kind).first()
         if document is None:
             if payload.base_version is not None:
-                raise text_services.ConflictError("The script has no saved version yet. Reload the text.")
-            text_services.create_document(post.pk, request.user, markdown=payload.markdown, source="api")
+                raise text_services.ConflictError(f"The {kind} has no saved version yet. Reload the text.")
+            text_services.create_document(post.pk, request.user, kind=kind, markdown=payload.markdown, source="api")
         else:
             base = (
                 document.versions.filter(pk=payload.base_version, state=TextVersion.State.FINAL).first()
@@ -239,14 +244,51 @@ def script_save(request, post_id: uuid.UUID, payload: ScriptWrite):
                 else None
             )
             if base is None:
-                raise text_services.ConflictError("The script changed. Reload the text and send base_version.")
+                raise text_services.ConflictError(f"The {kind} changed. Reload the text and send base_version.")
             draft = text_services.edit(base.pk, request.user, source="api")
             saved = text_services.save(draft.pk, request.user, expected_revision=0, markdown=payload.markdown)
             if saved.pk == base.pk:
                 status = 200
-    result = _script_response(post, membership)
-    log_audit_entry(request, action="script.write", target_id=post.id, status_code=status)
+    result = _script_response(post, membership, kind=kind)
+    log_audit_entry(request, action=f"{kind}.write", target_id=post.id, status_code=status)
     return status, result
+
+
+# ---------------------------------------------------------------------------
+# Concept (P1-B08): the idea worked out in versions, same rules and shape as the script
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{post_id}/concept",
+    response=ScriptResponse,
+    operation_id="get_concept",
+    summary="Read the concept (newest saved version and the version list)",
+)
+def concept_get(request, post_id: uuid.UUID, version: uuid.UUID | None = None):
+    """Every member of the workspace may read. `?version=<id>` returns an older saved version."""
+    enforce_http_rate_limits(request, is_write=False)
+    post = _post(request, post_id)
+    membership = _membership(request, post)
+    result = _script_response(post, membership, version, kind="concept")
+    log_audit_entry(request, action="concept.read", target_id=post.id, status_code=200)
+    return result
+
+
+@router.post(
+    "/{post_id}/concept",
+    response={201: ScriptResponse, 200: ScriptResponse},
+    operation_id="save_concept",
+    summary="Save the concept as a new version",
+)
+def concept_save(request, post_id: uuid.UUID, payload: ScriptWrite):
+    """Same rules as the script: `markdown` is the whole concept, `base_version` the newest version.
+
+    Returns 201 with the new version, 200 when the text equals the newest version (nothing is created),
+    409 when `base_version` is not the newest version or somebody has an unsaved draft in the editor,
+    422 when the Markdown does not fit the editor schema.
+    """
+    return _save_rich_text(request, post_id, payload, "concept")
 
 
 # ---------------------------------------------------------------------------

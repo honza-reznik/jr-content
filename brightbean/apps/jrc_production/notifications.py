@@ -45,17 +45,18 @@ def _send(post, users, *, event_type, title, body, tab):
 
 
 def notify_text_version(version, actor):
-    """A new saved version of a script or a channel caption."""
+    """A new saved version of a script, a concept (P1-B08) or a channel caption."""
     try:
         with transaction.atomic():
             document = version.document
             post = document.post
             label = content_label(post)
             who = actor.display_name if actor else "Someone"
-            if document.kind == "script":
-                event, tab = EventType.CONTENT_SCRIPT_VERSION, "script"
-                title = "New script version"
-                body = f'{who} saved version {version.number} of the script for "{label}".'
+            if document.kind in ("script", "concept"):
+                # P1-B08: a concept version uses the script's event type (and its preference).
+                event, tab = EventType.CONTENT_SCRIPT_VERSION, document.kind
+                title = f"New {document.kind} version"
+                body = f'{who} saved version {version.number} of the {document.kind} for "{label}".'
             else:
                 account = document.platform_post.social_account
                 event, tab = EventType.CONTENT_CAPTION_VERSION, "caption"

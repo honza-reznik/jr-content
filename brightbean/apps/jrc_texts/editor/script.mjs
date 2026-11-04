@@ -3,6 +3,9 @@ import { editorExtensions } from './extensions.mjs'
 import { compareDocs } from './diff.mjs'
 
 const panel = document.getElementById('script-panel')
+// P1-B08: the same editor serves the Script and the Concept tab; the template names the text.
+const noun = panel.dataset.noun || 'script'
+const Noun = noun.charAt(0).toUpperCase() + noun.slice(1)
 const $ = name => document.getElementById(`script-${name}`)
 let state, editing = false, finishing = false, fatal = false
 let generation = 0, storedGeneration = 0, timer, pending = null, selected = null
@@ -11,7 +14,7 @@ const empty = { type: 'doc', content: [{ type: 'paragraph' }] }
 const date = value => new Date(value).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })
 const editor = new Editor({
   element: $('editor'), extensions: editorExtensions(), content: empty, editable: false,
-  editorProps: { attributes: { role: 'textbox', 'aria-label': 'Script text', 'aria-multiline': 'true' } },
+  editorProps: { attributes: { role: 'textbox', 'aria-label': `${Noun} text`, 'aria-multiline': 'true' } },
   onUpdate() {
     if (!editing) return
     generation++
@@ -55,7 +58,7 @@ async function api(data, version = null, comparison = comparisonChoice) {
   if (!response.ok || response.redirected || !('can_edit' in result)) {
     const error = new Error(result.error || (response.status === 403 || response.redirected
       ? 'Your access changed. Copy any unsaved text, then reload and sign in.'
-      : 'The script could not be loaded or saved. Your text is still here. Please retry.'))
+      : `The ${noun} could not be loaded or saved. Your text is still here. Please retry.`))
     error.fatal = [403, 404, 409].includes(response.status) || response.redirected
     throw error
   }
@@ -150,7 +153,7 @@ function showState(next) {
   editor.commands.setContent(state.shown?.content || empty, { emitUpdate: false })
   $('version').textContent = state.shown
     ? `Version ${state.shown.number} · ${state.shown.id === state.latest ? 'Latest saved' : 'Older version'} · ${date(state.shown.saved_at)} · ${state.shown.author}`
-    : 'No script yet. Add an outline, talking points or a full script.'
+    : (panel.dataset.empty || `No ${noun} yet.`)
   renderComparison(state.comparison)
   $('lock').hidden = !state.draft
   $('lock').textContent = state.draft ? `${state.draft.owner} is editing since ${date(state.draft.since)}. ${state.draft.own ? 'Your draft is available to resume.' : state.draft.recoverable ? 'This editor has left the workspace. Edit text starts a new draft from the latest saved version.' : 'You can read saved versions while they edit.'}` : ''
@@ -244,7 +247,7 @@ async function finish(action) {
     selected = null
     comparisonChoice = null
     showState(next)
-    message(action === 'save' ? 'Script saved.' : 'Draft discarded. Showing the latest saved version.')
+    message(action === 'save' ? `${Noun} saved.` : 'Draft discarded. Showing the latest saved version.')
   } catch (error) { failed(error) }
   finally { finishing = false; controls() }
 }
@@ -277,7 +280,7 @@ $('reload').addEventListener('click', async () => {
     const next = await api()
     selected = null
     showState(next)
-    message('Script reloaded.')
+    message(`${Noun} reloaded.`)
   } catch (error) { message(error.message, true) }
   finally { finishing = false; controls() }
 })

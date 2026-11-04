@@ -1,15 +1,20 @@
-"""Local Script tab adapter; document services remain the authority for writes."""
+"""Local Script and Concept tab adapter; document services remain the authority for writes.
+
+P1-B08: the Concept tab uses the same editor endpoint with ``kind="concept"``.
+"""
 
 import json
 from uuid import UUID
 
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.http import JsonResponse
-from django.shortcuts import get_object_or_404
+from django.shortcuts import get_object_or_404, redirect
+from django.urls import reverse
 from django.views.decorators.cache import never_cache
-from django.views.decorators.http import require_http_methods
+from django.views.decorators.http import require_http_methods, require_POST
 
 from apps.composer.models import Post
 from apps.jrc_production.services import content_membership
@@ -35,19 +40,19 @@ def _version(version, *, content=False):
     return data
 
 
-def _snapshot(post, user, membership, selected=None, compare_old=None, compare_new=None):
+def _snapshot(post, user, membership, selected=None, compare_old=None, compare_new=None, *, kind="script"):
     if bool(compare_old) != bool(compare_new):
         raise ValidationError("Choose both versions to compare.")
     can_edit = services.can_edit_text(post, membership)
     result = {"can_edit": can_edit, "versions": [], "latest": None, "shown": None, "draft": None}
-    document = TextDocument.objects.filter(post=post, kind="script").first()
+    document = TextDocument.objects.filter(post=post, kind=kind).first()
     if document is None:
         if selected or compare_old or compare_new:
             get_object_or_404(
                 TextVersion,
                 pk=selected or compare_old or compare_new,
                 document__post=post,
-                document__kind="script",
+                document__kind=kind,
                 state="final",
             )
         return result
@@ -104,10 +109,7 @@ def _uuid(value):
         raise ValidationError("Choose a valid text version.") from exc
 
 
-@login_required
-@never_cache
-@require_http_methods(["GET", "POST"])
-def script(request, workspace_id, post_id):
+def _text_editor(request, workspace_id, post_id, kind):
     post = get_object_or_404(Post.objects.select_related("workspace"), pk=post_id, workspace_id=workspace_id)
     membership = content_membership(post.workspace, request.user)
     try:
@@ -115,7 +117,9 @@ def script(request, workspace_id, post_id):
             selected = _uuid(request.GET["version"]) if request.GET.get("version") else None
             compare_old = _uuid(request.GET["compare_old"]) if request.GET.get("compare_old") else None
             compare_new = _uuid(request.GET["compare_new"]) if request.GET.get("compare_new") else None
-            return JsonResponse(_snapshot(post, request.user, membership, selected, compare_old, compare_new))
+            return JsonResponse(
+                _snapshot(post, request.user, membership, selected, compare_old, compare_new, kind=kind)
+            )
         if not services.can_edit_text(post, membership):
             raise PermissionDenied("You cannot edit texts for this post.")
         if len(request.body) > MAX_CONTENT_BYTES + 4096:
@@ -128,31 +132,31 @@ def script(request, workspace_id, post_id):
             raise ValidationError("Send a valid JSON object.")
         action = data.get("action")
         if not isinstance(action, str):
-            raise ValidationError("Choose a valid script action.")
+            raise ValidationError(f"Choose a valid {kind} action.")
         if action == "edit":
             # Serialize first creation as well as two simultaneous Edit clicks.
             with transaction.atomic():
                 Post.objects.select_for_update().get(pk=post.pk)
-                document = TextDocument.objects.filter(post=post, kind="script").first()
+                document = TextDocument.objects.filter(post=post, kind=kind).first()
                 if document is None:
                     if data.get("base") is not None:
-                        raise services.ConflictError("The script changed. Reload the text.")
-                    document = services.create_document(post.pk, request.user, markdown="")
+                        raise services.ConflictError(f"The {kind} changed. Reload the text.")
+                    document = services.create_document(post.pk, request.user, kind=kind, markdown="")
                     base = services.latest_version(document.pk, request.user)
                 else:
                     if data.get("base") is None:
-                        raise services.ConflictError("The script changed. Reload the text.")
+                        raise services.ConflictError(f"The {kind} changed. Reload the text.")
                     base = get_object_or_404(document.versions.filter(state="final"), pk=_uuid(data.get("base")))
                 services.edit(base.pk, request.user)
-                return JsonResponse(_snapshot(post, request.user, membership))
+                return JsonResponse(_snapshot(post, request.user, membership, kind=kind))
         if action not in {"autosave", "save", "discard"}:
-            raise ValidationError("Choose a valid script action.")
+            raise ValidationError(f"Choose a valid {kind} action.")
         version_id = _uuid(data.get("version"))
         revision = data.get("revision")
         if type(revision) is not int or revision < 0:
             raise ValidationError("Provide the draft revision.")
         # Never resolve a caller-supplied draft outside this post or text kind.
-        if not TextVersion.objects.filter(pk=version_id, document__post=post, document__kind="script").exists():
+        if not TextVersion.objects.filter(pk=version_id, document__post=post, document__kind=kind).exists():
             raise services.ConflictError("This draft no longer exists. Reload the text.")
         if action == "discard":
             services.discard(version_id, request.user, expected_revision=revision)
@@ -161,8 +165,47 @@ def script(request, workspace_id, post_id):
                 raise ValidationError("Provide the editor content.")
             operation = services.update_draft if action == "autosave" else services.save
             operation(version_id, request.user, expected_revision=revision, content=data["content"])
-        return JsonResponse(_snapshot(post, request.user, membership))
+        return JsonResponse(_snapshot(post, request.user, membership, kind=kind))
     except services.ConflictError as exc:
         return JsonResponse({"error": str(exc)}, status=409)
     except ValidationError as exc:
         return JsonResponse({"error": " ".join(exc.messages)}, status=400)
+
+
+@login_required
+@never_cache
+@require_http_methods(["GET", "POST"])
+def script(request, workspace_id, post_id):
+    return _text_editor(request, workspace_id, post_id, "script")
+
+
+@login_required
+@never_cache
+@require_http_methods(["GET", "POST"])
+def concept(request, workspace_id, post_id):
+    """P1-B08: the idea worked out in versions; the same rules as the script."""
+    return _text_editor(request, workspace_id, post_id, "concept")
+
+
+@login_required
+@require_POST
+def concept_to_script(request, workspace_id, post_id):
+    """P1-B08 "Use as script draft": the newest saved concept becomes a new script version."""
+    post = get_object_or_404(Post.objects.select_related("workspace"), pk=post_id, workspace_id=workspace_id)
+    membership = content_membership(post.workspace, request.user)
+    if not services.can_edit_text(post, membership):
+        raise PermissionDenied("You cannot edit texts for this post.")
+    detail = reverse("jrc_production:content_detail", kwargs={"workspace_id": post.workspace_id, "post_id": post.pk})
+    try:
+        version, changed = services.copy_concept_to_script(post.pk, request.user)
+    except services.ConflictError as exc:
+        messages.error(request, str(exc))
+        return redirect(f"{detail}?tab=concept")
+    except ValidationError as exc:
+        messages.error(request, " ".join(exc.messages))
+        return redirect(f"{detail}?tab=concept")
+    if changed:
+        messages.success(request, f"The concept was copied to the script as version {version.number}.")
+    else:
+        messages.info(request, "The script already matches the latest concept.")
+    return redirect(f"{detail}?tab=script")
