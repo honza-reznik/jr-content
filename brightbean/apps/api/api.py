@@ -27,6 +27,7 @@ from apps.api.routers.inbox import router as inbox_router
 from apps.api.routers.me import router as me_router
 from apps.api.routers.media import router as media_router
 from apps.api.routers.posts import router as posts_router
+from apps.api.routers.shotlist import router as shotlist_router
 from apps.jrc_ui.features import api_path_enabled
 from apps.mcp.transport import router as mcp_router
 
@@ -119,6 +120,8 @@ api.add_router("/accounts", accounts_router)
 api.add_router("/posts", posts_router)
 # JR Content (F9-B01): script, captions, stage and comments of a content, under /posts/{id}/.
 api.add_router("/posts", content_router)
+# JR Content (P1-B09): shotlist of a content, under /posts/{id}/shotlist.
+api.add_router("/posts", shotlist_router)
 api.add_router("/media", media_router)
 api.add_router("/analytics", analytics_router)
 api.add_router("/inbox", inbox_router)

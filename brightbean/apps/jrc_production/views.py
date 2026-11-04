@@ -6,7 +6,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
-from django.db.models import Prefetch
+from django.db.models import Count, Prefetch, Q
 from django.http import Http404, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -25,8 +25,9 @@ from apps.members.permissions import can_publish_directly
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 
+from . import shotlist as shotlist_services
 from .approval import approval_context, is_waiting_for
-from .models import ManualPublication, PipelineStage
+from .models import ManualPublication, PipelineStage, ShotlistChange
 from .services import (
     add_content_channel,
     available_moves,
@@ -73,6 +74,11 @@ def _board_context(request, *, error="", title="", selected_client=None):
         posts = posts.filter(platform_posts__social_account_id=channel)
     posts = (
         posts.select_related("workspace", "author", "jrc_production")
+        # P1-B09: shotlist progress on the card ("3/7 done").
+        .annotate(
+            shotlist_total=Count("jrc_shotlist_items", distinct=True),
+            shotlist_done=Count("jrc_shotlist_items", filter=Q(jrc_shotlist_items__is_done=True), distinct=True),
+        )
         .prefetch_related(
             Prefetch("platform_posts", queryset=PlatformPost.objects.select_related("social_account__jrc_channel"))
         )
@@ -189,7 +195,7 @@ def move(request, workspace_id, post_id):
     return redirect(reverse("jrc_production:board") + "?" + urlencode(filters))
 
 
-TABS = ("script", "video", "caption", "approval", "publish", "comments", "history")
+TABS = ("script", "shotlist", "video", "caption", "approval", "publish", "comments", "history")
 
 
 def _word_diff(previous, current):
@@ -443,6 +449,17 @@ def content_detail(request, workspace_id, post_id):
             "published_by", "platform_post__social_account"
         )
     )
+    history.extend(
+        {
+            "kind": "shotlist",
+            "created_at": change.created_at,
+            "label": _SHOTLIST_HISTORY_LABELS[change.action].format(text=change.item_text),
+            "actor": change.user,
+            "note": "",
+            "can_view_note": True,
+        }
+        for change in post.jrc_shotlist_changes.select_related("user").all()
+    )
     history.sort(key=lambda item: item["created_at"], reverse=True)
 
     video_context = {}
@@ -468,6 +485,9 @@ def content_detail(request, workspace_id, post_id):
             _enabled_caption_accounts(post),
             can_view_internal_notes=can_view_internal_notes,
         )
+    shotlist_ctx = {}
+    if active_tab == "shotlist":
+        shotlist_ctx = _shotlist_context(post, membership, focus=request.GET.get("focus", ""))
     publish_channels = []
     can_publish = can_publish_directly(membership)
     if active_tab == "publish":
@@ -528,6 +548,7 @@ def content_detail(request, workspace_id, post_id):
         {
             **video_context,
             **approval_ctx,
+            **shotlist_ctx,
             "workspace": workspace,
             "post": post,
             "pipeline_stage": pipeline_stage(post),
@@ -560,6 +581,91 @@ def content_detail(request, workspace_id, post_id):
             "can_publish": can_publish,
         },
     )
+
+
+_SHOTLIST_HISTORY_LABELS = {
+    ShotlistChange.Action.ADDED: 'Added "{text}" to the shotlist',
+    ShotlistChange.Action.DONE: 'Checked off "{text}" in the shotlist',
+    ShotlistChange.Action.UNDONE: 'Unchecked "{text}" in the shotlist',
+    ShotlistChange.Action.DELETED: 'Removed "{text}" from the shotlist',
+}
+
+
+def _shotlist_context(post, membership, *, focus="", error="", new_text="", new_note=""):
+    # The automatic item must exist even for content created before P1-B09 outside the migration.
+    shotlist_services.ensure_thumbnail_item(post)
+    items = shotlist_services.items_for(post)
+    done, total = shotlist_services.progress(items)
+    return {
+        "shotlist_items": items,
+        "shotlist_done": done,
+        "shotlist_total": total,
+        "can_edit_shotlist": shotlist_services.can_edit_shotlist(post, membership),
+        "shotlist_focus": focus,
+        "shotlist_error": error,
+        "shotlist_new_text": new_text,
+        "shotlist_new_note": new_note,
+        "shotlist_max_text": shotlist_services.MAX_TEXT,
+        "shotlist_max_note": shotlist_services.MAX_NOTE,
+    }
+
+
+@login_required
+@require_POST
+def shotlist_action(request, workspace_id, post_id):
+    """Add, edit, check off, reorder or delete a shotlist item (P1-B09).
+
+    A plain form post redirects back to the tab. The tab's script sends ``X-JRC-Shotlist: 1`` and gets
+    the re-rendered list instead, so ticking items on a phone does not reload the page.
+    """
+    workspace = get_object_or_404(Workspace, pk=workspace_id)
+    membership = WorkspaceMembership.objects.filter(user=request.user, workspace=workspace).first()
+    if membership is None:
+        raise Http404
+    post = get_object_or_404(Post.objects.select_related("workspace"), pk=post_id, workspace=workspace)
+    action = request.POST.get("action", "")
+    item_id = request.POST.get("item", "")
+    text, note = request.POST.get("text"), request.POST.get("note")
+    focus, error, status = "", "", 200
+    try:
+        if action == "add":
+            shotlist_services.add_item(post, request.user, text or "", note or "")
+            focus = "add"
+        elif action == "update":
+            shotlist_services.update_item(post, item_id, request.user, text=text, note=note)
+            focus = f"item-{item_id}"
+        elif action == "done":
+            shotlist_services.update_item(post, item_id, request.user, is_done=request.POST.get("done") == "1")
+            focus = f"item-{item_id}"
+        elif action in ("up", "down"):
+            shotlist_services.move_item(post, item_id, request.user, offset=-1 if action == "up" else 1)
+            focus = f"item-{item_id}"
+        elif action == "delete":
+            shotlist_services.delete_item(post, item_id, request.user)
+            focus = "add"
+        else:
+            return HttpResponseBadRequest("Unknown action.")
+    except shotlist_services.ItemNotFoundError as exc:
+        error, status = str(exc), 409
+    except ValidationError as exc:
+        error, status = " ".join(exc.messages), 400
+    if request.headers.get("X-JRC-Shotlist") == "1":
+        context = _shotlist_context(
+            post,
+            membership,
+            focus=focus,
+            error=error,
+            new_text=(text or "") if error and action == "add" else "",
+            new_note=(note or "") if error and action == "add" else "",
+        )
+        return render(
+            request, "jrc_production/_shotlist.html", {**context, "workspace": workspace, "post": post}, status=status
+        )
+    if error:
+        messages.error(request, error)
+    url = reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.id, "post_id": post.id})
+    anchor = f"#shotlist-{focus}" if focus and not error else "#shotlist"
+    return redirect(f"{url}?tab=shotlist" + ("&focus=add" if focus == "add" and not error else "") + anchor)
 
 
 @login_required

@@ -105,6 +105,7 @@
       <article class="board-card" data-post="{{ card.post.id }}">
         <span class="board-client">{{ card.post.workspace.name }}</span><h3><a href="{% url 'jrc_production:content_detail' workspace_id=card.post.workspace_id post_id=card.post.id %}">{{ card.post.title|default:"Untitled content" }}</a></h3>
         <div>{% for variant in card.post.platform_posts.all %}<span class="board-channel">{{ variant.social_account.jrc_channel.display_name|default:variant.social_account.account_name }}</span>{% empty %}<span class="board-channel">No channel</span><p class="board-status">Add a channel on the content detail before Review.</p>{% endfor %}</div>
+        {% if card.post.shotlist_total %}<span class="board-status" data-shotlist-progress>Shotlist {{ card.post.shotlist_done }}/{{ card.post.shotlist_total }} done</span>{% endif %}
         {% if card.client_review %}<span class="board-status">Awaiting client sign-off</span>{% endif %}
         {% if card.post.scheduled_at %}{% timezone card.post.workspace.effective_timezone %}<time datetime="{{ card.post.scheduled_at|date:'c' }}">Planned: {{ card.post.scheduled_at|date:"M j, Y H:i T" }}</time>{% endtimezone %}{% endif %}
         {% if card.moves %}
