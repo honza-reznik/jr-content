@@ -269,6 +269,47 @@ def move_content(post, stage, user, *, expected_stage, scheduled_at=None):
 
 
 @transaction.atomic
+def set_publication_date(post, platform_post_id, user, scheduled_at):
+    """Plan one manual copy using the board's scheduling permission and state rules."""
+    post = Post.objects.select_for_update(of=("self",)).select_related("workspace").get(pk=post.pk)
+    membership = content_membership(post.workspace, user)
+    if membership.workspace_role == "viewer" or not membership.effective_permissions.get("publish_directly", False):
+        raise PermissionDenied("You cannot schedule content.")
+    child = (
+        post.platform_posts.select_for_update(of=("self",))
+        .select_related("social_account__jrc_channel")
+        .filter(pk=platform_post_id)
+        .first()
+    )
+    if child is None:
+        raise ValidationError("Choose a channel of this content.")
+    profile = getattr(child.social_account, "jrc_channel", None)
+    if (
+        profile is None
+        or not profile.is_enabled
+        or profile.kind not in {ChannelProfile.Kind.MANUAL, ChannelProfile.Kind.CUSTOM}
+    ):
+        raise ValidationError("Choose an enabled manual channel.")
+    if child.status not in {PlatformPost.Status.APPROVED, PlatformPost.Status.SCHEDULED}:
+        raise ValidationError("Only approved or scheduled content can be planned.")
+    if scheduled_at is None or timezone.is_naive(scheduled_at) or scheduled_at <= timezone.now():
+        raise ValidationError("Choose a future publication date and time.")
+    previous = pipeline_stage(post)
+    if child.status != PlatformPost.Status.SCHEDULED:
+        child.transition_to(PlatformPost.Status.SCHEDULED)
+    child.scheduled_at = scheduled_at
+    child.save(update_fields=[*PlatformPost.TRANSITION_FIELDS, "scheduled_at", "updated_at"])
+    sync_post_scheduled_at(post)
+    post.refresh_from_db()
+    current = pipeline_stage(post)
+    if current != previous:
+        StageChange.objects.create(
+            post=post, from_stage=previous, to_stage=current, user=user, **note_audience(post.workspace, user)
+        )
+    return child
+
+
+@transaction.atomic
 def mark_published_manually(post, platform_post_id, user, *, post_url=""):
     """Record a team's manual publication for one approved channel copy."""
     from apps.jrc_video.models import VideoAsset, VideoVersion

@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% load static %}
 {% block title %}{{ post.title|default:"Content" }} · {{ workspace.name }}{% endblock %}
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'jrc_production/content-tabs.css' %}">
+{% endblock %}
 {% block page_header %}{% endblock %}
 {% block content %}
 <div class="mx-auto w-full max-w-5xl pb-8">
@@ -38,13 +41,17 @@
         </details>
     </header>
 
-    <nav aria-label="Content sections" class="mt-5 -mx-3 overflow-x-auto px-3 sm:mx-0 sm:px-0">
+    <div class="jrc-content-tabs mt-5" data-content-tabs>
+    <nav aria-label="Content sections" class="overflow-x-auto" data-tabs-scroll>
         <div class="flex min-w-max border-b border-stone-200" role="tablist">
             {% for tab in tabs %}
             <a role="tab" aria-selected="{% if active_tab == tab %}true{% else %}false{% endif %}" href="?tab={{ tab }}" class="border-b-2 px-3 py-3 text-sm font-medium capitalize sm:px-5 {% if active_tab == tab %}border-orange-500 text-orange-700{% else %}border-transparent text-stone-500 hover:text-stone-800{% endif %}">{{ tab }}</a>
             {% endfor %}
         </div>
     </nav>
+    <button type="button" class="jrc-tabs-arrow jrc-tabs-previous" aria-label="Previous content sections" hidden>‹</button>
+    <button type="button" class="jrc-tabs-arrow jrc-tabs-next" aria-label="More content sections" hidden>›</button>
+    </div>
 
     <section class="mt-5 rounded-2xl border border-stone-200 bg-white p-4 sm:p-6" role="tabpanel" aria-label="{{ active_tab|title }}">
         {% if needs_channel %}
@@ -82,7 +89,7 @@
                 <li class="relative border-l border-stone-200 pb-6 pl-5 last:border-transparent last:pb-0">
                     <span class="absolute -left-[5px] top-1 h-2.5 w-2.5 rounded-full {% if item.kind == 'approval' %}bg-blue-500{% else %}bg-orange-500{% endif %}"></span>
                     <div class="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between"><p class="text-sm font-medium text-stone-800">{{ item.label }}</p><time class="text-xs text-stone-400">{{ item.created_at|date:"M j, Y · g:i A" }}</time></div>
-                    <p class="mt-1 text-xs text-stone-500">{% if item.actor %}{{ item.actor.display_name|default:item.actor.email }}{% else %}System{% endif %} · {% if item.kind == "approval" %}Approval{% else %}Production stage{% endif %}</p>
+                    <p class="mt-1 text-xs text-stone-500">{% if item.actor %}{{ item.actor.display_name|default:item.actor.email }}{% else %}System{% endif %} · {% if item.kind == "approval" %}Approval{% elif item.kind == "video" %}Video{% else %}Production stage{% endif %}</p>
                     {% if item.note and item.can_view_note %}{% if item.kind == "publication" and item.note|slice:":8" == "https://" %}<a href="{{ item.note }}" target="_blank" rel="noopener noreferrer" class="mt-2 inline-block break-all text-sm text-orange-700 underline">View published post</a>{% else %}<p class="mt-2 whitespace-pre-wrap rounded-lg bg-stone-50 p-3 text-sm text-stone-600">{{ item.note }}</p>{% endif %}{% endif %}
                 </li>
                 {% empty %}<li class="rounded-xl border border-dashed border-stone-300 px-4 py-8 text-center text-sm text-stone-500">No history yet.</li>{% endfor %}
@@ -103,19 +110,34 @@
                         {% if item.published %}<span class="w-fit rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800">Published manually</span>{% else %}<span class="w-fit rounded-full bg-stone-100 px-3 py-1 text-xs font-medium text-stone-700">{{ item.variant.get_status_display }}</span>{% endif %}
                     </div>
                     <p class="mt-3 text-xs font-medium uppercase tracking-wide text-stone-500">Scheduled publication</p>
+                    {% if item.date_error %}<p role="alert" class="text-sm text-red-700">{{ item.date_error }}</p>{% endif %}
                     <p class="mt-1 text-sm text-stone-800">{% if item.scheduled_label %}{{ item.scheduled_label }}{% else %}No date or time scheduled{% endif %}</p>
+                    {% if item.can_schedule %}
+                    <details class="mt-3" {% if item.date_open %}open{% endif %}>
+                        <summary class="cursor-pointer text-sm text-orange-700 underline">{% if item.scheduled_at %}Change date{% else %}Set date{% endif %}</summary>
+                        <form method="post" action="?tab=publish" class="mt-3 max-w-sm space-y-3">
+                            {% csrf_token %}<input type="hidden" name="action" value="set_date"><input type="hidden" name="platform_post" value="{{ item.variant.pk }}">
+                            <label for="{{ item.date_form.scheduled_at.id_for_label }}" class="block text-sm font-medium">Publication date and time ({{ workspace.effective_timezone }})</label>
+                            {{ item.date_form.scheduled_at }}
+                            {% for error in item.date_form.scheduled_at.errors %}<p role="alert" class="text-sm text-red-700">{{ error }}</p>{% endfor %}
+                            <p class="text-xs text-stone-500">This channel will wait for you to publish it manually.</p>
+                            <button class="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white">Save date</button>
+                        </form>
+                    </details>
+                    {% endif %}
                     <div class="mt-4">
                         <label for="publish-caption-{{ forloop.counter }}" class="mb-1 block text-xs font-medium uppercase tracking-wide text-stone-500">Saved caption</label>
                         <textarea id="publish-caption-{{ forloop.counter }}" readonly rows="5" class="block w-full rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-stone-800">{{ item.caption }}</textarea>
                         <div class="mt-2 flex flex-wrap items-center gap-2">
                             {% if item.caption %}<button type="button" data-copy-caption="publish-caption-{{ forloop.counter }}" class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">Copy caption</button><span data-copy-status="publish-caption-{{ forloop.counter }}" class="text-xs text-stone-500" aria-live="polite"></span>{% else %}<span class="text-sm text-amber-700">Add a caption before publishing.</span>{% endif %}
+                            {% if item.video_final %}<span class="text-sm text-stone-700">Final video · v{{ item.video_number }}</span>{% endif %}
                             {% if item.download_url %}<a href="{{ item.download_url }}" class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">Download final video</a>{% elif item.has_video %}<span class="text-sm text-amber-700">No final video selected.</span>{% endif %}
                         </div>
                     </div>
                     {% if item.published %}
                         {% if item.publication_url %}<a href="{{ item.publication_url }}" target="_blank" rel="noopener noreferrer" class="mt-4 inline-block break-all text-sm text-orange-700 underline">View published post</a>{% endif %}
                     {% elif item.can_mark %}
-                    <form method="post" action="{% url 'jrc_production:mark_published' workspace_id=workspace.id post_id=post.id %}" class="mt-5 border-t border-stone-100 pt-4">
+                    <form method="post" action="{% url 'jrc_production:mark_published' workspace_id=workspace.id post_id=post.id %}" class="mt-5 border-t border-stone-100 pt-4" data-confirm-publication="{{ item.label }}">
                         {% csrf_token %}<input type="hidden" name="platform_post" value="{{ item.variant.id }}">
                         <label for="post-url-{{ forloop.counter }}" class="mb-1 block text-sm font-medium text-stone-700">Published post link <span class="font-normal text-stone-500">(optional, HTTPS)</span></label>
                         <input id="post-url-{{ forloop.counter }}" name="post_url" type="url" inputmode="url" placeholder="https://…" class="block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm sm:max-w-xl">
@@ -174,6 +196,7 @@
 </div>
 {% endblock %}
 {% block extra_js %}
+<script src="{% static 'jrc_production/content-tabs.js' %}" nonce="{{ request.csp_nonce }}"></script>
 <script nonce="{{ request.csp_nonce }}">
 const channels = document.getElementById('content-channels');
 if (location.hash === '#content-channels') channels.open = true;

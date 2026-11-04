@@ -27,6 +27,7 @@ from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 
 from .approval import approval_context, is_waiting_for
+from .forms import PublicationDateForm
 from .models import ManualPublication, PipelineStage
 from .services import (
     add_content_channel,
@@ -39,6 +40,7 @@ from .services import (
     pipeline_stage,
     remove_content_channel,
     request_content_changes,
+    set_publication_date,
 )
 
 BOARD_CLIENT_KEY = "jrc_board_client"
@@ -431,7 +433,30 @@ def content_detail(request, workspace_id, post_id):
     can_edit_captions = text_services.can_edit_text(post, membership)
     caption_error = ""
     channel_error = ""
-    if request.method == "POST" and request.POST.get("action") in {"add_channel", "remove_channel"}:
+    date_form = None
+    date_target = ""
+    date_error = ""
+    if request.method == "POST" and request.POST.get("action") == "set_date":
+        if membership.workspace_role == "viewer" or not membership.effective_permissions.get("publish_directly", False):
+            raise PermissionDenied("You cannot schedule content.")
+        active_tab = "publish"
+        try:
+            variant = get_object_or_404(PlatformPost, pk=request.POST.get("platform_post"), post=post)
+        except ValidationError:
+            raise Http404 from None
+        date_target = str(variant.pk)
+        date_form = PublicationDateForm(request.POST, auto_id=f"date-{variant.pk}-%s")
+        with timezone.override(ZoneInfo(workspace.effective_timezone)):
+            valid = date_form.is_valid()
+        if valid:
+            try:
+                set_publication_date(post, variant.pk, request.user, date_form.cleaned_data["scheduled_at"])
+            except ValidationError as exc:
+                date_error = " ".join(exc.messages)
+            else:
+                messages.success(request, "Publication date saved. Publish this channel manually at the planned time.")
+                return redirect(f"{request.path}?tab=publish")
+    elif request.method == "POST" and request.POST.get("action") in {"add_channel", "remove_channel"}:
         try:
             if request.POST["action"] == "add_channel":
                 account = get_object_or_404(SocialAccount, pk=request.POST.get("channel"), workspace=workspace)
@@ -552,6 +577,34 @@ def content_detail(request, workspace_id, post_id):
             "published_by", "platform_post__social_account"
         )
     )
+    from apps.jrc_video.models import VideoActivity, VideoVersion
+
+    history.extend(
+        {
+            "kind": "video",
+            "created_at": version.uploaded_at,
+            "label": f"Uploaded video v{version.number} · {version.video.platform_post.social_account.account_name}",
+            "actor": version.uploaded_by,
+            "note": "",
+            "can_view_note": True,
+        }
+        for version in VideoVersion.objects.filter(video__platform_post__post=post)
+        .exclude(status=VideoVersion.Status.UPLOADING)
+        .select_related("uploaded_by", "video__platform_post__social_account")
+    )
+    history.extend(
+        {
+            "kind": "video",
+            "created_at": event.created_at,
+            "label": f"{event.get_action_display()} · v{event.version.number} · {event.version.video.platform_post.social_account.account_name}",
+            "actor": event.actor,
+            "note": "",
+            "can_view_note": True,
+        }
+        for event in VideoActivity.objects.filter(version__video__platform_post__post=post).select_related(
+            "actor", "version__video__platform_post__social_account"
+        )
+    )
     history.sort(key=lambda item: item["created_at"], reverse=True)
 
     video_context = {}
@@ -612,7 +665,21 @@ def content_detail(request, workspace_id, post_id):
                     "caption": caption,
                     "scheduled_at": scheduled_at,
                     "scheduled_label": (scheduled_at.strftime("%b %-d, %Y · %-I:%M %p %Z") if scheduled_at else ""),
+                    "can_schedule": membership.workspace_role != "viewer"
+                    and membership.effective_permissions.get("publish_directly", False)
+                    and variant.status in {PlatformPost.Status.APPROVED, PlatformPost.Status.SCHEDULED}
+                    and getattr(getattr(account, "jrc_channel", None), "is_enabled", False)
+                    and account.jrc_channel.kind in {"manual", "custom"},
+                    "date_open": date_target == str(variant.pk),
+                    "date_error": date_error if date_target == str(variant.pk) else "",
+                    "date_form": date_form
+                    if date_target == str(variant.pk)
+                    else PublicationDateForm(
+                        initial={"scheduled_at": scheduled_at.strftime("%Y-%m-%dT%H:%M") if scheduled_at else ""},
+                        auto_id=f"date-{variant.pk}-%s",
+                    ),
                     "video_final": video_final,
+                    "video_number": video.final_version.number if video_final else None,
                     "has_video": bool(video),
                     "published": publication is not None,
                     "publication_url": publication.post_url if publication else "",
@@ -626,7 +693,8 @@ def content_detail(request, workspace_id, post_id):
                     )
                     if video_final
                     and can_publish
-                    and variant.status in {PlatformPost.Status.APPROVED, PlatformPost.Status.SCHEDULED}
+                    and variant.status
+                    in {PlatformPost.Status.APPROVED, PlatformPost.Status.SCHEDULED, PlatformPost.Status.PUBLISHED}
                     and bool(caption.strip())
                     else "",
                 }

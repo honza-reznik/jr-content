@@ -1,5 +1,13 @@
 # Úpravy JR Content
 
+## 2026-11-04 — P1-B13, oprava review 1
+
+- Set date v Publish otevírá vlastní formulář pro jednu schválenou ruční kanálovou kopii,
+  ukládá budoucí termín v pásmu klienta a zachovává ostatní kopie. Oprávnění odpovídá
+  plánování na nástěnce; ruční kanály zůstávají vyloučené z automatického publikování.
+- Formulář podporuje video z FreeFrame bez příloh PostMedia, hlásí neplatný čas
+  včetně nejednoznačného času při změně letního času a vyžaduje ochranu CSRF.
+
 ## 2026-10-27 — P1-B06
 
 - Obsah lze založit bez kanálu; zapnuté kanály klienta se připojují jen výslovnou volbou.

@@ -84,3 +84,23 @@ class VideoVersion(models.Model):
     class Meta:
         constraints = [models.UniqueConstraint(fields=["video", "number"], name="jrc_video_version_number_uniq")]
         ordering = ["-number"]
+
+
+class VideoActivity(models.Model):
+    """Keep every final decision, including removals, for the shared History."""
+
+    class Action(models.TextChoices):
+        FINAL = "final", "Marked video as final"
+        UNFINAL = "unfinal", "Removed final video mark"
+
+    version = models.ForeignKey(VideoVersion, on_delete=models.CASCADE)
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
+    action = models.CharField(max_length=10, choices=Action.choices)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class VideoCommentReceipt(models.Model):
+    """Idempotency marker: retries must never duplicate a notification."""
+
+    comment_id = models.UUIDField(primary_key=True)
+    created_at = models.DateTimeField(auto_now_add=True)
