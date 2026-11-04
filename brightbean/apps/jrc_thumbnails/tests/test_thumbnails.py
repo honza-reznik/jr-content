@@ -1,7 +1,8 @@
 """P1-B10: image bytes, channel history, live permissions and all three screens."""
 
 from io import BytesIO
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
+from uuid import uuid4
 
 import pytest
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -14,8 +15,10 @@ from apps.composer.models import PlatformPost, Post
 from apps.composer.services import ChannelRemovalError, remove_platform_posts
 from apps.jrc_channels.services import create_manual_channel
 from apps.jrc_storage import views as files
+from apps.jrc_texts.models import TextDocument, TextVersion
 from apps.jrc_thumbnails import services
 from apps.jrc_thumbnails.models import ChannelThumbnail
+from apps.jrc_video.models import VideoAsset, VideoVersion
 from apps.members.models import CustomRole, WorkspaceMembership
 from apps.workspaces.models import Workspace
 
@@ -54,6 +57,19 @@ def gateway(monkeypatch):
     monkeypatch.setattr(files, "_storage", lambda: (client, "jrc-app"))
     monkeypatch.setattr(files, "acquire", lambda user: lambda: None)
     return client
+
+
+@pytest.fixture
+def downloadable(variant):
+    variant.status = PlatformPost.Status.APPROVED
+    variant.platform_specific_caption = "A saved caption"
+    variant.save(update_fields=["status", "platform_specific_caption"])
+    video = VideoAsset.objects.create(platform_post=variant, ff_asset_id=uuid4())
+    video.final_version = VideoVersion.objects.create(
+        video=video, number=1, ff_version_id=uuid4(), status=VideoVersion.Status.READY
+    )
+    video.save(update_fields=["final_version"])
+    return video
 
 
 @pytest.mark.parametrize("fmt", ["JPEG", "PNG", "WEBP"])
@@ -162,7 +178,9 @@ def test_upload_permissions_and_controls(client, post, variant, workspace, user,
         ("viewer", False),
     ],
 )
-def test_download_reuses_publication_permissions(client, post, variant, workspace, user, gateway, role, allowed):
+def test_download_reuses_publication_permissions(
+    client, post, variant, workspace, user, gateway, downloadable, role, allowed
+):
     thumbnail = upload(post, variant, user)
     WorkspaceMembership.objects.filter(workspace=workspace, user=user).update(workspace_role=role)
     client.force_login(user)
@@ -189,7 +207,7 @@ def test_download_reuses_publication_permissions(client, post, variant, workspac
     [("editor", False, False), ("contributor", True, True), ("client", False, True), ("viewer", True, False)],
 )
 def test_custom_role_download_permissions(
-    client, post, variant, workspace, organization, user, gateway, role, permission, allowed
+    client, post, variant, workspace, organization, user, gateway, downloadable, role, permission, allowed
 ):
     thumbnail = upload(post, variant, user)
     custom = CustomRole.objects.create(
@@ -200,6 +218,115 @@ def test_custom_role_download_permissions(
     response = client.get(url("download", post, variant, thumbnail))
     assert response.status_code == (200 if allowed else 403)
     response.close()
+
+
+@pytest.mark.parametrize("role", ["owner", "client"])
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "draft",
+        "pending_review",
+        "rejected",
+        "published",
+        "empty-caption",
+        "whitespace-caption",
+        "empty-saved-caption",
+        "no-video",
+        "no-final",
+        "uploading",
+        "processing",
+        "failed",
+    ],
+)
+def test_download_conditions_match_final_video(
+    client, post, variant, workspace, user, gateway, downloadable, role, missing
+):
+    previous = upload(post, variant, user)
+    current = upload(post, variant, user)
+    if missing in {"draft", "pending_review", "rejected", "published"}:
+        variant.status = missing
+        variant.save(update_fields=["status"])
+    elif missing in {"empty-caption", "whitespace-caption"}:
+        variant.platform_specific_caption = "" if missing == "empty-caption" else " \n\t "
+        variant.save(update_fields=["platform_specific_caption"])
+    elif missing == "empty-saved-caption":
+        document = TextDocument.objects.create(
+            workspace=workspace, post=post, platform_post=variant, kind="caption", format="plain"
+        )
+        TextVersion.objects.create(
+            document=document, number=1, state="final", content={}, text=" \n ", finalized_at=timezone.now()
+        )
+    elif missing == "no-video":
+        downloadable.delete()
+    elif missing == "no-final":
+        downloadable.final_version = None
+        downloadable.save(update_fields=["final_version"])
+    else:
+        downloadable.final_version.status = missing
+        downloadable.final_version.save(update_fields=["status"])
+    WorkspaceMembership.objects.filter(workspace=workspace, user=user).update(workspace_role=role)
+    client.force_login(user)
+    final_url = reverse(
+        "jrc_video:final_download",
+        kwargs={"workspace_id": workspace.pk, "post_id": post.pk, "platform_post_id": variant.pk},
+    )
+    with patch("apps.jrc_video.uploads._call") as video_service:
+        assert client.get(final_url).status_code == 404
+        for thumbnail in (previous, current):
+            response = client.get(url("download", post, variant, thumbnail))
+            assert response.status_code == 404
+        video_service.assert_not_called()
+    gateway.head_object.assert_not_called()
+    gateway.get_object.assert_not_called()
+    for tab in ("caption", "publish"):
+        response = client.get(detail(post), {"tab": tab})
+        assert response.status_code == 200
+        assert b"data-thumbnail-image" in response.content
+        assert b"data-thumbnail-download" not in response.content
+        assert url("download", post, variant, previous).encode() not in response.content
+        assert final_url.encode() not in response.content
+
+
+@pytest.mark.parametrize("role", ["owner", "client"])
+@pytest.mark.parametrize("state", [PlatformPost.Status.APPROVED, PlatformPost.Status.SCHEDULED])
+@pytest.mark.parametrize("caption_source", ["channel", "post", "saved"])
+def test_ready_downloads_and_buttons_match_final_video(
+    client, post, variant, workspace, user, gateway, downloadable, role, state, caption_source
+):
+    previous = upload(post, variant, user)
+    current = upload(post, variant, user)
+    variant.status = state
+    if caption_source == "post":
+        post.caption = "Fallback caption"
+        post.save(update_fields=["caption"])
+        variant.platform_specific_caption = None
+    elif caption_source == "saved":
+        variant.platform_specific_caption = ""
+        document = TextDocument.objects.create(
+            workspace=workspace, post=post, platform_post=variant, kind="caption", format="plain"
+        )
+        TextVersion.objects.create(
+            document=document, number=1, state="final", content={}, text="Saved caption", finalized_at=timezone.now()
+        )
+    variant.save(update_fields=["status", "platform_specific_caption"])
+    WorkspaceMembership.objects.filter(workspace=workspace, user=user).update(workspace_role=role)
+    client.force_login(user)
+    final_url = reverse(
+        "jrc_video:final_download",
+        kwargs={"workspace_id": workspace.pk, "post_id": post.pk, "platform_post_id": variant.pk},
+    )
+    with patch("apps.jrc_video.uploads._call", return_value={"url": "http://testserver/files/video/raw/final.mp4"}):
+        assert client.get(final_url).status_code == 302
+    for thumbnail in (previous, current):
+        response = client.get(url("download", post, variant, thumbnail))
+        assert response.status_code == 200
+        assert b"".join(response.streaming_content) == b"0123456789"
+    for tab in ("caption", "publish"):
+        content = client.get(detail(post), {"tab": tab}).content
+        assert url("download", post, variant, current).encode() in content
+        assert url("download", post, variant, previous).encode() in content
+        if tab == "publish":
+            assert final_url.encode() in content
 
 
 @pytest.mark.parametrize("state", ["revoked", "archived", "deleted-organization", "inactive"])

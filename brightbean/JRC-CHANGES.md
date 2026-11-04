@@ -711,8 +711,10 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
   u vlastního obsahu, s kontrolou oprávnění k úpravě textů. Klient a viewer nenahrávají ani přes vlastní roli.
 - Server ověřuje JPG/PNG/WebP pomocí Pillow včetně načtení obrazových dat, velikost do 20 MiB a počet pixelů.
   Soukromé soubory v `jrc-app` čte brána P1-B03 pouze s platným členstvím ve workspace; cizí workspace vrací 404.
-- Publish nabízí „Download thumbnail“ podle společných oprávnění `can_publish_directly` jako video po P1-B02,
-  včetně klienta; náhled lze stáhnout i před schválením nebo bez videa. Approval zobrazuje aktuální náhled kanálu.
+- „Download thumbnail“ i stažení finálního videa používají společnou kontrolu `jrc_video.downloads`:
+  publikační oprávnění (včetně klienta), nearchivovaný workspace, schválený či naplánovaný kanál,
+  neprázdný uložený popisek a připravený finál. Stejné podmínky platí pro endpointy a odkazy
+  v Caption i Publish, včetně historie náhledů. Approval zobrazuje aktuální náhled kanálu.
   Kanál s historií náhledů nelze odebrat; smazání celého obsahu zůstává možné.
 - Regresní testy `apps/jrc_thumbnails/tests/` a lokální průchod Chromium `scripts/P1-B10/run.sh`
   (owner/klient, 1440/390 px, skutečné soubory přes S3, historie a porovnání stažených dat).

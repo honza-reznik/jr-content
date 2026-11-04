@@ -10,6 +10,7 @@ from django.urls import reverse
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.composer.models import PlatformPost, Post
+from apps.members.permissions import can_publish_directly
 from apps.workspaces.models import Workspace
 
 from . import services
@@ -50,8 +51,10 @@ def upload(request, workspace_id, post_id, platform_post_id):
 @require_GET
 def download(request, workspace_id, post_id, platform_post_id, thumbnail_id):
     _workspace, membership, post, variant = _context(request, workspace_id, post_id, platform_post_id)
-    if not services.can_download(membership):
+    if not can_publish_directly(membership):
         raise PermissionDenied("You cannot download this thumbnail.")
+    if not services.can_download(membership, variant):
+        raise Http404
     thumbnail = get_object_or_404(
         ChannelThumbnail.objects.select_related("post", "platform_post__social_account"),
         pk=thumbnail_id,

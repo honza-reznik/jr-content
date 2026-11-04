@@ -12,8 +12,8 @@ from django.utils.text import slugify
 from PIL import Image, UnidentifiedImageError
 
 from apps.jrc_texts.services import can_edit_text
+from apps.jrc_video.downloads import downloadable_final
 from apps.members.models import WorkspaceMembership
-from apps.members.permissions import can_publish_directly
 
 from .models import ChannelThumbnail
 
@@ -53,9 +53,9 @@ def can_upload(post, membership):
     return can_edit_text(post, membership)
 
 
-def can_download(membership):
-    """The team and the client download; a viewer only sees the thumbnail."""
-    return can_publish_directly(membership)
+def can_download(membership, variant):
+    """The same role, approval, caption and ready-final conditions as the final video."""
+    return downloadable_final(membership, variant) is not None
 
 
 def validate_image(upload):

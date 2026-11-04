@@ -21,6 +21,7 @@ from apps.composer.models import PlatformPost, Post
 from apps.jrc_texts import services as text_services
 from apps.jrc_texts.models import TextDocument
 from apps.jrc_texts.services import ConflictError
+from apps.jrc_video.downloads import can_download_final
 from apps.members.models import WorkspaceMembership
 from apps.members.permissions import can_publish_directly
 from apps.social_accounts.models import SocialAccount
@@ -624,10 +625,7 @@ def content_detail(request, workspace_id, post_id):
                         "jrc_video:final_download",
                         kwargs={"workspace_id": workspace.id, "post_id": post.id, "platform_post_id": variant.id},
                     )
-                    if video_final
-                    and can_publish
-                    and variant.status in {PlatformPost.Status.APPROVED, PlatformPost.Status.SCHEDULED}
-                    and bool(caption.strip())
+                    if can_download_final(membership, variant, caption=caption, video=video)
                     else "",
                 }
             )

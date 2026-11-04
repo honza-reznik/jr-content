@@ -31,7 +31,7 @@ def channel_thumbnail(context, variant, mode="caption", label=""):
         ChannelThumbnail.objects.filter(platform_post=variant).select_related("uploaded_by").order_by("-number")
     )
     current = versions[0] if versions else None
-    may_download = services.can_download(membership)
+    may_download = mode != "approval" and current is not None and services.can_download(membership, variant)
     kwargs = {"workspace_id": variant.post.workspace_id, "post_id": variant.post_id, "platform_post_id": variant.pk}
 
     def download_url(thumbnail):

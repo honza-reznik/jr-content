@@ -90,12 +90,13 @@ const net = require('node:net');
       await capture(page, '01-caption-prazdny', width);
       // Picking a thumbnail must not discard unsaved text in another channel.
       const caption = page.locator('[data-caption-counter]').last();
+      const savedCaption = await caption.inputValue();
       await caption.fill('Unsaved caption must stay');
       await first.locator('[data-thumbnail-input]').setInputFiles(`${root}/test-output/P1-B10/garden.png`);
       assert.match(await first.locator('[data-thumbnail-status]').textContent(), /Save caption changes/);
       assert.equal(await caption.inputValue(), 'Unsaved caption must stay');
       assert.equal(await first.locator('[data-thumbnail-image]').count(), 0);
-      await caption.fill('');
+      await caption.fill(savedCaption);
       await upload(page, first, 'png', 1);
       assert.equal(await second.locator('[data-thumbnail-image]').count(), 0);
       await capture(page, '02-caption-nahrano', width);
