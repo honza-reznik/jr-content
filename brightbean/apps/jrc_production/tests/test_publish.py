@@ -60,6 +60,7 @@ def test_published_video_keeps_final_version_and_download(client, workspace, use
     page = client.get(detail, {"tab": "publish"})
     assert b"Published manually" in page.content
     assert b"Final video \xc2\xb7 v2" in page.content
+    assert b"Copy caption" in page.content
     assert b"Download final video" in page.content
     download = reverse(
         "jrc_video:final_download",

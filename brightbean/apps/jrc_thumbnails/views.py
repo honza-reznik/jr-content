@@ -38,7 +38,7 @@ def upload(request, workspace_id, post_id, platform_post_id):
     try:
         thumbnail = services.upload_thumbnail(post, variant, request.user, request.FILES.get("image"), membership)
     except ValidationError as exc:
-        messages.error(request, " ".join(exc.messages))
+        request.session[f"thumbnail_error:{variant.pk}"] = " ".join(exc.messages)
     else:
         messages.success(request, f"Thumbnail uploaded as version {thumbnail.number}.")
     tab = request.POST.get("tab")

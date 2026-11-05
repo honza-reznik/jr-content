@@ -429,7 +429,7 @@ def test_stale_composer_waits_for_new_caption_channel_then_rejects_it(
     _assert_selection_rejected(response, endpoint)
     copy = PlatformPost.objects.get(post=post, social_account=channel)
     assert copy.platform_specific_caption == _latest(copy).text == LONG_CAPTION
-    assert TextDocument.objects.get(platform_post=copy).versions.count() == 2
+    assert TextDocument.objects.get(platform_post=copy).versions.count() == 1
 
 
 def _compose_page(client, post):
@@ -467,8 +467,8 @@ def test_composer_save_never_overwrites_a_saved_caption(client, user, content):
         assert variant.effective_caption == LONG_CAPTION
 
     document = TextDocument.objects.get(platform_post=variant, kind=TextDocument.Kind.CAPTION)
-    # Version 1 is the starting text of the document, version 2 the caption saved above.
-    assert document.versions.filter(state="final").count() == 2
+    # With no previous caption, the first actual save is version 1.
+    assert document.versions.filter(state="final").count() == 1
     assert _latest(variant).pk == version.pk
     assert _latest(variant).text == LONG_CAPTION
 
@@ -498,7 +498,7 @@ def test_composer_shows_saved_caption_read_only_with_link_to_caption_tab(client,
     captions = response.context["jrc_captions"]
     assert set(captions) == {str(instagram.pk)}  # LinkedIn has no saved version: unchanged behavior
     assert captions[str(instagram.pk)]["text"] == LONG_CAPTION
-    assert captions[str(instagram.pk)]["version"] == 2
+    assert captions[str(instagram.pk)]["version"] == 1
     assert captions[str(instagram.pk)]["edit_url"] == _detail(post)
     html = response.content.decode()
     payload = re.search(r'<script id="composer-jrc-captions" type="application/json">(.*?)</script>', html, re.S)

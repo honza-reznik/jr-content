@@ -78,7 +78,16 @@ def latest_version(document_id, user):
 
 @transaction.atomic
 def create_document(
-    post_id, user, *, kind="script", platform_post_id=None, format="rich", content=None, markdown=None, source="editor"
+    post_id,
+    user,
+    *,
+    kind="script",
+    platform_post_id=None,
+    format="rich",
+    content=None,
+    markdown=None,
+    source="editor",
+    initial_draft=False,
 ):
     post = Post.objects.select_for_update().select_related("workspace").get(pk=post_id)
     # Authorize before validating any channel-specific data.
@@ -92,6 +101,9 @@ def create_document(
         raise ValidationError("Choose a valid version source.")
     normalized, text = normalize_content(content=content, markdown=markdown, plain=format == "plain")
     document.save()
+    if initial_draft:
+        start_draft(document.pk, user, source=source)
+        return document
     version = TextVersion.objects.create(
         document=document,
         number=1,
@@ -103,11 +115,37 @@ def create_document(
         finalized_at=timezone.now(),
     )
     # A script (or concept, P1-B08) created with real text is a new version for the team (F7-B03).
-    # An empty one (the editor creates it before the first edit) and the copy a caption history
-    # starts from are not: the version saved on top of them is what changes something.
+    # Empty saved texts and the pre-existing copy a caption history starts from
+    # do not notify: the actual edit saved on top of that caption is what changes it.
     if kind in (TextDocument.Kind.SCRIPT, TextDocument.Kind.CONCEPT) and text.strip():
         notify_text_version(version, user)
     return document
+
+
+@transaction.atomic
+def start_draft(document_id, user, *, source="editor"):
+    """Start version 1 without saving an empty placeholder; also works after discard."""
+    document = _document(document_id, user, write=True)
+    if document.versions.filter(state=TextVersion.State.FINAL).exists():
+        raise ConflictError("This text has a saved version. Reload the text.")
+    draft = document.versions.filter(state=TextVersion.State.DRAFT).first()
+    if draft is not None and not can_recover_orphan(draft, user):
+        raise ConflictError("This text already has a draft.")
+    if source not in TextVersion.Source.values:
+        raise ValidationError("Choose a valid version source.")
+    if draft is not None:
+        draft.delete()
+    content, text = normalize_content(markdown="", plain=document.format == TextDocument.Format.PLAIN)
+    return TextVersion.objects.create(
+        document=document,
+        number=1,
+        content=content,
+        text=text,
+        source=source,
+        created_by=user,
+        draft_owner=user,
+        draft_heartbeat_at=timezone.now(),
+    )
 
 
 @transaction.atomic
@@ -218,6 +256,22 @@ def save_caption(post_id, platform_post_id, user, text, *, base_version_id=None,
     if document is None:
         if base_version_id is not None:
             raise ConflictError("This caption has no saved version yet. Reload the text.")
+        if not (variant.effective_caption or "").strip():
+            document = create_document(
+                post.pk,
+                user,
+                kind=TextDocument.Kind.CAPTION,
+                platform_post_id=variant.pk,
+                format=TextDocument.Format.PLAIN,
+                content={"text": text},
+                source=source,
+            )
+            saved = document.versions.get(state=TextVersion.State.FINAL)
+            variant.platform_specific_caption = saved.text
+            variant.save(update_fields=["platform_specific_caption", "updated_at"])
+            if text.strip():
+                notify_text_version(saved, user)
+            return saved, True
         document = create_document(
             post.pk,
             user,
@@ -270,9 +324,9 @@ def copy_concept_to_script(post_id, user, *, source="editor"):
     base = script.versions.filter(state=TextVersion.State.FINAL).order_by("-number").first()
     if script.versions.filter(state=TextVersion.State.DRAFT).exists():
         raise ConflictError("Someone is editing the script. Try again after their draft is saved or discarded.")
-    draft = edit(base.pk, user, source=source)
+    draft = edit(base.pk, user, source=source) if base else start_draft(script.pk, user, source=source)
     saved = save(draft.pk, user, expected_revision=0, content=concept.content)
-    return saved, saved.pk != base.pk
+    return saved, base is None or saved.pk != base.pk
 
 
 def latest_saved_captions(platform_post_ids):

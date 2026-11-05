@@ -53,5 +53,6 @@ def channel_thumbnail(context, variant, mode="caption", label=""):
         "can_upload": mode != "approval" and post is not None and services.can_upload(post, membership),
         "upload_url": reverse("jrc_thumbnails:upload", kwargs=kwargs),
         "max_bytes": services.MAX_BYTES,
+        "upload_error": context["request"].session.pop(f"thumbnail_error:{variant.pk}", ""),
         "csrf_token": context.get("csrf_token"),
     }

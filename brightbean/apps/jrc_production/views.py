@@ -19,7 +19,7 @@ from apps.approvals import comments as comment_services
 from apps.approvals.models import ApprovalAction, PostComment
 from apps.composer.models import PlatformPost, Post
 from apps.jrc_texts import services as text_services
-from apps.jrc_texts.models import TextDocument
+from apps.jrc_texts.models import TextDocument, TextVersion
 from apps.jrc_texts.services import ConflictError
 from apps.jrc_video.downloads import can_download_final
 from apps.members.models import WorkspaceMembership
@@ -304,8 +304,6 @@ TABS = ("concept", "script", "shotlist", "video", "caption", "approval", "commen
 
 def _default_tab(post):
     """A content without a script opens on its Concept (e.g. a quick idea); otherwise on the Script."""
-    from apps.jrc_texts.models import TextVersion
-
     has_script = (
         TextVersion.objects.filter(document__post=post, document__kind=TextDocument.Kind.SCRIPT, state="final")
         .exclude(text="")
@@ -348,8 +346,6 @@ def _enabled_caption_accounts(post):
 
 
 def _caption_channels(post, submitted=None):
-    from apps.jrc_texts.models import TextVersion
-
     channels = []
     variants = {variant.social_account_id: variant for variant in post.platform_posts.select_related("social_account")}
     for account in _enabled_caption_accounts(post):
@@ -511,28 +507,10 @@ def content_detail(request, workspace_id, post_id):
                     Post.objects.select_for_update().get(pk=post.pk)
                     if variant is None:
                         variant = _create_missing_copy(post, target.removeprefix("new:"))
-                    document = TextDocument.objects.filter(
-                        platform_post=variant, kind=TextDocument.Kind.CAPTION
-                    ).first()
-                    if document is None:
-                        document = text_services.create_document(
-                            post.pk,
-                            request.user,
-                            kind=TextDocument.Kind.CAPTION,
-                            platform_post_id=variant.pk,
-                            format=TextDocument.Format.PLAIN,
-                            content={"text": variant.effective_caption},
-                        )
-                        base = document.versions.filter(state="final").order_by("-number").first()
-                    else:
-                        base_id = request.POST.get("base_version", "")
-                        base = document.versions.filter(pk=base_id, state="final").first()
-                        if base is None:
-                            raise ConflictError("This caption changed in another tab. Reload the page.")
-                    draft = text_services.edit(base.pk, request.user)
-                    saved = text_services.save(draft.pk, request.user, expected_revision=0, content={"text": caption})
-                    variant.platform_specific_caption = saved.text
-                    variant.save(update_fields=["platform_specific_caption", "updated_at"])
+                    base_id = request.POST.get("base_version", "")
+                    text_services.save_caption(
+                        post.pk, variant.pk, request.user, caption, base_version_id=base_id or None
+                    )
             except ConflictError as exc:
                 caption_error = str(exc) or "This caption changed in another tab. Reload the page."
             except ValidationError as exc:
@@ -626,6 +604,28 @@ def content_detail(request, workspace_id, post_id):
         for event in VideoActivity.objects.filter(version__video__platform_post__post=post).select_related(
             "actor", "version__video__platform_post__social_account"
         )
+    )
+    history.extend(
+        {
+            "kind": "text",
+            "created_at": version.finalized_at,
+            "label": (
+                f"Saved {version.document.get_kind_display()} version {version.number}"
+                + (
+                    f" · {version.document.platform_post.social_account.get_platform_display()}"
+                    f" · {version.document.platform_post.social_account.account_name}"
+                    if version.document.platform_post_id
+                    else ""
+                )
+                + (" · Empty text" if not version.text.strip() else "")
+            ),
+            "actor": version.created_by,
+            "note": "",
+            "can_view_note": True,
+        }
+        for version in TextVersion.objects.filter(document__post=post, state=TextVersion.State.FINAL)
+        .defer("content")
+        .select_related("created_by", "document__platform_post__social_account")
     )
     history.sort(key=lambda item: item["created_at"], reverse=True)
 
@@ -733,6 +733,11 @@ def content_detail(request, workspace_id, post_id):
             "active_tab": active_tab,
             "tabs": TABS,
             "history": history[:100],
+            "empty_initial_text": TextVersion.objects.filter(
+                document__post=post, document__kind=active_tab, state=TextVersion.State.FINAL, number=1, text=""
+            ).exists()
+            if active_tab in {"concept", "script"}
+            else False,
             "can_view_internal_notes": can_view_internal_notes,
             "can_edit_posts": text_services.can_edit_text(post, membership),
             "comments": comments,

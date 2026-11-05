@@ -67,6 +67,7 @@ def test_caption_save_creates_plain_version_and_copies_to_channel(client, user, 
     document = TextDocument.objects.get(platform_post=variant, kind=TextDocument.Kind.CAPTION)
     saved = document.versions.filter(state="final").order_by("-number").first()
     assert document.format == TextDocument.Format.PLAIN
+    assert saved.number == 1
     assert saved.text == "Hi \U0001f331"
     assert saved.char_count is None  # Length is platform-specific and computed with the account's wire rules.
     assert variant.platform_specific_caption == "Hi \U0001f331"
@@ -114,7 +115,7 @@ def test_caption_versions_compare_words(client, user, instagram_content):
 
     assert response.status_code == 302
     page = client.get(f"{_url(variant.post.workspace, post)}?tab=caption")
-    assert b"Compare with version 2" in page.content
+    assert b"Compare with version 1" in page.content
     assert b"<del" in page.content and b"old" in page.content
     assert b"<ins" in page.content and b"new" in page.content
 

@@ -8,6 +8,7 @@ The element ids stay script-* because the built editor (dist/script.js) looks th
 <div id="script-panel" data-noun="script" data-empty="No script yet. Add an outline, talking points or a full script." data-url="{% url 'jrc_texts:script' workspace_id=workspace.id post_id=post.id %}">
 {% endif %}
     {% csrf_token %}
+    {% if empty_initial_text %}<p class="script-version-help" data-empty-initial-text>Version 1 is an empty initial version. Existing version numbers are kept.</p>{% endif %}
     <div class="script-heading">
         {% if text_kind == "concept" %}
         <div><h2 class="text-lg font-semibold text-stone-900">Concept</h2><p class="mt-1 text-sm text-stone-600">Work out the idea here until it is ready for a script. Every saved version is kept.</p><p id="script-version" class="mt-1 text-sm text-stone-500">Loading concept…</p></div>

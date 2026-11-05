@@ -287,10 +287,13 @@ def _save_script(args: dict, context: dict[str, Any], kind: str = "script") -> d
             else:
                 base = document.versions.filter(pk=base_id, state=TextVersion.State.FINAL).first() if base_id else None
                 if base is None:
-                    raise text_services.ConflictError(f"The {kind} changed. Reload the text and send base_version.")
-                draft = text_services.edit(base.pk, actor, source="mcp")
+                    if base_id is not None:
+                        raise text_services.ConflictError(f"The {kind} changed. Reload the text and send base_version.")
+                    draft = text_services.start_draft(document.pk, actor, source="mcp")
+                else:
+                    draft = text_services.edit(base.pk, actor, source="mcp")
                 saved = text_services.save(draft.pk, actor, expected_revision=0, markdown=args["markdown"])
-                status = 200 if saved.pk == base.pk else 201
+                status = 200 if base is not None and saved.pk == base.pk else 201
     except text_services.ConflictError as exc:
         raise _content_error(str(exc), 409) from exc
     except PermissionDenied as exc:
