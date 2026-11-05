@@ -1,16 +1,18 @@
-<div class="px-6 py-4 flex items-center gap-4" id="invite-{{ invite.id }}"
+<div class="px-6 py-4 flex flex-wrap items-center gap-4" id="invite-{{ invite.id }}"
      style="border-bottom: 1px solid var(--border);">
-    <!-- Email icon -->
-    <div class="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
-         style="background: var(--neutral-100); color: var(--text-tertiary);">
-        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
-    </div>
+    <div class="flex w-full items-start gap-4 sm:w-auto min-w-0" style="flex-grow: 1;">
+        <!-- Email icon -->
+        <div class="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
+             style="background: var(--neutral-100); color: var(--text-tertiary);">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+        </div>
 
-    <!-- Email & Info -->
-    <div class="flex-1 min-w-0">
-        <div class="text-sm font-medium truncate" style="color: var(--text-primary);">{{ invite.email }}</div>
-        <div class="text-xs" style="color: var(--text-tertiary);">
-            Invited by {{ invite.invited_by.display_name }} · Expires {{ invite.expires_at|timesince }} from now
+        <!-- Email & Info -->
+        <div class="flex-1 min-w-0">
+            <div class="text-sm font-medium truncate" style="color: var(--text-primary);">{{ invite.email }}</div>
+            <div class="text-xs" style="color: var(--text-tertiary);">
+                Invited by {{ invite.invited_by.display_name }} · Expires in {{ invite.expires_at|timeuntil }} ({{ invite.expires_at|date:"M j, Y, H:i T" }})
+            </div>
         </div>
     </div>
 

@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - JR Content: časový štítek nad obrazem videa, synchronizovaný s vykresleným snímkem; FPS ze souboru a celá obrazovka se štítkem i na telefonu.
 
 ### Fixed
+- JR Content: API a převod videa obnovují spojení po restartu PostgreSQL; databázové chyby před převodem i při zápisu výsledku opakují úlohu místo trvalého stavu Converting.
 - JR Content: upozornění na videokomentář se ukládá spolu s komentářem a po výpadku doručení se automaticky opakuje bez zdvojení upozornění.
 - JR Content: klientské komentáře k videu upozorní tým v hlavním přehledu upozornění; mobilní panel komentářů ponechává prostor pro ovládání přehrávače.
 - JR Content: login a magic code sdílejí limit stejné validované adresy i při různých zobrazovaných jménech v e-mailu.

@@ -9,6 +9,7 @@ import logging
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 from celery.exceptions import Retry
+from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError
 
 from .celery_app import celery_app
 from ..database import SessionLocal
@@ -28,20 +29,57 @@ def _run_async(coro):
         loop.close()
 
 
+def _database_unavailable(exc):
+    return isinstance(exc, (OperationalError, InterfaceError)) or (
+        isinstance(exc, DBAPIError) and exc.connection_invalidated
+    )
+
+
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=60)
 def process_asset(self, asset_id: str, version_id: str):
-    """Main processing task dispatched after upload completes."""
+    """Process an upload, retrying transactions interrupted by database outages."""
     db = SessionLocal()
+    version = asset = None
+    final_attempt = self.request.retries >= self.max_retries
+
+    def _retry_database(exc):
+        # An unavailable DB cannot store a terminal status. Keep the message
+        # queued until it recovers, even when the normal transcode budget is
+        # spent. The delay prevents a busy loop during a prolonged outage.
+        raise self.retry(exc=exc, max_retries=max(self.max_retries, self.request.retries + 1))
+
+    def _record_failure(exc):
+        from packages.transcoder.redact import redact_presigned_urls
+
+        # A failed commit leaves SQLAlchemy's transaction unusable. Roll it
+        # back before trying to persist a terminal status; never reuse its
+        # uncommitted media metadata from an interrupted conversion.
+        db.rollback()
+        try:
+            if version is not None:
+                version.processing_status = ProcessingStatus.failed
+                db.commit()
+            if asset is not None:
+                _publish_event(str(asset.project_id), "transcode_failed", {
+                    "asset_id": asset_id,
+                    "error": redact_presigned_urls(str(exc)),
+                })
+        except DBAPIError as db_exc:
+            if not _database_unavailable(db_exc):
+                raise
+            db.rollback()
+            _retry_database(db_exc)
+
     try:
+        # These initial reads and the first commit used to bypass retrying.
         version = db.query(AssetVersion).filter(AssetVersion.id == uuid.UUID(version_id)).first()
         if not version:
             return  # version already cleaned up
 
         asset = db.query(Asset).filter(Asset.id == uuid.UUID(asset_id)).first()
         if not asset:
-            if version:
-                version.processing_status = ProcessingStatus.failed
-                db.commit()
+            version.processing_status = ProcessingStatus.failed
+            db.commit()
             return
 
         media_file = db.query(MediaFile).filter(MediaFile.version_id == version.id).first()
@@ -50,79 +88,46 @@ def process_asset(self, asset_id: str, version_id: str):
             db.commit()
             return
 
-        # Reset to processing status before each attempt
         version.processing_status = ProcessingStatus.processing
         db.commit()
-
         output_prefix = f"processed/{asset.project_id}/{asset_id}/{version_id}"
         s3 = get_s3_client()
 
-        # Whether this read of the source is the last one there will be. The
-        # handler below reads this same flag to decide `failed` -- but that
-        # happens after the transcode has already returned, and the transcoder
-        # needs to know beforehand: a check that cannot be certain has to give
-        # way on the last attempt rather than spend the master. One flag for
-        # both is deliberate, so they cannot drift apart. See TranscodeJob.
-        final_attempt = self.request.retries >= self.max_retries
+        if asset.asset_type == AssetType.video:
+            _process_video(
+                db, asset, version, media_file, s3, output_prefix,
+                final_attempt=final_attempt,
+            )
+        elif asset.asset_type == AssetType.audio:
+            _process_audio(db, asset, version, media_file, s3, output_prefix)
+        elif asset.asset_type in (AssetType.image, AssetType.image_carousel):
+            _process_image(db, asset, version, media_file, s3, output_prefix)
 
+        version.processing_status = ProcessingStatus.ready
+        db.commit()
+        _publish_event(str(asset.project_id), "transcode_complete", {
+            "asset_id": asset_id,
+            "version_id": version_id,
+        })
+    except Exception as exc:
+        db.rollback()
+        unavailable = _database_unavailable(exc)
+        # DB outages get another transaction even on the last normal attempt.
+        # Other errors retain the existing bounded retry/failure lifecycle.
+        if final_attempt and not unavailable:
+            _record_failure(exc)
+            raise
         try:
-            if asset.asset_type in (AssetType.video,):
-                _process_video(
-                    db, asset, version, media_file, s3, output_prefix,
-                    final_attempt=final_attempt,
-                )
-            elif asset.asset_type == AssetType.audio:
-                _process_audio(db, asset, version, media_file, s3, output_prefix)
-            elif asset.asset_type in (AssetType.image, AssetType.image_carousel):
-                _process_image(db, asset, version, media_file, s3, output_prefix)
-
-            version.processing_status = ProcessingStatus.ready
-            db.commit()
-
-            # Publish SSE event (best-effort)
-            _publish_event(str(asset.project_id), "transcode_complete", {
-                "asset_id": asset_id,
-                "version_id": version_id,
-            })
-
-        except Exception as exc:
-            def _record_failure() -> None:
-                from packages.transcoder.redact import redact_presigned_urls
-
-                version.processing_status = ProcessingStatus.failed
-                db.commit()
-                # Every subscriber to the project's stream receives this, not
-                # only the uploader, so never let a presigned URL through.
-                _publish_event(str(asset.project_id), "transcode_failed", {
-                    "asset_id": asset_id,
-                    "error": redact_presigned_urls(str(exc)),
-                })
-
-            # `failed` is written only when nothing more is coming. Writing it
-            # before every retry made the version oscillate
-            # failed -> processing -> failed for the whole ladder (three retries
-            # a minute apart) while its raw object sat there intact, so
-            # /upload/complete's retry guard, the reaper and the client each got
-            # a different answer depending on when they asked.
-            if final_attempt:
-                _record_failure()
-                raise
-
-            try:
-                raise self.retry(exc=exc)
-            except Retry:
-                # Scheduled. Leave the version at `processing`: that is true, and
-                # the next attempt will move it on.
-                raise
-            except Exception:
-                # self.retry() raises Reject when the broker will not take the
-                # message, so the retry never gets queued and nothing else will
-                # run for this version. Leaving it at `processing` here is what
-                # stranded uploads before -- record the failure we already know
-                # about rather than leaving it for the sweep to find.
-                _record_failure()
-                raise
-
+            if unavailable:
+                _retry_database(exc)
+            raise self.retry(exc=exc)
+        except Retry:
+            raise  # Scheduled: keep processing until the next attempt.
+        except Exception:
+            # The broker refused the retry: record a terminal status so the
+            # upload cannot remain at Converting with no queued work.
+            _record_failure(exc)
+            raise
     finally:
         db.close()
 
