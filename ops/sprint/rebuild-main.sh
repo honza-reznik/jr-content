@@ -4,7 +4,7 @@ cd /home/honza/jr-content; export JRC_PROJECT=jrc
 dev=$(ip route | awk '/default/{print $5; exit}'); s=$(cat /sys/class/net/$dev/statistics/rx_bytes)
 mb() { echo $(( ($(cat /sys/class/net/$dev/statistics/rx_bytes)-s)/1000000 )); }
 make backup && b=$(ls -1d backups/jrc/2* | tail -1) && make backup-verify BACKUP="$b" && echo "ZÁLOHA OK $b" || { echo "ZÁLOHA SELHALA"; exit 1; }
-br=${1:?blok}; git merge -q --no-ff blok/$br -m "$br: merge
+br=${1:?blok}; git merge-base --is-ancestor blok/$br HEAD || git merge -q --no-ff blok/$br -m "$br: merge
 
 Agent: PM (Claude Opus 5.5)
 
