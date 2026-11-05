@@ -12,7 +12,8 @@ def can_download_final(membership, variant, *, caption, video):
     return bool(
         can_publish_directly(membership)
         and not variant.post.workspace.is_archived
-        and variant.status in {PlatformPost.Status.APPROVED, PlatformPost.Status.SCHEDULED}
+        and variant.status
+        in {PlatformPost.Status.APPROVED, PlatformPost.Status.SCHEDULED, PlatformPost.Status.PUBLISHED}
         and caption.strip()
         and video
         and video.final_version_id

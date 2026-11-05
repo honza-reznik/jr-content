@@ -160,7 +160,10 @@ def test_one_concept_per_post_and_never_on_a_channel_copy(workspace, user, post)
 
 def test_tab_order_and_default_tab_until_a_script_exists(http, post):
     page = http.get(detail(post)).content.decode()
-    tabs = [name for name in ("concept", "script", "video", "caption", "approval", "comments", "publish", "history")]
+    tabs = [
+        name
+        for name in ("concept", "script", "shotlist", "video", "caption", "approval", "comments", "publish", "history")
+    ]
     positions = [page.index(f'href="?tab={name}"') for name in tabs]
     assert positions == sorted(positions)
     # A new content (also a quick idea) opens on the Concept.

@@ -83,6 +83,21 @@ const net = require('node:net');
       const detail = `${base}/workspace/${seed.workspace}/content/${post.id}/`;
       const owner = await contextFor('owner', width);
       const page = await owner.newPage();
+      // After merging main, its board, Concept and Shotlist must coexist with thumbnails.
+      await page.goto(`${base}/board/?client=${seed.workspace}`, { waitUntil: 'networkidle' });
+      const card = page.locator(`[data-post="${post.id}"]`);
+      assert.match(await card.locator('[data-shotlist-progress]').innerText(), /Shotlist 0\/1 done/);
+      await capture(page, '08-merge-board', width);
+      await page.goto(detail, { waitUntil: 'networkidle' });
+      assert.equal((await page.locator('[role=tab][aria-selected=true]').innerText()).trim().toLowerCase(), 'concept');
+      assert.deepEqual((await page.locator('[role=tab]').allInnerTexts()).map(t => t.trim().toLowerCase()), [
+        'concept', 'script', 'shotlist', 'video', 'caption', 'approval', 'comments', 'publish', 'history',
+      ]);
+      await capture(page, '09-merge-concept', width);
+      await page.goto(`${detail}?tab=shotlist`, { waitUntil: 'networkidle' });
+      assert.equal((await page.locator('[data-shotlist-progress]').innerText()).trim(), '0/1 done');
+      assert.equal(await page.locator('[data-kind="thumbnail"] [role=checkbox]').getAttribute('aria-checked'), 'false');
+      await capture(page, '10-merge-shotlist', width);
       await page.goto(`${detail}?tab=caption`, { waitUntil: 'networkidle' });
       const first = page.locator(`#thumbnail-${post.variants[0]}`);
       const second = page.locator(`#thumbnail-${post.variants[1]}`);
@@ -114,6 +129,9 @@ const net = require('node:net');
       assert.equal(await page.locator('[data-thumbnail-summary] img').count(), 2);
       assert.equal(await page.locator('[data-thumbnail-input]').count(), 0);
       await capture(page, '04-approval', width);
+      // Uploading a channel image must never check off the manual Shotlist reminder.
+      await page.goto(`${detail}?tab=shotlist`, { waitUntil: 'networkidle' });
+      assert.equal((await page.locator('[data-shotlist-progress]').innerText()).trim(), '0/1 done');
       await owner.close();
 
       const client = await contextFor('client', width);

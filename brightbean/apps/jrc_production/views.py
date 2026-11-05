@@ -7,7 +7,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
-from django.db.models import Prefetch
+from django.db.models import Count, Prefetch, Q
 from django.http import Http404, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -27,8 +27,10 @@ from apps.members.permissions import can_publish_directly
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 
+from . import shotlist as shotlist_services
 from .approval import approval_context, is_waiting_for
-from .models import ManualPublication, PipelineStage
+from .forms import PublicationDateForm
+from .models import ManualPublication, PipelineStage, ShotlistChange
 from .services import (
     add_content_channel,
     available_moves,
@@ -40,6 +42,7 @@ from .services import (
     pipeline_stage,
     remove_content_channel,
     request_content_changes,
+    set_publication_date,
 )
 
 BOARD_CLIENT_KEY = "jrc_board_client"
@@ -127,6 +130,11 @@ def _board_context(request, *, error="", title="", selected_client=None):
         posts = posts.filter(platform_posts__social_account_id=channel)
     posts = list(
         posts.select_related("workspace", "author", "jrc_production")
+        # P1-B09: shotlist progress on the card ("3/7 done").
+        .annotate(
+            shotlist_total=Count("jrc_shotlist_items", distinct=True),
+            shotlist_done=Count("jrc_shotlist_items", filter=Q(jrc_shotlist_items__is_done=True), distinct=True),
+        )
         .prefetch_related(
             Prefetch("platform_posts", queryset=PlatformPost.objects.select_related("social_account__jrc_channel"))
         )
@@ -237,6 +245,10 @@ def quick_idea(request):
         )
     post = (
         Post.objects.select_related("workspace", "jrc_production")
+        .annotate(
+            shotlist_total=Count("jrc_shotlist_items", distinct=True),
+            shotlist_done=Count("jrc_shotlist_items", filter=Q(jrc_shotlist_items__is_done=True), distinct=True),
+        )
         .prefetch_related(
             Prefetch("platform_posts", queryset=PlatformPost.objects.select_related("social_account__jrc_channel"))
         )
@@ -287,7 +299,7 @@ def move(request, workspace_id, post_id):
 
 
 # P1-B08: Concept (the idea worked out in versions) comes before the Script.
-TABS = ("concept", "script", "video", "caption", "approval", "comments", "publish", "history")
+TABS = ("concept", "script", "shotlist", "video", "caption", "approval", "comments", "publish", "history")
 
 
 def _default_tab(post):
@@ -432,7 +444,30 @@ def content_detail(request, workspace_id, post_id):
     can_edit_captions = text_services.can_edit_text(post, membership)
     caption_error = ""
     channel_error = ""
-    if request.method == "POST" and request.POST.get("action") in {"add_channel", "remove_channel"}:
+    date_form = None
+    date_target = ""
+    date_error = ""
+    if request.method == "POST" and request.POST.get("action") == "set_date":
+        if membership.workspace_role == "viewer" or not membership.effective_permissions.get("publish_directly", False):
+            raise PermissionDenied("You cannot schedule content.")
+        active_tab = "publish"
+        try:
+            variant = get_object_or_404(PlatformPost, pk=request.POST.get("platform_post"), post=post)
+        except ValidationError:
+            raise Http404 from None
+        date_target = str(variant.pk)
+        date_form = PublicationDateForm(request.POST, auto_id=f"date-{variant.pk}-%s")
+        with timezone.override(ZoneInfo(workspace.effective_timezone)):
+            valid = date_form.is_valid()
+        if valid:
+            try:
+                set_publication_date(post, variant.pk, request.user, date_form.cleaned_data["scheduled_at"])
+            except ValidationError as exc:
+                date_error = " ".join(exc.messages)
+            else:
+                messages.success(request, "Publication date saved. Publish this channel manually at the planned time.")
+                return redirect(f"{request.path}?tab=publish")
+    elif request.method == "POST" and request.POST.get("action") in {"add_channel", "remove_channel"}:
         try:
             if request.POST["action"] == "add_channel":
                 account = get_object_or_404(SocialAccount, pk=request.POST.get("channel"), workspace=workspace)
@@ -553,6 +588,45 @@ def content_detail(request, workspace_id, post_id):
             "published_by", "platform_post__social_account"
         )
     )
+    history.extend(
+        {
+            "kind": "shotlist",
+            "created_at": change.created_at,
+            "label": _SHOTLIST_HISTORY_LABELS[change.action].format(text=change.item_text),
+            "actor": change.user,
+            "note": "",
+            "can_view_note": True,
+        }
+        for change in post.jrc_shotlist_changes.select_related("user").all()
+    )
+    from apps.jrc_video.models import VideoActivity, VideoVersion
+
+    history.extend(
+        {
+            "kind": "video",
+            "created_at": version.uploaded_at,
+            "label": f"Uploaded video v{version.number} · {version.video.platform_post.social_account.account_name}",
+            "actor": version.uploaded_by,
+            "note": "",
+            "can_view_note": True,
+        }
+        for version in VideoVersion.objects.filter(video__platform_post__post=post)
+        .exclude(status=VideoVersion.Status.UPLOADING)
+        .select_related("uploaded_by", "video__platform_post__social_account")
+    )
+    history.extend(
+        {
+            "kind": "video",
+            "created_at": event.created_at,
+            "label": f"{event.get_action_display()} · v{event.version.number} · {event.version.video.platform_post.social_account.account_name}",
+            "actor": event.actor,
+            "note": "",
+            "can_view_note": True,
+        }
+        for event in VideoActivity.objects.filter(version__video__platform_post__post=post).select_related(
+            "actor", "version__video__platform_post__social_account"
+        )
+    )
     history.sort(key=lambda item: item["created_at"], reverse=True)
 
     video_context = {}
@@ -578,6 +652,9 @@ def content_detail(request, workspace_id, post_id):
             _enabled_caption_accounts(post),
             can_view_internal_notes=can_view_internal_notes,
         )
+    shotlist_ctx = {}
+    if active_tab == "shotlist":
+        shotlist_ctx = _shotlist_context(post, membership, focus=request.GET.get("focus", ""))
     publish_channels = []
     can_publish = can_publish_directly(membership)
     if active_tab == "publish":
@@ -613,7 +690,21 @@ def content_detail(request, workspace_id, post_id):
                     "caption": caption,
                     "scheduled_at": scheduled_at,
                     "scheduled_label": (scheduled_at.strftime("%b %-d, %Y · %-I:%M %p %Z") if scheduled_at else ""),
+                    "can_schedule": membership.workspace_role != "viewer"
+                    and membership.effective_permissions.get("publish_directly", False)
+                    and variant.status in {PlatformPost.Status.APPROVED, PlatformPost.Status.SCHEDULED}
+                    and getattr(getattr(account, "jrc_channel", None), "is_enabled", False)
+                    and account.jrc_channel.kind in {"manual", "custom"},
+                    "date_open": date_target == str(variant.pk),
+                    "date_error": date_error if date_target == str(variant.pk) else "",
+                    "date_form": date_form
+                    if date_target == str(variant.pk)
+                    else PublicationDateForm(
+                        initial={"scheduled_at": scheduled_at.strftime("%Y-%m-%dT%H:%M") if scheduled_at else ""},
+                        auto_id=f"date-{variant.pk}-%s",
+                    ),
                     "video_final": video_final,
+                    "video_number": video.final_version.number if video_final else None,
                     "has_video": bool(video),
                     "published": publication is not None,
                     "publication_url": publication.post_url if publication else "",
@@ -635,6 +726,7 @@ def content_detail(request, workspace_id, post_id):
         {
             **video_context,
             **approval_ctx,
+            **shotlist_ctx,
             "workspace": workspace,
             "post": post,
             "pipeline_stage": pipeline_stage(post),
@@ -667,6 +759,94 @@ def content_detail(request, workspace_id, post_id):
             "can_publish": can_publish,
         },
     )
+
+
+_SHOTLIST_HISTORY_LABELS = {
+    ShotlistChange.Action.ADDED: 'Added "{text}" to the shotlist',
+    ShotlistChange.Action.DONE: 'Checked off "{text}" in the shotlist',
+    ShotlistChange.Action.UNDONE: 'Unchecked "{text}" in the shotlist',
+    ShotlistChange.Action.DELETED: 'Removed "{text}" from the shotlist',
+}
+
+
+def _shotlist_context(post, membership, *, focus="", error="", new_text="", new_note=""):
+    # The automatic item must exist even for content created before P1-B09 outside the migration.
+    shotlist_services.ensure_thumbnail_item(post)
+    items = shotlist_services.items_for(post)
+    done, total = shotlist_services.progress(items)
+    return {
+        "shotlist_items": items,
+        "shotlist_done": done,
+        "shotlist_total": total,
+        "can_edit_shotlist": shotlist_services.can_edit_shotlist(post, membership),
+        "shotlist_focus": focus,
+        "shotlist_error": error,
+        "shotlist_new_text": new_text,
+        "shotlist_new_note": new_note,
+        "shotlist_max_text": shotlist_services.MAX_TEXT,
+        "shotlist_max_note": shotlist_services.MAX_NOTE,
+    }
+
+
+@login_required
+@require_POST
+def shotlist_action(request, workspace_id, post_id):
+    """Add, edit, check off, reorder or delete a shotlist item (P1-B09).
+
+    A plain form post redirects back to the tab. The tab's script sends ``X-JRC-Shotlist: 1`` and gets
+    the re-rendered list instead, so ticking items on a phone does not reload the page.
+    """
+    workspace = get_object_or_404(Workspace, pk=workspace_id)
+    membership = WorkspaceMembership.objects.filter(user=request.user, workspace=workspace).first()
+    if membership is None:
+        raise Http404
+    post = get_object_or_404(Post.objects.select_related("workspace"), pk=post_id, workspace=workspace)
+    action = request.POST.get("action", "")
+    item_id = request.POST.get("item", "")
+    text, note = request.POST.get("text"), request.POST.get("note")
+    focus, error, status = "", "", 200
+    try:
+        if action == "add":
+            shotlist_services.add_item(post, request.user, text or "", note or "")
+            focus = "add"
+        elif action == "update":
+            shotlist_services.update_item(post, item_id, request.user, text=text, note=note)
+            focus = f"item-{item_id}"
+        elif action == "done":
+            shotlist_services.update_item(post, item_id, request.user, is_done=request.POST.get("done") == "1")
+            focus = f"item-{item_id}"
+        elif action in ("up", "down"):
+            shotlist_services.move_item(post, item_id, request.user, offset=-1 if action == "up" else 1)
+            focus = f"item-{item_id}"
+        elif action == "delete":
+            shotlist_services.delete_item(post, item_id, request.user)
+            focus = "add"
+        else:
+            return HttpResponseBadRequest("Unknown action.")
+    except shotlist_services.ItemNotFoundError as exc:
+        error, status = str(exc), 409
+    except ValidationError as exc:
+        error, status = " ".join(exc.messages), 400
+    if request.headers.get("X-JRC-Shotlist") == "1":
+        context = _shotlist_context(
+            post,
+            membership,
+            focus=focus,
+            error=error,
+            new_text=(text or "") if error and action == "add" else "",
+            new_note=(note or "") if error and action == "add" else "",
+        )
+        return render(
+            request, "jrc_production/_shotlist.html", {**context, "workspace": workspace, "post": post}, status=status
+        )
+    if error:
+        messages.error(request, error)
+    url = reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.id, "post_id": post.id})
+    if focus == "add" and not error:
+        # No fragment here: browsers skip autofocus when the URL targets an element.
+        return redirect(f"{url}?tab=shotlist&focus=add")
+    anchor = f"#shotlist-{focus}" if focus and not error else "#shotlist"
+    return redirect(f"{url}?tab=shotlist{anchor}")
 
 
 @login_required

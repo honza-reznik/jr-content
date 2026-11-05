@@ -227,7 +227,6 @@ def test_custom_role_download_permissions(
         "draft",
         "pending_review",
         "rejected",
-        "published",
         "empty-caption",
         "whitespace-caption",
         "empty-saved-caption",
@@ -243,7 +242,7 @@ def test_download_conditions_match_final_video(
 ):
     previous = upload(post, variant, user)
     current = upload(post, variant, user)
-    if missing in {"draft", "pending_review", "rejected", "published"}:
+    if missing in {"draft", "pending_review", "rejected"}:
         variant.status = missing
         variant.save(update_fields=["status"])
     elif missing in {"empty-caption", "whitespace-caption"}:
@@ -288,7 +287,9 @@ def test_download_conditions_match_final_video(
 
 
 @pytest.mark.parametrize("role", ["owner", "client"])
-@pytest.mark.parametrize("state", [PlatformPost.Status.APPROVED, PlatformPost.Status.SCHEDULED])
+@pytest.mark.parametrize(
+    "state", [PlatformPost.Status.APPROVED, PlatformPost.Status.SCHEDULED, PlatformPost.Status.PUBLISHED]
+)
 @pytest.mark.parametrize("caption_source", ["channel", "post", "saved"])
 def test_ready_downloads_and_buttons_match_final_video(
     client, post, variant, workspace, user, gateway, downloadable, role, state, caption_source

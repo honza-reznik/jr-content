@@ -1,5 +1,28 @@
 # Úpravy JR Content
 
+## 2026-11-04 — P1-B09
+
+- Shotlist u obsahu: `ShotlistItem` (text, poznámka, hotovo, pořadí, kdo/kdy změnil) a historie
+  `ShotlistChange` v `apps/jrc_production` (migrace 0003, datová 0004). Každý obsah má automatickou
+  položku „Thumbnail photo“ (signál `post_save` u `composer.Post`), odškrtává se ručně a nejde smazat.
+- Záložka Shotlist za Script, změny v History, „Shotlist x/y done“ na kartě nástěnky.
+- REST `/api/v1/posts/{id}/shotlist` (GET, POST) a `/shotlist/{item_id}` (PATCH, DELETE); upstream
+  `apps/api/api.py` jen registruje nový router.
+- Opravy kontroly: zápis REST ověřuje povolené kanály pod zámkem obsahu a aktuální oprávnění člena,
+  přesun ukládá autora a čas změny. Při ztracené odpovědi (včetně přerušeného čtení jejího těla)
+  rozhraní načte aktuální seznam bez automatického opakování zápisu.
+- Integrace s P1-B07/B08: ukazatel je ve sdílené kartě i u rychlého nápadu; Concept zůstává
+  výchozí bez scénáře, pořadí záložek Concept, Script, Shotlist, Video, Caption, Approval,
+  Comments, Publish, History. Historie zachovává také události videa z P1-B13.
+
+## 2026-11-04 — P1-B13, oprava review 1
+
+- Set date v Publish otevírá vlastní formulář pro jednu schválenou ruční kanálovou kopii,
+  ukládá budoucí termín v pásmu klienta a zachovává ostatní kopie. Oprávnění odpovídá
+  plánování na nástěnce; ruční kanály zůstávají vyloučené z automatického publikování.
+- Formulář podporuje video z FreeFrame bez příloh PostMedia, hlásí neplatný čas
+  včetně nejednoznačného času při změně letního času a vyžaduje ochranu CSRF.
+
 ## 2026-10-27 — P1-B06
 
 - Obsah lze založit bez kanálu; zapnuté kanály klienta se připojují jen výslovnou volbou.
@@ -712,9 +735,20 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
 - Server ověřuje JPG/PNG/WebP pomocí Pillow včetně načtení obrazových dat, velikost do 20 MiB a počet pixelů.
   Soukromé soubory v `jrc-app` čte brána P1-B03 pouze s platným členstvím ve workspace; cizí workspace vrací 404.
 - „Download thumbnail“ i stažení finálního videa používají společnou kontrolu `jrc_video.downloads`:
-  publikační oprávnění (včetně klienta), nearchivovaný workspace, schválený či naplánovaný kanál,
+  publikační oprávnění (včetně klienta), nearchivovaný workspace, schválený, naplánovaný či publikovaný kanál,
   neprázdný uložený popisek a připravený finál. Stejné podmínky platí pro endpointy a odkazy
   v Caption i Publish, včetně historie náhledů. Approval zobrazuje aktuální náhled kanálu.
   Kanál s historií náhledů nelze odebrat; smazání celého obsahu zůstává možné.
 - Regresní testy `apps/jrc_thumbnails/tests/` a lokální průchod Chromium `scripts/P1-B10/run.sh`
   (owner/klient, 1440/390 px, skutečné soubory přes S3, historie a porovnání stažených dat).
+
+## 2026-11-04 · P1-B11 — bez obrazovky souhlasu Brightbean („Almost there“)
+
+- `jrc_ui`: nový vypínač funkce `terms` (cesta `/accounts/accept-terms/`), v `MVP_FEATURES` vypnutý → stránka souhlasu vrací 404.
+  `configure_ui` nahrazuje upstream `TosAcceptanceMiddleware` obalem `jrc_ui.middleware.TermsAcceptanceMiddleware`, který
+  přesměrování na souhlas provede jen při zapnuté funkci; noví uživatelé (pozvánka, `createsuperuser`) jdou rovnou do aplikace.
+  `tos_accepted_at` se nemění (vratné: `JRC_FEATURES["terms"] = True` vrátí upstream chování; regresní sada `jrc_test` ho dál ověřuje).
+- `templates/account/signup.html`: odstavec s odkazy na brightbean.xyz Terms of Service / Privacy Policy jen při zapnuté funkci `terms`.
+  About & license beze změny.
+- Test: `apps/jrc_ui/tests/test_terms.py` (přihlášení nového uživatele, registrace přes pozvánku, 404 stránky souhlasu,
+  vratnost, statická kontrola šablon s brightbean.xyz – zbylé jsou jen za vypnutými funkcemi `terms`, `reviews`, `intelligence`).

@@ -3,6 +3,7 @@ from .project import Project, ProjectMember
 from .folder import Folder
 from .asset import Asset, AssetVersion, MediaFile, CarouselItem
 from .comment import Comment, Annotation, CommentAttachment, CommentReaction
+from .jrc_comment_event import JrcCommentEvent
 from .approval import Approval
 from .share import ShareLink, AssetShare, ShareLinkActivity, ShareActivityAction, ShareVisibility
 from .metadata import MetadataField, AssetMetadata, Collection, CollectionShare

@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import UTC, timedelta
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
@@ -39,6 +39,47 @@ def approved_post(post):
     variant.refresh_from_db()
     transition_platform_post(variant, PlatformPost.Status.APPROVED)
     return variant
+
+
+@pytest.mark.parametrize("role", ["owner", "client"])
+def test_published_video_keeps_final_version_and_download(client, workspace, user, post, role):
+    import uuid
+
+    variant = approved_post(post)
+    video = VideoAsset.objects.create(platform_post=variant, ff_asset_id=uuid.uuid4())
+    version = VideoVersion.objects.create(
+        video=video, number=2, ff_version_id=uuid.uuid4(), status=VideoVersion.Status.READY
+    )
+    video.final_version = version
+    video.save(update_fields=["final_version"])
+    WorkspaceMembership.objects.filter(workspace=workspace, user=user).update(workspace_role=role)
+    client.force_login(user)
+    mark = reverse("jrc_production:mark_published", kwargs={"workspace_id": workspace.pk, "post_id": post.pk})
+    assert client.post(mark, {"platform_post": variant.pk}).status_code == 302
+    detail = reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.pk, "post_id": post.pk})
+    page = client.get(detail, {"tab": "publish"})
+    assert b"Published manually" in page.content
+    assert b"Final video \xc2\xb7 v2" in page.content
+    assert b"Download final video" in page.content
+    download = reverse(
+        "jrc_video:final_download",
+        kwargs={"workspace_id": workspace.pk, "post_id": post.pk, "platform_post_id": variant.pk},
+    )
+    assert download.encode() in page.content
+    with patch("apps.jrc_video.uploads._call", return_value={"url": "http://testserver/files/video/raw/final.mp4"}):
+        assert client.get(download).status_code == 302
+
+
+def test_publish_without_date_offers_local_form_and_confirmation(client, workspace, user, post):
+    variant = approved_post(post)
+    client.force_login(user)
+    detail = reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.pk, "post_id": post.pk})
+    page = client.get(detail, {"tab": "publish"}).content.decode()
+    assert 'name="action" value="set_date"' in page
+    assert 'type="datetime-local"' in page
+    assert f'name="platform_post" value="{variant.pk}"' in page
+    assert "set_date=1" not in page
+    assert "Set date" in page and "data-confirm-publication=" in page
 
 
 def test_mark_published_manually_records_channel_actor_time_url_and_history(client, workspace, user, post):
@@ -428,3 +469,184 @@ def test_ready_or_scheduled_time_is_rendered_using_workspace_timezone(client, wo
     assert b"Scheduled publication" in response.content
     assert b"data-copy-caption" in response.content
     assert b"innerHTML" not in response.content
+
+
+@pytest.mark.parametrize("role", ["owner", "manager"])
+def test_set_date_persists_freeframe_video_and_preserves_other_channels(client, workspace, user, post, role):
+    import uuid
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from apps.publisher.engine import PublishEngine
+
+    workspace.timezone = "Europe/Prague"
+    workspace.approval_workflow_mode = "required_internal_and_client"
+    workspace.save(update_fields=["timezone", "approval_workflow_mode"])
+    WorkspaceMembership.objects.filter(workspace=workspace, user=user).update(workspace_role=role)
+    variant = approved_post(post)
+    video = VideoAsset.objects.create(platform_post=variant, ff_asset_id=uuid.uuid4())
+    version = VideoVersion.objects.create(video=video, number=1, ff_version_id=uuid.uuid4(), status="ready")
+    video.final_version = version
+    video.save(update_fields=["final_version"])
+    other_channel = create_manual_channel(workspace, "linkedin_personal", "Unchanged channel")
+    other = PlatformPost.objects.create(
+        post=post,
+        social_account=other_channel,
+        status="scheduled",
+        scheduled_at=timezone.now() + timedelta(days=5),
+        platform_specific_caption="Keep this",
+    )
+    before = PlatformPost.objects.filter(pk=other.pk).values().get()
+    assert not post.media_attachments.exists(), "Video is stored in FreeFrame, not PostMedia"
+    detail = reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.pk, "post_id": post.pk})
+    client.force_login(user)
+    local = (timezone.now() + timedelta(days=2)).astimezone(ZoneInfo("Europe/Prague")).replace(second=0, microsecond=0)
+    response = client.post(
+        detail + "?tab=publish",
+        {"action": "set_date", "platform_post": variant.pk, "scheduled_at": local.strftime("%Y-%m-%dT%H:%M")},
+    )
+    assert response.status_code == 302
+    variant.refresh_from_db()
+    post.refresh_from_db()
+    assert variant.status == "scheduled"
+    assert variant.scheduled_at == local.astimezone(UTC)
+    assert post.scheduled_at == variant.scheduled_at
+    assert PlatformPost.objects.filter(pk=other.pk).values().get() == before
+    assert video.final_version_id == version.pk
+    # A second submission can change just this copy's term.
+    later = local + timedelta(days=1)
+    assert (
+        client.post(
+            detail,
+            {"action": "set_date", "platform_post": variant.pk, "scheduled_at": later.strftime("%Y-%m-%dT%H:%M")},
+        ).status_code
+        == 302
+    )
+    variant.refresh_from_db()
+    assert variant.scheduled_at == later.astimezone(UTC)
+    assert PlatformPost.objects.filter(pk=other.pk).values().get() == before
+    with patch("apps.publisher.engine.timezone.now", return_value=datetime.now(UTC) + timedelta(days=10)):
+        assert variant.pk not in {item.pk for item in PublishEngine()._get_due_platform_posts()}
+    assert client.get(detail, {"tab": "publish"}).context["publish_channels"][0]["scheduled_at"] is not None
+
+
+@pytest.mark.parametrize("role", ["editor", "client", "viewer"])
+def test_set_date_uses_scheduling_permission(client, workspace, user, post, role):
+    variant = approved_post(post)
+    WorkspaceMembership.objects.filter(workspace=workspace, user=user).update(workspace_role=role)
+    client.force_login(user)
+    detail = reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.pk, "post_id": post.pk})
+    assert b">Set date<" not in client.get(detail, {"tab": "publish"}).content
+    assert (
+        client.post(
+            detail, {"action": "set_date", "platform_post": variant.pk, "scheduled_at": "2099-01-01T12:00"}
+        ).status_code
+        == 403
+    )
+    variant.refresh_from_db()
+    assert variant.scheduled_at is None and variant.status == "approved"
+
+
+@pytest.mark.parametrize("value", ["", "not-a-date", "2020-01-01T12:00", "2099-03-29T02:30", "2099-10-25T02:30"])
+def test_set_date_rejects_invalid_past_or_dst_ambiguous_time(client, workspace, user, post, value):
+    variant = approved_post(post)
+    workspace.timezone = "Europe/Prague"
+    workspace.save(update_fields=["timezone"])
+    client.force_login(user)
+    detail = reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.pk, "post_id": post.pk})
+    response = client.post(detail, {"action": "set_date", "platform_post": variant.pk, "scheduled_at": value})
+    assert response.status_code == 200
+    assert response.context["publish_channels"][0]["date_form"].errors
+    assert b'role="alert"' in response.content
+    variant.refresh_from_db()
+    assert variant.scheduled_at is None
+
+
+@pytest.mark.parametrize("state", ["draft", "pending_review", "pending_client", "published"])
+def test_set_date_rejects_unapproved_or_published_copy(client, workspace, user, post, state):
+    variant = post.platform_posts.get()
+    PlatformPost.objects.filter(pk=variant.pk).update(status=state)
+    client.force_login(user)
+    detail = reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.pk, "post_id": post.pk})
+    response = client.post(
+        detail, {"action": "set_date", "platform_post": variant.pk, "scheduled_at": "2099-01-01T12:00"}
+    )
+    assert response.status_code == 200
+    assert b"Only approved or scheduled" in response.content
+    variant.refresh_from_db()
+    assert variant.scheduled_at is None and variant.status == state
+
+
+def test_set_date_rejects_foreign_copy_and_archived_workspace(client, workspace, user, post, organization):
+    from apps.composer.models import Post
+
+    variant = approved_post(post)
+    foreign_workspace = Workspace.objects.create(organization=organization, name="Foreign")
+    foreign_post = Post.objects.create(workspace=foreign_workspace, title="Foreign")
+    foreign_channel = create_manual_channel(foreign_workspace, "instagram", "Foreign")
+    foreign_variant = PlatformPost.objects.create(post=foreign_post, social_account=foreign_channel, status="approved")
+    client.force_login(user)
+    detail = reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.pk, "post_id": post.pk})
+    data = {"action": "set_date", "platform_post": foreign_variant.pk, "scheduled_at": "2099-01-01T12:00"}
+    assert client.post(detail, data).status_code == 404
+    workspace.is_archived = True
+    workspace.save(update_fields=["is_archived"])
+    data["platform_post"] = variant.pk
+    assert client.post(detail, data).status_code == 404
+    assert not post.platform_posts.exclude(scheduled_at__isnull=True).exists()
+
+
+@pytest.mark.parametrize("channel_state", ["disabled", "automatic", "no-profile"])
+def test_set_date_rejects_non_manual_or_disabled_channels(client, workspace, user, post, channel_state):
+    variant = approved_post(post)
+    profile = variant.social_account.jrc_channel
+    if channel_state == "disabled":
+        profile.is_enabled = False
+        profile.save(update_fields=["is_enabled"])
+    elif channel_state == "automatic":
+        profile.kind = "connected"
+        profile.save(update_fields=["kind"])
+    else:
+        profile.delete()
+    client.force_login(user)
+    detail = reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.pk, "post_id": post.pk})
+    assert b">Set date<" not in client.get(detail, {"tab": "publish"}).content
+    assert (
+        client.post(
+            detail, {"action": "set_date", "platform_post": variant.pk, "scheduled_at": "2099-01-01T12:00"}
+        ).status_code
+        == 200
+    )
+    variant.refresh_from_db()
+    assert variant.scheduled_at is None and variant.status == "approved"
+
+
+@pytest.mark.parametrize("target", ["not-a-uuid", "", "11111111-1111-4111-8111-111111111111"])
+def test_set_date_invalid_copy_returns_404(client, workspace, user, post, target):
+    approved_post(post)
+    client.force_login(user)
+    detail = reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.pk, "post_id": post.pk})
+    assert (
+        client.post(
+            detail, {"action": "set_date", "platform_post": target, "scheduled_at": "2099-01-01T12:00"}
+        ).status_code
+        == 404
+    )
+
+
+def test_set_date_respects_custom_scheduling_grant_and_removed_membership(client, workspace, user, post):
+    variant = approved_post(post)
+    custom = CustomRole.objects.create(
+        organization=workspace.organization, name="Date planner", permissions={"publish_directly": True}
+    )
+    WorkspaceMembership.objects.filter(workspace=workspace, user=user).update(
+        workspace_role="editor", custom_role=custom
+    )
+    client.force_login(user)
+    detail = reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.pk, "post_id": post.pk})
+    data = {"action": "set_date", "platform_post": variant.pk, "scheduled_at": "2099-01-01T12:00"}
+    assert client.post(detail, data).status_code == 302
+    variant.refresh_from_db()
+    assert variant.status == "scheduled"
+    WorkspaceMembership.objects.filter(workspace=workspace, user=user).delete()
+    assert client.post(detail, data).status_code == 404

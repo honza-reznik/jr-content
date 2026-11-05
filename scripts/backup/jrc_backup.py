@@ -7,6 +7,7 @@ adresáře se platným manifestem přímo v backups/<projekt>/.
 """
 import argparse
 import datetime
+import errno
 import hashlib
 import json
 import os
@@ -247,6 +248,8 @@ def read_index(directory, bucket):
             raise BackupError("Neplatná metadata S3.")
         if any(field in entry and not isinstance(entry[field], str) for field in EXTRA_ARGS):
             raise BackupError("Neplatné hlavičky S3.")
+        if "etag" in entry and (not isinstance(entry["etag"], str) or not entry["etag"]):
+            raise BackupError("Neplatný ETag S3.")
         keys.add(entry["key"])
         names.add(entry["file"])
     return entries
@@ -599,17 +602,92 @@ def cmd_start(args):
     (partial / "state.json").write_text(json.dumps(state, indent=1), encoding="utf-8")
 
 
+def previous_backup(project_root, stamp):
+    """Jen poslední platná záloha stejného projektu; neúplné a poškozené se nepoužijí."""
+    for directory in sorted(project_root.iterdir(), reverse=True):
+        if not STAMP_RE.fullmatch(directory.name) or directory.name >= stamp:
+            continue
+        try:
+            manifest = validate_backup(directory)
+        except (BackupError, OSError):
+            continue
+        if manifest["project"] == project_root.name and manifest["stamp"] == directory.name:
+            return directory
+    return None
+
+
+def link_or_copy(source, target):
+    """Pevný odkaz přežije smazání zdrojové zálohy. Bez podpory odkazů uděláme úplnou kopii."""
+    try:
+        os.link(source, target)
+    except OSError as error:
+        if error.errno not in {errno.EXDEV, errno.EPERM, errno.EOPNOTSUPP, errno.EMLINK}:
+            raise
+        with open(source, "rb") as src, open(target, "xb") as dst:
+            shutil.copyfileobj(src, dst, CHUNK)
+
+
+def copy_object(client, bucket, key, target, saved=None, source=None):
+    """ETag a velikost šetří přenos; SHA-256 nadále ověřuje zálohovaná data."""
+    try:
+        head = client.head_object(Bucket=bucket, Key=key)
+        entry = {"key": key, "file": target.name, "size": head["ContentLength"]}
+        if head.get("ETag"):
+            entry["etag"] = head["ETag"]
+        for field in (*EXTRA_ARGS, "Metadata"):
+            if head.get(field):
+                entry[field] = head[field]
+        if (saved and entry.get("etag") and saved.get("etag") == entry["etag"]
+                and saved["size"] == entry["size"]):
+            entry["sha256"] = saved["sha256"]
+            link_or_copy(source, target)
+            return entry, True
+
+        # IfMatch brání převzetí jiného obsahu mezi HEAD a GET (zejména při chybějícím ETagu
+        # ve starším indexu). Metadata obnovujeme z téže odpovědi jako vlastní obsah.
+        condition = {"IfMatch": head["ETag"]} if head.get("ETag") else {}
+        response = client.get_object(Bucket=bucket, Key=key, **condition)
+    except client.exceptions.NoSuchKey:
+        raise BackupError(f"Objekt {bucket}/{key} zmizel během zálohy; záloha zůstane neúplná.") from None
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with open(target, "xb") as stream:
+            for chunk in response["Body"].iter_chunks(CHUNK):
+                stream.write(chunk)
+                digest.update(chunk)
+                size += len(chunk)
+    finally:
+        response["Body"].close()
+    if size != response["ContentLength"]:
+        raise BackupError(f"Objekt {bucket}/{key} se stáhl neúplně.")
+    entry = {"key": key, "file": target.name, "size": size, "sha256": digest.hexdigest()}
+    if response.get("ETag"):
+        entry["etag"] = response["ETag"]
+    for field in (*EXTRA_ARGS, "Metadata"):
+        if response.get(field):
+            entry[field] = response[field]
+    # Starší zálohy nemají ETag; po přečtení obsahu lze stále ušetřit místo podle SHA-256.
+    if saved and all(entry[k] == saved[k] for k in ("size", "sha256")):
+        target.unlink()
+        link_or_copy(source, target)
+        return entry, True
+    return entry, False
+
+
 def cmd_copy_objects(args):
     """Kopie bucketů před i po dumpech; první kopie zůstává zachována."""
     os.umask(0o077)
     project = check_project(args.project)
     workspace = safe_path(args.workspace)
     env = merged_env(workspace)
-    partial = safe_path(backup_root(workspace, project) / f"{args.stamp}.partial", workspace)
+    project_root = backup_root(workspace, project)
+    partial = safe_path(project_root / f"{args.stamp}.partial", workspace)
     state_path = safe_path(partial / "state.json", partial)
     if not state_path.is_file():
         raise BackupError("Rozpracovaná záloha neexistuje.")
     state = json.loads(state_path.read_text(encoding="utf-8"))
+    baseline = previous_backup(project_root, args.stamp)
     clients = {bucket: s3_client(env, bucket) for bucket in bucket_credentials(env)}
     print("Záloha: soubory v úložišti S3")
     summary = {}
@@ -620,30 +698,20 @@ def cmd_copy_objects(args):
         (folder / "objects").mkdir(mode=0o700, parents=True, exist_ok=True)
         entries = read_index(partial, bucket) if (folder / "index.json").exists() else []
         previous = {e["key"]: e for e in entries}
+        reusable = {e["key"]: e for e in read_index(baseline, bucket)} if baseline else {}
+        reused = 0
         for item in list_objects(client, bucket):
             key = item["Key"]
             name = f"{len(entries) + 1:08d}"
-            try:
-                response = client.get_object(Bucket=bucket, Key=key)
-            except client.exceptions.NoSuchKey:
-                raise BackupError(f"Objekt {bucket}/{key} zmizel během zálohy; záloha zůstane neúplná.") from None
-            digest = hashlib.sha256()
-            size = 0
-            # Předchozí kopii zachováme i po smazání ve zdroji; přepsání stejného klíče odmítneme.
+            saved = previous.get(key) or reusable.get(key)
+            source = None
+            if saved:
+                origin = partial if key in previous else baseline
+                source = safe_path(origin / "s3" / bucket / "objects" / saved["file"], origin)
             target = safe_path(folder / "objects" / name, partial)
-            with open(target, "xb") as stream:
-                for chunk in response["Body"].iter_chunks(CHUNK):
-                    stream.write(chunk)
-                    digest.update(chunk)
-                    size += len(chunk)
-            if size != response["ContentLength"]:
-                raise BackupError(f"Objekt {bucket}/{key} se stáhl neúplně.")
-            entry = {"key": key, "file": name, "size": size, "sha256": digest.hexdigest()}
-            for field in EXTRA_ARGS:
-                if response.get(field):
-                    entry[field] = response[field]
-            if response.get("Metadata"):
-                entry["Metadata"] = response["Metadata"]
+            entry, linked = copy_object(client, bucket, key, target, saved, source)
+            reused += linked
+            # Předchozí kopii zachováme i po smazání ve zdroji; přepsání stejného klíče odmítneme.
             if key in previous:
                 target.unlink()
                 if any(entry.get(k) != previous[key].get(k) for k in ("size", "sha256", *EXTRA_ARGS, "Metadata")):
@@ -652,7 +720,7 @@ def cmd_copy_objects(args):
                 entries.append(entry)
         (folder / "index.json").write_text(json.dumps(entries, ensure_ascii=False, indent=1), encoding="utf-8")
         summary[bucket] = {"objects": len(entries), "bytes": sum(e["size"] for e in entries)}
-        print(f"  {bucket}: {len(entries)} objektů, {human(summary[bucket]['bytes'])}")
+        print(f"  {bucket}: {len(entries)} objektů, {human(summary[bucket]['bytes'])}, znovu použito {reused}")
     state.update({"buckets": summary, "vanished": vanished})
     state_path.write_text(json.dumps(state, indent=1), encoding="utf-8")
 

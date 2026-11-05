@@ -447,6 +447,8 @@ def test_gc_covers_all_inbound_fks_to_purged_tables():
         # -> comments.id
         ("comments", "parent_id"), ("annotations", "comment_id"), ("comment_attachments", "comment_id"),
         ("comment_reactions", "comment_id"), ("mentions", "comment_id"), ("notifications", "comment_id"),
+        # PostgreSQL ON DELETE CASCADE; verified by test_purging_comment_removes_its_event.
+        ("jrc_comment_events", "comment_id"),
         # -> share_links.id
         ("share_link_items", "share_link_id"), ("share_link_activity", "share_link_id"),
         ("watermark_settings", "share_link_id"),

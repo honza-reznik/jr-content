@@ -155,6 +155,14 @@ case "${1:?Chybí operace}" in
         safe_backup_path "$workdir/backups/$project" >/dev/null
         sh scripts/workspace.sh check
         need_image
+        # Jeden běh pro tento adresář záloh: zdroj pevných odkazů nesmí mezitím
+        # smazat rotace jiného běhu. Zámek držíme i přes finish (včetně rotace).
+        # Soubor se nemaže: čekající procesy musí zamykat pořád stejný inode.
+        umask 077
+        mkdir -p -m 700 "$workdir/backups/$project"
+        lock=$(safe_backup_path "$workdir/backups/$project/.backup.lock")
+        exec 8>> "$lock" || die "Nelze otevřít zámek zálohy $lock."
+        flock 8 || die "Nelze získat zámek zálohy $lock."
         rev=$(git rev-parse HEAD 2>/dev/null || printf unknown)
         dirty=no
         if [ -n "$(git status --porcelain 2>/dev/null | head -n 1)" ]; then dirty=yes; fi

@@ -136,6 +136,7 @@ DEFAULT_CHANNELS: dict[str, dict[str, bool]] = {
     EventType.CLIENT_CONNECTED_ACCOUNTS: {Channel.IN_APP: True, Channel.EMAIL: True},
     EventType.CONTENT_SCRIPT_VERSION: {Channel.IN_APP: True, Channel.EMAIL: False},
     EventType.CONTENT_CAPTION_VERSION: {Channel.IN_APP: True, Channel.EMAIL: False},
+    EventType.CONTENT_CLIENT_COMMENT: {Channel.IN_APP: True, Channel.EMAIL: False},
     EventType.CONTENT_VIDEO_VERSION: {Channel.IN_APP: True, Channel.EMAIL: False},
 }
 
