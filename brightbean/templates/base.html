@@ -309,20 +309,21 @@
             <div class="relative border-b border-stone-100" x-data="{ wsOpen: false }">
                 <button @click="wsOpen = !wsOpen"
                         class="sidebar-ws-btn w-full flex items-center gap-2.5 px-4 py-3.5 text-left hover:bg-black/[0.04] transition-colors cursor-pointer rounded-br-lg"
+                        {% if request.workspace %}style="border-left:4px solid {{ request.workspace.accent_color }}"{% endif %}
                         :class="sidebarCollapsed ? 'justify-center px-0' : 'gap-2.5 px-4'">
                     {% with current_ws=request.workspace %}
                     {% if current_ws %}
                     {% if current_ws.icon %}
                     <img src="{{ current_ws.icon.url }}" alt="" class="sidebar-logo-mark flex-shrink-0 object-cover">
                     {% else %}
-                    <div class="sidebar-logo-mark flex-shrink-0">{{ current_ws.name|make_list|first|upper }}</div>
+                    <div class="sidebar-logo-mark flex-shrink-0" style="background:{{ current_ws.accent_color }};color:white">{{ current_ws.name|make_list|first|upper }}</div>
                     {% endif %}
                     <span class="flex-1 font-bold text-[0.9375rem] tracking-tight text-stone-900 truncate" x-show="!sidebarCollapsed" x-cloak>{{ current_ws.name }}</span>
                     {% elif sidebar_workspaces %}
                     {% if sidebar_workspaces.0.icon %}
                     <img src="{{ sidebar_workspaces.0.icon.url }}" alt="" class="sidebar-logo-mark flex-shrink-0 object-cover">
                     {% else %}
-                    <div class="sidebar-logo-mark flex-shrink-0">{{ sidebar_workspaces.0.name|make_list|first|upper }}</div>
+                    <div class="sidebar-logo-mark flex-shrink-0" style="background:{{ sidebar_workspaces.0.accent_color }};color:white">{{ sidebar_workspaces.0.name|make_list|first|upper }}</div>
                     {% endif %}
                     <span class="flex-1 font-bold text-[0.9375rem] tracking-tight text-stone-900 truncate" x-show="!sidebarCollapsed" x-cloak>{{ sidebar_workspaces.0.name }}</span>
                     {% else %}
@@ -349,11 +350,11 @@
                         <img src="{{ ws.icon.url }}" alt="" class="w-7 h-7 rounded-md object-cover flex-shrink-0">
                         {% else %}
                         <div class="w-7 h-7 rounded-md flex items-center justify-center text-white text-[11px] font-bold flex-shrink-0"
-                             style="background: var(--primary);">
+                             style="background: {{ ws.accent_color }};">
                             {{ ws.name|make_list|first|upper }}
                         </div>
                         {% endif %}
-                        <span class="truncate">{{ ws.name }}</span>
+                        <span aria-hidden="true" style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:{{ ws.accent_color }}"></span><span class="truncate">{{ ws.name }}</span>
                         {% if request.workspace and ws.id == request.workspace.id %}
                         <svg class="w-4 h-4 text-stone-400 ml-auto flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
                         {% endif %}
@@ -730,7 +731,7 @@
                         <div class="w-7 h-7 rounded-full bg-stone-200 flex items-center justify-center text-[11px] font-semibold text-stone-500">{{ channel.account_name|default:channel.account_handle|make_list|first|upper }}</div>
                         {% endif %}
                         {% if channel.platform != "youtube" %}<div class="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-white rounded-full flex items-center justify-center">
-                            {% include "partials/_platform_icon.html" with platform=channel.platform size="sm" %}
+                            {% include "jrc_channels/icon.html" with account=channel %}
                         </div>{% endif %}
                     </div>
                     {% if channel.platform == "youtube" %}
@@ -754,7 +755,7 @@
                         <div class="w-7 h-7 rounded-full bg-stone-200 flex items-center justify-center text-[11px] font-semibold text-stone-500">{{ channel.account_name|default:channel.account_handle|make_list|first|upper }}</div>
                         {% endif %}
                         {% if channel.platform != "youtube" %}<div class="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-white rounded-full flex items-center justify-center">
-                            {% include "partials/_platform_icon.html" with platform=channel.platform size="sm" %}
+                            {% include "jrc_channels/icon.html" with account=channel %}
                         </div>{% endif %}
                     </div>
                     {% if channel.platform == "youtube" %}
@@ -917,9 +918,9 @@
                     {% with current_ws=request.workspace %}
                     {% if current_ws %}
                     {% if current_ws.icon %}
-                    <img src="{{ current_ws.icon.url }}" alt="" class="w-7 h-7 rounded-md object-cover">
+                    <img src="{{ current_ws.icon.url }}" alt="" class="w-7 h-7 rounded-md object-cover" style="outline:2px solid {{ current_ws.accent_color }}">
                     {% else %}
-                    <div class="w-7 h-7 rounded-md flex items-center justify-center text-white text-[11px] font-bold" style="background: var(--primary);">{{ current_ws.name|make_list|first|upper }}</div>
+                    <div class="w-7 h-7 rounded-md flex items-center justify-center text-white text-[11px] font-bold" style="background: {{ current_ws.accent_color }};">{{ current_ws.name|make_list|first|upper }}</div>
                     {% endif %}
                     <span class="text-sm font-semibold text-stone-800 truncate max-w-[160px]">{{ current_ws.name }}</span>
                     {% else %}
