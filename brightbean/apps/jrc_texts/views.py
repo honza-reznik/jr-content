@@ -141,13 +141,13 @@ def _text_editor(request, workspace_id, post_id, kind):
                 if document is None:
                     if data.get("base") is not None:
                         raise services.ConflictError(f"The {kind} changed. Reload the text.")
-                    document = services.create_document(post.pk, request.user, kind=kind, markdown="")
-                    base = services.latest_version(document.pk, request.user)
+                    services.create_document(post.pk, request.user, kind=kind, markdown="", initial_draft=True)
                 else:
                     if data.get("base") is None:
-                        raise services.ConflictError(f"The {kind} changed. Reload the text.")
-                    base = get_object_or_404(document.versions.filter(state="final"), pk=_uuid(data.get("base")))
-                services.edit(base.pk, request.user)
+                        services.start_draft(document.pk, request.user)
+                    else:
+                        base = get_object_or_404(document.versions.filter(state="final"), pk=_uuid(data.get("base")))
+                        services.edit(base.pk, request.user)
                 return JsonResponse(_snapshot(post, request.user, membership, kind=kind))
         if action not in {"autosave", "save", "discard"}:
             raise ValidationError(f"Choose a valid {kind} action.")

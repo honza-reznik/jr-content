@@ -9,6 +9,12 @@ document.querySelectorAll("[data-thumbnail-form]").forEach((form) => {
     const maxBytes = Number(form.dataset.maxBytes || 0);
     if (!input || !status) return;
     if (submit) submit.hidden = true;
+    const reject = (message) => {
+        status.textContent = `${message} JPG, PNG or WebP, up to 20 MB.`;
+        status.classList.add("text-red-700");
+        input.setAttribute("aria-invalid", "true");
+        input.value = "";
+    };
 
     input.addEventListener("change", () => {
         const file = input.files && input.files[0];
@@ -18,24 +24,20 @@ document.querySelectorAll("[data-thumbnail-form]").forEach((form) => {
         const unsavedCaption = Array.from(document.querySelectorAll("[data-caption-counter]"))
             .some((field) => field.value !== field.defaultValue);
         if (unsavedCaption) {
-            status.textContent = "Save caption changes before uploading a thumbnail.";
-            status.classList.add("text-red-700");
-            input.value = "";
+            reject("Save caption changes before uploading a thumbnail.");
             return;
         }
         if (maxBytes && file.size > maxBytes) {
-            status.textContent = "The image is larger than 20 MB.";
-            status.classList.add("text-red-700");
-            input.value = "";
+            reject("The file is larger than 20 MB.");
             return;
         }
-        if (file.type && !file.type.startsWith("image/")) {
-            status.textContent = "Upload a JPG, PNG or WebP image.";
-            status.classList.add("text-red-700");
-            input.value = "";
+        if (!/\.(jpe?g|png|webp)$/i.test(file.name)
+            || (file.type && !["image/jpeg", "image/png", "image/webp"].includes(file.type))) {
+            reject("This file type is not supported.");
             return;
         }
         status.classList.remove("text-red-700");
+        input.removeAttribute("aria-invalid");
         status.textContent = "Uploading…";
         form.classList.add("is-uploading");
         form.submit();

@@ -121,6 +121,21 @@ def test_script_versions_and_conflicts(key, content):
     assert other.status_code == 404
 
 
+@pytest.mark.parametrize("kind", ["concept", "script"])
+def test_first_save_after_discarded_editor_draft(key, content, user, kind):
+    document = texts.create_document(content.pk, user, kind=kind, markdown="", initial_draft=True)
+    draft = document.versions.get(state="draft")
+    path = f"{content.pk}/{kind}"
+    assert api(key, "post", path, {"markdown": "Blocked"}).status_code == 409
+    texts.discard(draft.pk, user, expected_revision=0)
+    assert api(key, "post", path, {"markdown": "Stale", "base_version": str(draft.pk)}).status_code == 409
+    saved = api(key, "post", path, {"markdown": "First saved text"})
+    assert saved.status_code == 201
+    assert saved.json()["version"]["number"] == 1
+    assert saved.json()["version"]["source"] == "api"
+    assert api(key, "post", path, {"markdown": "Missing base"}).status_code == 409
+
+
 def test_script_first_version_with_base_and_unknown_base_conflict(key, content):
     fake = "00000000-0000-0000-0000-000000000001"
     assert api(key, "post", f"{content.pk}/script", {"markdown": "x", "base_version": fake}).status_code == 409
@@ -202,22 +217,22 @@ def test_caption_versions_copy_and_limit(key, content):
     assert created.status_code == 201, created.content
     body = created.json()
     assert body["text"] == "Hello 🌱" and body["char_count"] == 7
-    # The history starts from the caption the copy had, then the new text.
-    assert [v["number"] for v in body["versions"]] == [2, 1]
+    # An empty channel starts with its first actual caption, without an empty baseline.
+    assert [v["number"] for v in body["versions"]] == [1]
     variant.refresh_from_db()
     assert variant.platform_specific_caption == "Hello 🌱"
 
     # Stale and missing bases conflict; a patch with the right base is a new version.
     assert api(key, "post", path, {"text": "No base"}).status_code == 409
-    v2 = body["version"]["id"]
-    patched = api(key, "patch", path, {"text": "Second", "base_version": v2})
-    assert patched.status_code == 201 and patched.json()["version"]["number"] == 3
-    assert api(key, "patch", path, {"text": "Stale", "base_version": v2}).status_code == 409
+    v1 = body["version"]["id"]
+    patched = api(key, "patch", path, {"text": "Second", "base_version": v1})
+    assert patched.status_code == 201 and patched.json()["version"]["number"] == 2
+    assert api(key, "patch", path, {"text": "Stale", "base_version": v1}).status_code == 409
     same = api(key, "post", path, {"text": "Second", "base_version": patched.json()["version"]["id"]})
     assert same.status_code == 200
     variant.refresh_from_db()
     assert variant.platform_specific_caption == "Second"
-    assert TextVersion.objects.filter(document__platform_post=variant, state="final").count() == 3
+    assert TextVersion.objects.filter(document__platform_post=variant, state="final").count() == 2
 
     # Over the Instagram limit: nothing changes.
     long_text = "x" * 2201

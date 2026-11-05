@@ -60,32 +60,26 @@ def test_read_never_creates_document_and_detail_loads_local_bundle(http, post):
 
 def test_edit_autosave_resume_save_history_and_discard(http, post):
     state = send(http, post, "edit", base=None).json()
-    assert state["draft"]["own"]
-    assert len(state["versions"]) == 1
-    base = state["shown"]
-    first = draft_request(state)
-    response = send(http, post, "autosave", **first)
-    assert response.status_code == 200
-    state = response.json()
-    assert state["draft"]["revision"] == 1
-    assert state["shown"]["content"] == base["content"]
-    assert len(state["versions"]) == 1
-    # A page refresh offers an explicit resume, retaining only the owner's draft content.
+    assert state["draft"]["own"] and state["draft"]["number"] == 1
+    assert state["versions"] == [] and state["shown"] is None
+    state = send(http, post, "autosave", **draft_request(state)).json()
+    assert state["draft"]["revision"] == 1 and state["versions"] == []
     assert http.get(url(post)).json()["draft"]["content"] == content("Updated outline")
     saved = send(http, post, "save", **draft_request(state)).json()
-    assert saved["draft"] is None
-    assert len(saved["versions"]) == 2
-    assert saved["shown"]["number"] == 2
-    old = http.get(url(post), {"version": base["id"]}).json()
-    assert old["shown"]["content"] == base["content"]
-    assert old["latest"] == saved["latest"]
-    assert send(http, post, "edit", base=base["id"]).status_code == 409
+    assert saved["draft"] is None and len(saved["versions"]) == 1
+    assert saved["shown"]["number"] == 1
     state = send(http, post, "edit", base=saved["latest"]).json()
+    second = send(http, post, "save", **draft_request(state, "Second version")).json()
+    assert second["shown"]["number"] == 2
+    old = http.get(url(post), {"version": saved["latest"]}).json()
+    assert old["shown"]["content"] == saved["shown"]["content"]
+    assert old["latest"] == second["latest"]
+    assert send(http, post, "edit", base=saved["latest"]).status_code == 409
+    state = send(http, post, "edit", base=second["latest"]).json()
     state = send(http, post, "autosave", **draft_request(state, "Discard this")).json()
     discarded = send(http, post, "discard", **draft_request(state)).json()
-    assert discarded["shown"]["content"] == saved["shown"]["content"]
-    assert len(discarded["versions"]) == 2
-    assert discarded["draft"] is None
+    assert discarded["shown"]["content"] == second["shown"]["content"]
+    assert len(discarded["versions"]) == 2 and discarded["draft"] is None
 
 
 def test_compare_defaults_to_last_two_versions_and_accepts_two_selected_versions(http, post):
@@ -123,7 +117,9 @@ def test_noop_save_does_not_add_version(http, post):
 
 def test_comparison_is_read_only_and_rejects_drafts_and_other_posts(http, post, workspace):
     state = send(http, post, "edit", base=None).json()
-    first_id = state["latest"]
+    first = send(http, post, "save", **draft_request(state, "First version")).json()
+    first_id = first["latest"]
+    state = send(http, post, "edit", base=first_id).json()
     saved = send(http, post, "save", **draft_request(state)).json()
     draft = send(http, post, "edit", base=saved["latest"]).json()
     draft = send(http, post, "autosave", **draft_request(draft, "PRIVATE DRAFT")).json()
@@ -149,7 +145,9 @@ def test_comparison_is_read_only_and_rejects_drafts_and_other_posts(http, post, 
 
 def test_comparison_size_limit_keeps_version_metadata_and_saved_text_readable(http, post):
     state = send(http, post, "edit", base=None).json()
-    first_id = state["latest"]
+    first = send(http, post, "save", **draft_request(state, "First version")).json()
+    first_id = first["latest"]
+    state = send(http, post, "edit", base=first_id).json()
     saved = send(http, post, "save", **draft_request(state, "x" * 260_000)).json()
     response = http.get(url(post), {"compare_old": first_id, "compare_new": saved["latest"]})
     assert response.status_code == 200
@@ -206,7 +204,7 @@ def test_nonmember_archived_workspace_anonymous_and_cross_post(http, post, works
     state = send(http, post, "edit", base=None).json()
     other = Post.objects.create(workspace=workspace, author=user, title="Another post")
     assert send(http, other, "save", **draft_request(state)).status_code == 409
-    assert http.get(url(other), {"version": state["latest"]}).status_code == 404
+    assert http.get(url(other), {"version": state["draft"]["id"]}).status_code == 404
     other_workspace = Workspace.objects.create(organization=organization, name="Other client")
     assert http.get(url(post).replace(str(workspace.pk), str(other_workspace.pk))).status_code == 404
     WorkspaceMembership.objects.create(workspace=other_workspace, user=user, workspace_role="owner")
@@ -310,3 +308,12 @@ def test_simultaneous_first_edit_creates_one_document_and_one_draft(post, user):
     assert sorted(results) == [200, 409]
     assert TextDocument.objects.filter(post=post).count() == 1
     assert TextVersion.objects.filter(document__post=post, state="draft").count() == 1
+
+
+def test_discard_first_draft_can_start_again_at_one(http, post):
+    state = send(http, post, "edit", base=None).json()
+    result = send(http, post, "discard", **draft_request(state)).json()
+    assert result["versions"] == [] and result["draft"] is None
+    state = send(http, post, "edit", base=None).json()
+    assert state["draft"]["number"] == 1
+    assert send(http, post, "save", **draft_request(state)).json()["shown"]["number"] == 1

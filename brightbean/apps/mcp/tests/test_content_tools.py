@@ -202,6 +202,27 @@ def test_script_read_write_uses_versions_and_rejects_stale_base(owner_client, ow
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("kind", ["concept", "script"])
+def test_first_save_after_discarded_editor_draft(owner_client, owner, kind):
+    from apps.jrc_texts import services as texts
+
+    user, _, _, _, post, _ = owner
+    document = texts.create_document(post.pk, user, kind=kind, markdown="", initial_draft=True)
+    draft = document.versions.get(state="draft")
+    tool = f"jrc_save_{kind}"
+    args = {"post_id": str(post.pk), "markdown": "First saved text"}
+    blocked = _call(owner_client, tool, args)
+    assert blocked["error"]["data"]["status"] == 409
+    texts.discard(draft.pk, user, expected_revision=0)
+    stale = _call(owner_client, tool, {**args, "base_version": str(draft.pk)})
+    assert stale["error"]["data"]["status"] == 409
+    saved = _result(_call(owner_client, tool, args))
+    assert saved["status"] == 201 and saved["version"]["number"] == 1
+    assert saved["version"]["source"] == "mcp"
+    assert _call(owner_client, tool, args)["error"]["data"]["status"] == 409
+
+
+@pytest.mark.django_db
 def test_caption_tools_use_version_service_and_preserve_history(owner_client, owner):
     _, _, _, _, post, variant = owner
     before = _result(

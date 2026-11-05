@@ -29,10 +29,10 @@
                     <input type="hidden" name="tab" value="{{ mode }}">
                     <label class="cursor-pointer rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50" data-thumbnail-pick>
                         <span>{% if current %}Replace thumbnail{% else %}Upload thumbnail{% endif %}</span>
-                        <input type="file" name="image" accept="image/*" required class="sr-only" data-thumbnail-input>
+                        <input type="file" name="image" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" required class="sr-only" data-thumbnail-input aria-describedby="thumbnail-status-{{ variant.id }}" {% if upload_error %}aria-invalid="true"{% endif %}>
                     </label>
                     <button type="submit" class="rounded-lg bg-orange-600 px-3 py-2 text-sm font-semibold text-white hover:bg-orange-700" data-thumbnail-submit>Upload</button>
-                    <span class="text-xs text-stone-500" aria-live="polite" data-thumbnail-status>JPG, PNG or WebP, up to 20 MB</span>
+                    <span id="thumbnail-status-{{ variant.id }}" class="text-xs {% if upload_error %}text-red-700{% else %}text-stone-500{% endif %}" role="status" aria-live="polite" data-thumbnail-status>{% if upload_error %}{{ upload_error }} {% endif %}JPG, PNG or WebP, up to 20 MB</span>
                 </form>
                 {% endif %}
             </div>

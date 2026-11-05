@@ -164,7 +164,7 @@ def test_upload_permissions_and_controls(client, post, variant, workspace, user,
         assert response.status_code == 200
         assert (b"data-thumbnail-form" in response.content) == allowed
         if allowed:
-            assert b'accept="image/*"' in response.content
+            assert b'accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"' in response.content
 
 
 @pytest.mark.parametrize(
@@ -488,3 +488,37 @@ def test_concurrent_uploads_keep_distinct_sequential_versions(post, variant, use
         numbers = list(pool.map(lambda _: save_one(), range(2)))
     assert sorted(numbers) == [1, 2]
     assert list(variant.jrc_thumbnails.values_list("number", flat=True)) == [2, 1]
+
+
+@pytest.mark.parametrize("role", ["owner", "client"])
+def test_published_thumbnail_download_remains_available(
+    client, post, variant, user, workspace, downloadable, gateway, role
+):
+    from apps.jrc_production.services import mark_published_manually
+
+    thumbnail = upload(post, variant, user)
+    WorkspaceMembership.objects.filter(workspace=workspace, user=user).update(workspace_role=role)
+    mark_published_manually(post, variant.pk, user)
+    client.force_login(user)
+    page = client.get(detail(post), {"tab": "publish"})
+    assert b"Published manually" in page.content
+    assert b"Copy caption" in page.content and b"Download final video" in page.content
+    assert b"Download thumbnail" in page.content
+    assert client.get(url("download", post, variant, thumbnail)).status_code == 200
+
+
+def test_invalid_image_error_is_by_the_field_and_keeps_previous_version(client, post, variant, user):
+    first = upload(post, variant, user)
+    client.force_login(user)
+    response = client.post(
+        url("upload", post, variant),
+        {
+            "image": SimpleUploadedFile("video.mov", b"not an image", content_type="video/quicktime"),
+        },
+        follow=True,
+    )
+    page = response.content.decode()
+    assert 'aria-invalid="true"' in page
+    assert "data-thumbnail-status>Upload a JPG, PNG or WebP image." in page
+    assert "up to 20 MB" in page
+    assert list(ChannelThumbnail.objects.values_list("pk", flat=True)) == [first.pk]

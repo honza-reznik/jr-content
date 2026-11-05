@@ -244,10 +244,13 @@ def _save_rich_text(request, post_id: uuid.UUID, payload: ScriptWrite, kind: str
                 else None
             )
             if base is None:
-                raise text_services.ConflictError(f"The {kind} changed. Reload the text and send base_version.")
-            draft = text_services.edit(base.pk, request.user, source="api")
+                if payload.base_version is not None:
+                    raise text_services.ConflictError(f"The {kind} changed. Reload the text and send base_version.")
+                draft = text_services.start_draft(document.pk, request.user, source="api")
+            else:
+                draft = text_services.edit(base.pk, request.user, source="api")
             saved = text_services.save(draft.pk, request.user, expected_revision=0, markdown=payload.markdown)
-            if saved.pk == base.pk:
+            if base is not None and saved.pk == base.pk:
                 status = 200
     result = _script_response(post, membership, kind=kind)
     log_audit_entry(request, action=f"{kind}.write", target_id=post.id, status_code=status)

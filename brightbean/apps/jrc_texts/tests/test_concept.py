@@ -82,13 +82,13 @@ def save_concept(http, post, text):
 def test_concept_versions_are_separate_from_the_script(http, post):
     assert http.get(url(post)).json()["versions"] == []
     state = send(http, post, "edit", base=None).json()
-    assert state["draft"]["own"] and len(state["versions"]) == 1
+    assert state["draft"]["own"] and len(state["versions"]) == 0
     state = send(http, post, "autosave", **draft_request(state, "Hook: three plants")).json()
     assert state["draft"]["revision"] == 1
     # The draft is the author's only; the saved version list does not change on autosave.
-    assert len(state["versions"]) == 1
+    assert len(state["versions"]) == 0
     saved = send(http, post, "save", **draft_request(state, "Hook: three plants")).json()
-    assert saved["draft"] is None and saved["shown"]["number"] == 2
+    assert saved["draft"] is None and saved["shown"]["number"] == 1
     assert saved["shown"]["content"] == content("Hook: three plants")
     # The script stays untouched and empty.
     assert http.get(url(post, "script")).json()["versions"] == []
@@ -97,14 +97,14 @@ def test_concept_versions_are_separate_from_the_script(http, post):
 
     # Compare and older versions work as for the script.
     second = save_concept(http, post, "Hook: four plants")
-    assert second["comparison"]["old"]["number"] == 2 and second["comparison"]["new"]["number"] == 3
+    assert second["comparison"]["old"]["number"] == 1 and second["comparison"]["new"]["number"] == 2
     old = http.get(url(post), {"version": saved["latest"]}).json()
     assert old["shown"]["content"] == content("Hook: three plants")
 
     # Discard keeps the saved versions.
     state = send(http, post, "edit", base=second["latest"]).json()
     discarded = send(http, post, "discard", **draft_request(state, "")).json()
-    assert discarded["draft"] is None and len(discarded["versions"]) == 3
+    assert discarded["draft"] is None and len(discarded["versions"]) == 2
 
 
 def test_saved_concept_versions_are_immutable(http, post):
@@ -210,6 +210,17 @@ def test_use_as_script_draft_copies_the_latest_concept(http, post):
     assert http.get(url(post), {}).json()["shown"]["content"] == content("Idea three")
 
 
+def test_use_as_script_after_discarding_the_first_script_draft(http, post):
+    save_concept(http, post, "Saved idea")
+    state = send(http, post, "edit", kind="script", base=None).json()
+    send(http, post, "discard", kind="script", **draft_request(state, ""))
+    response = http.post(to_script_url(post))
+    assert response.status_code == 302
+    script = http.get(url(post, "script")).json()
+    assert script["shown"]["number"] == 1
+    assert script["shown"]["content"] == content("Saved idea")
+
+
 def test_use_as_script_draft_never_overwrites_an_open_script_draft(http, post, workspace):
     save_concept(http, post, "Concept text")
     editor = member(workspace, "editor", "eddie")
@@ -218,7 +229,7 @@ def test_use_as_script_draft_never_overwrites_an_open_script_draft(http, post, w
     assert state["draft"]["own"]
     response = http.post(to_script_url(post), follow=True)
     assert b"Someone is editing the script" in response.content
-    assert TextVersion.objects.filter(document__post=post, document__kind="script", state="final").count() == 1
+    assert TextVersion.objects.filter(document__post=post, document__kind="script", state="final").count() == 0
     assert TextVersion.objects.filter(document__post=post, document__kind="script", state="draft").count() == 1
 
 
