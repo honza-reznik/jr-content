@@ -381,6 +381,12 @@ Provozní postup je v `docs-arch/F2-B02/freeframe-provoz.md` (doplněk pro PM do
   záznamu uvicorn obdobně maskuje tokeny, tikety a podpisy bez odstranění ostatních údajů URL.
 - Přidány testy platnosti, účelového omezení, odmítnutí přihlašovacího JWT v SSE URL a maskování
   API záznamů. Celoaplikační ověření poběží po dokončení implementace.
+## 2026-11-05 — P1-B18
+
+- Převodník doplní prázdný hlavní HLS seznam, který FFmpeg může vytvořit při převodu videa bez zvukové stopy. Použije skutečný datový tok hotových segmentů; kvalitu videa ani zvukové stopy nemění. Platný hlavní seznam zachovává.
+- Regresní testy používají skutečný FFmpeg pro video se zvukem i bez něj, s překódováním i kopírováním původní obrazové stopy. `scripts/P1-B18/` ověřuje ve vlastním Docker projektu i vložený přehrávač a časové komentáře ownera a klienta.
+- Nasazení po začlenění potřebuje přestavbu obrazu `jrc-ff-api` a restart převodového workeru. Zde bylo ověření provedeno jen přeznačením místních obrazů a připojením zdrojových souborů, bez sestavování nebo stahování.
+
 ## 2026-10-25 — F7-B02
 
 - Viditelnost komentářů sladěná s Brightbeanem: pro řízené účty JR Content (`jrc_managed`) s rolí v projektu `reviewer`

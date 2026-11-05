@@ -1252,6 +1252,44 @@ class TranscodeTruncated(RuntimeError):
 # the largest drift measured.
 _TRUNCATION_SLACK_SECONDS = 3.0
 
+def complete_hls_master(hls_dir: Path) -> None:
+    """Fill a master FFmpeg left empty when CRF video has no audio bitrate.
+
+    FFmpeg can exit successfully with playable variants but no STREAM-INF:
+    a quality-based encoder does not advertise a bitrate, and without audio
+    the HLS muxer has no bitrate to put in the master. Measure the completed
+    segments instead of changing encoding quality or adding synthetic audio.
+    CODECS and RESOLUTION are optional; players discover them from the media.
+    """
+    master = hls_dir / "master.m3u8"
+    if not master.is_file() or "#EXT-X-STREAM-INF:" in master.read_text():
+        return
+    entries = ["#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-INDEPENDENT-SEGMENTS"]
+    for playlist in sorted(hls_dir.glob("*/playlist.m3u8")):
+        rates = []
+        duration = None
+        for line in playlist.read_text().splitlines():
+            if line.startswith("#EXTINF:"):
+                duration = float(line.split(":", 1)[1].split(",", 1)[0])
+            elif line and not line.startswith("#"):
+                if duration is None or not math.isfinite(duration) or duration <= 0:
+                    raise RuntimeError("Invalid HLS segment duration")
+                size = (playlist.parent / line).stat().st_size
+                if size <= 0:
+                    raise RuntimeError("Empty HLS segment")
+                rates.append(size * 8 / duration)
+                duration = None
+        if not rates:
+            raise RuntimeError("HLS variant has no media segments")
+        entries += [
+            f"#EXT-X-STREAM-INF:BANDWIDTH={math.ceil(max(rates))}",
+            playlist.relative_to(hls_dir).as_posix(),
+        ]
+    if len(entries) == 3:
+        raise RuntimeError("HLS master has no variants")
+    master.write_text("\n".join(entries) + "\n")
+
+
 def hls_output_seconds(hls_dir: Path) -> Optional[float]:
     """How long the longest variant in a finished HLS directory actually is.
 
@@ -2470,6 +2508,8 @@ class FFmpegTranscoder(BaseTranscoder):
                     # Discard any partial HLS output before retrying.
                     shutil.rmtree(hls_dir, ignore_errors=True)
                     hls_dir.mkdir(exist_ok=True)
+
+            complete_hls_master(hls_dir)
 
             # 4. One downloadable file, remuxed from the rendition just encoded.
             #    A copied source needs none: its rendition carries the uploaded
