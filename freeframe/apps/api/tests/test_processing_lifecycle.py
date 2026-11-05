@@ -145,12 +145,15 @@ def test_the_sweep_re_dispatches_rather_than_condemning():
     with patch.object(cleanup_tasks.settings, "stuck_processing_timeout_hours", 6), \
          patch.object(transcode_tasks, "finish_failed_transcodes"), \
          patch.object(cleanup_tasks, "SessionLocal", return_value=db), \
-         patch("apps.api.tasks.celery_app.send_task_safe",
-               side_effect=lambda task, *a, **k: sent.append(a)):
+         patch("apps.api.tasks.transcode_dispatch.dispatch_pending",
+               side_effect=lambda: sent.append("dispatch")):
         requeued = cleanup_tasks.requeue_stuck_processing()
 
     assert requeued == 1
-    assert sent == [(str(stuck.asset_id), str(stuck.id))]
+    assert sent == ["dispatch"]
+    assert stuck.processing_recovery_attempts == 1
+    assert stuck.last_activity_at is not None
+    db.execute.assert_called_once()
     # never condemned: the raw object must survive for the retry to use
     assert stuck.processing_status == ProcessingStatus.processing
 
@@ -172,8 +175,8 @@ def test_a_version_whose_output_already_exists_is_marked_ready_not_re_transcoded
     with patch.object(cleanup_tasks.settings, "stuck_processing_timeout_hours", 6), \
          patch.object(transcode_tasks, "finish_failed_transcodes"), \
          patch.object(cleanup_tasks, "SessionLocal", return_value=db), \
-         patch("apps.api.tasks.celery_app.send_task_safe",
-               side_effect=lambda task, *a, **k: sent.append(a)):
+         patch("apps.api.tasks.transcode_dispatch.dispatch_pending",
+               side_effect=lambda: sent.append("dispatch")):
         requeued = cleanup_tasks.requeue_stuck_processing()
 
     assert requeued == 0

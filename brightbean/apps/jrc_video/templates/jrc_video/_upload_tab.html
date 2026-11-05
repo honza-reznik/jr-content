@@ -4,7 +4,7 @@
      data-start-url="{% url 'jrc_video:upload_start' workspace_id=workspace.id post_id=post.id %}"
      data-csrf="{{ csrf_token }}" data-max-bytes="{{ video_max_bytes }}"
      data-sso-url="{% url 'video_sso' %}" data-player-ready="{{ video_player_ready|yesno:'1,0' }}">
-    <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">Video</h2><p class="mt-1 text-sm text-stone-500">Each channel has its own video and its own versions. Play a version and comment at the exact time.</p></div>
+    <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">Video</h2><p class="mt-1 text-sm text-stone-500">Each channel has its own video and its own versions. Play a version and comment at the exact time.</p><p class="mt-2 text-sm text-stone-600">To reply to a timecoded comment, open <a href="?tab=comments" class="text-orange-700 underline">Reply in Comments</a>. Choose the comment there; replies keep the thread’s visibility.</p></div>
     <p data-video-notice role="status" aria-live="polite" class="mb-4 hidden rounded-lg px-3 py-2 text-sm"></p>
     {% if video_cards|length > 1 %}
     <div role="tablist" aria-label="Channels" class="mb-4 flex flex-wrap gap-2" data-video-tabs>

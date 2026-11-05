@@ -488,8 +488,7 @@ def requeue_stuck_processing():
     # The cutoff must clear the transcoder's own 4-hour ceiling, or a legitimately
     # slow encode gets a second worker started on top of the one still running.
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-    from .celery_app import send_task_safe
-    from .transcode_tasks import process_asset, finish_failed_transcodes
+    from .transcode_tasks import finish_failed_transcodes
 
     # Exhausted conversions awaiting a terminal status must be settled before
     # this sweep considers dispatching any old processing version again.
@@ -517,11 +516,24 @@ def requeue_stuck_processing():
                 log.info("requeue: version %s already had output; marking ready", v.id)
                 continue
 
-            send_task_safe(process_asset, str(v.asset_id), str(v.id))
+            attempts = getattr(v, "processing_recovery_attempts", 0)
+            if attempts >= 3:
+                v.processing_status = ProcessingStatus.failed
+                log.warning("requeue: recovery exhausted for version %s", v.id)
+                continue
+            v.processing_recovery_attempts = attempts + 1
+            v.last_activity_at = datetime.now(timezone.utc)
+            # Commit the retry request together with the new recovery budget.
+            from ..models.pending_transcode import PendingTranscode
+            from sqlalchemy.dialects.postgresql import insert
+            db.execute(insert(PendingTranscode).values(version_id=v.id).on_conflict_do_nothing())
             log.info("requeue: re-dispatched transcode for version %s", v.id)
             requeued += 1
 
         db.commit()
+        if requeued:
+            from .transcode_dispatch import dispatch_pending
+            dispatch_pending()
         if stuck:
             log.info("requeue: %s stuck, %s re-dispatched", len(stuck), requeued)
         return requeued

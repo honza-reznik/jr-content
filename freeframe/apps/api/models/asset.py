@@ -58,6 +58,7 @@ class AssetVersion(Base):
     asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id"), nullable=False, index=True)
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
     processing_status: Mapped[ProcessingStatus] = mapped_column(Enum(ProcessingStatus), default=ProcessingStatus.uploading)
+    processing_recovery_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     # The S3 multipart upload backing this version while it is being uploaded.
     # NULL for rows created before this was recorded, and for versions whose
     # upload has been completed or aborted -- treat NULL as "unknown", never as

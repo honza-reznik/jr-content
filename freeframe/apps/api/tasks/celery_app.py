@@ -14,6 +14,7 @@ celery_app = Celery(
     backend=settings.redis_url,
     include=[
         "apps.api.tasks.transcode_tasks",
+        "apps.api.tasks.transcode_dispatch",
         "apps.api.tasks.watermark_tasks",
         "apps.api.tasks.reminder_tasks",
         "apps.api.tasks.email_tasks",
@@ -75,6 +76,10 @@ celery_app.conf.update(
 )
 
 celery_app.conf.beat_schedule = {
+    "dispatch-pending-transcodes": {
+        "task": "dispatch_pending_transcodes",
+        "schedule": 60.0,
+    },
     "finish-failed-transcodes": {
         "task": "finish_failed_transcodes",
         "schedule": 60.0,
