@@ -45,7 +45,8 @@ x-bb: &bb
     DB_USER: ${PGUSER:-jrc}
     DB_PASSWORD: ${PGPASSWORD:?Spusťte make env}
     EMAIL_BACKEND_TYPE: console
-    JRC_SMTP_HOST: ${JRC_SMTP_HOST:+jrc-smtp-relay}
+    JRC_SMTP_HOST: ${JRC_SMTP_HOST:-}
+    JRC_SMTP_RELAY_HOST: ${JRC_SMTP_HOST:+jrc-smtp-relay}
     JRC_SMTP_PORT: ${JRC_SMTP_PORT:-}
     JRC_SMTP_USER: ${JRC_SMTP_USER:-}
     JRC_SMTP_PASSWORD: ${JRC_SMTP_PASSWORD:-}

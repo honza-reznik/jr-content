@@ -752,3 +752,12 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
   About & license beze změny.
 - Test: `apps/jrc_ui/tests/test_terms.py` (přihlášení nového uživatele, registrace přes pozvánku, 404 stránky souhlasu,
   vratnost, statická kontrola šablon s brightbean.xyz – zbylé jsou jen za vypnutými funkcemi `terms`, `reviews`, `intelligence`).
+
+## 2026-11-05 · P1-B22 — SMTP přes relay s ověřením TLS
+
+- `apps.common.smtp.RelayEmailBackend`: síťové spojení míří na `JRC_SMTP_RELAY_HOST`, ale TLS SNI a ověření certifikátu
+  používá skutečný `EMAIL_HOST`. Funguje pro implicitní SSL/465 i STARTTLS/587; kontrola certifikátu zůstává zapnutá.
+- Compose předává původní `JRC_SMTP_HOST` a samostatnou adresu relay; provozní nastavení volí nový backend a časový limit 20 s.
+- `BudgetedEmailBackend` hlásí pevně danou kategorii chyby a číselný SMTP/TLS kód. Nepropouští text odpovědi serveru,
+  adresy ani přihlašovací údaje do výjimky či logu.
+- `make test-smtp-tls` ověřuje oba režimy přes skutečný relay s lokálním certifikátem a autentizací; zahrnuto v `make test`.

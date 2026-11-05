@@ -63,6 +63,14 @@ test-smtp-relay:
 	@sh scripts/P1-B02/test-smtp-relay-scope.sh
 	@sh scripts/P1-B02/test-smtp-relay.sh
 
+# Local TLS + AUTH through the real relay, with a locally generated certificate.
+.PHONY: test-smtp-tls
+test-smtp-tls:
+	$(COMPOSE) run --rm --no-deps --pull never -T \
+	  --volume "$(CURDIR)/docker/smtp-relay:/jrc-relay:ro" \
+	  jrc-bb-web timeout 120s pytest -p no:cacheprovider -o addopts="" -q --tb=short \
+	  --ds=config.settings.jrc_test /jrc-scripts/P1-B22/test_smtp_tls.py
+
 test-p1b02-regressions:
 	$(COMPOSE) exec -T jrc-bb-web pytest -p no:cacheprovider -o addopts="" -q --tb=short --ds=config.settings.jrc_test \
 	  apps/jrc_video/tests/test_player.py apps/jrc_video/tests/test_upload.py \
@@ -141,7 +149,7 @@ shell:
 
 test: check-project-ports
 	@failed=0; \
-	for suite in test-smoke test-build-source test-bb test-ff test-backup-guards test-smtp-relay test-offsite; do \
+	for suite in test-smoke test-build-source test-bb test-ff test-backup-guards test-smtp-relay test-smtp-tls test-offsite; do \
 	  printf '\n=== %s ===\n' "$$suite"; \
 	  if $(MAKE) --no-print-directory "$$suite"; then \
 	    printf 'VÝSLEDEK: %s OK\n' "$$suite"; \
