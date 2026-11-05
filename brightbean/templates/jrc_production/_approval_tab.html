@@ -1,4 +1,4 @@
-<div class="mb-5">
+{% load jrc_thumbnails %}<div class="mb-5">
     <h2 class="text-lg font-semibold text-stone-900">Approval</h2>
     <p class="mt-1 text-sm text-stone-500">What is being approved, and who decides.</p>
 </div>
@@ -26,6 +26,7 @@
             <li class="rounded-lg bg-stone-50 p-3" data-approval-caption>
                 <p class="text-xs font-semibold text-stone-500">{{ item.label }}{% if item.number %} · version {{ item.number }}{% endif %}</p>
                 <p class="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-stone-700">{% if item.text %}{{ item.text }}{% else %}<span class="text-stone-500">No caption yet.</span>{% endif %}</p>
+                {% channel_thumbnail item.variant "approval" item.label %}
             </li>
             {% empty %}
             <li class="text-sm text-stone-500">No channels yet.</li>

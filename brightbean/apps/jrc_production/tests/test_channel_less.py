@@ -125,7 +125,7 @@ def test_cannot_remove_channel_with_saved_work(workspace, user, history):
         texts.save_caption(post.pk, variant.pk, user, "Saved caption")
     else:
         VideoAsset.objects.create(platform_post=variant, ff_asset_id=uuid.uuid4())
-    with pytest.raises(ValidationError, match="caption history or video"):
+    with pytest.raises(ValidationError, match="caption history, video or thumbnails"):
         remove_content_channel(post, variant.pk, user)
     assert PlatformPost.objects.filter(pk=variant.pk).exists()
 

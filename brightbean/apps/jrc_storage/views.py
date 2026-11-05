@@ -42,6 +42,15 @@ def _authorized(user, key, workspace=None):
         if not comment or comment.post.workspace.organization.deleted_at or not can_view_comment(comment, user):
             raise Http404
         return
+    if key.startswith("jrc_thumbnails/"):
+        # P1-B10: a channel thumbnail is visible to every member of its workspace (viewer included).
+        from apps.jrc_thumbnails.models import ChannelThumbnail
+
+        if ChannelThumbnail.objects.filter(
+            image=key, post__workspace_id__in=workspaces.values("workspace_id")
+        ).exists():
+            return
+        raise Http404
     access = Q(workspace_id__in=workspaces.values("workspace_id")) | Q(
         workspace__isnull=True, organization_id__in=organizations.values("organization_id")
     )

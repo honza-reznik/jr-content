@@ -28,7 +28,7 @@ class ChannelRemovalError(ValidationError):
 
     def __init__(self, variants):
         self.variants = variants
-        super().__init__("A channel with caption history or video cannot be removed.")
+        super().__init__("A channel with caption history, video or thumbnails cannot be removed.")
 
 
 def channel_removal_blocker(variant):
@@ -40,6 +40,9 @@ def channel_removal_blocker(variant):
 
         if VideoAsset.objects.filter(platform_post=variant).exists():
             return "video"
+    # JR Content: upraveno 2026-11-04 (blok P1-B10), AGPL-3.0: nahrané náhledy kanálu se nemažou.
+    if apps.is_installed("apps.jrc_thumbnails") and variant.jrc_thumbnails.exists():
+        return "thumbnail"
     return None
 
 

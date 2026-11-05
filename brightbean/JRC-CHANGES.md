@@ -725,6 +725,23 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
 - REST `GET/POST /api/v1/posts/{id}/concept` (stejné schéma jako `/script`, audit `concept.write`), MCP `jrc_get_concept`,
   `jrc_save_concept`. Upozornění: typ `content_script_version`, nadpis „New concept version“, odkaz `?tab=concept`.
 
+## 2026-11-04 · P1-B10 — náhledový obrázek každého kanálu
+
+- Nová aplikace `jrc_thumbnails` a migrace `0001_initial`: `ChannelThumbnail` uchovává obrázky jednotlivých
+  kanálových kopií jako číslované verze, aktuální je poslední; historie zůstává celá dostupná.
+- Nahrání v Caption a Publish (na telefonu `accept="image/*"`); neuložené popisky při nahrání chrání kontrola před obnovením stránky.
+  Tým owner/manager/editor a contributor
+  u vlastního obsahu, s kontrolou oprávnění k úpravě textů. Klient a viewer nenahrávají ani přes vlastní roli.
+- Server ověřuje JPG/PNG/WebP pomocí Pillow včetně načtení obrazových dat, velikost do 20 MiB a počet pixelů.
+  Soukromé soubory v `jrc-app` čte brána P1-B03 pouze s platným členstvím ve workspace; cizí workspace vrací 404.
+- „Download thumbnail“ i stažení finálního videa používají společnou kontrolu `jrc_video.downloads`:
+  publikační oprávnění (včetně klienta), nearchivovaný workspace, schválený, naplánovaný či publikovaný kanál,
+  neprázdný uložený popisek a připravený finál. Stejné podmínky platí pro endpointy a odkazy
+  v Caption i Publish, včetně historie náhledů. Approval zobrazuje aktuální náhled kanálu.
+  Kanál s historií náhledů nelze odebrat; smazání celého obsahu zůstává možné.
+- Regresní testy `apps/jrc_thumbnails/tests/` a lokální průchod Chromium `scripts/P1-B10/run.sh`
+  (owner/klient, 1440/390 px, skutečné soubory přes S3, historie a porovnání stažených dat).
+
 ## 2026-11-04 · P1-B11 — bez obrazovky souhlasu Brightbean („Almost there“)
 
 - `jrc_ui`: nový vypínač funkce `terms` (cesta `/accounts/accept-terms/`), v `MVP_FEATURES` vypnutý → stránka souhlasu vrací 404.

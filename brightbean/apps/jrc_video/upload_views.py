@@ -14,12 +14,12 @@ from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.composer.models import Post
-from apps.jrc_texts.models import TextDocument
 from apps.members.models import WorkspaceMembership
 from apps.members.permissions import can_publish_directly
 from apps.workspaces.models import Workspace
 
 from . import player, uploads
+from .downloads import downloadable_final
 from .uploads import UploadError
 
 MAX_BODY_BYTES = 8192
@@ -153,27 +153,12 @@ def final_download(request, workspace_id, post_id, platform_post_id):
     """Download this channel's final through the session-authorized file gateway."""
     from apps.composer.models import PlatformPost
 
-    from .models import VideoAsset, VideoVersion
-
     _workspace, membership, post = _context(request, workspace_id, post_id)
     if not can_publish_directly(membership):
         raise PermissionDenied("You cannot download the final video.")
-    if post.workspace.is_archived:
-        raise Http404
     variant = get_object_or_404(PlatformPost.objects.select_related("social_account"), pk=platform_post_id, post=post)
-    if variant.status not in {
-        PlatformPost.Status.APPROVED,
-        PlatformPost.Status.SCHEDULED,
-        PlatformPost.Status.PUBLISHED,
-    }:
-        raise Http404
-    document = TextDocument.objects.filter(platform_post=variant, kind=TextDocument.Kind.CAPTION).first()
-    latest_caption = document.versions.filter(state="final").order_by("-number").first() if document else None
-    caption = latest_caption.text if latest_caption else (variant.effective_caption or "")
-    if not caption.strip():
-        raise Http404
-    video = VideoAsset.objects.filter(platform_post=variant).select_related("final_version").first()
-    if video is None or video.final_version_id is None or video.final_version.status != VideoVersion.Status.READY:
+    video = downloadable_final(membership, variant)
+    if video is None:
         raise Http404
     account = variant.social_account
     filename = (

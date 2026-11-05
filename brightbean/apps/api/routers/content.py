@@ -644,7 +644,7 @@ def channel_add(request, post_id: uuid.UUID, payload: ChannelWrite):
 @router.delete(
     "/{post_id}/channels/{platform_post_id}",
     response=PostResponse,
-    summary="Remove a draft channel copy without caption history or video",
+    summary="Remove a draft channel copy without caption history, video or thumbnails",
 )
 def channel_remove(request, post_id: uuid.UUID, platform_post_id: uuid.UUID):
     enforce_http_rate_limits(request, is_write=True)

@@ -1,8 +1,9 @@
 {% extends "base.html" %}
-{% load static %}
+{% load static jrc_thumbnails %}
 {% block title %}{{ post.title|default:"Content" }} · {{ workspace.name }}{% endblock %}
 {% block extra_head %}
 <link rel="stylesheet" href="{% static 'jrc_production/content-tabs.css' %}">
+{% if active_tab == "caption" or active_tab == "publish" or active_tab == "approval" %}<link rel="stylesheet" href="{% static 'jrc_thumbnails/thumbnail.css' %}">{% endif %}
 {% endblock %}
 {% block page_header %}{% endblock %}
 {% block content %}
@@ -36,7 +37,7 @@
                 <p class="mt-3 text-sm text-stone-500">Add channels explicitly. New client channels never attach to existing content automatically. Move content to Editing to change its channels.</p>
                 {% if addable_channels %}<form method="post" class="mt-3 flex flex-wrap gap-2">{% csrf_token %}<input type="hidden" name="action" value="add_channel"><label for="add-channel" class="sr-only">Channel to add</label><select id="add-channel" name="channel" class="rounded-lg border border-stone-300 px-3 py-2">{% for account in addable_channels %}<option value="{{ account.id }}">{{ account.jrc_channel.display_name|default:account.account_name }}</option>{% endfor %}</select><button class="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white">Add channel</button></form>{% else %}<p class="mt-3 text-sm text-stone-500">No more enabled channels. Enable a channel in the client profile first.</p>{% endif %}
                 {% for variant in post.platform_posts.all %}<form method="post" class="mt-3 flex flex-wrap items-center gap-2">{% csrf_token %}<input type="hidden" name="action" value="remove_channel"><input type="hidden" name="platform_post" value="{{ variant.id }}"><span class="text-sm">{{ variant.social_account.account_name }}</span><button class="rounded-lg border border-stone-300 px-3 py-2 text-sm">Remove channel</button></form>{% endfor %}
-                <p class="mt-3 text-xs text-stone-500">Channels with caption history or video cannot be removed.</p>
+                <p class="mt-3 text-xs text-stone-500">Channels with caption history, video or thumbnails cannot be removed.</p>
             {% else %}<p class="mt-3 text-sm text-stone-500">Ask an editor to add a channel to this content.</p>{% endif %}
         </details>
     </header>
@@ -105,7 +106,7 @@
         {% elif active_tab == "video" %}
             {% include "jrc_video/_upload_tab.html" %}
         {% elif active_tab == "publish" %}
-            <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">Publish channels</h2><p class="mt-1 text-sm text-stone-500">Download the final video, copy the saved caption, then record when you publish it manually.</p></div>
+            <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">Publish channels</h2><p class="mt-1 text-sm text-stone-500">Download the final video and the thumbnail, copy the saved caption, then record when you publish it manually.</p></div>
             <div class="space-y-4">
                 {% for item in publish_channels %}
                 <article class="rounded-xl border border-stone-200 p-4 sm:p-5" aria-labelledby="publish-channel-{{ forloop.counter }}">
@@ -138,6 +139,7 @@
                             {% if item.download_url %}<a href="{{ item.download_url }}" class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">Download final video</a>{% elif item.has_video %}<span class="text-sm text-amber-700">No final video selected.</span>{% endif %}
                         </div>
                     </div>
+                    {% channel_thumbnail item.variant "publish" item.label %}
                     {% if item.published %}
                         {% if item.publication_url %}<a href="{{ item.publication_url }}" target="_blank" rel="noopener noreferrer" class="mt-4 inline-block break-all text-sm text-orange-700 underline">View published post</a>{% endif %}
                     {% elif item.can_mark %}
@@ -174,6 +176,7 @@
                             {% if can_edit_captions %}<button type="submit" class="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-300">Save version</button>{% endif %}
                         </div>
                     </form>
+                    {% channel_thumbnail item.variant "caption" %}
                     {% if item.previews %}
                     <section class="mt-4 border-t border-stone-100 pt-3" aria-label="Instagram preview of the saved caption" data-caption-preview>
                         <h4 class="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">Instagram preview of the saved caption</h4>
@@ -211,4 +214,5 @@ document.querySelectorAll('[data-open-channels]').forEach(button => button.addEv
 {% if active_tab == "video" %}<script src="{% static 'jrc_video/upload.js' %}" nonce="{{ request.csp_nonce }}"></script><script src="{% static 'jrc_video/video-tab.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
 {% if active_tab == "shotlist" %}<script src="{% static 'jrc_production/shotlist.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
 {% if active_tab == "publish" %}<script src="{% static 'jrc_production/publish.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
+{% if active_tab == "caption" or active_tab == "publish" %}<script src="{% static 'jrc_thumbnails/thumbnail.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
 {% endblock %}

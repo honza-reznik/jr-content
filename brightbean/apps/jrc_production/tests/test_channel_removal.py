@@ -11,6 +11,7 @@ from apps.jrc_channels.services import create_manual_channel
 from apps.jrc_production.models import StageChange
 from apps.jrc_production.services import add_content_channel, create_content, move_content
 from apps.jrc_texts import services as texts
+from apps.jrc_thumbnails.models import ChannelThumbnail
 from apps.jrc_video.models import VideoAsset, VideoVersion
 
 from .test_composer_captions import _composer_autosave, _composer_save
@@ -41,7 +42,7 @@ def remove_via(client, post, variant, endpoint):
 
 
 @pytest.mark.parametrize("endpoint", ENDPOINTS)
-@pytest.mark.parametrize("history", ["caption", "video"])
+@pytest.mark.parametrize("history", ["caption", "video", "thumbnail"])
 def test_all_channel_removal_paths_protect_saved_work(client, workspace, user, endpoint, history):
     account = create_manual_channel(workspace, "instagram", "IG")
     post = create_content(workspace, "Keep this work", user, social_account_ids=[account.pk])
@@ -51,10 +52,23 @@ def test_all_channel_removal_paths_protect_saved_work(client, workspace, user, e
     if history == "caption":
         texts.save_caption(post.pk, variant.pk, user, "Keep every caption version")
         saved = list(variant.jrc_texts.get().versions.values())
-    else:
+    elif history == "video":
         video = VideoAsset.objects.create(platform_post=variant, ff_asset_id=uuid.uuid4())
         VideoVersion.objects.create(video=video, number=1, ff_version_id=uuid.uuid4(), uploaded_by=user)
         saved = list(video.versions.values())
+    else:
+        ChannelThumbnail.objects.create(
+            post=post,
+            platform_post=variant,
+            number=1,
+            image="jrc_thumbnails/keep.png",
+            content_type="image/png",
+            size=10,
+            width=2,
+            height=2,
+            uploaded_by=user,
+        )
+        saved = list(variant.jrc_thumbnails.values())
     client.force_login(user)
 
     response = remove_via(client, post, variant, endpoint)
@@ -64,7 +78,7 @@ def test_all_channel_removal_paths_protect_saved_work(client, workspace, user, e
     else:
         assert response.status_code == 200, response.content
     assert (
-        b"caption history or video" in response.content
+        b"caption history, video or thumbnails" in response.content
         or b"captionSelectionConflict" in response.headers.get("HX-Trigger", "").encode()
     )
     post.refresh_from_db()
@@ -73,9 +87,11 @@ def test_all_channel_removal_paths_protect_saved_work(client, workspace, user, e
     assert PlatformPost.objects.filter(pk=sibling.pk).exists()  # refuse the entire save/batch
     if history == "caption":
         assert list(variant.jrc_texts.get().versions.values()) == saved
-    else:
+    elif history == "video":
         assert VideoAsset.objects.filter(pk=video.pk).exists()
         assert list(video.versions.values()) == saved
+    else:
+        assert list(variant.jrc_thumbnails.values()) == saved
 
 
 @pytest.mark.parametrize("endpoint", ENDPOINTS)

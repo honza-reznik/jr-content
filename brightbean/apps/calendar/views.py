@@ -1604,7 +1604,7 @@ def bulk_platform_action(request, workspace_id):
         items = "; ".join(labels) or "a selected channel"
         return JsonResponse(
             {
-                "error": f"Nothing was deleted. {items} has caption history or video. Review its saved work on the content detail.",
+                "error": f"Nothing was deleted. {items} has caption history, video or thumbnails. Review its saved work on the content detail.",
                 "links": links,
             },
             status=409,

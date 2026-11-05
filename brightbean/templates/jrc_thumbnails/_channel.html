@@ -1,0 +1,53 @@
+{# JR Content: přidáno 2026-11-04 (blok P1-B10), AGPL-3.0. Náhledový obrázek jedné kanálové kopie. #}
+{% if show %}
+{% if mode == "approval" %}
+<div class="mt-3 flex items-start gap-3" data-thumbnail-summary>
+    {% if current %}
+    <a href="{{ current_url }}" target="_blank" rel="noopener" class="shrink-0"><img src="{{ current_url }}" alt="Thumbnail for {{ label }}, version {{ current.number }}" loading="lazy" class="jrc-thumb-small rounded-lg border border-stone-200 bg-white object-contain"></a>
+    <p class="text-xs text-stone-500">Thumbnail · version {{ current.number }}</p>
+    {% else %}
+    <p class="text-xs text-stone-500">No thumbnail yet.</p>
+    {% endif %}
+</div>
+{% else %}
+<section id="thumbnail-{{ variant.id }}" class="mt-4 border-t border-stone-100 pt-3" aria-label="Thumbnail for {{ label }}" data-channel-thumbnail>
+    <h4 class="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">Thumbnail</h4>
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-start">
+        {% if current %}
+        <a href="{{ current_url }}" target="_blank" rel="noopener" class="jrc-thumb-link shrink-0"><img src="{{ current_url }}" alt="Thumbnail for {{ label }}, version {{ current.number }}" loading="lazy" data-thumbnail-image class="jrc-thumb-image rounded-lg border border-stone-200 bg-stone-50 object-contain"></a>
+        {% else %}
+        <div class="jrc-thumb-empty flex shrink-0 items-center justify-center rounded-lg border border-dashed border-stone-300 px-3 text-center text-xs text-stone-500">No thumbnail yet</div>
+        {% endif %}
+        <div class="min-w-0 flex-1">
+            {% if current %}<p class="text-sm text-stone-700" data-thumbnail-current>Version {{ current.number }}{% if current.uploaded_by %} · {{ current.uploaded_by.name|default:current.uploaded_by.email }}{% endif %} · {{ current.created_at|date:"M j, Y · g:i A" }}</p>
+            <p class="text-xs text-stone-500">{{ current.width }} × {{ current.height }} px · {{ current.size|filesizeformat }}</p>{% endif %}
+            <div class="mt-2 flex flex-wrap items-center gap-2">
+                {% if download_url %}<a href="{{ download_url }}" class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50" data-thumbnail-download>Download thumbnail</a>{% endif %}
+                {% if can_upload %}
+                <form method="post" action="{{ upload_url }}" enctype="multipart/form-data" class="flex flex-wrap items-center gap-2" data-thumbnail-form data-max-bytes="{{ max_bytes }}">
+                    <input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">
+                    <input type="hidden" name="tab" value="{{ mode }}">
+                    <label class="cursor-pointer rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50" data-thumbnail-pick>
+                        <span>{% if current %}Replace thumbnail{% else %}Upload thumbnail{% endif %}</span>
+                        <input type="file" name="image" accept="image/*" required class="sr-only" data-thumbnail-input>
+                    </label>
+                    <button type="submit" class="rounded-lg bg-orange-600 px-3 py-2 text-sm font-semibold text-white hover:bg-orange-700" data-thumbnail-submit>Upload</button>
+                    <span class="text-xs text-stone-500" aria-live="polite" data-thumbnail-status>JPG, PNG or WebP, up to 20 MB</span>
+                </form>
+                {% endif %}
+            </div>
+            {% if history %}
+            <details class="mt-3" data-thumbnail-history>
+                <summary class="cursor-pointer text-sm font-medium text-stone-700">Earlier versions ({{ history|length }})</summary>
+                <ul class="mt-2 space-y-1">
+                    {% for item in history %}
+                    <li class="text-sm text-stone-600"><a href="{{ item.url }}" target="_blank" rel="noopener" class="text-orange-700 underline">Version {{ item.thumbnail.number }}</a> · {{ item.thumbnail.created_at|date:"M j, Y · g:i A" }}{% if item.download_url %} · <a href="{{ item.download_url }}" class="text-stone-600 underline">Download</a>{% endif %}</li>
+                    {% endfor %}
+                </ul>
+            </details>
+            {% endif %}
+        </div>
+    </div>
+</section>
+{% endif %}
+{% endif %}
