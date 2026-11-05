@@ -270,7 +270,7 @@ def cross_workspace_calendar(request):
 
     base_pps = (
         PlatformPost.objects.filter(post__workspace__in=filtered_workspaces)
-        .select_related("post__workspace", "post__author", "social_account")
+        .select_related("post__workspace", "post__author", "social_account", "social_account__jrc_channel")
         .prefetch_related("post__media_attachments__media_asset")
         .annotate(effective_at=Coalesce("scheduled_at", "post__scheduled_at"))
     )
@@ -293,7 +293,7 @@ def cross_workspace_calendar(request):
     # Workspace colors for legend
     workspace_colors = {}
     for ws in workspaces:
-        workspace_colors[str(ws.id)] = ws.primary_color or "#F97316"
+        workspace_colors[str(ws.id)] = ws.accent_color
 
     today = date.today()
 

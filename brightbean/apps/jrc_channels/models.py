@@ -1,5 +1,7 @@
 from django.db import models
 
+from .icons import icon_path
+
 
 class ChannelProfile(models.Model):
     class Kind(models.TextChoices):
@@ -16,6 +18,7 @@ class ChannelProfile(models.Model):
     display_name = models.CharField(max_length=100, blank=True, default="")
     is_enabled = models.BooleanField(default=True)
     profile_url = models.URLField(max_length=2000, blank=True, default="")
+    icon = models.ImageField(upload_to=icon_path, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

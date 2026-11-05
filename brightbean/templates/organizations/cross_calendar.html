@@ -229,7 +229,7 @@
                     {% for ws in workspaces %}
                     <a href="?view={{ view_type }}&date={{ target_date|date:'Y-m-d' }}{% if request.GET.status %}&status={{ request.GET.status }}{% endif %}{% if request.GET.channel %}&channel={{ request.GET.channel }}{% endif %}{% if request.GET.tag %}&tag={{ request.GET.tag }}{% endif %}{% if ws.id|stringformat:'s' in selected_workspace_ids %}{% for sid in selected_workspace_ids %}{% if sid != ws.id|stringformat:'s' %}&workspace={{ sid }}{% endif %}{% endfor %}{% else %}{% for sid in selected_workspace_ids %}&workspace={{ sid }}{% endfor %}&workspace={{ ws.id }}{% endif %}"
                        class="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-stone-600 hover:bg-stone-50 transition-colors no-underline">
-                        <span class="w-3 h-3 rounded-full flex-shrink-0" style="background: {{ ws.primary_color|default:'#F97316' }};"></span>
+                        <span class="w-3 h-3 rounded-full flex-shrink-0" style="background: {{ ws.accent_color }};"></span>
                         <span class="flex-1">{{ ws.name }}</span>
                         {% if ws.id|stringformat:'s' in selected_workspace_ids or not selected_workspace_ids %}
                         <svg class="w-3.5 h-3.5 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
@@ -246,7 +246,7 @@
         <span class="text-[10px] font-semibold text-stone-400 uppercase tracking-wide">Workspaces:</span>
         {% for ws in workspaces %}
         <span class="inline-flex items-center gap-1.5 text-[11px] text-stone-600">
-            <span class="w-2.5 h-2.5 rounded-full" style="background: {{ ws.primary_color|default:'#F97316' }};"></span>
+            <span class="w-2.5 h-2.5 rounded-full" style="background: {{ ws.accent_color }};"></span>
             {{ ws.name }}
         </span>
         {% endfor %}
@@ -281,9 +281,9 @@
                     <a href="{% url 'composer:compose_edit' workspace_id=pp.post.workspace_id post_id=pp.post_id %}"
                        class="cross-post-chip status-{{ pp.status }}"
                        title="{{ pp.post.workspace.name }}: {{ pp.post.caption_snippet }}">
-                        <span class="ws-dot" style="background: {{ pp.post.workspace.primary_color|default:'#F97316' }};"></span>
+                        <span class="ws-dot" style="background: {{ pp.post.workspace.accent_color }};"></span>
                         <span class="w-4 h-4 rounded flex items-center justify-center pi-{{ pp.social_account.platform }} flex-shrink-0 text-white">
-                            {% include "social_accounts/partials/_platform_icon.html" with platform=pp.social_account.platform size="3" %}
+                            {% include "jrc_channels/icon.html" with account=pp.social_account calendar_icon=True %}
                         </span>
                         {% with first_media=pp.post.media_attachments.all.0 %}
                         {% if first_media and first_media.media_asset.thumbnail %}

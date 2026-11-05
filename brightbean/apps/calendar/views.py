@@ -288,7 +288,7 @@ def _channel_less_calendar_rows(workspace, request, first_date, last_date):
 def _enabled_platform_posts():
     """Visible variants from explicitly enabled workspace channels."""
     return PlatformPost.objects.filter(social_account__jrc_channel__is_enabled=True).select_related(
-        "post", "post__jrc_production", "social_account"
+        "post", "post__jrc_production", "social_account", "social_account__jrc_channel"
     )
 
 

@@ -44,13 +44,30 @@
 {% block content %}
 <div class="client-profile">
     <header class="profile-heading">
-        <div class="profile-avatar" aria-hidden="true">{{ workspace.name|first|upper }}</div>
+        <div class="profile-avatar" style="background:{{ workspace.accent_color }};color:white" aria-hidden="true">{{ workspace.name|first|upper }}</div>
         <div style="min-width:0">
             <p style="font-size:13px">Client profile</p>
             <h1>{{ workspace.name }}</h1>
         </div>
     </header>
     <p class="profile-note">Plan content here, then publish it yourself. Channels do not sign in to social networks or publish automatically.</p>
+    <section class="channel-card" aria-labelledby="colour-title">
+        <h2 id="colour-title">Workspace colour</h2>
+        <p><span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:{{ workspace.accent_color }}" aria-hidden="true"></span> Current colour: {{ workspace.accent_color }}</p>
+        {% if can_change_color %}
+        <form method="post" action="{% url 'jrc_channels:color' workspace_id=workspace.id %}">
+            {% csrf_token %}
+            <div style="display:flex;flex-wrap:wrap;gap:8px;margin:16px 0" role="group" aria-label="Colour palette">
+            {% for hex,name in color_palette %}<button type="submit" name="color" value="{{ hex }}" aria-label="Use {{ name }}" aria-pressed="{% if hex == workspace.accent_color %}true{% else %}false{% endif %}" style="min-width:44px;min-height:44px;border-radius:8px;background:{{ hex }};color:white;padding:8px;border:2px solid {% if hex == workspace.accent_color %}#1c1917{% else %}transparent{% endif %}">{{ name }}</button>{% endfor %}
+            </div>
+        </form>
+        <form method="post" action="{% url 'jrc_channels:color' workspace_id=workspace.id %}">
+            {% csrf_token %}
+            <div class="profile-fields"><div class="profile-field">{{ color_form.color.label_tag }}{{ color_form.color }}<div role="alert">{{ color_form.color.errors }}</div><p class="profile-help">Use #RRGGBB. Choose a dark colour for readable white labels (contrast at least 4.5:1).</p></div></div>
+            <button class="profile-button primary" type="submit">Save colour</button>
+        </form>
+        {% endif %}
+    </section>
     <section aria-labelledby="channels-title">
         <div class="channels-heading">
             <h2 id="channels-title">Channels</h2>
@@ -62,7 +79,7 @@
             <div class="channel-top">
                 <div style="min-width:0">
                     <div class="channel-type">{% if channel.account.platform == 'custom' %}Custom channel{% else %}{{ channel.account.get_platform_display }}{% endif %}</div>
-                    <h3 class="channel-title" id="title-{{ channel.account.pk }}">{{ channel.profile.display_name|default:channel.account.account_name }}</h3>
+                    <h3 class="channel-title" id="title-{{ channel.account.pk }}">{% include "jrc_channels/icon.html" with account=channel.account %} {{ channel.profile.display_name|default:channel.account.account_name }}</h3>
                 </div>
                 <span class="channel-status {% if channel.profile.is_enabled %}on{% endif %}">{% if channel.profile.is_enabled %}On{% else %}Off{% endif %}</span>
             </div>
@@ -79,6 +96,16 @@
                 </form>
                 {% if channel.profile.is_enabled %}<p class="profile-help">Available when creating posts.</p>{% endif %}
             </div>
+            {% if channel.account.platform == 'custom' %}
+            <form method="post" enctype="multipart/form-data" action="{% url 'jrc_channels:icon' workspace_id=workspace.id account_id=channel.account.pk %}" style="margin-top:16px">
+                {% csrf_token %}
+                <label for="icon-{{ channel.account.pk }}">Channel icon</label>
+                <input id="icon-{{ channel.account.pk }}" type="file" name="icon" accept="image/png,image/jpeg,image/webp" style="display:block;max-width:100%;margin:8px 0" required>
+                <p class="profile-help">PNG, JPG or WebP, up to 1 MB. SVG is not supported.</p>
+                <button class="profile-button" type="submit">Upload icon</button>
+            </form>
+            {% if channel.profile.icon %}<form method="post" action="{% url 'jrc_channels:icon' workspace_id=workspace.id account_id=channel.account.pk %}" style="margin-top:8px">{% csrf_token %}<button class="profile-button" name="remove_icon" value="1">Use default icon</button></form>{% endif %}
+            {% endif %}
             <details class="channel-editor" {% if channel.is_editing %}open{% endif %}>
                 <summary>Edit channel<span class="sr-only"> {{ channel.profile.display_name|default:channel.account.account_name }}</span></summary>
                 <form method="post" action="{% url 'jrc_channels:edit' workspace_id=workspace.id account_id=channel.account.pk %}">

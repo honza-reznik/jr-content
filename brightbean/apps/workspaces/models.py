@@ -48,3 +48,9 @@ class Workspace(models.Model):
     @property
     def effective_timezone(self):
         return self.timezone or self.organization.default_timezone
+
+    @property
+    def accent_color(self):
+        from .colors import workspace_accent
+
+        return workspace_accent(self)

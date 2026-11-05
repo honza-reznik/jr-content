@@ -43,7 +43,7 @@ Context: posts, workspace.
                     <div class="flex gap-1">
                         {% for pp in post.platform_posts.all %}
                         <span class="w-5 h-5 rounded-[5px] flex items-center justify-center">
-                            {% include "partials/_platform_icon.html" with platform=pp.social_account.platform size="sm" %}
+                            {% include "jrc_channels/icon.html" with account=pp.social_account %}
                         </span>
                         {% empty %}<span class="text-xs text-stone-500">No channel</span>{% endfor %}
                     </div>

@@ -11,7 +11,7 @@
     <a href="{% url 'composer:compose_edit' workspace_id=workspace.id post_id=post.id %}" class="inline-flex items-center gap-2 text-sm font-medium text-stone-500 hover:text-stone-800 mb-5" {% if not can_edit_posts %}hidden{% endif %}>
         <span aria-hidden="true">←</span> Back to content
     </a>
-    <header class="rounded-2xl border border-stone-200 bg-white p-4 sm:p-6 shadow-sm">
+    <header class="rounded-2xl border border-stone-200 bg-white p-4 sm:p-6 shadow-sm" style="border-top:5px solid {{ workspace.accent_color }}">
         <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div class="min-w-0">
                 <p class="text-xs font-semibold uppercase tracking-wide text-stone-400">{{ workspace.name }} · Content</p>
@@ -25,7 +25,7 @@
         </div>
         <div class="mt-5 grid grid-cols-1 gap-3 border-t border-stone-100 pt-4 sm:grid-cols-3">
             <div><p class="text-xs text-stone-400">Channels</p><div class="mt-1 flex flex-wrap gap-1.5">
-                {% for platform_post in post.platform_posts.all %}<span class="rounded-md bg-stone-100 px-2 py-1 text-xs text-stone-700">{{ platform_post.social_account.get_platform_display }} · {{ platform_post.get_status_display }}</span>{% empty %}<span class="text-sm text-stone-500">No channels</span>{% endfor %}
+                {% for platform_post in post.platform_posts.all %}<span class="rounded-md bg-stone-100 px-2 py-1 text-xs text-stone-700">{% include "jrc_channels/icon.html" with account=platform_post.social_account %} {{ platform_post.social_account.jrc_channel.display_name|default:platform_post.social_account.account_name }} · {{ platform_post.get_status_display }}</span>{% empty %}<span class="text-sm text-stone-500">No channels</span>{% endfor %}
             </div></div>
             <div><p class="text-xs text-stone-400">Publish date</p><p class="mt-1 text-sm font-medium text-stone-700">{% if post.scheduled_at %}{{ post.scheduled_at|date:"M j, Y · g:i A" }}{% elif post.proposed_publish_at %}Proposed · {{ post.proposed_publish_at|date:"M j, Y · g:i A" }}{% else %}Not set{% endif %}</p></div>
             <div><p class="text-xs text-stone-400">Category</p><p class="mt-1 text-sm font-medium text-stone-700">{{ post.category.name|default:"None" }}</p></div>
@@ -111,7 +111,7 @@
                 {% for item in publish_channels %}
                 <article class="rounded-xl border border-stone-200 p-4 sm:p-5" aria-labelledby="publish-channel-{{ forloop.counter }}">
                     <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                        <h3 id="publish-channel-{{ forloop.counter }}" class="font-semibold text-stone-900">{{ item.label }}</h3>
+                        <h3 id="publish-channel-{{ forloop.counter }}" class="font-semibold text-stone-900">{% include "jrc_channels/icon.html" with account=item.variant.social_account %} {{ item.label }}</h3>
                         {% if item.published %}<span class="w-fit rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800">Published manually</span>{% else %}<span class="w-fit rounded-full bg-stone-100 px-3 py-1 text-xs font-medium text-stone-700">{{ item.variant.get_status_display }}</span>{% endif %}
                     </div>
                     <p class="mt-3 text-xs font-medium uppercase tracking-wide text-stone-500">Scheduled publication</p>
@@ -161,7 +161,7 @@
                 {% for item in caption_channels %}
                 <article class="rounded-xl border border-stone-200 p-4 sm:p-5" aria-labelledby="caption-title-{{ forloop.counter }}">
                     <div class="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
-                        <h3 id="caption-title-{{ forloop.counter }}" class="font-semibold text-stone-900">{{ item.platform_label }} · {{ item.account.account_name }}</h3>
+                        <h3 id="caption-title-{{ forloop.counter }}" class="font-semibold text-stone-900">{% include "jrc_channels/icon.html" with account=item.account %} {{ item.platform_label }} · {{ item.account.account_name }}</h3>
                         {% if item.latest %}<p class="text-xs text-stone-500">Saved version {{ item.latest.number }}</p>{% elif not item.variant %}<p class="text-xs text-stone-500">New channel · saving creates its copy of this content</p>{% endif %}
                     </div>
                     <form method="post" class="mt-4">

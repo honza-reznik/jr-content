@@ -361,6 +361,7 @@
 {% endblock %}
 
 {% block content %}
+<div style="border-top:5px solid {{ workspace.accent_color }};margin-bottom:12px;padding-top:8px"><span aria-hidden="true" style="display:inline-block;width:10px;height:10px;border-radius:50%;background:{{ workspace.accent_color }}"></span> {{ workspace.name }}</div>
 {% if waiting_items %}
 <section class="waiting-panel" aria-labelledby="waiting-heading">
     <h2 id="waiting-heading">Waiting for me <span class="text-stone-400">({{ waiting_items|length }})</span></h2>

@@ -43,6 +43,7 @@ def sidebar_context(request):
         sidebar_channels = list(
             SocialAccount.objects.for_workspace(workspace.id)
             .filter(connection_status=SocialAccount.ConnectionStatus.CONNECTED)
+            .select_related("jrc_channel")
             .annotate(
                 queued_post_count=Count(
                     "platform_posts",

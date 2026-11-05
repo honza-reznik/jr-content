@@ -37,3 +37,12 @@ class AddChannelForm(ChannelDetailsForm):
             ("custom", "Other (e.g. Forendors)"),
         ],
     )
+
+
+class WorkspaceColorForm(forms.Form):
+    color = forms.CharField(label="Workspace colour (HEX)", max_length=7)
+
+    def clean_color(self):
+        from apps.workspaces.colors import validate_accent
+
+        return validate_accent(self.cleaned_data["color"])
