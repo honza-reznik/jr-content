@@ -1,6 +1,7 @@
 """Vymyšlená data pouze pro jrc-p1b17; výstup patří do ignorovaného souboru."""
 import json
 import os
+import uuid
 from io import BytesIO
 
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -24,8 +25,9 @@ assert os.environ.get('JRC_PUBLIC_ORIGIN') == 'http://127.0.0.1:13593'
 organization = Organization.objects.create(name='P1-B17 local studio')
 workspace = Workspace.objects.create(organization=organization, name='P1-B17 Garden')
 sessions, people = {}, {}
+suffix = uuid.uuid4().hex[:8]
 for role in ['owner', 'client']:
-    person = User.objects.create(email=f'{role}-p1b17@example.invalid', name=role.title(), tos_accepted_at=timezone.now())
+    person = User.objects.create(email=f'{role}-p1b17-{suffix}@example.invalid', name=role.title(), tos_accepted_at=timezone.now())
     OrgMembership.objects.create(organization=organization, user=person, org_role='owner' if role == 'owner' else 'member')
     WorkspaceMembership.objects.create(workspace=workspace, user=person, workspace_role=role)
     person.last_workspace_id = workspace.pk

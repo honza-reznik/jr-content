@@ -33,6 +33,8 @@ celery_app.conf.update(
     broker_connection_retry=True,
     broker_connection_max_retries=5,
     broker_pool_limit=0,  # Disable connection pooling in web process to avoid stale connections
+    broker_connection_timeout=5,
+    broker_transport_options={"socket_connect_timeout": 5, "socket_timeout": 5},
     # Define queues
     task_queues=(
         Queue("default"),

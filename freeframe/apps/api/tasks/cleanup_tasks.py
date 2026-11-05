@@ -465,20 +465,12 @@ def _run_cleanup(db) -> PurgeCounts:
 
 @celery_app.task(name="requeue_stuck_processing")
 def requeue_stuck_processing():
-    """Re-dispatch transcodes for versions claimed as `processing` that never ran.
+    """Recover old processing versions, including jobs lost before the outbox existed.
 
-    /upload/complete claims the version and *then* schedules the dispatch on a
-    background thread whose failures are swallowed into a log line. A broker
-    outage, or an API worker recycled between the two, leaves a version at
-    `processing` with no task behind it. Nothing recovered that: the stale-upload
-    reaper filters on `uploading` and `failed` only, so the bytes kept counting
-    against the storage cap and the upload sat in the panel's Active tab forever.
-
-    This re-dispatches rather than condemning. Marking such a version `failed`
-    would be worse than leaving it: CompleteMultipartUpload has already run by
-    then, so the raw object is fully assembled, and the reaper deletes
-    `s3_key_raw` for `failed` and `uploading` alike -- a twenty-second broker
-    restart after a large upload would schedule that master for deletion.
+    New completions commit their dispatch marker atomically and beat sends it
+    within a minute. This slower sweep also covers accepted jobs lost later,
+    with a persistent recovery budget so broken conversions eventually fail.
+    Already written output is reconciled without another transcode.
     """
     hours = settings.stuck_processing_timeout_hours
     if hours <= 0:
