@@ -37,7 +37,7 @@ def _drive_process_asset(retries: int, retry_raises: BaseException):
     db = MagicMock()
     db.query.return_value = db
     db.filter.return_value = db
-    db.first.side_effect = [version, asset, media_file]
+    db.first.side_effect = [version, asset, media_file, version, asset]
 
     published = []
     # process_asset is a PromiseProxy until it is resolved; patch the real Task.
@@ -143,6 +143,7 @@ def test_the_sweep_re_dispatches_rather_than_condemning():
 
     sent = []
     with patch.object(cleanup_tasks.settings, "stuck_processing_timeout_hours", 6), \
+         patch.object(transcode_tasks, "finish_failed_transcodes"), \
          patch.object(cleanup_tasks, "SessionLocal", return_value=db), \
          patch("apps.api.tasks.celery_app.send_task_safe",
                side_effect=lambda task, *a, **k: sent.append(a)):
@@ -169,6 +170,7 @@ def test_a_version_whose_output_already_exists_is_marked_ready_not_re_transcoded
 
     sent = []
     with patch.object(cleanup_tasks.settings, "stuck_processing_timeout_hours", 6), \
+         patch.object(transcode_tasks, "finish_failed_transcodes"), \
          patch.object(cleanup_tasks, "SessionLocal", return_value=db), \
          patch("apps.api.tasks.celery_app.send_task_safe",
                side_effect=lambda task, *a, **k: sent.append(a)):

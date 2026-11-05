@@ -4,12 +4,13 @@ import os
 import asyncio
 import json
 import logging
+import psycopg2
 
 # Ensure the workspace root is on the path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 from celery.exceptions import Retry
-from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError
+from sqlalchemy.exc import DBAPIError, InterfaceError
 
 from .celery_app import celery_app
 from ..database import SessionLocal
@@ -30,45 +31,93 @@ def _run_async(coro):
 
 
 def _database_unavailable(exc):
-    return isinstance(exc, (OperationalError, InterfaceError)) or (
-        isinstance(exc, DBAPIError) and exc.connection_invalidated
-    )
+    if not isinstance(exc, DBAPIError):
+        return False
+    # OperationalError also covers deadlocks, invalid SQL and permissions.
+    # Only invalidated connections, SQLSTATE class 08 and server shutdowns
+    # indicate an unavailable database (a failed connect has no SQLSTATE).
+    code = getattr(exc.orig, "pgcode", None)
+    return (exc.connection_invalidated or
+            (code is not None and (code.startswith("08") or code in {"57P01", "57P02", "57P03"})) or
+            (code is None and (isinstance(exc, InterfaceError) or
+                               isinstance(exc.orig, psycopg2.OperationalError))))
+
+
+_PENDING_FAILURES = "transcode:pending-failures"
+_DATABASE_FAILURE = "Video conversion stopped after repeated database connection failures. Please upload the video again."
+
+
+def _failure_store():
+    from ..services.event_service import _get_sync_redis
+    return _get_sync_redis()
+
+
+def _close_session(db):
+    # A rollback can be the first operation to discover a lost connection.
+    # Neither it nor close may mask the original failure or prevent retrying.
+    try:
+        db.rollback()
+    except Exception:
+        log.warning("Could not roll back transcode session; discarding it")
+    try:
+        db.close()
+    except Exception:
+        log.warning("Could not close transcode session; invalidating it")
+        try:
+            db.invalidate()
+        except Exception:
+            log.warning("Could not invalidate transcode session")
+
+
+def _write_failure(asset_id, version_id, error):
+    """Use a fresh transaction, never an ORM object from the broken session."""
+    db = SessionLocal()
+    try:
+        version = db.query(AssetVersion).filter(AssetVersion.id == uuid.UUID(version_id)).first()
+        if version is None or version.processing_status == ProcessingStatus.ready:
+            return
+        asset = db.query(Asset).filter(Asset.id == uuid.UUID(asset_id)).first()
+        version.processing_status = ProcessingStatus.failed
+        db.commit()
+        if asset is not None:
+            _publish_event(str(asset.project_id), "transcode_failed", {
+                "asset_id": asset_id, "error": error,
+            })
+    finally:
+        _close_session(db)
+
+
+def _record_failure(asset_id, version_id, error):
+    try:
+        _write_failure(asset_id, version_id, error)
+    except DBAPIError:
+        # The DB cannot accept a terminal status during an outage. Redis is
+        # persistent in JR Content; keep only the status write pending, with
+        # no TTL and no new conversion task or retry budget.
+        _failure_store().hset(_PENDING_FAILURES, version_id, json.dumps({
+            "asset_id": asset_id, "error": error,
+        }))
+        log.warning("Deferred terminal transcode status for version %s", version_id)
+
+
+@celery_app.task(name="finish_failed_transcodes")
+def finish_failed_transcodes():
+    store = _failure_store()
+    finished = 0
+    for version_id, payload in store.hscan_iter(_PENDING_FAILURES):
+        failure = json.loads(payload)
+        # Leave the marker intact if the database is still unavailable.
+        _write_failure(failure["asset_id"], version_id, failure["error"])
+        store.hdel(_PENDING_FAILURES, version_id)
+        finished += 1
+    return finished
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=60)
 def process_asset(self, asset_id: str, version_id: str):
     """Process an upload, retrying transactions interrupted by database outages."""
     db = SessionLocal()
-    version = asset = None
     final_attempt = self.request.retries >= self.max_retries
-
-    def _retry_database(exc):
-        # An unavailable DB cannot store a terminal status. Keep the message
-        # queued until it recovers, even when the normal transcode budget is
-        # spent. The delay prevents a busy loop during a prolonged outage.
-        raise self.retry(exc=exc, max_retries=max(self.max_retries, self.request.retries + 1))
-
-    def _record_failure(exc):
-        from packages.transcoder.redact import redact_presigned_urls
-
-        # A failed commit leaves SQLAlchemy's transaction unusable. Roll it
-        # back before trying to persist a terminal status; never reuse its
-        # uncommitted media metadata from an interrupted conversion.
-        db.rollback()
-        try:
-            if version is not None:
-                version.processing_status = ProcessingStatus.failed
-                db.commit()
-            if asset is not None:
-                _publish_event(str(asset.project_id), "transcode_failed", {
-                    "asset_id": asset_id,
-                    "error": redact_presigned_urls(str(exc)),
-                })
-        except DBAPIError as db_exc:
-            if not _database_unavailable(db_exc):
-                raise
-            db.rollback()
-            _retry_database(db_exc)
 
     try:
         # These initial reads and the first commit used to bypass retrying.
@@ -110,26 +159,26 @@ def process_asset(self, asset_id: str, version_id: str):
             "version_id": version_id,
         })
     except Exception as exc:
-        db.rollback()
-        unavailable = _database_unavailable(exc)
-        # DB outages get another transaction even on the last normal attempt.
-        # Other errors retain the existing bounded retry/failure lifecycle.
-        if final_attempt and not unavailable:
-            _record_failure(exc)
+        _close_session(db)
+        db = None
+        from packages.transcoder.redact import redact_presigned_urls
+
+        error = _DATABASE_FAILURE if _database_unavailable(exc) else redact_presigned_urls(str(exc))
+        if final_attempt:
+            _record_failure(asset_id, version_id, error)
             raise
         try:
-            if unavailable:
-                _retry_database(exc)
             raise self.retry(exc=exc)
         except Retry:
             raise  # Scheduled: keep processing until the next attempt.
         except Exception:
             # The broker refused the retry: record a terminal status so the
             # upload cannot remain at Converting with no queued work.
-            _record_failure(exc)
+            _record_failure(asset_id, version_id, error)
             raise
     finally:
-        db.close()
+        if db is not None:
+            db.close()
 
 
 def _process_video(

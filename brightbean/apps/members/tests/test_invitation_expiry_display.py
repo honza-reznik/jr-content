@@ -1,4 +1,5 @@
 """P1-B16: pending invitations display their remaining validity."""
+
 from datetime import timedelta
 from unittest.mock import patch
 
@@ -16,8 +17,12 @@ def test_new_invitation_has_seven_days_and_displays_remaining_time(organization,
     now = timezone.now()
     with patch("django.utils.timezone.now", return_value=now), timezone.override(zone), translation.override("en"):
         invitation = create_invitation(
-            org=organization, email="invitee@example.invalid", org_role="member",
-            workspace_assignments=[], invited_by=org_owner, inviter=org_owner,
+            org=organization,
+            email="invitee@example.invalid",
+            org_role="member",
+            workspace_assignments=[],
+            invited_by=org_owner,
+            inviter=org_owner,
         )
         invitation.refresh_from_db()
         assert invitation.expires_at == now + timedelta(days=INVITE_EXPIRY_DAYS)

@@ -53,6 +53,7 @@ celery_app.conf.update(
         "send_due_date_reminders": {"queue": "maintenance"},
         "cleanup_soft_deleted": {"queue": "maintenance"},
         "requeue_stuck_processing": {"queue": "maintenance"},
+        "finish_failed_transcodes": {"queue": "maintenance"},
         "sweep_orphan_s3": {"queue": "maintenance"},
         # Not housekeeping: this one is dispatched from a request handler and
         # is a full FFmpeg re-encode, so it belongs with the other transcoding
@@ -74,6 +75,10 @@ celery_app.conf.update(
 )
 
 celery_app.conf.beat_schedule = {
+    "finish-failed-transcodes": {
+        "task": "finish_failed_transcodes",
+        "schedule": 60.0,
+    },
     "jrc-comment-events": {
         "task": "deliver_jrc_comment_events",
         "schedule": 30.0,
