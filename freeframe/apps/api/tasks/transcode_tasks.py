@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirna
 
 from celery.exceptions import Retry
 from sqlalchemy.exc import DBAPIError, InterfaceError
+from sqlalchemy import text
 
 from .celery_app import celery_app
 from ..database import SessionLocal
@@ -113,17 +114,25 @@ def finish_failed_transcodes():
     return finished
 
 
-@celery_app.task(bind=True, max_retries=3, default_retry_delay=60)
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=60, acks_late=True, reject_on_worker_lost=True)
 def process_asset(self, asset_id: str, version_id: str):
     """Process an upload, retrying transactions interrupted by database outages."""
     db = SessionLocal()
     final_attempt = self.request.retries >= self.max_retries
+    lock_connection = None
+    lock_key = uuid.UUID(version_id).int % (2 ** 63)
 
     try:
+        # Session lock survives ORM commits; a dedicated connection owns it.
+        lock_connection = db.get_bind().connect()
+        locked = lock_connection.execute(text("SELECT pg_try_advisory_lock(:key)"), {"key": lock_key}).scalar()
+        lock_connection.commit()
+        if not locked:
+            return
         # These initial reads and the first commit used to bypass retrying.
         version = db.query(AssetVersion).filter(AssetVersion.id == uuid.UUID(version_id)).first()
-        if not version:
-            return  # version already cleaned up
+        if not version or getattr(version, "deleted_at", None) is not None or version.processing_status in (ProcessingStatus.ready, ProcessingStatus.failed):
+            return  # duplicate delivery, discarded version, or already finished
 
         asset = db.query(Asset).filter(Asset.id == uuid.UUID(asset_id)).first()
         if not asset:
@@ -179,6 +188,16 @@ def process_asset(self, asset_id: str, version_id: str):
     finally:
         if db is not None:
             db.close()
+        if lock_connection is not None:
+            try:
+                lock_connection.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": lock_key})
+                lock_connection.commit()
+            except Exception:
+                # Never return a connection holding a session lock to the pool.
+                lock_connection.invalidate()
+                log.warning("Discarded conversion lock connection")
+            finally:
+                lock_connection.close()
 
 
 def _process_video(

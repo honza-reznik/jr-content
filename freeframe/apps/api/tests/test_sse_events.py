@@ -227,7 +227,8 @@ def test_resolve_comment_publishes_the_resulting_state():
     from apps.api.routers import comments as comments_router
 
     project_id, asset_id, comment_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
-    comment = SimpleNamespace(id=comment_id, asset_id=asset_id, resolved=False, deleted_at=None)
+    comment = SimpleNamespace(id=comment_id, asset_id=asset_id, resolved=False, deleted_at=None,
+                              visibility="public", parent_id=None)
     asset = SimpleNamespace(id=asset_id, project_id=project_id, deleted_at=None)
     user = SimpleNamespace(id=uuid.uuid4(), name="Alice", jrc_managed=False)
 

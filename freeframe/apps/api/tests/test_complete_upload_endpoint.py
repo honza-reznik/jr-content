@@ -737,6 +737,8 @@ def test_a_completion_that_does_not_claim_the_version_does_not_dispatch(
     # the caller is still told the work is underway, because it is
     assert resp.json()["status"] == "processing"
     assert dispatched == [], "the losing completion must not queue a second transcode"
+    from apps.api.models.pending_transcode import PendingTranscode
+    assert not any(isinstance(call.args[0], PendingTranscode) for call in mock_db.add.call_args_list)
 
 
 def test_a_completion_that_claims_the_version_dispatches_once(
@@ -753,6 +755,11 @@ def test_a_completion_that_claims_the_version_dispatches_once(
 
     assert resp.status_code == 200, resp.text
     assert dispatched == [version.id]
+    from apps.api.models.pending_transcode import PendingTranscode
+    markers = [call.args[0] for call in mock_db.add.call_args_list if isinstance(call.args[0], PendingTranscode)]
+    assert len(markers) == 1 and markers[0].version_id == version.id
+    calls = [call[0] for call in mock_db.mock_calls]
+    assert calls.index("add") < calls.index("commit"), "dispatch request must persist with completion"
 
 
 # ── the recorded size is reconciled with storage (#258) ───────────────────────

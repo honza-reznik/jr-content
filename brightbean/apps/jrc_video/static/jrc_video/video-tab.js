@@ -108,7 +108,9 @@
       note.textContent = c.can_upload ? "No video yet. Use “Upload version” to add one." : "No video has been uploaded yet.";
       show(note, true);
     } else if (!versions.length) {
-      note.textContent = "The video is being prepared. The player appears here when it is ready.";
+      note.textContent = c.versions.every(function (v) { return v.status === "failed"; })
+        ? "Video conversion failed. Please upload the video again, or ask your team to upload a new version."
+        : "The video is being prepared. Interrupted conversions are retried automatically; the player appears when it is ready.";
       show(note, true);
     } else {
       show(note, false);

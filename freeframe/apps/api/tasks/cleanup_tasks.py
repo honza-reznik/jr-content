@@ -465,20 +465,12 @@ def _run_cleanup(db) -> PurgeCounts:
 
 @celery_app.task(name="requeue_stuck_processing")
 def requeue_stuck_processing():
-    """Re-dispatch transcodes for versions claimed as `processing` that never ran.
+    """Recover old processing versions, including jobs lost before the outbox existed.
 
-    /upload/complete claims the version and *then* schedules the dispatch on a
-    background thread whose failures are swallowed into a log line. A broker
-    outage, or an API worker recycled between the two, leaves a version at
-    `processing` with no task behind it. Nothing recovered that: the stale-upload
-    reaper filters on `uploading` and `failed` only, so the bytes kept counting
-    against the storage cap and the upload sat in the panel's Active tab forever.
-
-    This re-dispatches rather than condemning. Marking such a version `failed`
-    would be worse than leaving it: CompleteMultipartUpload has already run by
-    then, so the raw object is fully assembled, and the reaper deletes
-    `s3_key_raw` for `failed` and `uploading` alike -- a twenty-second broker
-    restart after a large upload would schedule that master for deletion.
+    New completions commit their dispatch marker atomically and beat sends it
+    within a minute. This slower sweep also covers accepted jobs lost later,
+    with a persistent recovery budget so broken conversions eventually fail.
+    Already written output is reconciled without another transcode.
     """
     hours = settings.stuck_processing_timeout_hours
     if hours <= 0:
@@ -488,8 +480,7 @@ def requeue_stuck_processing():
     # The cutoff must clear the transcoder's own 4-hour ceiling, or a legitimately
     # slow encode gets a second worker started on top of the one still running.
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-    from .celery_app import send_task_safe
-    from .transcode_tasks import process_asset, finish_failed_transcodes
+    from .transcode_tasks import finish_failed_transcodes
 
     # Exhausted conversions awaiting a terminal status must be settled before
     # this sweep considers dispatching any old processing version again.
@@ -505,6 +496,18 @@ def requeue_stuck_processing():
 
         requeued = 0
         for v in stuck:
+            # Share the worker's lock through this transaction's commit. A slow
+            # active conversion must never be failed or redispatched by recovery.
+            locked = db.execute(text("SELECT pg_try_advisory_xact_lock(:key)"),
+                                {"key": v.id.int % (2 ** 63)}).scalar()
+            if not locked:
+                continue
+            # The worker may have finished after the initial scan, before we
+            # acquired its lock. Discard that stale snapshot before any writes.
+            db.refresh(v)
+            if (v.deleted_at is not None or v.processing_status != ProcessingStatus.processing
+                    or (v.last_activity_at or v.created_at) >= cutoff):
+                continue
             # A version whose output is already written finished its transcode and
             # simply never had its status updated. Re-running it would redo hours
             # of work to reach the same bytes, so treat the output as the truth.
@@ -517,11 +520,24 @@ def requeue_stuck_processing():
                 log.info("requeue: version %s already had output; marking ready", v.id)
                 continue
 
-            send_task_safe(process_asset, str(v.asset_id), str(v.id))
+            attempts = getattr(v, "processing_recovery_attempts", 0)
+            if attempts >= 3:
+                v.processing_status = ProcessingStatus.failed
+                log.warning("requeue: recovery exhausted for version %s", v.id)
+                continue
+            v.processing_recovery_attempts = attempts + 1
+            v.last_activity_at = datetime.now(timezone.utc)
+            # Commit the retry request together with the new recovery budget.
+            from ..models.pending_transcode import PendingTranscode
+            from sqlalchemy.dialects.postgresql import insert
+            db.execute(insert(PendingTranscode).values(version_id=v.id).on_conflict_do_nothing())
             log.info("requeue: re-dispatched transcode for version %s", v.id)
             requeued += 1
 
         db.commit()
+        if requeued:
+            from .transcode_dispatch import dispatch_pending
+            dispatch_pending()
         if stuck:
             log.info("requeue: %s stuck, %s re-dispatched", len(stuck), requeued)
         return requeued

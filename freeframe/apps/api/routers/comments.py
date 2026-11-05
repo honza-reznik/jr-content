@@ -49,7 +49,7 @@ from ..schemas.comment import (
 )
 from ..services import s3_service
 from ..services import comment_export
-from ..services.comment_privacy import hides_internal_comments, internal_comment_ids, thread_is_internal
+from ..services.comment_privacy import hides_internal_comments, thread_is_internal
 from ..services.permissions import (
     require_asset_access, can_access_asset, validate_share_link_with_session, validate_asset_in_share,
     require_asset_project_live, require_project_role,
@@ -230,11 +230,12 @@ def _build_comment_response(
     current_user_id: uuid.UUID | None = None,
     depth: int = COMMENT_TREE_MAX_DEPTH,
     file_context=None,
+    exclude_internal: bool = False,
 ) -> CommentResponse:
     annotation = db.query(Annotation).filter(Annotation.comment_id == comment.id).first()
     replies_raw = []
     if depth > 0:
-        replies_raw = db.query(Comment).filter(
+        replies_query = db.query(Comment).filter(
             Comment.parent_id == comment.id,
             # A reply lives on the same asset as the comment it answers. Keying
             # on parent_id alone rendered any row that merely claimed this
@@ -244,7 +245,10 @@ def _build_comment_response(
             # this is what any row already committed is read back through.
             Comment.asset_id == comment.asset_id,
             Comment.deleted_at.is_(None),
-        ).order_by(Comment.created_at).all()
+        )
+        if exclude_internal:
+            replies_query = replies_query.filter(Comment.visibility != "internal")
+        replies_raw = replies_query.order_by(Comment.created_at).all()
 
     # Load attachments
     attachments_raw = db.query(CommentAttachment).filter(
@@ -279,7 +283,8 @@ def _build_comment_response(
     resp.guest_author = guest_author_info
     resp.annotation = AnnotationResponse.model_validate(annotation) if annotation else None
     resp.replies = [
-        _build_comment_response(r, db, current_user_id=current_user_id, depth=depth - 1, file_context=file_context)
+        _build_comment_response(r, db, current_user_id=current_user_id, depth=depth - 1,
+                                file_context=file_context, exclude_internal=exclude_internal)
         for r in replies_raw
     ]
     resp.attachments = attachments
@@ -604,7 +609,8 @@ def create_comment(
             "author": current_user.name,
         })
 
-    return _build_comment_response(comment, db, current_user_id=current_user.id)
+    return _build_comment_response(comment, db, current_user_id=current_user.id,
+                                   exclude_internal=hides_internal_comments(db, asset.project_id, current_user))
 
 
 @router.post("/assets/{asset_id}/comments/{comment_id}/replies", response_model=CommentResponse, status_code=status.HTTP_201_CREATED)
@@ -679,7 +685,8 @@ def reply_to_comment(
             "author": current_user.name,
         })
 
-    return _build_comment_response(reply, db, current_user_id=current_user.id)
+    return _build_comment_response(reply, db, current_user_id=current_user.id,
+                                   exclude_internal=hides_internal_comments(db, asset.project_id, current_user))
 
 
 @router.patch("/comments/{comment_id}", response_model=CommentResponse)
@@ -713,7 +720,9 @@ def update_comment(
     comment.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(comment)
-    return _build_comment_response(comment, db, current_user_id=current_user.id)
+    return _build_comment_response(comment, db, current_user_id=current_user.id,
+                                   exclude_internal=(current_user.jrc_managed is True and
+                                                     hides_internal_comments(db, managed_asset.project_id, current_user)))
 
 
 @router.delete("/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -765,12 +774,16 @@ def resolve_comment(
 
     # This endpoint toggles, so send the resulting state rather than implying
     # "resolved" — a client that assumed that would get it backwards on unresolve.
-    event_service.publish_sync(asset.project_id, "comment_resolved", {
-        "comment_id": str(comment.id),
-        "resolved": comment.resolved,
-    })
+    # This project channel also reaches clients; match new_comment's privacy
+    # rule, including inherited visibility and soft-deleted ancestors.
+    if not thread_is_internal(db, comment):
+        event_service.publish_sync(asset.project_id, "comment_resolved", {
+            "comment_id": str(comment.id),
+            "resolved": comment.resolved,
+        })
 
-    return _build_comment_response(comment, db, current_user_id=current_user.id)
+    return _build_comment_response(comment, db, current_user_id=current_user.id,
+                                   exclude_internal=hides_internal_comments(db, asset.project_id, current_user))
 
 
 # ── Attachments ────────────────────────────────────────────────────────────────
@@ -1077,8 +1090,9 @@ def export_comments(
         Comment.deleted_at.is_(None),
     ).order_by(Comment.created_at.asc()).all()
     if hides_internal_comments(db, asset.project_id, current_user):
-        hidden = internal_comment_ids(comments)
-        comments = [c for c in comments if c.id not in hidden]
+        # Export rows omit deleted comments and other versions. Visibility must
+        # still follow their ancestors in the DB, even outside those rows.
+        comments = [c for c in comments if not thread_is_internal(db, c)]
 
     user_ids = {c.author_id for c in comments if c.author_id}
     guest_ids = {c.guest_author_id for c in comments if c.guest_author_id}
@@ -1386,4 +1400,4 @@ def guest_comment(
         })
 
     file_context = {"share_link": link, "share_user": current_user, "share_session": share_session} if settings.s3_public_path else None
-    return _build_comment_response(comment, db, file_context=file_context)
+    return _build_comment_response(comment, db, file_context=file_context, exclude_internal=True)

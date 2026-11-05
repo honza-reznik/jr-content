@@ -1,4 +1,5 @@
 {% extends "layouts/workspace_settings.html" %}
+{% load static %}
 {% block title %}{{ workspace.name }} · Client profile · JR Content{% endblock %}
 {% block extra_head %}
 <style>
@@ -97,10 +98,11 @@
                 {% if channel.profile.is_enabled %}<p class="profile-help">Available when creating posts.</p>{% endif %}
             </div>
             {% if channel.account.platform == 'custom' %}
-            <form method="post" enctype="multipart/form-data" action="{% url 'jrc_channels:icon' workspace_id=workspace.id account_id=channel.account.pk %}" style="margin-top:16px">
+            <form method="post" enctype="multipart/form-data" action="{% url 'jrc_channels:icon' workspace_id=workspace.id account_id=channel.account.pk %}" style="margin-top:16px" data-channel-icon-form>
                 {% csrf_token %}
                 <label for="icon-{{ channel.account.pk }}">Channel icon</label>
-                <input id="icon-{{ channel.account.pk }}" type="file" name="icon" accept="image/png,image/jpeg,image/webp" style="display:block;max-width:100%;margin:8px 0" required>
+                <input id="icon-{{ channel.account.pk }}" type="file" name="icon" accept="image/png,image/jpeg,image/webp" style="display:block;max-width:100%;margin:8px 0" required aria-describedby="icon-status-{{ channel.account.pk }}">
+                <p id="icon-status-{{ channel.account.pk }}" class="profile-help" data-icon-status role="status" aria-live="polite"></p>
                 <p class="profile-help">PNG, JPG or WebP, up to 1 MB. SVG is not supported.</p>
                 <button class="profile-button" type="submit">Upload icon</button>
             </form>
@@ -137,3 +139,5 @@
     {% endif %}
 </div>
 {% endblock %}
+
+{% block extra_js %}<script src="{% static 'jrc_channels/icon-upload.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endblock %}

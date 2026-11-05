@@ -22,7 +22,7 @@
             {% if current %}<p class="text-sm text-stone-700" data-thumbnail-current>Version {{ current.number }}{% if current.uploaded_by %} · {{ current.uploaded_by.name|default:current.uploaded_by.email }}{% endif %} · {{ current.created_at|date:"M j, Y · g:i A" }}</p>
             <p class="text-xs text-stone-500">{{ current.width }} × {{ current.height }} px · {{ current.size|filesizeformat }}</p>{% endif %}
             <div class="mt-2 flex flex-wrap items-center gap-2">
-                {% if download_url %}<a href="{{ download_url }}" class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50" data-thumbnail-download>Download thumbnail</a>{% endif %}
+                {% if download_url %}<a href="{{ download_url }}" class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50" data-thumbnail-download>Download thumbnail</a>{% elif download_blocked %}<p class="text-sm text-amber-700">Thumbnail download requires channel approval, a saved caption and a ready video marked “Final for publishing”. Open Video to select it.</p>{% elif mode == "publish" and not current %}<p class="text-sm text-stone-500">Upload a thumbnail here or in Caption to make it available for download.</p>{% endif %}
                 {% if can_upload %}
                 <form method="post" action="{{ upload_url }}" enctype="multipart/form-data" class="flex flex-wrap items-center gap-2" data-thumbnail-form data-max-bytes="{{ max_bytes }}">
                     <input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">

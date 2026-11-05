@@ -676,6 +676,9 @@ def complete_upload(
                 synchronize_session=False,
             )
         )
+        if claimed:
+            from ..models.pending_transcode import PendingTranscode
+            db.add(PendingTranscode(version_id=version_id))
         db.commit()
 
         if claimed:
@@ -822,9 +825,8 @@ def complete_upload(
 
 def _trigger_processing(asset_id: uuid.UUID, version_id: uuid.UUID):
     """Dispatch Celery task to process the uploaded asset."""
-    from ..tasks.transcode_tasks import process_asset
-    from ..tasks.celery_app import send_task_safe
-    send_task_safe(process_asset, str(asset_id), str(version_id))
+    from ..tasks.transcode_dispatch import dispatch_pending
+    dispatch_pending(version_id)
 
 
 def _may_remove_asset(db: Session, asset_id: uuid.UUID, user: User) -> bool:
@@ -987,9 +989,19 @@ def abort_upload(
                 "abort called for upload %s but the object is already complete; "
                 "recording it as processing instead of failed", version.id,
             )
-            version.processing_status = ProcessingStatus.processing
+            claimed = db.query(AssetVersion).filter(
+                AssetVersion.id == version.id,
+                AssetVersion.processing_status == ProcessingStatus.uploading,
+            ).update(
+                {AssetVersion.processing_status: ProcessingStatus.processing},
+                synchronize_session=False,
+            )
+            if claimed:
+                from ..models.pending_transcode import PendingTranscode
+                db.add(PendingTranscode(version_id=version.id))
             db.commit()
-            background_tasks.add_task(_trigger_processing, version.asset_id, version.id)
+            if claimed:
+                background_tasks.add_task(_trigger_processing, version.asset_id, version.id)
             return
         version.processing_status = ProcessingStatus.failed
         db.commit()

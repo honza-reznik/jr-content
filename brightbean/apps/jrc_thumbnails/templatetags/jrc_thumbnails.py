@@ -47,6 +47,7 @@ def channel_thumbnail(context, variant, mode="caption", label=""):
         "current": current,
         "current_url": current.image.url if current else "",
         "download_url": download_url(current) if current else "",
+        "download_blocked": mode == "publish" and current is not None and not may_download,
         "history": [
             {"thumbnail": item, "url": item.image.url, "download_url": download_url(item)} for item in versions[1:]
         ],

@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - JR Content: časový štítek nad obrazem videa, synchronizovaný s vykresleným snímkem; FPS ze souboru a celá obrazovka se štítkem i na telefonu.
 
 ### Fixed
+- JR Content P1-B17 review2: export komentářů respektuje interní předky i po jejich smazání; živé události vyřešení interních vláken neodhalují jejich existenci klientům. Odesílač požadavku na převod nepřepisuje výsledek hotového ani běžícího převodu.
+- JR Content P1-B17 review: záchrana hotového uploadu přes abort ukládá požadavek na převod atomicky; obnova visících převodů sdílí zámek s workerem a znovu ověřuje stav. Odpovědi po vyřešení, úpravě i vytvoření komentáře filtrují interní potomky podle viditelnosti, včetně příloh a sdílených odkazů.
+- JR Content: dokončení uploadu ukládá požadavek na převod do databáze; minutová kontrola obnoví odeslání po výpadku API či fronty. Duplicitní úlohy nepřevádějí stejnou verzi souběžně, visící převody mají omezenou obnovu.
 - JR Content: převod má pevný strop tří opakování; i při selhání rollbacku používá nové spojení. Po vyčerpání pokusů se zapíše chyba, při nedostupné DB se po jejím návratu dokončí jen tento zápis.
 - JR Content: API a převod videa obnovují spojení po restartu PostgreSQL; databázové chyby před převodem i při zápisu výsledku opakují úlohu místo trvalého stavu Converting.
 - JR Content: upozornění na videokomentář se ukládá spolu s komentářem a po výpadku doručení se automaticky opakuje bez zdvojení upozornění.

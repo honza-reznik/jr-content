@@ -414,6 +414,7 @@ def test_gc_covers_all_inbound_fks_to_purged_tables():
     import apps.api.models.activity  # noqa: F401
     import apps.api.models.user  # noqa: F401
     import apps.api.models.instance_settings  # noqa: F401
+    import apps.api.models.pending_transcode  # noqa: F401
     from apps.api.database import Base
 
     # Every table the GC cascade hard-deletes rows from (grep `cleanup_tasks.py` for
@@ -442,6 +443,8 @@ def test_gc_covers_all_inbound_fks_to_purged_tables():
         # -> asset_versions.id
         ("media_files", "version_id"), ("carousel_items", "version_id"),
         ("comments", "version_id"), ("approvals", "version_id"),
+        # PostgreSQL ON DELETE CASCADE; verified by test_pending_transcode_is_removed_with_its_version.
+        ("pending_transcodes", "version_id"),
         # -> media_files.id
         ("carousel_items", "media_file_id"),
         # -> comments.id

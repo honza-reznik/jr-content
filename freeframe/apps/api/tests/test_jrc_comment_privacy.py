@@ -171,6 +171,75 @@ def test_client_still_reaches_public_comments_by_id(world):
     assert comments_module.resolve_comment(world["public"].id, db=db, current_user=client).resolved is True
 
 
+@pytest.mark.parametrize("who", ["client", "team", "native"])
+@pytest.mark.parametrize("route", ["resolve", "update", "create", "reply", "share_list", "share_create"])
+def test_every_thread_response_filters_internal_descendants(world, monkeypatch, who, route):
+    """Exercise the real serializers, including deep replies and attachment signing."""
+    from apps.api.models.comment import CommentAttachment
+    from apps.api.models.share import ShareLink, SharePermission
+    from apps.api.schemas.comment import GuestCommentCreate
+
+    db, user, root = world["db"], world[who], world["public"]
+    root.author_id = user.id  # editing one's own public thread is allowed
+    signed = []
+    monkeypatch.setattr(comments_module, "_build_attachment_response",
+                        lambda *args: signed.append(args) or pytest.fail("internal attachment was signed"))
+
+    def descendants(parent):
+        public = world["comment"]("PUBLIC nested reply", "public", parent=parent)
+        internal = world["comment"]("SECRET nested reply", "internal", parent=public)
+        world["comment"]("SECRET public child", "public", parent=internal)
+        if who == "client" or route.startswith("share"):
+            db.add(CommentAttachment(comment_id=internal.id, s3_key="secret-file",
+                                     original_filename="secret.txt", file_type="text/plain", file_size_bytes=6))
+            db.flush()
+
+    if route in {"create", "reply", "share_create"}:
+        # A concurrent reply can appear between saving and rendering the response.
+        refresh = db.refresh
+
+        def refresh_with_replies(comment, *args, **kwargs):
+            refresh(comment, *args, **kwargs)
+            descendants(comment)
+
+        monkeypatch.setattr(db, "refresh", refresh_with_replies)
+    else:
+        descendants(root)
+
+    if route.startswith("share"):
+        link = ShareLink(asset_id=world["asset"].id, token=str(uuid.uuid4()),
+                         created_by=world["team"].id, permission=SharePermission.comment)
+        db.add(link)
+        db.flush()
+        monkeypatch.setattr(comments_module, "validate_share_link_with_session", lambda *a, **k: link)
+        if route == "share_list":
+            result = comments_module.list_share_comments(
+                link.token, asset_id=None, version_id=None, latest_only=False,
+                share_session=None, db=db, current_user=user)
+        else:
+            result = [comments_module.guest_comment(
+                link.token, GuestCommentCreate(body="PUBLIC created", version_id=world["version"].id),
+                share_session=None, db=db, current_user=user)]
+    elif route == "resolve":
+        result = [comments_module.resolve_comment(root.id, db=db, current_user=user)]
+    elif route == "update":
+        result = [comments_module.update_comment(root.id, CommentUpdate(body="PUBLIC edited"), db=db, current_user=user)]
+    elif route == "create":
+        result = [_create(world, user, text="PUBLIC created")]
+    else:
+        result = [comments_module.reply_to_comment(
+            world["asset"].id, root.id, CommentCreate(version_id=world["version"].id, body="PUBLIC created"),
+            db=db, current_user=user)]
+
+    bodies = {node.body for node in _flatten(result)}
+    assert "PUBLIC nested reply" in bodies
+    if who == "client" or route.startswith("share"):
+        assert not any("SECRET" in body for body in bodies)
+        assert not signed
+    else:
+        assert {"SECRET nested reply", "SECRET public child"} <= bodies
+
+
 def test_csv_export_leaves_out_internal_comments_for_a_client(world):
     def export(user):
         return comments_module.export_comments(
@@ -181,6 +250,63 @@ def test_csv_export_leaves_out_internal_comments_for_a_client(world):
     client_csv, team_csv = export(world["client"]), export(world["team"])
     assert "PUBLIC shorten it" in client_csv and "SECRET" not in client_csv
     assert "SECRET team talk" in team_csv and "SECRET internal reply" in team_csv
+
+
+@pytest.mark.parametrize("who", ["client", "viewer"])
+@pytest.mark.parametrize("ancestor_version", ["current", "other"])
+def test_csv_export_checks_deleted_ancestors_outside_export_rows(world, who, ancestor_version):
+    from apps.api.models.asset import AssetVersion, ProcessingStatus
+
+    db, root = world["db"], world["internal"]
+    if ancestor_version == "other":
+        older = AssetVersion(asset_id=world["asset"].id, version_number=2,
+                             processing_status=ProcessingStatus.ready, created_by=world["team"].id)
+        db.add(older)
+        db.flush()
+        root.version_id = older.id
+    nested = world["comment"]("SECRET nested descendant", "public", parent=world["reply_under_internal"])
+    comments_module.delete_comment(root.id, db=db, current_user=world["team"])
+    comments_module.delete_comment(world["reply_under_internal"].id, db=db, current_user=world["team"])
+    # Public replies to deleted public parents remain exportable.
+    comments_module.delete_comment(world["public"].id, db=db, current_user=world["team"])
+
+    def export(user):
+        return comments_module.export_comments(
+            world["asset"].id, format="csv", version_id=world["version"].id, fps=None, start_tc=None,
+            include_resolved=True, db=db, current_user=user,
+        ).body.decode("utf-8")
+
+    client_csv, team_csv = export(world[who]), export(world["team"])
+    assert "PUBLIC reply" in client_csv
+    assert "SECRET" not in client_csv
+    assert nested.body in team_csv
+    assert root.body not in team_csv and world["reply_under_internal"].body not in team_csv
+    assert world["public"].body not in team_csv
+
+
+@pytest.mark.parametrize("target", ["internal", "reply_under_internal", "internal_under_public", "deleted_ancestor"])
+def test_resolve_and_unresolve_do_not_broadcast_internal_threads(world, monkeypatch, target):
+    db = world["db"]
+    if target == "deleted_ancestor":
+        comments_module.delete_comment(world["internal"].id, db=db, current_user=world["team"])
+        target = "reply_under_internal"
+    published = []
+    monkeypatch.setattr(comments_module.event_service, "publish_sync", lambda *args: published.append(args))
+    for expected in (True, False):
+        response = comments_module.resolve_comment(world[target].id, db=db, current_user=world["team"])
+        assert response.resolved is expected
+    assert published == []
+
+
+def test_public_resolve_and_unresolve_still_broadcast_the_result(world, monkeypatch):
+    published = []
+    monkeypatch.setattr(comments_module.event_service, "publish_sync", lambda *args: published.append(args))
+    for expected in (True, False):
+        comments_module.resolve_comment(world["public_reply"].id, db=world["db"], current_user=world["client"])
+        assert published[-1] == (world["asset"].project_id, "comment_resolved", {
+            "comment_id": str(world["public_reply"].id), "resolved": expected,
+        })
+    assert len(published) == 2
 
 
 def test_mentions_and_notifications_do_not_announce_internal_comments(world):
