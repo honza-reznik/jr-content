@@ -49,7 +49,7 @@ from ..schemas.comment import (
 )
 from ..services import s3_service
 from ..services import comment_export
-from ..services.comment_privacy import hides_internal_comments, internal_comment_ids, thread_is_internal
+from ..services.comment_privacy import hides_internal_comments, thread_is_internal
 from ..services.permissions import (
     require_asset_access, can_access_asset, validate_share_link_with_session, validate_asset_in_share,
     require_asset_project_live, require_project_role,
@@ -774,10 +774,13 @@ def resolve_comment(
 
     # This endpoint toggles, so send the resulting state rather than implying
     # "resolved" — a client that assumed that would get it backwards on unresolve.
-    event_service.publish_sync(asset.project_id, "comment_resolved", {
-        "comment_id": str(comment.id),
-        "resolved": comment.resolved,
-    })
+    # This project channel also reaches clients; match new_comment's privacy
+    # rule, including inherited visibility and soft-deleted ancestors.
+    if not thread_is_internal(db, comment):
+        event_service.publish_sync(asset.project_id, "comment_resolved", {
+            "comment_id": str(comment.id),
+            "resolved": comment.resolved,
+        })
 
     return _build_comment_response(comment, db, current_user_id=current_user.id,
                                    exclude_internal=hides_internal_comments(db, asset.project_id, current_user))
@@ -1087,8 +1090,9 @@ def export_comments(
         Comment.deleted_at.is_(None),
     ).order_by(Comment.created_at.asc()).all()
     if hides_internal_comments(db, asset.project_id, current_user):
-        hidden = internal_comment_ids(comments)
-        comments = [c for c in comments if c.id not in hidden]
+        # Export rows omit deleted comments and other versions. Visibility must
+        # still follow their ancestors in the DB, even outside those rows.
+        comments = [c for c in comments if not thread_is_internal(db, c)]
 
     user_ids = {c.author_id for c in comments if c.author_id}
     guest_ids = {c.guest_author_id for c in comments if c.guest_author_id}

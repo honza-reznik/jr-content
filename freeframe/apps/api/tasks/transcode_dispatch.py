@@ -1,5 +1,6 @@
 """Transactional outbox: an API restart or a broker failure cannot lose a conversion."""
 import logging
+from sqlalchemy import text
 from ..database import SessionLocal
 from ..models.asset import AssetVersion, ProcessingStatus
 from ..models.pending_transcode import PendingTranscode
@@ -28,8 +29,18 @@ def dispatch_pending(version_id=None):
             except Exception:
                 marker.attempts += 1
                 if marker.attempts >= 3:
-                    version.processing_status = ProcessingStatus.failed
-                    db.delete(marker)
+                    # An earlier ambiguous publish may already be converting.
+                    # Share the worker's lock until commit; keep the marker if
+                    # it is busy, so a later pass can settle the request.
+                    locked = db.execute(text("SELECT pg_try_advisory_xact_lock(:key)"),
+                                        {"key": version.id.int % (2 ** 63)}).scalar()
+                    if locked:
+                        # Publishing can outlive the conversion. The first read
+                        # must not overwrite ready from that concurrent worker.
+                        db.refresh(version)
+                        if version.deleted_at is None and version.processing_status == ProcessingStatus.processing:
+                            version.processing_status = ProcessingStatus.failed
+                        db.delete(marker)
                 log.warning("Conversion dispatch deferred for version %s", marker.version_id)
             else:
                 db.delete(marker)

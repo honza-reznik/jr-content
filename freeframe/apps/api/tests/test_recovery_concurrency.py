@@ -14,7 +14,7 @@ from apps.api.models.project import Project, ProjectType
 from apps.api.models.user import User
 from apps.api.routers import upload
 from apps.api.schemas.upload import AbortUploadRequest
-from apps.api.tasks import cleanup_tasks, transcode_tasks
+from apps.api.tasks import cleanup_tasks, transcode_dispatch, transcode_tasks
 
 
 @pytest.fixture
@@ -43,7 +43,11 @@ def saved_version(monkeypatch):
 
             def own_version_only(*entities):
                 result = query(*entities)
-                return result.filter(AssetVersion.id == version_id) if entities == (AssetVersion,) else result
+                if entities == (AssetVersion,):
+                    return result.filter(AssetVersion.id == version_id)
+                if entities == (PendingTranscode,):
+                    return result.filter(PendingTranscode.version_id == version_id)
+                return result
 
             monkeypatch.setattr(session, "query", own_version_only)
             return session
@@ -155,4 +159,90 @@ def test_pending_transcode_is_removed_with_its_version(saved_version):
         db.query(AssetVersion).filter_by(id=c.version_id).delete(synchronize_session=False)
         db.commit()
     with SessionLocal() as fresh:
+        assert fresh.get(PendingTranscode, c.version_id) is None
+
+
+@pytest.fixture
+def last_dispatch_attempt(saved_version, monkeypatch):
+    c = saved_version
+    with SessionLocal() as db:
+        db.add(PendingTranscode(version_id=c.version_id, attempts=2))
+        db.commit()
+    monkeypatch.setattr(transcode_dispatch, "SessionLocal", c.session)
+    return c
+
+
+@pytest.mark.parametrize("change", ["ready", "deleted"])
+def test_dispatch_failure_refreshes_state_finished_during_publish(last_dispatch_attempt, monkeypatch, change):
+    c = last_dispatch_attempt
+
+    def finish_then_lose_ack(**kwargs):
+        with SessionLocal() as worker:
+            version = worker.get(AssetVersion, c.version_id)
+            if change == "ready":
+                version.processing_status = ProcessingStatus.ready
+            else:
+                version.deleted_at = datetime.now(timezone.utc)
+            worker.commit()
+        raise ConnectionError("publish acknowledgement lost")
+
+    monkeypatch.setattr(transcode_tasks.process_asset, "apply_async", finish_then_lose_ack)
+    assert transcode_dispatch.dispatch_pending(c.version_id) == 1
+    with SessionLocal() as fresh:
+        version = fresh.get(AssetVersion, c.version_id)
+        assert version.processing_status == (ProcessingStatus.ready if change == "ready" else ProcessingStatus.processing)
+        assert (version.deleted_at is not None) == (change == "deleted")
+        assert fresh.get(PendingTranscode, c.version_id) is None
+
+
+def test_dispatch_failure_leaves_running_worker_and_marker_for_later(last_dispatch_attempt, monkeypatch):
+    c = last_dispatch_attempt
+    with engine.connect() as worker:
+        def running_then_lose_ack(**kwargs):
+            worker.execute(text("SELECT pg_advisory_lock(:key)"), {"key": c.lock_key})
+            worker.commit()
+            raise ConnectionError("publish acknowledgement lost")
+
+        monkeypatch.setattr(transcode_tasks.process_asset, "apply_async", running_then_lose_ack)
+        try:
+            assert transcode_dispatch.dispatch_pending(c.version_id) == 1
+            with SessionLocal() as fresh:
+                assert fresh.get(AssetVersion, c.version_id).processing_status == ProcessingStatus.processing
+                assert fresh.get(PendingTranscode, c.version_id).attempts == 3
+        finally:
+            worker.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": c.lock_key})
+            worker.commit()
+    # The ambiguous delivery eventually completed; the durable marker is now obsolete.
+    with SessionLocal() as finished:
+        finished.get(AssetVersion, c.version_id).processing_status = ProcessingStatus.ready
+        finished.commit()
+    monkeypatch.setattr(transcode_tasks.process_asset, "apply_async", lambda **k: pytest.fail("ready cannot redispatch"))
+    assert transcode_dispatch.dispatch_pending(c.version_id) == 1
+    with SessionLocal() as fresh:
+        assert fresh.get(PendingTranscode, c.version_id) is None
+        assert fresh.get(AssetVersion, c.version_id).processing_status == ProcessingStatus.ready
+
+
+def test_dispatch_holds_worker_lock_until_failed_state_commits(last_dispatch_attempt, monkeypatch):
+    c = last_dispatch_attempt
+    with c.session() as dispatcher, engine.connect() as worker:
+        commit = dispatcher.commit
+
+        def check_lock_then_commit():
+            acquired = worker.execute(text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": c.lock_key}).scalar()
+            worker.rollback()
+            assert acquired is False
+            commit()
+
+        def reject(**kwargs):
+            raise ConnectionError("broker unavailable")
+
+        monkeypatch.setattr(transcode_tasks.process_asset, "apply_async", reject)
+        monkeypatch.setattr(dispatcher, "commit", check_lock_then_commit)
+        monkeypatch.setattr(transcode_dispatch, "SessionLocal", lambda: dispatcher)
+        assert transcode_dispatch.dispatch_pending(c.version_id) == 1
+        assert worker.execute(text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": c.lock_key}).scalar() is True
+        worker.rollback()
+    with SessionLocal() as fresh:
+        assert fresh.get(AssetVersion, c.version_id).processing_status == ProcessingStatus.failed
         assert fresh.get(PendingTranscode, c.version_id) is None

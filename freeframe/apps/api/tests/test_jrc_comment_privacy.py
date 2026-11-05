@@ -252,6 +252,63 @@ def test_csv_export_leaves_out_internal_comments_for_a_client(world):
     assert "SECRET team talk" in team_csv and "SECRET internal reply" in team_csv
 
 
+@pytest.mark.parametrize("who", ["client", "viewer"])
+@pytest.mark.parametrize("ancestor_version", ["current", "other"])
+def test_csv_export_checks_deleted_ancestors_outside_export_rows(world, who, ancestor_version):
+    from apps.api.models.asset import AssetVersion, ProcessingStatus
+
+    db, root = world["db"], world["internal"]
+    if ancestor_version == "other":
+        older = AssetVersion(asset_id=world["asset"].id, version_number=2,
+                             processing_status=ProcessingStatus.ready, created_by=world["team"].id)
+        db.add(older)
+        db.flush()
+        root.version_id = older.id
+    nested = world["comment"]("SECRET nested descendant", "public", parent=world["reply_under_internal"])
+    comments_module.delete_comment(root.id, db=db, current_user=world["team"])
+    comments_module.delete_comment(world["reply_under_internal"].id, db=db, current_user=world["team"])
+    # Public replies to deleted public parents remain exportable.
+    comments_module.delete_comment(world["public"].id, db=db, current_user=world["team"])
+
+    def export(user):
+        return comments_module.export_comments(
+            world["asset"].id, format="csv", version_id=world["version"].id, fps=None, start_tc=None,
+            include_resolved=True, db=db, current_user=user,
+        ).body.decode("utf-8")
+
+    client_csv, team_csv = export(world[who]), export(world["team"])
+    assert "PUBLIC reply" in client_csv
+    assert "SECRET" not in client_csv
+    assert nested.body in team_csv
+    assert root.body not in team_csv and world["reply_under_internal"].body not in team_csv
+    assert world["public"].body not in team_csv
+
+
+@pytest.mark.parametrize("target", ["internal", "reply_under_internal", "internal_under_public", "deleted_ancestor"])
+def test_resolve_and_unresolve_do_not_broadcast_internal_threads(world, monkeypatch, target):
+    db = world["db"]
+    if target == "deleted_ancestor":
+        comments_module.delete_comment(world["internal"].id, db=db, current_user=world["team"])
+        target = "reply_under_internal"
+    published = []
+    monkeypatch.setattr(comments_module.event_service, "publish_sync", lambda *args: published.append(args))
+    for expected in (True, False):
+        response = comments_module.resolve_comment(world[target].id, db=db, current_user=world["team"])
+        assert response.resolved is expected
+    assert published == []
+
+
+def test_public_resolve_and_unresolve_still_broadcast_the_result(world, monkeypatch):
+    published = []
+    monkeypatch.setattr(comments_module.event_service, "publish_sync", lambda *args: published.append(args))
+    for expected in (True, False):
+        comments_module.resolve_comment(world["public_reply"].id, db=world["db"], current_user=world["client"])
+        assert published[-1] == (world["asset"].project_id, "comment_resolved", {
+            "comment_id": str(world["public_reply"].id), "resolved": expected,
+        })
+    assert len(published) == 2
+
+
 def test_mentions_and_notifications_do_not_announce_internal_comments(world):
     db, client = world["db"], world["client"]
     _create(world, world["team"], visibility="internal", text="psst", mention_user_ids=[client.id])
