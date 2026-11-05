@@ -611,6 +611,20 @@ def test_status_keeps_stored_state_when_freeframe_is_down(client, ff, workspace,
     assert response.json()["channels"][0]["versions"][0]["status"] == "processing"
 
 
+def test_failed_conversion_shows_a_clear_terminal_message(client, ff, workspace, user, setup):
+    client.force_login(user)
+    started(client, workspace, setup)
+    version = VideoVersion.objects.get()
+    VideoVersion.objects.filter(pk=version.pk).update(status="processing")
+    ff.versions[str(version.video.ff_asset_id)][0].update(processing_status="failed")
+    response = client.get(url("upload_status", workspace, setup))
+    row = response.json()["channels"][0]["versions"][0]
+    assert row["status"] == "failed"
+    assert row["status_label"] == "Conversion failed. Please upload the video again."
+    version.refresh_from_db()
+    assert version.status == VideoVersion.Status.FAILED
+
+
 def test_version_removed_in_freeframe_becomes_error(client, ff, workspace, user, setup):
     client.force_login(user)
     started(client, workspace, setup)

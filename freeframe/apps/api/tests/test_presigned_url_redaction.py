@@ -285,7 +285,7 @@ def _drive_failing_process_asset(process_video):
     db = MagicMock()
     db.query.return_value = db
     db.filter.return_value = db
-    db.first.side_effect = [version, asset, media_file]
+    db.first.side_effect = [version, asset, media_file, version, asset]
     s3 = MagicMock()
     s3.generate_presigned_url.return_value = _URL
 

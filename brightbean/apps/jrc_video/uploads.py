@@ -116,6 +116,8 @@ def _int(value, minimum=0):
 
 
 def _label(version):
+    if version.status == VideoVersion.Status.FAILED:
+        return "Conversion failed. Please upload the video again."
     return VideoVersion.Status(version.status).label
 
 

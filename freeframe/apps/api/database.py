@@ -8,7 +8,9 @@ try:
 except ImportError:
     from config import settings
 
-engine = create_engine(settings.database_url)
+# API processes and long-lived Celery workers must discard connections left
+# behind by a PostgreSQL restart before handing them to a new transaction.
+engine = create_engine(settings.database_url, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 class Base(DeclarativeBase):

@@ -489,7 +489,11 @@ def requeue_stuck_processing():
     # slow encode gets a second worker started on top of the one still running.
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
     from .celery_app import send_task_safe
-    from .transcode_tasks import process_asset
+    from .transcode_tasks import process_asset, finish_failed_transcodes
+
+    # Exhausted conversions awaiting a terminal status must be settled before
+    # this sweep considers dispatching any old processing version again.
+    finish_failed_transcodes()
 
     db = SessionLocal()
     try:
