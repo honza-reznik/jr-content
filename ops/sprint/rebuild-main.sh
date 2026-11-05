@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# PM: záloha → merge P1-B10 → přestavba obrazů a restart hlavního jrc → celá sada testů. Hlídač stahování 3 GB.
+# PM: záloha → merge blok/<ID> (argument) → přestavba obrazů a restart hlavního jrc → celá sada testů. Hlídač stahování 3 GB.
 cd /home/honza/jr-content; export JRC_PROJECT=jrc
 dev=$(ip route | awk '/default/{print $5; exit}'); s=$(cat /sys/class/net/$dev/statistics/rx_bytes)
 mb() { echo $(( ($(cat /sys/class/net/$dev/statistics/rx_bytes)-s)/1000000 )); }
 make backup && b=$(ls -1d backups/jrc/2* | tail -1) && make backup-verify BACKUP="$b" && echo "ZÁLOHA OK $b" || { echo "ZÁLOHA SELHALA"; exit 1; }
-git merge -q --no-ff blok/P1-B10 -m "P1-B10: merge
+br=${1:?blok}; git merge -q --no-ff blok/$br -m "$br: merge
 
 Agent: PM (Claude Opus 5.5)
 
