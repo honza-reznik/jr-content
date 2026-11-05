@@ -1,6 +1,7 @@
 """Client approval on the content detail (F7-B02): card, decisions, history, "Waiting for you"."""
 
 import uuid
+from unittest.mock import patch
 
 import pytest
 from django.test import Client
@@ -8,7 +9,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
-from apps.approvals.models import ApprovalAction
+from apps.approvals.models import ApprovalAction, PostComment
 from apps.jrc_channels.services import create_manual_channel
 from apps.jrc_production.services import (
     available_moves,
@@ -21,6 +22,7 @@ from apps.jrc_production.services import (
 from apps.jrc_texts import services as texts
 from apps.jrc_video.models import VideoAsset, VideoVersion
 from apps.members.models import CustomRole, WorkspaceMembership
+from apps.notifications.models import EventType, Notification
 from apps.organizations.models import Organization
 from apps.workspaces.models import Workspace
 
@@ -113,6 +115,56 @@ def decide(user, post, decision, comment="", expected="review"):
     return login(user).post(
         decide_url(post), {"decision": decision, "comment": comment, "expected_stage": expected}, follow=True
     )
+
+
+@pytest.mark.parametrize("actor_role", ["client", "manager"])
+def test_change_request_is_one_shared_comment_and_one_decision_alert(
+    workspace, team, manager, ella, content, actor_role
+):
+    set_mode(workspace, SINGLE)
+    # Multiple channels still produce a single shared comment for the content.
+    from apps.composer.models import PlatformPost
+
+    PlatformPost.objects.create(
+        post=content, social_account=create_manual_channel(workspace, "youtube", "Garden shorts")
+    )
+    to_review(content, team)
+    Notification.objects.all().delete()
+    actor = ella if actor_role == "client" else manager
+    feedback = "Please shorten the ending. @test"
+    response = decide(actor, content, "request_changes", comment=feedback)
+    assert response.status_code == 200
+    comment = PostComment.objects.get(post=content)
+    assert comment.body == feedback and comment.author == actor and comment.visibility == "external"
+    assert ApprovalAction.objects.filter(post=content, action="changes_requested", comment=feedback).exists()
+    for person in (team, ella):
+        assert feedback in login(person).get(detail_url(content, "comments")).content.decode()
+    assert feedback in login(team).get(detail_url(content, "history")).content.decode()
+    assert feedback in login(actor).get(detail_url(content, "approval")).content.decode()
+    alerts = Notification.objects.filter(user=team)
+    assert alerts.count() == 1 and alerts.get().event_type == EventType.POST_CHANGES_REQUESTED
+    assert not Notification.objects.filter(
+        event_type__in=[EventType.CONTENT_CLIENT_COMMENT, EventType.COMMENT_MENTION]
+    ).exists()
+    # A repeated submission cannot add a comment or notify a second time.
+    decide(actor, content, "request_changes", comment=feedback)
+    assert PostComment.objects.filter(post=content).count() == 1
+    assert alerts.count() == 1
+
+
+def test_shared_feedback_and_decision_roll_back_together(workspace, team, ella, content):
+    set_mode(workspace, SINGLE)
+    to_review(content, team)
+    Notification.objects.all().delete()
+    with (
+        patch("apps.jrc_production.services.PostComment.objects.create", side_effect=RuntimeError("DB failure")),
+        pytest.raises(RuntimeError),
+    ):
+        request_content_changes(content, ella, "Shorten the ending", expected_stage="review")
+    assert statuses(content) == {"pending_review"}
+    assert not PostComment.objects.filter(post=content).exists()
+    assert not ApprovalAction.objects.filter(post=content, action="changes_requested").exists()
+    assert not Notification.objects.exists()
 
 
 def statuses(post):

@@ -51,6 +51,50 @@ def test_client_comments_and_replies_notify_only_the_content_team(workspace, eve
     assert alerts.count() == 8
 
 
+def test_comment_from_content_form_is_immediately_visible_in_owner_notifications(client, everyone, content):
+    client.force_login(everyone["client"])
+    response = client.post(
+        reverse(
+            "jrc_production:add_content_comment", kwargs={"workspace_id": content.workspace_id, "post_id": content.pk}
+        ),
+        {"body": "TEST K-09 od klienta"},
+    )
+    assert response.status_code == 302
+    owner = everyone["owner"]
+    alert = Notification.objects.get(user=owner, event_type=EventType.CONTENT_CLIENT_COMMENT)
+    assert alert.data["action_url"] == content_path(content, "comments")
+    client.force_login(owner)
+    for view in ("notifications:list", "notifications:drawer"):
+        page = client.get(reverse(view)).content.decode()
+        assert "New client comment" in page and content.title in page
+        assert f'href="{alert.safe_action_url}"' in page
+        # Alerts identify the author/content; the actual feedback is on the linked tab.
+        assert "TEST K-09 od klienta" not in page
+    assert b"TEST K-09 od klienta" in client.get(alert.safe_action_url).content
+
+
+def test_video_comment_alert_is_visible_and_duplicate_delivery_does_not_repeat_it(client, everyone, content):
+    response, payload, digest, secret = video_comment_event(client, content, everyone["client"])
+    assert response.status_code == 204
+    with override_settings(JRC_FF_SSO_SECRET=secret):
+        assert (
+            client.post(
+                reverse("jrc_video:comment_event"),
+                payload,
+                content_type="application/json",
+                HTTP_X_JRC_SIGNATURE=digest,
+            ).status_code
+            == 204
+        )
+    client.force_login(everyone["owner"])
+    alert = Notification.objects.get(user=everyone["owner"], event_type=EventType.CONTENT_CLIENT_COMMENT)
+    assert alert.data["action_url"] == content_path(content, "video")
+    page = client.get(reverse("notifications:list")).content.decode()
+    assert "New client comment" in page and content.title in page
+    assert f'href="{alert.safe_action_url}"' in page
+    assert client.get(alert.safe_action_url).status_code == 200
+
+
 def video_comment_event(client, content, actor, *, signature=True, timestamp=None, data=None):
     from apps.jrc_video.models import VideoAccount
 

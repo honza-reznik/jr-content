@@ -5,6 +5,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.approvals import services as approvals
+from apps.approvals.models import PostComment
 from apps.composer.models import PlatformPost, Post
 from apps.composer.services import remove_platform_posts, sync_post_scheduled_at
 from apps.jrc_channels.models import ChannelProfile
@@ -210,6 +211,10 @@ def request_content_changes(post, user, comment, *, expected_stage):
     if len(comment) > 5000:
         raise ValidationError("Keep the request under 5,000 characters.")
     approvals.request_changes(post, user, post.workspace, comment)
+    # P1-B19: keep feedback in the shared discussion as well as the decision log.
+    # The approval service already notifies its recipients: creating the comment
+    # directly avoids a second client-comment or mention notification.
+    PostComment.objects.create(post=post, author=user, body=comment, visibility=PostComment.Visibility.EXTERNAL)
     post.refresh_from_db()
     return post
 
