@@ -1,5 +1,6 @@
 """P1-B17: committed uploads survive failed dispatch and duplicate delivery."""
 import uuid
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -79,7 +80,8 @@ def test_worker_skips_duplicate_or_discarded_work(state):
 
 def test_recovery_budget_stops_infinite_reprocessing():
     version = SimpleNamespace(id=uuid.uuid4(), processing_recovery_attempts=3,
-                              processing_status=ProcessingStatus.processing)
+                              processing_status=ProcessingStatus.processing, deleted_at=None,
+                              last_activity_at=datetime.now(timezone.utc) - timedelta(hours=7))
     db = MagicMock()
     db.query.return_value.filter.return_value.all.return_value = [version]
     db.query.return_value.filter.return_value.first.return_value = None
@@ -90,5 +92,37 @@ def test_recovery_budget_stops_infinite_reprocessing():
         assert cleanup_tasks.requeue_stuck_processing() == 0
     assert version.processing_status == ProcessingStatus.failed
     assert version.processing_recovery_attempts == 3
-    db.execute.assert_not_called()
+    assert db.execute.call_count == 1  # advisory lock only, no pending transcode
     dispatch.assert_not_called()
+
+
+@pytest.mark.parametrize("change", ["locked", "ready", "active", "deleted"])
+def test_recovery_does_not_overwrite_a_worker_or_fresh_state(change):
+    version = SimpleNamespace(id=uuid.uuid4(), processing_recovery_attempts=3,
+                              processing_status=ProcessingStatus.processing, deleted_at=None,
+                              last_activity_at=datetime.now(timezone.utc) - timedelta(hours=7))
+    db = MagicMock()
+    db.query.return_value.filter.return_value.all.return_value = [version]
+    db.query.return_value.filter.return_value.first.return_value = None
+    db.execute.return_value.scalar.return_value = change != "locked"
+
+    def concurrent_completion(row):
+        if change == "ready":
+            row.processing_status = ProcessingStatus.ready
+        elif change == "active":
+            row.last_activity_at = datetime.now(timezone.utc)
+        elif change == "deleted":
+            row.deleted_at = datetime.now(timezone.utc)
+
+    db.refresh.side_effect = concurrent_completion
+    with patch.object(cleanup_tasks, "SessionLocal", return_value=db), \
+         patch.object(cleanup_tasks.settings, "stuck_processing_timeout_hours", 6), \
+         patch.object(transcode_tasks, "finish_failed_transcodes"), \
+         patch.object(transcode_dispatch, "dispatch_pending") as dispatch:
+        assert cleanup_tasks.requeue_stuck_processing() == 0
+    assert version.processing_status == (ProcessingStatus.ready if change == "ready" else ProcessingStatus.processing)
+    assert version.processing_recovery_attempts == 3
+    db.query.return_value.filter.return_value.first.assert_not_called()
+    dispatch.assert_not_called()
+    if change == "locked":
+        db.refresh.assert_not_called()

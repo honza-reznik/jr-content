@@ -9,6 +9,7 @@ These exercise the branches directly, including the Reject path, rather than
 asserting on a stubbed `self`.
 """
 import uuid
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -133,7 +134,8 @@ def test_the_sweep_re_dispatches_rather_than_condemning():
     """
     from apps.api.tasks import cleanup_tasks
 
-    stuck = SimpleNamespace(id=uuid.uuid4(), asset_id=uuid.uuid4(),
+    stuck = SimpleNamespace(id=uuid.uuid4(), asset_id=uuid.uuid4(), deleted_at=None,
+                            last_activity_at=datetime.now(timezone.utc) - timedelta(hours=7),
                             processing_status=ProcessingStatus.processing)
     db = MagicMock()
     db.query.return_value = db
@@ -153,7 +155,7 @@ def test_the_sweep_re_dispatches_rather_than_condemning():
     assert sent == ["dispatch"]
     assert stuck.processing_recovery_attempts == 1
     assert stuck.last_activity_at is not None
-    db.execute.assert_called_once()
+    assert db.execute.call_count == 2  # advisory lock and pending transcode
     # never condemned: the raw object must survive for the retry to use
     assert stuck.processing_status == ProcessingStatus.processing
 
@@ -163,7 +165,8 @@ def test_a_version_whose_output_already_exists_is_marked_ready_not_re_transcoded
     would redo hours of work to produce the same bytes."""
     from apps.api.tasks import cleanup_tasks
 
-    stuck = SimpleNamespace(id=uuid.uuid4(), asset_id=uuid.uuid4(),
+    stuck = SimpleNamespace(id=uuid.uuid4(), asset_id=uuid.uuid4(), deleted_at=None,
+                            last_activity_at=datetime.now(timezone.utc) - timedelta(hours=7),
                             processing_status=ProcessingStatus.processing)
     db = MagicMock()
     db.query.return_value = db

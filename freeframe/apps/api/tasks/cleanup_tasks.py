@@ -496,6 +496,18 @@ def requeue_stuck_processing():
 
         requeued = 0
         for v in stuck:
+            # Share the worker's lock through this transaction's commit. A slow
+            # active conversion must never be failed or redispatched by recovery.
+            locked = db.execute(text("SELECT pg_try_advisory_xact_lock(:key)"),
+                                {"key": v.id.int % (2 ** 63)}).scalar()
+            if not locked:
+                continue
+            # The worker may have finished after the initial scan, before we
+            # acquired its lock. Discard that stale snapshot before any writes.
+            db.refresh(v)
+            if (v.deleted_at is not None or v.processing_status != ProcessingStatus.processing
+                    or (v.last_activity_at or v.created_at) >= cutoff):
+                continue
             # A version whose output is already written finished its transcode and
             # simply never had its status updated. Re-running it would redo hours
             # of work to reach the same bytes, so treat the output as the truth.

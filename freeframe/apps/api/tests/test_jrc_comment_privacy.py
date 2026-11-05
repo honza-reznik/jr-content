@@ -171,6 +171,75 @@ def test_client_still_reaches_public_comments_by_id(world):
     assert comments_module.resolve_comment(world["public"].id, db=db, current_user=client).resolved is True
 
 
+@pytest.mark.parametrize("who", ["client", "team", "native"])
+@pytest.mark.parametrize("route", ["resolve", "update", "create", "reply", "share_list", "share_create"])
+def test_every_thread_response_filters_internal_descendants(world, monkeypatch, who, route):
+    """Exercise the real serializers, including deep replies and attachment signing."""
+    from apps.api.models.comment import CommentAttachment
+    from apps.api.models.share import ShareLink, SharePermission
+    from apps.api.schemas.comment import GuestCommentCreate
+
+    db, user, root = world["db"], world[who], world["public"]
+    root.author_id = user.id  # editing one's own public thread is allowed
+    signed = []
+    monkeypatch.setattr(comments_module, "_build_attachment_response",
+                        lambda *args: signed.append(args) or pytest.fail("internal attachment was signed"))
+
+    def descendants(parent):
+        public = world["comment"]("PUBLIC nested reply", "public", parent=parent)
+        internal = world["comment"]("SECRET nested reply", "internal", parent=public)
+        world["comment"]("SECRET public child", "public", parent=internal)
+        if who == "client" or route.startswith("share"):
+            db.add(CommentAttachment(comment_id=internal.id, s3_key="secret-file",
+                                     original_filename="secret.txt", file_type="text/plain", file_size_bytes=6))
+            db.flush()
+
+    if route in {"create", "reply", "share_create"}:
+        # A concurrent reply can appear between saving and rendering the response.
+        refresh = db.refresh
+
+        def refresh_with_replies(comment, *args, **kwargs):
+            refresh(comment, *args, **kwargs)
+            descendants(comment)
+
+        monkeypatch.setattr(db, "refresh", refresh_with_replies)
+    else:
+        descendants(root)
+
+    if route.startswith("share"):
+        link = ShareLink(asset_id=world["asset"].id, token=str(uuid.uuid4()),
+                         created_by=world["team"].id, permission=SharePermission.comment)
+        db.add(link)
+        db.flush()
+        monkeypatch.setattr(comments_module, "validate_share_link_with_session", lambda *a, **k: link)
+        if route == "share_list":
+            result = comments_module.list_share_comments(
+                link.token, asset_id=None, version_id=None, latest_only=False,
+                share_session=None, db=db, current_user=user)
+        else:
+            result = [comments_module.guest_comment(
+                link.token, GuestCommentCreate(body="PUBLIC created", version_id=world["version"].id),
+                share_session=None, db=db, current_user=user)]
+    elif route == "resolve":
+        result = [comments_module.resolve_comment(root.id, db=db, current_user=user)]
+    elif route == "update":
+        result = [comments_module.update_comment(root.id, CommentUpdate(body="PUBLIC edited"), db=db, current_user=user)]
+    elif route == "create":
+        result = [_create(world, user, text="PUBLIC created")]
+    else:
+        result = [comments_module.reply_to_comment(
+            world["asset"].id, root.id, CommentCreate(version_id=world["version"].id, body="PUBLIC created"),
+            db=db, current_user=user)]
+
+    bodies = {node.body for node in _flatten(result)}
+    assert "PUBLIC nested reply" in bodies
+    if who == "client" or route.startswith("share"):
+        assert not any("SECRET" in body for body in bodies)
+        assert not signed
+    else:
+        assert {"SECRET nested reply", "SECRET public child"} <= bodies
+
+
 def test_csv_export_leaves_out_internal_comments_for_a_client(world):
     def export(user):
         return comments_module.export_comments(

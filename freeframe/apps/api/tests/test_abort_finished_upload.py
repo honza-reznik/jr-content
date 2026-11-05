@@ -14,6 +14,7 @@ from botocore.exceptions import ClientError
 
 import apps.api.routers.upload as upload_module
 from apps.api.models.asset import ProcessingStatus
+from apps.api.models.pending_transcode import PendingTranscode
 
 MB = 1024 * 1024
 KEY = "raw/p/a/v/original.mp4"
@@ -39,6 +40,13 @@ def abort_rows(mock_db, test_user):
 
     # version lookup, then the media file lookup that pins the key being aborted
     mock_db.first.side_effect = [version, media_file]
+    mock_db.update.return_value = 1
+
+    def claim_status(values, **kwargs):
+        version.processing_status = ProcessingStatus.processing
+        return 1
+
+    mock_db.update.side_effect = claim_status
     return version, media_file
 
 
@@ -65,6 +73,24 @@ def test_a_completed_upload_is_recorded_as_processing_not_failed(
     assert version.processing_status == ProcessingStatus.processing
     # It never got its transcode dispatched either, so do that now.
     assert dispatched == [version.id]
+    marker, = [call.args[0] for call in mock_db.add.call_args_list
+               if isinstance(call.args[0], PendingTranscode)]
+    assert marker.version_id == version.id
+    # The dispatch marker must already exist when the status transaction commits.
+    calls = mock_db.mock_calls
+    assert calls.index(next(c for c in calls if c[0] == "add")) < calls.index(next(c for c in calls if c[0] == "commit"))
+
+
+def test_abort_losing_to_concurrent_completion_does_not_dispatch_twice(
+    client, auth_headers, mock_db, abort_rows, monkeypatch
+):
+    monkeypatch.setattr(upload_module, "abort_multipart_upload", lambda k, u: None)
+    monkeypatch.setattr(upload_module, "head_object_size", lambda k: 23 * MB)
+    monkeypatch.setattr(upload_module, "_trigger_processing", lambda *a: pytest.fail("already dispatched"))
+    mock_db.update.side_effect = None
+    mock_db.update.return_value = 0
+    assert _abort(client, auth_headers).status_code == 204
+    assert not any(isinstance(c.args[0], PendingTranscode) for c in mock_db.add.call_args_list)
 
 
 def test_a_genuinely_cancelled_upload_still_fails(

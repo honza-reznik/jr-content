@@ -989,9 +989,19 @@ def abort_upload(
                 "abort called for upload %s but the object is already complete; "
                 "recording it as processing instead of failed", version.id,
             )
-            version.processing_status = ProcessingStatus.processing
+            claimed = db.query(AssetVersion).filter(
+                AssetVersion.id == version.id,
+                AssetVersion.processing_status == ProcessingStatus.uploading,
+            ).update(
+                {AssetVersion.processing_status: ProcessingStatus.processing},
+                synchronize_session=False,
+            )
+            if claimed:
+                from ..models.pending_transcode import PendingTranscode
+                db.add(PendingTranscode(version_id=version.id))
             db.commit()
-            background_tasks.add_task(_trigger_processing, version.asset_id, version.id)
+            if claimed:
+                background_tasks.add_task(_trigger_processing, version.asset_id, version.id)
             return
         version.processing_status = ProcessingStatus.failed
         db.commit()
