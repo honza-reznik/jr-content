@@ -282,6 +282,12 @@ def test_download_conditions_match_final_video(
         assert response.status_code == 200
         assert b"data-thumbnail-image" in response.content
         assert b"data-thumbnail-download" not in response.content
+        if tab == "publish":
+            assert b"data-thumbnail-blocked>Download thumbnail</button>" in response.content
+            assert b'disabled aria-describedby="thumbnail-download-reason-' in response.content
+            assert b"Requires channel approval, a saved caption" in response.content
+        else:
+            assert b"data-thumbnail-blocked" not in response.content
         assert url("download", post, variant, previous).encode() not in response.content
         assert final_url.encode() not in response.content
 
