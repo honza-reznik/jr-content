@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import smtplib
+import ssl
 from datetime import datetime, timedelta
 
 from django.conf import settings
@@ -172,6 +174,38 @@ def _is_suppressed(addresses: list[str]) -> bool:
         return False
 
 
+def smtp_failure_reason(exc: Exception) -> str:
+    """Allow only fixed labels and numeric codes; server text may contain secrets."""
+    if isinstance(exc, ssl.SSLCertVerificationError):
+        code = getattr(exc, "verify_code", None)
+        suffix = f"; code={code}" if type(code) is int else ""
+        return f"TLS certificate verification{suffix}"
+    if isinstance(exc, ssl.SSLError):
+        return "TLS handshake"
+    if isinstance(exc, smtplib.SMTPRecipientsRefused):
+        codes = sorted({reply[0] for reply in exc.recipients.values() if type(reply[0]) is int})
+        return "SMTP recipients refused; codes=" + ",".join(map(str, codes))
+    if isinstance(exc, smtplib.SMTPResponseException):
+        label = "SMTP server response"
+        if isinstance(exc, smtplib.SMTPAuthenticationError):
+            label = "SMTP authentication"
+        elif isinstance(exc, smtplib.SMTPDataError):
+            label = "SMTP DATA"
+        elif isinstance(exc, smtplib.SMTPSenderRefused):
+            label = "SMTP sender refused"
+        code = exc.smtp_code
+        return f"{label}; code={code}" if type(code) is int else label
+    if isinstance(exc, smtplib.SMTPNotSupportedError):
+        return "SMTP feature unavailable"
+    if isinstance(exc, smtplib.SMTPServerDisconnected):
+        return "SMTP disconnected"
+    if isinstance(exc, TimeoutError):
+        return "SMTP timeout"
+    if isinstance(exc, OSError):
+        return "SMTP connection"
+    return "mail backend error"
+
+
 class BudgetedEmailBackend(BaseEmailBackend):
     """Applies the budget, then hands the survivors to the real backend."""
 
@@ -201,11 +235,13 @@ class BudgetedEmailBackend(BaseEmailBackend):
 
         try:
             return self._inner().send_messages(allowed) or 0
-        except Exception:
+        except Exception as exc:
             # SMTP servers may echo credentials or message contents in their
             # error replies. Do not let the original exception reach callers,
             # logs, or NotificationDelivery.error_message.
-            raise RuntimeError("SMTP delivery failed") from None
+            reason = smtp_failure_reason(exc)
+            logger.error("SMTP delivery failed (%s)", reason)
+            raise RuntimeError(f"SMTP delivery failed ({reason})") from None
 
     def _allow(self, message) -> bool:
         # recipients() is to + cc + bcc. Suppression has to cover all of them —

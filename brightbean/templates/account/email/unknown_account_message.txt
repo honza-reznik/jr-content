@@ -1,0 +1,9 @@
+{% extends "account/email/base_message.txt" %}
+{% block content %}{% autoescape off %}A password reset was requested for {{ email }}, but no JR Content account uses this address.
+
+Check that you entered the address you use to sign in. If you are joining a team, ask its administrator for an invitation and open the invitation link to create your account.
+{% if signup_url %}
+You can also create an account here:
+{{ signup_url }}
+{% endif %}
+If you did not request this, you can safely ignore this email.{% endautoescape %}{% endblock content %}

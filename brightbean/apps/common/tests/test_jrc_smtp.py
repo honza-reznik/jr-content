@@ -100,3 +100,5 @@ def test_smtp_error_reply_cannot_leak_password_to_logs_or_caller(caplog):
 
     assert password not in str(error.value)
     assert password not in caplog.text
+    assert "code=535" in str(error.value)
+    assert "code=535" in caplog.text

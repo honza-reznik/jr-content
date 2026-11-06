@@ -46,14 +46,16 @@ if _smtp_values["host"]:
     if not all(_smtp_values.values()):
         raise RuntimeError("JRC_SMTP_HOST requires JRC_SMTP_PORT, JRC_SMTP_USER, JRC_SMTP_PASSWORD, and JRC_SMTP_FROM")
     EMAIL_BACKEND_TYPE = "smtp"
-    EMAIL_INNER_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    EMAIL_INNER_BACKEND = "apps.common.smtp.RelayEmailBackend"
     EMAIL_HOST = _smtp_values["host"]
+    JRC_SMTP_RELAY_HOST = os.environ.get("JRC_SMTP_RELAY_HOST", "").strip()
     EMAIL_PORT = int(_smtp_values["port"])
     EMAIL_HOST_USER = _smtp_values["user"]
     EMAIL_HOST_PASSWORD = _smtp_values["password"]
     DEFAULT_FROM_EMAIL = _smtp_values["from"]
     EMAIL_USE_SSL = EMAIL_PORT == 465
     EMAIL_USE_TLS = not EMAIL_USE_SSL
+    EMAIL_TIMEOUT = 20
     del _smtp_values
 SESSION_COOKIE_SECURE = False
 CSP_REPORT_ONLY = True

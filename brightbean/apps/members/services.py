@@ -271,7 +271,8 @@ def accept_invitation(invitation, user, *, require_email_match=True):
         )
 
     invitation.accepted_at = timezone.now()
-    invitation.save(update_fields=["accepted_at"])
+    invitation.accepted_by = user
+    invitation.save(update_fields=["accepted_at", "accepted_by"])
 
     # Set last workspace for dashboard redirect
     if invitation.workspace_assignments:
@@ -562,7 +563,7 @@ def _send_invite_email(invitation) -> bool:
         "app_url": app_url,
     }
 
-    subject = f"You've been invited to join {invitation.organization.name} on Brightbean"
+    subject = f"You've been invited to join {invitation.organization.name} on JR Content"
     text_content = render_to_string("members/email/invite.txt", context)
     html_content = render_to_string("members/email/invite.html", context)
 

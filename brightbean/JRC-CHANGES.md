@@ -1,5 +1,15 @@
 # Úpravy JR Content
 
+## 2026-11-05 — P1-B24
+
+- E-maily účtu mají společnou značku JR Content; odkazy používají veřejný původ a předponu
+  aplikace, nezávisle na historickém záznamu Site či vnitřním hostiteli požadavku. Reset pro
+  neznámou adresu při registraci jen na pozvánku vysvětlí další postup bez nefunkčního odkazu.
+- Pozvánka má sjednocený předmět i textovou část, upozornění také textovou patičku JR Content.
+- Migrace `members.0004` ukládá příjemce přijetí (`accepted_by`): návrat po registraci na již
+  přijatý odkaz přesměruje téhož uživatele s trvajícím členstvím do aplikace. Cizí návštěvník,
+  odvolané členství a historické přijaté pozvánky bez známého příjemce zůstávají odmítnuté.
+
 ## 2026-11-04 — P1-B09
 
 - Shotlist u obsahu: `ShotlistItem` (text, poznámka, hotovo, pořadí, kdo/kdy změnil) a historie
@@ -752,3 +762,12 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
   About & license beze změny.
 - Test: `apps/jrc_ui/tests/test_terms.py` (přihlášení nového uživatele, registrace přes pozvánku, 404 stránky souhlasu,
   vratnost, statická kontrola šablon s brightbean.xyz – zbylé jsou jen za vypnutými funkcemi `terms`, `reviews`, `intelligence`).
+
+## 2026-11-05 · P1-B22 — SMTP přes relay s ověřením TLS
+
+- `apps.common.smtp.RelayEmailBackend`: síťové spojení míří na `JRC_SMTP_RELAY_HOST`, ale TLS SNI a ověření certifikátu
+  používá skutečný `EMAIL_HOST`. Funguje pro implicitní SSL/465 i STARTTLS/587; kontrola certifikátu zůstává zapnutá.
+- Compose předává původní `JRC_SMTP_HOST` a samostatnou adresu relay; provozní nastavení volí nový backend a časový limit 20 s.
+- `BudgetedEmailBackend` hlásí pevně danou kategorii chyby a číselný SMTP/TLS kód. Nepropouští text odpovědi serveru,
+  adresy ani přihlašovací údaje do výjimky či logu.
+- `make test-smtp-tls` ověřuje oba režimy přes skutečný relay s lokálním certifikátem a autentizací; zahrnuto v `make test`.
