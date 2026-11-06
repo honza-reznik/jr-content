@@ -8,5 +8,6 @@
 View all: {{ app_url }}{% url 'notifications:list' %}
 
 ---
+JR Content
 You received this because of your notification settings.
 Manage preferences: {{ app_url }}{% url 'notifications:preferences' %}

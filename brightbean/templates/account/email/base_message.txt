@@ -1,0 +1,7 @@
+{% autoescape off %}Hello from JR Content!
+
+{% block content %}{% endblock content %}
+
+JR Content
+{{ jrc_home_url }}
+{% endautoescape %}

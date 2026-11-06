@@ -1,10 +1,8 @@
-{% load account %}{% autoescape off %}{% user_display user as user_display %}Hi {{ user_display }},
+{% extends "account/email/base_message.txt" %}
+{% block content %}{% autoescape off %}Please confirm this email address for your JR Content account:
+{% if code %}
+Enter this code in your open browser window:
+{{ code }}{% else %}
+{{ activate_url }}{% endif %}
 
-Please confirm this email address for your Brightbean Studio account by clicking the link below:
-
-{{ activate_url }}
-
-If you didn't add this email, you can safely ignore this message.
-
-- The Brightbean team
-{% endautoescape %}
+If you did not add this email, you can safely ignore this message.{% endautoescape %}{% endblock content %}
