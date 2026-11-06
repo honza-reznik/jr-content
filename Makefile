@@ -86,7 +86,7 @@ test-up:
 .PHONY: test-up-internal up-internal build-all build-infra
 # Interní cíle se spouštějí jedině pod hlídačem celé dávky.
 test-up-internal: restore-lock-check
-	@test "$${JRC_BUILD_GUARD_ACTIVE:-0}" = 1
+	@bash scripts/build/download-guard.sh --check-parent
 	$(MAKE) build
 	$(MAKE) env check-project-ports
 	bash scripts/build/images.sh bb ff-api ff-web ingress s3 smtp-relay
@@ -128,7 +128,7 @@ build-ff: check-clean-worktree
 
 .PHONY: build-ff-internal
 build-ff-internal:
-	@test "$${JRC_BUILD_GUARD_ACTIVE:-0}" = 1
+	@bash scripts/build/download-guard.sh --check-parent
 	$(MAKE) env
 	bash scripts/build/images.sh ff-api ff-web
 
@@ -140,7 +140,7 @@ build-all: check-clean-worktree
 
 .PHONY: build-all-internal
 build-all-internal:
-	@test "$${JRC_BUILD_GUARD_ACTIVE:-0}" = 1
+	@bash scripts/build/download-guard.sh --check-parent
 	$(MAKE) build
 	$(MAKE) env check-project-ports
 	bash scripts/build/images.sh ff-api ff-web ingress s3 smtp-relay
@@ -157,7 +157,7 @@ up: restore-lock-check check-clean-worktree
 	bash scripts/build/download-guard.sh $(MAKE) --no-print-directory up-internal
 
 up-internal:
-	@test "$${JRC_BUILD_GUARD_ACTIVE:-0}" = 1
+	@bash scripts/build/download-guard.sh --check-parent
 	$(MAKE) build-all
 	$(MAKE) runtime-images
 	$(COMPOSE) up --detach --no-build --pull never --wait --wait-timeout 120
@@ -170,7 +170,7 @@ runtime-images:
 	bash scripts/build/download-guard.sh $(MAKE) --no-print-directory runtime-images-internal
 
 runtime-images-internal:
-	@test "$${JRC_BUILD_GUARD_ACTIVE:-0}" = 1
+	@bash scripts/build/download-guard.sh --check-parent
 	@set -eu; for image in postgres:18.6-bookworm redis:7-alpine python:3.12-slim; do \
 	  docker image inspect "$$image" >/dev/null 2>&1 || \
 	    bash scripts/build/download-guard.sh docker pull "$$image"; \
@@ -397,4 +397,7 @@ test-offsite:
 test-build-cache:
 	docker run --rm --pull never --network none --memory 512m --cpus 1 \
 	  --user "$(JRC_UID):$(JRC_GID)" --volume "$(CURDIR):/source:ro" \
-	  jrc-dev:$(JRC_PROJECT) bash /source/scripts/build/test-guard.sh
+	  jrc-dev:$(JRC_PROJECT) timeout 120s bash /source/scripts/build/test-guard.sh
+	docker run --rm --pull never --network none --memory 512m --cpus 1 \
+	  --user "$(JRC_UID):$(JRC_GID)" --volume "$(CURDIR):/source:ro" \
+	  jrc-dev:$(JRC_PROJECT) timeout 120s bash /source/scripts/build/test-cache.sh

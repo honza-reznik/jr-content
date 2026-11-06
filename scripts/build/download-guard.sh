@@ -1,6 +1,36 @@
 #!/usr/bin/env bash
 # Měří celé rozhraní hostitele, tedy konzervativně i souběžný cizí provoz.
 set -euo pipefail
+# Kanonická cesta umožní ověřit skutečný proces hlídače v /proc, nikoli
+# důvěřovat příznaku předanému volajícím v prostředí.
+guard_path=$(realpath "${BASH_SOURCE[0]}")
+if [[ $0 != "$guard_path" ]]; then exec bash "$guard_path" "$@"; fi
+parent_guard_active() {
+    local ancestor=$PPID key value executable script mode
+    while [[ $ancestor != 0 ]]; do
+        [[ -r /proc/$ancestor/status ]] || return 1
+        executable= script= mode=
+        if {
+            IFS= read -r -d '' executable &&
+            IFS= read -r -d '' script &&
+            IFS= read -r -d '' mode
+        } < "/proc/$ancestor/cmdline" 2>/dev/null; then
+            if [[ ${executable##*/} == bash && $script == "$guard_path" && $mode != --check-parent ]]; then
+                return 0
+            fi
+        fi
+        value=0
+        while read -r key value _; do
+            [[ $key != PPid: ]] || break
+        done < "/proc/$ancestor/status"
+        ancestor=$value
+    done
+    return 1
+}
+if [[ ${1:-} == --check-parent ]]; then
+    parent_guard_active || { echo 'Interní sestavení vyžaduje skutečného nadřazeného hlídače.' >&2; exit 2; }
+    exit 0
+fi
 limit=${JRC_BUILD_DOWNLOAD_LIMIT_MB:-500}
 if [[ ${JRC_BUILD_CACHE_FILL:-0} == 1 ]]; then
     limit=${JRC_BUILD_CACHE_FILL_LIMIT_MB:-2000}
@@ -24,13 +54,13 @@ finish() {
         "$(date -Iseconds)" "$JRC_PROJECT" "$iface" "$end" "$bytes" \
         "$(awk -v b="$bytes" 'BEGIN {printf "%.3f", b/1000000}')" "$result" "$label" | tee -a "$log"
 }
-if [[ ${JRC_BUILD_GUARD_ACTIVE:-0} == 1 ]]; then
+if parent_guard_active; then
     # Nadřazený hlídač měří součet celé dávky. Zachovat jeho skupinu procesů.
     "$@" || result=$?
     finish
     exit "$result"
 fi
-export JRC_BUILD_GUARD_ACTIVE=1 JRC_BUILD_INTERFACE=$iface
+export JRC_BUILD_INTERFACE=$iface
 setsid "$@" &
 child=$!
 stop_child() {

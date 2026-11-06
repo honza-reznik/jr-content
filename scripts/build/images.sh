@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+if ! bash scripts/build/download-guard.sh --check-parent 2>/dev/null; then
+    exec bash scripts/build/download-guard.sh bash "$PWD/scripts/build/images.sh" "$@"
+fi
 export BUILDX_CONFIG=${BUILDX_CONFIG:-$PWD/.cache/docker-buildx}
 project=${JRC_PROJECT:?Spusť přes make s JRC_PROJECT}
 [[ $project =~ ^jrc(-[a-z0-9-]+)?$ ]] || exit 2
-mkdir -p .cache/buildkit
-# Jedna pracovní kopie nesmí současně přepisovat stejný OCI index cache.
-exec {cache_lock}>.cache/buildkit/build.lock
-flock "$cache_lock"
+source scripts/build/cache.sh
+prepare_build_cache
 for image in "$@"; do
     args=()
     case $image in
@@ -27,7 +28,7 @@ for image in "$@"; do
         smtp-relay) file=docker/smtp-relay/Dockerfile; context=docker/smtp-relay ;;
         *) echo "Neznámý obraz: $image" >&2; exit 2 ;;
     esac
-    cache="$PWD/.cache/buildkit/$image"
+    cache="$cache_root/$image"
     if [[ -f $cache/index.json ]]; then args+=(--cache-from "type=local,src=$cache"); fi
     # Export do stejného OCI úložiště: obsah je adresovaný hashem, existující
     # bloky se nepřenášejí znovu. Nikdy nemažeme cache ani obrazy Dockeru.
