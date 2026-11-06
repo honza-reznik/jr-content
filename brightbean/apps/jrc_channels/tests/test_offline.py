@@ -256,7 +256,10 @@ def test_organization_deletion_request_preserves_local_youtube(workspace, org_ow
     post = Post.objects.create(workspace=workspace, author=user, caption="Keep during grace period")
     pp = PlatformPost.objects.create(post=post, social_account=account, status="scheduled")
     client.force_login(user)
-    response = client.post(reverse("organizations:settings"), {"action": "delete_organization"})
+    response = client.post(
+        reverse("organizations:settings"),
+        {"action": "delete_organization", "organization_id": str(workspace.organization_id)},
+    )
     assert response.status_code == 302
     org = workspace.organization
     org.refresh_from_db()
@@ -264,7 +267,9 @@ def test_organization_deletion_request_preserves_local_youtube(workspace, org_ow
     assert Task.objects.filter(task_name="apps.organizations.tasks.execute_scheduled_org_deletion").exists()
     # Execute the queued body during the grace period, then cancel the request.
     execute_scheduled_org_deletion.now(str(org.pk))
-    response = client.post(reverse("organizations:settings"), {"action": "cancel_deletion"})
+    response = client.post(
+        reverse("organizations:settings"), {"action": "cancel_deletion", "organization_id": str(org.pk)}
+    )
     assert response.status_code == 302
     org.refresh_from_db()
     assert not org.is_deletion_pending

@@ -12,10 +12,12 @@ the audit trail remembers exactly which target was acted on.
 
 import logging
 
+from django.core.exceptions import PermissionDenied
 from django.db import transaction
 
 from apps.composer.models import PlatformPost, Post
 from apps.members.models import WorkspaceMembership
+from apps.members.permissions import can_decide_at_step
 from apps.notifications.audience import (
     active_memberships,
     content_label,
@@ -29,6 +31,10 @@ from apps.notifications.models import EventType
 from .models import ApprovalAction, ApprovalReminder
 
 logger = logging.getLogger(__name__)
+
+# States a decision may start from; who may decide in which state is ``can_decide_at_step``.
+_APPROVE_FROM = {"pending_review", "pending_client", "draft", "rejected", "changes_requested"}
+_DECIDE_FROM = {"pending_review", "pending_client"}
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +61,30 @@ def _resolve_targets(target, *, eligible_from_states=None):
     if eligible_from_states is not None:
         children = [pp for pp in children if pp.status in eligible_from_states]
     return target, children, True
+
+
+def _decision_targets(target, user, workspace, *, eligible_from_states):
+    """Authorize every selected object before the first transition (also bulk)."""
+    post, targets, bundled = _resolve_targets(target, eligible_from_states=eligible_from_states)
+    membership = (
+        WorkspaceMembership.objects.select_related("user", "workspace", "custom_role")
+        .filter(workspace=workspace, user=user)
+        .first()
+    )
+    if post.workspace_id != workspace.pk or not membership:
+        raise PermissionDenied("You cannot decide on this content.")
+    if not membership.user.is_active or workspace.is_archived or membership.workspace_role == "viewer":
+        raise PermissionDenied("You cannot decide on this content.")
+    if not membership.effective_permissions.get("approve_posts", False):
+        raise PermissionDenied("Approval permission required.")
+    # Re-read under the row lock: the decision is authorized against the state it will change.
+    locked = PlatformPost.objects.select_for_update().filter(pk__in=[pp.pk for pp in targets])
+    targets = [pp for pp in locked if pp.status in eligible_from_states]
+    if (not targets and membership.workspace_role == "client") or any(
+        not can_decide_at_step(membership, pp.status) for pp in targets
+    ):
+        raise PermissionDenied("You cannot decide at this review stage.")
+    return post, targets, bundled
 
 
 def _transition_or_skip(pp, target_status):
@@ -195,6 +225,7 @@ def submit_for_review(target, user, workspace):
     return post
 
 
+@transaction.atomic
 def approve_post(target, user, workspace, comment=""):
     """Approve a post or single platform post.
 
@@ -202,8 +233,11 @@ def approve_post(target, user, workspace, comment=""):
     out of ``pending_review``, the target hops to ``approved`` and then to
     ``pending_client`` (the same behaviour as before, just per-target).
     """
-    post, targets, is_bundled = _resolve_targets(
-        target, eligible_from_states={"pending_review", "pending_client", "draft", "rejected", "changes_requested"}
+    post, targets, is_bundled = _decision_targets(
+        target,
+        user,
+        workspace,
+        eligible_from_states=_APPROVE_FROM,
     )
 
     two_stage = workspace.approval_workflow_mode == "required_internal_and_client"
@@ -257,12 +291,13 @@ def approve_post(target, user, workspace, comment=""):
     return post
 
 
+@transaction.atomic
 def request_changes(target, user, workspace, comment):
     """Request changes on a post or single platform post. Comment is required."""
     if not comment.strip():
         raise ValueError("A comment is required when requesting changes.")
 
-    post, targets, is_bundled = _resolve_targets(target, eligible_from_states={"pending_review", "pending_client"})
+    post, targets, is_bundled = _decision_targets(target, user, workspace, eligible_from_states=_DECIDE_FROM)
 
     moved = []
     with transaction.atomic():
@@ -290,12 +325,13 @@ def request_changes(target, user, workspace, comment):
     return post
 
 
+@transaction.atomic
 def reject_post(target, user, workspace, comment):
     """Reject a post or single platform post. Comment is required."""
     if not comment.strip():
         raise ValueError("A comment is required when rejecting a post.")
 
-    post, targets, is_bundled = _resolve_targets(target, eligible_from_states={"pending_review", "pending_client"})
+    post, targets, is_bundled = _decision_targets(target, user, workspace, eligible_from_states=_DECIDE_FROM)
 
     moved = []
     with transaction.atomic():
@@ -417,14 +453,28 @@ def resubmit_post(target, user, workspace):
     return post
 
 
+def _authorize_bulk(posts, user, workspace, eligible_from_states):
+    """Authorize every selected post before the first transition or notification.
+
+    A single post the member may not decide on refuses the whole batch, so nothing is
+    half-applied and no notification about an undone change can leave the system.
+    """
+    for post in posts:
+        _decision_targets(post, user, workspace, eligible_from_states=eligible_from_states)
+
+
+@transaction.atomic
 def bulk_approve(post_ids, user, workspace):
     """Approve all eligible PlatformPosts under each post (bundled per post)."""
     results = []
-    posts = Post.objects.filter(
-        id__in=post_ids,
-        workspace=workspace,
-        platform_posts__status__in=["pending_review", "pending_client"],
-    ).distinct()
+    posts = list(
+        Post.objects.filter(
+            id__in=post_ids,
+            workspace=workspace,
+            platform_posts__status__in=["pending_review", "pending_client"],
+        ).distinct()
+    )
+    _authorize_bulk(posts, user, workspace, _APPROVE_FROM)
 
     for post in posts:
         try:
@@ -436,17 +486,21 @@ def bulk_approve(post_ids, user, workspace):
     return results
 
 
+@transaction.atomic
 def bulk_reject(post_ids, user, workspace, comment):
     """Reject all eligible PlatformPosts under each post (bundled per post)."""
     if not comment.strip():
         raise ValueError("A comment is required for bulk rejection.")
 
     results = []
-    posts = Post.objects.filter(
-        id__in=post_ids,
-        workspace=workspace,
-        platform_posts__status__in=["pending_review", "pending_client"],
-    ).distinct()
+    posts = list(
+        Post.objects.filter(
+            id__in=post_ids,
+            workspace=workspace,
+            platform_posts__status__in=["pending_review", "pending_client"],
+        ).distinct()
+    )
+    _authorize_bulk(posts, user, workspace, _DECIDE_FROM)
 
     for post in posts:
         try:

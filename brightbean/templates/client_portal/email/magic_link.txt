@@ -1,4 +1,4 @@
-Hi {{ client_user.display_name }},
+{% autoescape off %}Hi {{ client_user.display_name }},
 
 {{ created_by.display_name }} has shared content for your review in {{ workspace.name }}.
 
@@ -6,4 +6,4 @@ Click the link below to access your portal and approve or provide feedback on sc
 
 {{ magic_url }}
 
-This link is valid for 30 days. If it expires, ask your account manager for a new one.
+This link is valid for 30 days. If it expires, ask your account manager for a new one.{% endautoescape %}

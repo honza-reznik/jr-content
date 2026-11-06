@@ -27,6 +27,7 @@ def dashboard(request):
             user=user,
             workspace_id=user.last_workspace_id,
             workspace__is_archived=False,
+            workspace__organization=request.org,
         ).exists():
             return redirect("calendar:calendar", workspace_id=user.last_workspace_id)
         user.last_workspace_id = None
@@ -34,7 +35,10 @@ def dashboard(request):
 
     # Fallback: try to find any workspace the user belongs to
     membership = (
-        WorkspaceMembership.objects.filter(user=user, workspace__is_archived=False).select_related("workspace").first()
+        WorkspaceMembership.objects.filter(user=user, workspace__is_archived=False, workspace__organization=request.org)
+        .select_related("workspace")
+        .order_by("workspace__name", "workspace_id")
+        .first()
     )
     if membership:
         user.last_workspace_id = membership.workspace.id
@@ -65,17 +69,12 @@ def account_settings(request):
 
         return redirect("accounts:settings")
 
-    # Fetch the user's organization membership for role display
-    from apps.members.models import OrgMembership
-
-    org_membership = OrgMembership.objects.filter(user=user).select_related("organization").first()
-
     return render(
         request,
         "accounts/settings.html",
         {
             "settings_active": settings_active,
-            "org_membership": org_membership,
+            "org_membership": request.org_membership,
         },
     )
 

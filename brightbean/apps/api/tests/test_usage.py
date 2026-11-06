@@ -40,6 +40,9 @@ def user(db):
         name="Usage",
         tos_accepted_at=timezone.now(),
     )
+    from apps.accounts.signals import provision_organization_and_workspace
+
+    provision_organization_and_workspace(u)
     om = u.org_memberships.first()
     om.org_role = OrgMembership.OrgRole.OWNER
     om.save(update_fields=["org_role"])

@@ -69,6 +69,19 @@ def _require_perm(context: dict[str, Any], permission_key: str) -> None:
         raise JsonRpcError(INVALID_PARAMS, f"Permission denied: {permission_key}")
 
 
+def _require_post_edit(context, post):
+    from django.core.exceptions import PermissionDenied
+
+    from apps.members.permissions import require_authored_content
+
+    try:
+        require_authored_content(
+            context["membership"].effective_permissions, context["api_key"].issued_by_id, post.author_id
+        )
+    except PermissionDenied as exc:
+        raise JsonRpcError(INVALID_PARAMS, str(exc)) from exc
+
+
 def _parse_uuid(value: Any, field_name: str) -> UUID:
     if not isinstance(value, str):
         raise JsonRpcError(INVALID_PARAMS, f"{field_name} must be a string UUID")
@@ -909,6 +922,7 @@ def _cancel_post(args: dict, context: dict[str, Any]) -> dict:
         raise JsonRpcError(INVALID_PARAMS, "post_id is required")
     api_key = context["api_key"]
     post = _get_post_for_key(api_key, args["post_id"])
+    _require_post_edit(context, post)
     scheduled = [pp for pp in post.platform_posts.all() if pp.status == "scheduled"]
     if not scheduled:
         raise JsonRpcError(INVALID_PARAMS, "No scheduled platform posts to cancel")
@@ -976,6 +990,7 @@ def _schedule_draft(args: dict, context: dict[str, Any]) -> dict:
 
     api_key = context["api_key"]
     post = _get_post_for_key(api_key, args["post_id"])
+    _require_post_edit(context, post)
     drafts = [pp for pp in post.platform_posts.all() if pp.status == "draft"]
     if not drafts:
         raise JsonRpcError(INVALID_PARAMS, "No draft platform posts to schedule")

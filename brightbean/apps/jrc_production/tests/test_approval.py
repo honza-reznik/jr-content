@@ -94,6 +94,12 @@ def to_review(post, user):
     return move_content(post, "review", user, expected_stage="idea")
 
 
+def to_client_review(post, user):
+    set_mode(post.workspace, TWO_STAGE)
+    to_review(post, user)
+    return move_content(post, "approved", user, expected_stage="review")
+
+
 def login(user):
     client = Client()
     client.force_login(user)
@@ -128,7 +134,10 @@ def test_change_request_is_one_shared_comment_and_one_decision_alert(
     PlatformPost.objects.create(
         post=content, social_account=create_manual_channel(workspace, "youtube", "Garden shorts")
     )
-    to_review(content, team)
+    if actor_role == "client":
+        to_client_review(content, team)
+    else:
+        to_review(content, team)
     Notification.objects.all().delete()
     actor = ella if actor_role == "client" else manager
     feedback = "Please shorten the ending. @test"
@@ -154,14 +163,14 @@ def test_change_request_is_one_shared_comment_and_one_decision_alert(
 
 def test_shared_feedback_and_decision_roll_back_together(workspace, team, ella, content):
     set_mode(workspace, SINGLE)
-    to_review(content, team)
+    to_client_review(content, team)
     Notification.objects.all().delete()
     with (
         patch("apps.jrc_production.services.PostComment.objects.create", side_effect=RuntimeError("DB failure")),
         pytest.raises(RuntimeError),
     ):
         request_content_changes(content, ella, "Shorten the ending", expected_stage="review")
-    assert statuses(content) == {"pending_review"}
+    assert statuses(content) == {"pending_client"}
     assert not PostComment.objects.filter(post=content).exists()
     assert not ApprovalAction.objects.filter(post=content, action="changes_requested").exists()
     assert not Notification.objects.exists()
@@ -182,7 +191,7 @@ def test_card_summarizes_script_caption_and_final_video(workspace, team, ella, c
     v2 = VideoVersion.objects.create(video=video, number=2, ff_version_id=uuid.uuid4(), status="ready", duration_s=26)
     video.final_version, video.final_by, video.final_at = v2, team, timezone.now()
     video.save()
-    to_review(content, team)
+    to_client_review(content, team)
 
     response = login(ella).get(detail_url(content))
 
@@ -214,28 +223,24 @@ def test_card_without_video_or_script_says_so(workspace, team, ella):
 # ---- AK1/AK2: single stage ---------------------------------------------------------------------
 
 
-def test_client_approves_in_single_stage_mode(workspace, team, ella, content):
+def test_client_cannot_approve_in_team_only_mode(workspace, team, ella, content):
     set_mode(workspace, SINGLE)
     to_review(content, team)
-
-    response = decide(ella, content, "approve")
-
-    assert response.status_code == 200
-    assert "Approved. Thank you." in response.content.decode()
-    content.refresh_from_db()
-    assert pipeline_stage(content) == "approved"
-    action = ApprovalAction.objects.get(post=content, action="approved")
-    assert action.user == ella and action.note_visibility == "external" and action.actor_role == "client"
-    assert b"Your decision" not in response.content
+    for decision in ("approve", "request_changes"):
+        response = decide(ella, content, decision, comment="Client cannot skip team review")
+        assert response.status_code == 403
+    assert statuses(content) == {"pending_review"}
+    assert not ApprovalAction.objects.filter(post=content, action__in=["approved", "changes_requested"]).exists()
+    assert b'name="decision"' not in login(ella).get(detail_url(content)).content
 
 
 def test_client_requests_changes_with_required_comment(workspace, team, ella, content):
     set_mode(workspace, SINGLE)
-    to_review(content, team)
+    to_client_review(content, team)
 
     empty = decide(ella, content, "request_changes", comment="   ")
     assert "Tell the team what to change" in empty.content.decode()
-    assert statuses(content) == {"pending_review"}
+    assert statuses(content) == {"pending_client"}
     assert not ApprovalAction.objects.filter(post=content, action="changes_requested").exists()
 
     done = decide(ella, content, "request_changes", comment="Please cut the ending at 0:17.")
@@ -254,7 +259,7 @@ def test_client_requests_changes_with_required_comment(workspace, team, ella, co
 
 def test_changes_then_new_version_then_approval(workspace, team, ella, content):
     set_mode(workspace, SINGLE)
-    to_review(content, team)
+    to_client_review(content, team)
     decide(ella, content, "request_changes", comment="Shorter, please.")
     assert available_moves(content, WorkspaceMembership.objects.get(user=ella, workspace=workspace)) == []
 
@@ -263,6 +268,7 @@ def test_changes_then_new_version_then_approval(workspace, team, ella, content):
     texts.save(draft.pk, team, expected_revision=0, markdown="SCENE ONE: shorter.")
     move_content(content, "review", team, expected_stage="review")
     assert statuses(content) == {"pending_review"}
+    decide(team, content, "approve")
     body = login(ella).get(detail_url(content)).content.decode()
     assert "SCENE ONE: shorter." in body and "Waiting for your decision." in body
 
@@ -276,7 +282,7 @@ def test_team_can_move_client_changes_to_editing_but_client_cannot(workspace, te
     from django.core.exceptions import PermissionDenied
 
     set_mode(workspace, SINGLE)
-    to_review(content, team)
+    to_client_review(content, team)
     decide(ella, content, "request_changes", comment="Shorten the ending.")
     team_membership = WorkspaceMembership.objects.get(user=manager, workspace=workspace)
     client_membership = WorkspaceMembership.objects.get(user=ella, workspace=workspace)
@@ -422,11 +428,11 @@ def test_decision_requires_login_csrf_and_known_action(workspace, team, ella, co
 
 def test_double_submit_and_stale_page_are_refused(workspace, team, ella, content):
     set_mode(workspace, SINGLE)
-    to_review(content, team)
+    to_client_review(content, team)
     decide(ella, content, "approve")
     again = decide(ella, content, "approve")
     assert "This content changed" in again.content.decode()
-    assert ApprovalAction.objects.filter(post=content, action="approved").count() == 1
+    assert ApprovalAction.objects.filter(post=content, action="approved", user=ella).count() == 1
     # content that is no longer in review cannot get a change request either
     stale = decide(ella, content, "request_changes", comment="Too late", expected="approved")
     assert "not waiting for a decision" in stale.content.decode()
@@ -449,10 +455,11 @@ def test_service_refuses_changes_on_draft_and_archived_client(workspace, team, e
 
 
 def test_history_shows_who_when_and_respects_note_visibility(workspace, team, manager, ella, content):
-    set_mode(workspace, SINGLE)
+    set_mode(workspace, TWO_STAGE)
     to_review(content, team)
     decide(manager, content, "request_changes", comment="TEAM NOTE: legal wants a disclaimer.")
     move_content(content, "review", team, expected_stage="review")
+    decide(team, content, "approve")
     decide(ella, content, "request_changes", comment="CLIENT NOTE: lighter music.")
 
     client_history = login(ella).get(detail_url(content, "history")).content.decode()
@@ -490,7 +497,7 @@ def test_waiting_for_you_lists_only_own_client_content_for_clients(workspace, te
         social_account_ids=other_ws.social_accounts.filter(jrc_channel__is_enabled=True).values_list("pk", flat=True),
     )
     to_review(foreign, team)
-    to_review(content, team)
+    to_client_review(content, team)
 
     html = board_html(ella)
     assert "Waiting for you" in html and "Ella garden reel" in html

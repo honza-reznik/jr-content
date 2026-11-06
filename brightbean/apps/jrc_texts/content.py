@@ -46,3 +46,77 @@ def markdown_to_content(text):
 
 def content_to_markdown(content):
     return normalize_content(content=content)[1]
+
+
+# P1-B30: for a rich document ``TextVersion.text`` is Markdown, the exchange format of the API and MCP
+# (``<`` is stored as ``&lt;``, ``&`` as ``&amp;``, ``*`` as ``\*``...). It is never shown to people as
+# text: a template would escape those entities a second time. Pages read the editor content instead.
+_LISTS = ("bulletList", "orderedList", "taskList")
+
+
+def content_to_plain_text(content):
+    """Readable plain text of editor content (Tiptap JSON) for previews; the template escapes it once.
+
+    Blocks are separated by an empty line, list items keep their bullet, number or task box (nested
+    items are indented), a hard break is a new line and formatting marks are dropped. Anything that is
+    not editor content gives "".
+    """
+    if not isinstance(content, dict) or content.get("type") != "doc":
+        return ""
+    return "\n\n".join(_blocks(content.get("content"))).strip("\n")
+
+
+def _children(node):
+    content = node.get("content")
+    return [child for child in content if isinstance(child, dict)] if isinstance(content, list) else []
+
+
+def _inline(node):
+    parts = []
+    for child in _children(node):
+        if child.get("type") == "text" and isinstance(child.get("text"), str):
+            parts.append(child["text"])
+        elif child.get("type") == "hardBreak":
+            parts.append("\n")
+    return "".join(parts)
+
+
+def _blocks(nodes):
+    blocks = []
+    for node in nodes if isinstance(nodes, list) else []:
+        if not isinstance(node, dict):
+            continue
+        kind = node.get("type")
+        if kind in ("paragraph", "heading", "codeBlock"):
+            blocks.append(_inline(node))
+        elif kind == "blockquote":
+            inner = "\n\n".join(_blocks(_children(node)))
+            blocks.append("\n".join(f"> {line}" if line else ">" for line in inner.split("\n")))
+        elif kind == "horizontalRule":
+            blocks.append("———")
+        elif kind in _LISTS:
+            blocks.append("\n".join(_list_lines(node, indent="")))
+    return blocks
+
+
+def _list_lines(node, indent):
+    attrs = node.get("attrs") if isinstance(node.get("attrs"), dict) else {}
+    number = attrs.get("start") if isinstance(attrs.get("start"), int) else 1
+    lines = []
+    for item in _children(node):
+        item_attrs = item.get("attrs") if isinstance(item.get("attrs"), dict) else {}
+        if node.get("type") == "orderedList":
+            marker = f"{number}. "
+            number += 1
+        elif node.get("type") == "taskList":
+            marker = "☑ " if item_attrs.get("checked") else "☐ "
+        else:
+            marker = "• "
+        inner = indent + " " * len(marker)
+        own = [child for child in _children(item) if child.get("type") not in _LISTS]
+        text = "\n".join(_blocks(own)).replace("\n", "\n" + inner)
+        lines.append(indent + marker + text)
+        for child in _children(item):
+            if child.get("type") in _LISTS:
+                lines.extend(_list_lines(child, inner))
+    return lines

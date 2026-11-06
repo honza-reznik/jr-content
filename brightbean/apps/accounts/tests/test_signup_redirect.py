@@ -211,9 +211,15 @@ class TestPendingInviteLookup:
 @pytest.mark.django_db
 class TestOrgDeletionRedirect:
     def _delete_org_as_owner(self, client):
+        from apps.accounts.signals import provision_organization_and_workspace
+
         owner = User.objects.create_user(email="owner@example.com", password="x", tos_accepted_at=timezone.now())
+        provision_organization_and_workspace(owner)
         client.force_login(owner)
-        return client.post(reverse("organizations:settings"), {"action": "delete_organization_now"})
+        org_id = owner.org_memberships.get().organization_id
+        return client.post(
+            reverse("organizations:settings"), {"action": "delete_organization_now", "organization_id": org_id}
+        )
 
     @pytest.mark.parametrize("mode", ["invite", "closed"])
     def test_goes_to_login_when_signup_would_be_closed(self, settings, client, mode):

@@ -3,6 +3,7 @@ FROM jrc-dev:${JRC_PROJECT}
 USER root
 RUN python3 -m venv /opt/freeframe
 COPY freeframe/apps/api/requirements*.txt /tmp/freeframe/
-RUN /opt/freeframe/bin/pip install --no-cache-dir -r /tmp/freeframe/requirements-dev.txt
+RUN --mount=type=cache,id=jrc-ff-pip,target=/root/.cache/pip \
+    /opt/freeframe/bin/pip install -r /tmp/freeframe/requirements-dev.txt
 ENV PATH=/opt/freeframe/bin:$PATH PYTHONDONTWRITEBYTECODE=1
 WORKDIR /workspace

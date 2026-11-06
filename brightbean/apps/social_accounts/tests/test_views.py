@@ -24,6 +24,15 @@ from apps.social_accounts.views import (
 from providers.exceptions import OAuthError
 from providers.types import AccountProfile, OAuthTokens
 
+# The account picker is bound to one OAuth flow (P1-B23): session data is kept
+# per flow id and the picker URL/form names it.
+TEST_FLOW = "test-flow"
+SELECT_URL = reverse("social_accounts:select_account") + f"?flow={TEST_FLOW}"
+
+
+def _flow(page_data):
+    return {TEST_FLOW: page_data}
+
 
 @pytest.fixture
 def workspace(db, organization):
@@ -530,9 +539,10 @@ class TestOAuthCallbackView:
             response = authenticated_client.get(url, {"code": "abc123", "state": state})
 
         assert response.status_code == 302
-        assert response.url == reverse("social_accounts:select_account")
+        select_url, flow_id = response.url.split("?flow=")
+        assert select_url == reverse("social_accounts:select_account")
         mock_provider.get_profile.assert_not_called()
-        page_data = authenticated_client.session["oauth_page_select"]
+        page_data = authenticated_client.session["oauth_page_select"][flow_id]
         assert page_data["platform"] == "instagram"
         assert page_data["pages"][0]["id"] == "17841400000000000"
         assert page_data["user_tokens"]["access_token"] == "long-lived-user-token"
@@ -556,15 +566,17 @@ class TestOAuthCallbackView:
             for i in range(5)
         ]
         session = authenticated_client.session
-        session["oauth_page_select"] = {
-            "workspace_id": str(workspace.id),
-            "platform": "instagram",
-            "user_tokens": {"access_token": "user", "expires_in": None, "user_expires_at": expiry.isoformat()},
-            "pages": [{"id": f"ig-{i}", "name": f"Channel {i}", "access_token": f"page-{i}"} for i in range(5)],
-        }
+        session["oauth_page_select"] = _flow(
+            {
+                "workspace_id": str(workspace.id),
+                "platform": "instagram",
+                "user_tokens": {"access_token": "user", "expires_in": None, "user_expires_at": expiry.isoformat()},
+                "pages": [{"id": f"ig-{i}", "name": f"Channel {i}", "access_token": f"page-{i}"} for i in range(5)],
+            }
+        )
         session.save()
         response = authenticated_client.post(
-            reverse("social_accounts:select_account"),
+            SELECT_URL,
             {
                 "selected_pages": [f"ig-{i}" for i in range(5)],
             },
@@ -657,28 +669,30 @@ class TestPromoteMetaUserToken:
 class TestSelectAccountView:
     def test_bulk_selection_marks_accounts_without_publish_access(self, authenticated_client, workspace):
         session = authenticated_client.session
-        session["oauth_page_select"] = {
-            "workspace_id": str(workspace.id),
-            "platform": "facebook",
-            "user_tokens": {"access_token": "long-lived-user-token", "refresh_token": None},
-            "pages": [
-                {
-                    "id": "page-publishable",
-                    "name": "Publishable Page",
-                    "access_token": "page-token-1",
-                    "can_publish": True,
-                },
-                {
-                    "id": "page-read-only",
-                    "name": "Read-only Page",
-                    "access_token": "page-token-2",
-                    "can_publish": False,
-                },
-            ],
-        }
+        session["oauth_page_select"] = _flow(
+            {
+                "workspace_id": str(workspace.id),
+                "platform": "facebook",
+                "user_tokens": {"access_token": "long-lived-user-token", "refresh_token": None},
+                "pages": [
+                    {
+                        "id": "page-publishable",
+                        "name": "Publishable Page",
+                        "access_token": "page-token-1",
+                        "can_publish": True,
+                    },
+                    {
+                        "id": "page-read-only",
+                        "name": "Read-only Page",
+                        "access_token": "page-token-2",
+                        "can_publish": False,
+                    },
+                ],
+            }
+        )
         session.save()
 
-        response = authenticated_client.get(reverse("social_accounts:select_account"))
+        response = authenticated_client.get(SELECT_URL)
 
         assert response.status_code == 200
         body = response.content.decode()
@@ -694,23 +708,25 @@ class TestSelectAccountView:
         "this is connected" — a reading unticking could not act on anyway.
         """
         session = authenticated_client.session
-        session["oauth_page_select"] = {
-            "workspace_id": str(workspace.id),
-            "platform": "facebook",
-            "user_tokens": {"access_token": "long-lived-user-token", "refresh_token": None},
-            "pages": [
-                {
-                    "id": "page-demoted",
-                    "name": "Demoted Page",
-                    "access_token": "page-token",
-                    "can_publish": True,
-                    "already_connected": True,
-                },
-            ],
-        }
+        session["oauth_page_select"] = _flow(
+            {
+                "workspace_id": str(workspace.id),
+                "platform": "facebook",
+                "user_tokens": {"access_token": "long-lived-user-token", "refresh_token": None},
+                "pages": [
+                    {
+                        "id": "page-demoted",
+                        "name": "Demoted Page",
+                        "access_token": "page-token",
+                        "can_publish": True,
+                        "already_connected": True,
+                    },
+                ],
+            }
+        )
         session.save()
 
-        response = authenticated_client.get(reverse("social_accounts:select_account"))
+        response = authenticated_client.get(SELECT_URL)
 
         assert response.status_code == 200
         match = re.search(r"<input[^>]*value=\"page-demoted\"[^>]*>", response.content.decode())
@@ -726,19 +742,21 @@ class TestSelectAccountView:
         so nothing would flag the account until a publish simply failed.
         """
         session = authenticated_client.session
-        session["oauth_page_select"] = {
-            "workspace_id": str(workspace.id),
-            "platform": "facebook",
-            "user_tokens": {
-                "access_token": "short-lived-user-token",
-                "refresh_token": None,
-                "expires_in": 3600,
-            },
-            "pages": [{"id": "page-1", "name": "Page One", "access_token": "page-token"}],
-        }
+        session["oauth_page_select"] = _flow(
+            {
+                "workspace_id": str(workspace.id),
+                "platform": "facebook",
+                "user_tokens": {
+                    "access_token": "short-lived-user-token",
+                    "refresh_token": None,
+                    "expires_in": 3600,
+                },
+                "pages": [{"id": "page-1", "name": "Page One", "access_token": "page-token"}],
+            }
+        )
         session.save()
 
-        response = authenticated_client.post(reverse("social_accounts:select_account"), {"selected_pages": ["page-1"]})
+        response = authenticated_client.post(SELECT_URL, {"selected_pages": ["page-1"]})
 
         assert response.status_code == 302
         account = SocialAccount.objects.get(workspace=workspace, account_platform_id="page-1")
@@ -746,25 +764,27 @@ class TestSelectAccountView:
 
     def test_blank_page_access_token_falls_back_to_user_token(self, authenticated_client, workspace):
         session = authenticated_client.session
-        session["oauth_page_select"] = {
-            "workspace_id": str(workspace.id),
-            "platform": "instagram",
-            "user_tokens": {
-                "access_token": "user-token",
-                "refresh_token": "refresh-token",
-            },
-            "pages": [
-                {
-                    "id": "17841400000000000",
-                    "name": "Brightbean",
-                    "handle": "brightbean",
-                    "access_token": "",
-                }
-            ],
-        }
+        session["oauth_page_select"] = _flow(
+            {
+                "workspace_id": str(workspace.id),
+                "platform": "instagram",
+                "user_tokens": {
+                    "access_token": "user-token",
+                    "refresh_token": "refresh-token",
+                },
+                "pages": [
+                    {
+                        "id": "17841400000000000",
+                        "name": "Brightbean",
+                        "handle": "brightbean",
+                        "access_token": "",
+                    }
+                ],
+            }
+        )
         session.save()
 
-        url = reverse("social_accounts:select_account")
+        url = SELECT_URL
         response = authenticated_client.post(url, {"selected_pages": ["17841400000000000"]})
 
         assert response.status_code == 302
@@ -778,24 +798,26 @@ class TestSelectAccountView:
 
     def test_facebook_page_without_access_token_is_not_connected(self, authenticated_client, workspace):
         session = authenticated_client.session
-        session["oauth_page_select"] = {
-            "workspace_id": str(workspace.id),
-            "platform": "facebook",
-            "user_tokens": {
-                "access_token": "user-token",
-                "refresh_token": "refresh-token",
-            },
-            "pages": [
-                {
-                    "id": "page-1",
-                    "name": "Brightbean Page",
-                    "access_token": "",
-                }
-            ],
-        }
+        session["oauth_page_select"] = _flow(
+            {
+                "workspace_id": str(workspace.id),
+                "platform": "facebook",
+                "user_tokens": {
+                    "access_token": "user-token",
+                    "refresh_token": "refresh-token",
+                },
+                "pages": [
+                    {
+                        "id": "page-1",
+                        "name": "Brightbean Page",
+                        "access_token": "",
+                    }
+                ],
+            }
+        )
         session.save()
 
-        url = reverse("social_accounts:select_account")
+        url = SELECT_URL
         response = authenticated_client.post(url, {"selected_pages": ["page-1"]})
 
         assert response.status_code == 302
@@ -807,24 +829,26 @@ class TestSelectAccountView:
 
     def test_page_without_create_content_task_is_not_connected(self, authenticated_client, workspace):
         session = authenticated_client.session
-        session["oauth_page_select"] = {
-            "workspace_id": str(workspace.id),
-            "platform": "facebook",
-            "user_tokens": {"access_token": "long-lived-user-token", "refresh_token": None},
-            "pages": [
-                {
-                    "id": "page-read-only",
-                    "name": "Read-only Page",
-                    "access_token": "page-token",
-                    "tasks": ["ANALYZE"],
-                    "can_publish": False,
-                }
-            ],
-        }
+        session["oauth_page_select"] = _flow(
+            {
+                "workspace_id": str(workspace.id),
+                "platform": "facebook",
+                "user_tokens": {"access_token": "long-lived-user-token", "refresh_token": None},
+                "pages": [
+                    {
+                        "id": "page-read-only",
+                        "name": "Read-only Page",
+                        "access_token": "page-token",
+                        "tasks": ["ANALYZE"],
+                        "can_publish": False,
+                    }
+                ],
+            }
+        )
         session.save()
 
         response = authenticated_client.post(
-            reverse("social_accounts:select_account"),
+            SELECT_URL,
             {"selected_pages": ["page-read-only"]},
         )
 

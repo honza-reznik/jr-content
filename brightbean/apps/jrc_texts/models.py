@@ -67,6 +67,8 @@ class TextVersion(models.Model):
     number = models.PositiveIntegerField()
     state = models.CharField(max_length=10, choices=State.choices, default=State.DRAFT)
     content = models.JSONField()
+    # Rich documents: Markdown for the API and MCP ("<" is "&lt;"), plain documents: the text itself.
+    # Show people jrc_texts.content.content_to_plain_text(content), never ``text`` of a rich document (P1-B30).
     text = models.TextField(blank=True)
     char_count = models.PositiveIntegerField(null=True, blank=True)
     based_on = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True, related_name="successors")

@@ -84,6 +84,11 @@ class CommentDisplayPrivacyTests(ApprovalWorkflowBase):
                         response = self.client.post(
                             reverse(f"approvals:{surface}_comment", args=args), {"body": "Updated shared comment"}
                         )
+                        if role == "viewer":
+                            self.assertEqual(response.status_code, 403)
+                            self.assertNotContains(response, "SECRET", status_code=403)
+                            temporary.delete()
+                            continue
                         roots = [root for root in response.context["comments"] if root.pk == self.shared.pk]
                         temporary.delete()
                         PostComment.objects.filter(body="Updated shared comment").delete()
@@ -195,15 +200,20 @@ class DeleteCommentPrivacyTests(ApprovalWorkflowBase):
             self.client.force_login(self.author)
             for comment in (internal, reply, nested, hidden_reply):
                 with self.subTest(role=role, comment=comment.body):
-                    self.assertEqual(self.client.post(self._delete_url(comment)).status_code, 404)
+                    self.assertEqual(
+                        self.client.post(self._delete_url(comment)).status_code, 403 if role == "viewer" else 404
+                    )
                     with pytest.raises(PermissionError):
                         comments.delete_comment(comment.pk, self.author, self.ws, post=post)
                     comment.refresh_from_db()
                     self.assertIsNone(comment.deleted_at)
             allowed = PostComment.objects.create(post=post, author=self.author, body="Allowed", visibility="external")
-            self.assertEqual(self.client.post(self._delete_url(allowed)).status_code, 200)
+            self.assertEqual(self.client.post(self._delete_url(allowed)).status_code, 403 if role == "viewer" else 200)
             allowed.refresh_from_db()
-            self.assertIsNotNone(allowed.deleted_at)
+            if role == "viewer":
+                self.assertIsNone(allowed.deleted_at)
+            else:
+                self.assertIsNotNone(allowed.deleted_at)
         self.client.force_login(self.reviewer)
         self.assertEqual(self.client.post(self._delete_url(internal)).status_code, 200)
         internal.refresh_from_db()

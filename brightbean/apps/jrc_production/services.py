@@ -141,23 +141,18 @@ def can_decide(post, membership, statuses=None):
     """May this member approve or request changes right now (F7-B02)?
 
     One rule for both decisions, used by ``available_moves`` and the Approval card. Single-stage
-    workspaces let anyone with ``approve_posts`` decide on content in review. In the two-stage
+    workspaces let team members with ``approve_posts`` decide on content in review. In the two-stage
     mode (internal, then client) the team decides while the content waits for the team and the
     client only after the team has approved it.
     """
     if statuses is None:
         statuses = {pp.status for pp in post.platform_posts.all()}
-    if not membership.effective_permissions.get("approve_posts", False):
-        return False
+    from apps.members.permissions import can_decide_at_step
+
     if not statuses or not statuses <= {"pending_review", "pending_client", "approved"}:
         return False
     pending = statuses - {"approved"}
-    if not pending:
-        return False
-    if post.workspace.approval_workflow_mode != "required_internal_and_client":
-        return True
-    # Custom permissions do not change which side of the workflow a member is on.
-    return pending == ({"pending_client"} if membership.workspace_role == "client" else {"pending_review"})
+    return bool(pending) and all(can_decide_at_step(membership, step) for step in pending)
 
 
 def available_moves(post, membership):

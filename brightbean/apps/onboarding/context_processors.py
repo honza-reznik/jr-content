@@ -21,6 +21,9 @@ def onboarding_checklist(request):
         return {"checklist_dismissed": True, "checklist_items": []}
 
     checklist_items = get_checklist_items(workspace)
+    org_membership = getattr(request, "org_membership", None)
+    if not org_membership or org_membership.org_role not in {"owner", "admin"}:
+        checklist_items = [item for item in checklist_items if item["key"] != "invite_members"]
     completed_count = sum(1 for item in checklist_items if item["completed"])
     total_count = len(checklist_items)
 

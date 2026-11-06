@@ -3,7 +3,12 @@
 {% block title %}Open video - JR Content{% endblock %}
 {% block content %}
 <div class="max-w-md mx-auto p-8">
-    {% if unavailable %}
+    {% if denied %}
+    {% comment %}P1-B30: every refused video (no client at all, or another client's video) gets this answer.{% endcomment %}
+    <h1 class="text-2xl font-bold mb-4">You do not have access to video.</h1>
+    <p>This video belongs to a client you are not a member of. If you should see it, ask the team to add you to that client.</p>
+    <a class="btn-outline mt-4" href="{% url 'dashboard' %}" target="_top">Back to JR Content</a>
+    {% elif unavailable %}
     <h1 class="text-2xl font-bold mb-4">Video is temporarily unavailable</h1>
     <p>Please try again in a moment.</p>
     <a class="btn-outline mt-4" href="{% url 'dashboard' %}">Back to JR Content</a>

@@ -8,6 +8,7 @@
     <!-- Organization Name section -->
     <form method="POST" class="mb-10">
         {% csrf_token %}
+        <input type="hidden" name="organization_id" value="{{ request.org.pk|default:'' }}">
         <input type="hidden" name="action" value="update_name">
         <div class="flex items-end gap-4">
             <div class="flex-1">
@@ -27,6 +28,7 @@
     <!-- Default Timezone section -->
     <form method="POST" class="mb-10">
         {% csrf_token %}
+        <input type="hidden" name="organization_id" value="{{ request.org.pk|default:'' }}">
         <input type="hidden" name="action" value="update_timezone">
         <div class="flex items-end gap-4">
             <div class="flex-1">
@@ -76,6 +78,7 @@
             <div class="flex flex-col gap-3 shrink-0">
                 <form method="POST">
                     {% csrf_token %}
+                    <input type="hidden" name="organization_id" value="{{ request.org.pk|default:'' }}">
                     <input type="hidden" name="action" value="cancel_deletion">
                     <button type="submit"
                             class="btn-neutral px-5 py-2 text-sm font-medium rounded-full cursor-pointer whitespace-nowrap"
@@ -137,6 +140,7 @@
                         </button>
                         <form method="POST">
                             {% csrf_token %}
+                            <input type="hidden" name="organization_id" value="{{ request.org.pk|default:'' }}">
                             <input type="hidden" name="action" value="delete_organization_now">
                             <button type="submit"
                                     class="btn-opacity px-5 py-2 text-sm font-semibold rounded-full cursor-pointer whitespace-nowrap"
@@ -213,6 +217,7 @@
                         </button>
                         <form method="POST">
                             {% csrf_token %}
+                            <input type="hidden" name="organization_id" value="{{ request.org.pk|default:'' }}">
                             <input type="hidden" name="action" value="delete_organization">
                             <button type="submit"
                                     class="btn-opacity px-5 py-2 text-sm font-semibold rounded-full cursor-pointer whitespace-nowrap"
