@@ -61,7 +61,7 @@ def test_jrc_smtp_environment_selects_tls_backend_without_printing_credentials()
 import importlib
 settings = importlib.import_module('config.settings.jrc')
 assert settings.EMAIL_BACKEND_TYPE == 'smtp'
-assert settings.EMAIL_INNER_BACKEND == 'django.core.mail.backends.smtp.EmailBackend'
+assert settings.EMAIL_INNER_BACKEND == 'apps.common.smtp.RelayEmailBackend'
 assert settings.EMAIL_HOST == 'smtp.invalid'
 assert settings.EMAIL_PORT == 587
 assert settings.EMAIL_USE_TLS and not settings.EMAIL_USE_SSL
