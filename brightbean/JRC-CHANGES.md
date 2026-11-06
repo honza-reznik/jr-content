@@ -1,5 +1,20 @@
 # Úpravy JR Content
 
+## 2026-11-06 — P1-B27
+
+- Režim schvalování se čte na jednom místě (`apps/members/permissions.py`): `can_decide_at_step` (kdo rozhoduje,
+  P1-B25) a nově `release_blocker` / `approval_required` / `client_approval_required` (co musí proběhnout, než kopie
+  obsahu „půjde ven“ – naplánování, zveřejnění včetně ručního označení, stažení finálního videa a náhledu).
+  „No approvals“ a „Optional approvals“ pustí Draft přímo, povinné režimy až po schválení; schválená kopie jde
+  naplánovat ve všech režimech (dřív ji REST/MCP v povinných režimech odmítaly).
+- Stejné pravidlo používá detail JR (Publish: Set date, Mark as published, stažení, důvody zakázaných akcí),
+  nástěnka (Ready z Draftu, pole data), REST/MCP fáze, služba `composer.services.require_release_allowed`
+  (REST/MCP plánování), upstream composer (Schedule, Publish now, fronta, chip), kalendář (přetažení Draftu,
+  hromadné Publish) a CSV import (datované řádky zůstanou v povinných režimech koncepty).
+- Karta Schválení netvrdí „Approved and planned“ u obsahu naplánovaného bez povinného schválení.
+- Test `test_approval_modes.py`: matice režim × role × akce a kontrola, že každé místo „odchodu“ obsahu je
+  prověřené a používá sdílené pravidlo.
+
 ## 2026-11-06 — P1-B28
 
 - Publish na telefonu zobrazuje měsíc a týden jako seznam všech dnů; zachovává filtry,

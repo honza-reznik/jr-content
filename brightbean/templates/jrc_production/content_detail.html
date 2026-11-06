@@ -129,6 +129,7 @@
                             <button class="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white">Save date</button>
                         </form>
                     </details>
+                    {% elif item.schedule_blocker %}<p class="mt-2 text-sm text-stone-500" data-schedule-blocker>No date can be set yet. {{ item.schedule_blocker }}</p>
                     {% endif %}
                     <div class="mt-4">
                         <label for="publish-caption-{{ forloop.counter }}" class="mb-1 block text-xs font-medium uppercase tracking-wide text-stone-500">Saved caption</label>
@@ -136,7 +137,7 @@
                         <div class="mt-2 flex flex-wrap items-center gap-2">
                             {% if item.caption %}<button type="button" data-copy-caption="publish-caption-{{ forloop.counter }}" class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">Copy caption</button><span data-copy-status="publish-caption-{{ forloop.counter }}" class="text-xs text-stone-500" aria-live="polite"></span>{% else %}<span class="text-sm text-amber-700">Add a caption before publishing.</span>{% endif %}
                             {% if item.video_final %}<span class="text-sm text-stone-700">Final video · v{{ item.video_number }}</span>{% endif %}
-                            {% if item.download_url %}<a href="{{ item.download_url }}" class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">Download final video</a>{% elif item.has_video and not item.video_final %}<span class="text-sm text-amber-700">No final video selected. Open <a href="?tab=video" class="text-orange-700 underline">Video</a> and mark a ready version as “Final for publishing”.</span>{% elif item.has_video %}<span class="text-sm text-amber-700">The final video can be downloaded after approval with a saved caption.</span>{% endif %}
+                            {% if item.download_url %}<a href="{{ item.download_url }}" class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">Download final video</a>{% elif item.has_video and not item.video_final %}<span class="text-sm text-amber-700">No final video selected. Open <a href="?tab=video" class="text-orange-700 underline">Video</a> and mark a ready version as “Final for publishing”.</span>{% elif item.has_video and item.download_missing %}<span class="text-sm text-amber-700" data-download-blocker>To download the final video: {{ item.download_missing|join:" " }}</span>{% elif item.has_video %}<span class="text-sm text-stone-500">Members with publishing rights can download the final video.</span>{% endif %}
                         </div>
                     </div>
                     {% channel_thumbnail item.variant "publish" item.label %}
@@ -149,7 +150,7 @@
                         <input id="post-url-{{ forloop.counter }}" name="post_url" type="url" inputmode="url" placeholder="https://…" class="block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm sm:max-w-xl">
                         <button type="submit" class="mt-3 w-full rounded-lg bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-orange-700 sm:w-auto">Mark as published</button>
                     </form>
-                    {% elif not item.published %}<p class="mt-4 text-sm text-stone-500">This channel can be marked as published after approval, with a caption{% if item.has_video %} and a final video{% endif %}.</p>{% endif %}
+                    {% elif item.missing %}<p class="mt-4 text-sm text-stone-500" data-publish-blocker>To mark this channel as published: {{ item.missing|join:" " }}</p>{% elif not item.can_publish %}<p class="mt-4 text-sm text-stone-500">Members with publishing rights can mark this channel as published.</p>{% endif %}
                 </article>
                 {% empty %}<div class="rounded-xl border border-dashed border-stone-300 px-4 py-10 text-center text-sm text-stone-500">No enabled channels for this content.</div>{% endfor %}
             </div>

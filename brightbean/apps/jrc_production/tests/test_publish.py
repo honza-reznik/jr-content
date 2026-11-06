@@ -565,6 +565,9 @@ def test_set_date_rejects_invalid_past_or_dst_ambiguous_time(client, workspace, 
 
 @pytest.mark.parametrize("state", ["draft", "pending_review", "pending_client", "published"])
 def test_set_date_rejects_unapproved_or_published_copy(client, workspace, user, post, state):
+    # P1-B27: in "No approvals" / "Optional" a draft may be planned (test_approval_modes); here approval is required.
+    workspace.approval_workflow_mode = "required_internal_and_client"
+    workspace.save(update_fields=["approval_workflow_mode"])
     variant = post.platform_posts.get()
     PlatformPost.objects.filter(pk=variant.pk).update(status=state)
     client.force_login(user)
@@ -573,7 +576,7 @@ def test_set_date_rejects_unapproved_or_published_copy(client, workspace, user, 
         detail, {"action": "set_date", "platform_post": variant.pk, "scheduled_at": "2099-01-01T12:00"}
     )
     assert response.status_code == 200
-    assert b"Only approved or scheduled" in response.content
+    assert b"This channel cannot be planned yet." in response.content
     variant.refresh_from_db()
     assert variant.scheduled_at is None and variant.status == state
 

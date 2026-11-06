@@ -11,7 +11,7 @@ from apps.composer.services import remove_platform_posts, sync_post_scheduled_at
 from apps.jrc_channels.models import ChannelProfile
 from apps.members.models import WorkspaceMembership
 from apps.members.note_visibility import note_audience
-from apps.members.permissions import can_publish_directly
+from apps.members.permissions import can_publish_directly, release_blocker
 
 from .models import ManualPublication, PipelineStage, PostProduction, ProductionStage, StageChange
 
@@ -175,9 +175,30 @@ def available_moves(post, membership):
             moves.append(ProductionStage.EDITING)
     if can_decide(post, membership, statuses):
         moves.append(PipelineStage.APPROVED)
-    if children and permissions.get("publish_directly", False) and statuses <= {"approved"}:
+    if (
+        children
+        and permissions.get("publish_directly", False)
+        and statuses <= {"draft", "approved"}
+        and not any(release_blocker(post.workspace, status) for status in statuses)
+    ):
+        # P1-B27: Ready (planned) straight from a draft only where the approval mode allows it.
         moves.append(PipelineStage.READY)
     return moves
+
+
+# Channel copies that may still be planned or marked as published; the approval workflow decides
+# which of them may go out now (``release_blocker``).
+_UNPUBLISHED = {PlatformPost.Status.DRAFT, PlatformPost.Status.APPROVED, PlatformPost.Status.SCHEDULED}
+
+
+def publication_blocker(child):
+    """Why this channel copy may not be planned or marked as published now, or "" (P1-B27)."""
+    reason = release_blocker(child.post.workspace, child.status)
+    if reason:
+        return reason
+    if child.status not in _UNPUBLISHED:
+        return "It was already published."
+    return ""
 
 
 @transaction.atomic
@@ -249,9 +270,9 @@ def move_content(post, stage, user, *, expected_stage, scheduled_at=None):
             raise ValidationError("Choose a future publication date and time.")
         for child in children:
             # Manual JR channels wait in scheduled until a human marks publication.
-            # The upstream scheduling service assumes live publishing and rejects
-            # mandatory-review workspaces even after approval. Keep its state
-            # machine and aggregate scheduling service, without that direct gate.
+            # The upstream scheduling service assumes live publishing (publishability
+            # of media for automatic providers). Keep its state machine and aggregate
+            # scheduling service; the approval workflow was checked by available_moves.
             profile = getattr(child.social_account, "jrc_channel", None)
             if profile is None or profile.kind not in {ChannelProfile.Kind.MANUAL, ChannelProfile.Kind.CUSTOM}:
                 raise ValidationError("The board can plan manual channels only.")
@@ -290,8 +311,9 @@ def set_publication_date(post, platform_post_id, user, scheduled_at):
         or profile.kind not in {ChannelProfile.Kind.MANUAL, ChannelProfile.Kind.CUSTOM}
     ):
         raise ValidationError("Choose an enabled manual channel.")
-    if child.status not in {PlatformPost.Status.APPROVED, PlatformPost.Status.SCHEDULED}:
-        raise ValidationError("Only approved or scheduled content can be planned.")
+    reason = publication_blocker(child)
+    if reason:
+        raise ValidationError(f"This channel cannot be planned yet. {reason}")
     if scheduled_at is None or timezone.is_naive(scheduled_at) or scheduled_at <= timezone.now():
         raise ValidationError("Choose a future publication date and time.")
     previous = pipeline_stage(post)
@@ -326,8 +348,9 @@ def mark_published_manually(post, platform_post_id, user, *, post_url=""):
         )
     except (PlatformPost.DoesNotExist, ValueError, TypeError):
         raise ValidationError("Choose a channel of this content.") from None
-    if child.status not in {PlatformPost.Status.APPROVED, PlatformPost.Status.SCHEDULED}:
-        raise ValidationError("Only approved or scheduled content can be marked as published.")
+    reason = publication_blocker(child)
+    if reason:
+        raise ValidationError(f"This channel cannot be marked as published yet. {reason}")
     if not (child.platform_specific_caption or child.post.caption or "").strip():
         raise ValidationError("Add a caption before marking this content as published.")
     video = VideoAsset.objects.filter(platform_post=child).select_related("final_version").first()

@@ -48,6 +48,10 @@ def channel_thumbnail(context, variant, mode="caption", label=""):
         "current_url": current.image.url if current else "",
         "download_url": download_url(current) if current else "",
         "download_blocked": mode == "publish" and current is not None and not may_download,
+        # P1-B27: the reason comes from the same rule as the download itself.
+        "download_reason": services.download_blocker(membership, variant)
+        if mode == "publish" and current is not None and not may_download
+        else "",
         "history": [
             {"thumbnail": item, "url": item.image.url, "download_url": download_url(item)} for item in versions[1:]
         ],

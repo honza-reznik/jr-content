@@ -12,7 +12,7 @@ from django.utils.text import slugify
 from PIL import Image, UnidentifiedImageError
 
 from apps.jrc_texts.services import can_edit_text
-from apps.jrc_video.downloads import downloadable_final
+from apps.jrc_video.downloads import channel_caption, downloadable_final, missing_for_publication
 from apps.members.models import WorkspaceMembership
 
 from .models import ChannelThumbnail
@@ -56,6 +56,20 @@ def can_upload(post, membership):
 def can_download(membership, variant):
     """The same role, approval, caption and ready-final conditions as the final video."""
     return downloadable_final(membership, variant) is not None
+
+
+def download_blocker(membership, variant):
+    """Why the thumbnail cannot be downloaded now, from the same rule as the download (P1-B27)."""
+    from apps.jrc_video.models import VideoAsset
+    from apps.members.permissions import can_publish_directly
+
+    video = VideoAsset.objects.filter(platform_post=variant).select_related("final_version").first()
+    missing = missing_for_publication(variant, caption=channel_caption(variant), video=video, download=True)
+    if missing:
+        return "To download it: " + " ".join(missing)
+    if not can_publish_directly(membership):
+        return "Members with publishing rights can download it."
+    return ""
 
 
 def validate_image(upload):

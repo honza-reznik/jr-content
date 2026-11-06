@@ -1297,7 +1297,7 @@ def publish_tab_sent(request, workspace_id):
 @require_POST
 def reschedule_post(request, workspace_id):
     """HTMX endpoint for drag-and-drop rescheduling of a single PlatformPost."""
-    from apps.composer.services import require_publishable, sync_post_scheduled_at
+    from apps.composer.services import require_publishable, require_release_allowed, sync_post_scheduled_at
 
     workspace = _get_workspace(request, workspace_id)
     platform_post_id = request.POST.get("platform_post_id") or request.POST.get("post_id")
@@ -1334,8 +1334,11 @@ def reschedule_post(request, workspace_id):
     # fail there — an image-only TikTok draft, a pin with no board or image.
     # Checked out here because the ValueError handler below would report it as
     # a bad datetime.
+    # P1-B27: the same drop must also pass the approval workflow (a draft goes out directly only
+    # where the workspace mode does not require approval).
     if pp.status in _IMPLICIT_SCHEDULE_STATUSES and pp.can_transition_to("scheduled"):
         try:
+            require_release_allowed(workspace, pp.status)
             require_publishable(pp)
         except ValueError as exc:
             return JsonResponse({"error": str(exc)}, status=400)
@@ -1470,6 +1473,7 @@ def bulk_platform_action(request, workspace_id):
         media_types_by_post,
         remove_platform_posts,
         require_publishable,
+        require_release_allowed,
         sync_post_scheduled_at,
     )
 
@@ -1513,6 +1517,7 @@ def bulk_platform_action(request, workspace_id):
         blocked = []
         for pp in promoting:
             try:
+                require_release_allowed(workspace, pp.status)
                 require_publishable(pp, media_types=media_by_post.get(pp.post_id, set()))
             except ValueError as exc:
                 blocked.append(str(exc))

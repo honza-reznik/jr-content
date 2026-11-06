@@ -252,6 +252,11 @@ def test_download_conditions_match_final_video(
     if missing in {"draft", "pending_review", "rejected"}:
         variant.status = missing
         variant.save(update_fields=["status"])
+        if missing == "draft":
+            # P1-B27: a draft is downloadable where the mode does not require approval
+            # (test_approval_modes); here the mode requires it.
+            workspace.approval_workflow_mode = "required_internal"
+            workspace.save(update_fields=["approval_workflow_mode"])
     elif missing in {"empty-caption", "whitespace-caption"}:
         variant.platform_specific_caption = "" if missing == "empty-caption" else " \n\t "
         variant.save(update_fields=["platform_specific_caption"])
@@ -292,7 +297,8 @@ def test_download_conditions_match_final_video(
         if tab == "publish":
             assert b"data-thumbnail-blocked>Download thumbnail</button>" in response.content
             assert b'disabled aria-describedby="thumbnail-download-reason-' in response.content
-            assert b"Requires channel approval, a saved caption" in response.content
+            # P1-B27: the reason names what is actually missing, from the same rule as the download.
+            assert b"To download it: " in response.content
         else:
             assert b"data-thumbnail-blocked" not in response.content
         assert url("download", post, variant, previous).encode() not in response.content
