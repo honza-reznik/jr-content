@@ -6,6 +6,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from .untrusted import ffmpeg_input, ffprobe_input
+
 log = logging.getLogger(__name__)
 
 
@@ -21,7 +23,7 @@ def process_image(s3_client, bucket: str, input_s3_key: str, output_prefix: str)
         # Convert to WebP
         webp_path = os.path.join(work_dir, "processed.webp")
         subprocess.run(
-            ["ffmpeg", "-y", "-i", tmp_input, "-c:v", "libwebp", "-quality", "85", webp_path],
+            ["ffmpeg", "-y", *ffmpeg_input(tmp_input, images=True), "-c:v", "libwebp", "-quality", "85", webp_path],
             check=True, capture_output=True,
         )
         webp_key = f"{output_prefix}/processed.webp"
@@ -31,7 +33,7 @@ def process_image(s3_client, bucket: str, input_s3_key: str, output_prefix: str)
         # Thumbnail (max 400x400)
         thumb_path = os.path.join(work_dir, "thumbnail.jpg")
         subprocess.run(
-            ["ffmpeg", "-y", "-i", tmp_input, "-vf", "scale='min(400,iw)':'min(400,ih)':force_original_aspect_ratio=decrease", thumb_path],
+            ["ffmpeg", "-y", *ffmpeg_input(tmp_input, images=True), "-vf", "scale='min(400,iw)':'min(400,ih)':force_original_aspect_ratio=decrease", thumb_path],
             check=True, capture_output=True,
         )
         thumb_key = f"{output_prefix}/thumbnail.jpg"
@@ -60,7 +62,7 @@ def process_audio(s3_client, bucket: str, input_s3_key: str, output_prefix: str)
         duration_seconds = None
         try:
             probe = subprocess.run(
-                ["ffprobe", "-v", "error", "-print_format", "json", "-show_format", tmp_input],
+                ["ffprobe", "-v", "error", "-print_format", "json", "-show_format", *ffprobe_input(tmp_input)],
                 check=True, capture_output=True, text=True, timeout=120,
             )
             duration_seconds = float(json.loads(probe.stdout).get("format", {}).get("duration") or 0) or None
@@ -72,7 +74,7 @@ def process_audio(s3_client, bucket: str, input_s3_key: str, output_prefix: str)
         mp3_path = os.path.join(work_dir, "processed.mp3")
         subprocess.run(
             [
-                "ffmpeg", "-y", "-i", tmp_input,
+                "ffmpeg", "-y", *ffmpeg_input(tmp_input),
                 "-af", "loudnorm=I=-23:TP=-2:LRA=7",
                 "-codec:a", "libmp3lame", "-qscale:a", "2",
                 mp3_path,

@@ -73,7 +73,7 @@ describe('review page without an asset', () => {
 
   it.each([
     [403, 'You do not have access to video.'],
-    [404, 'This video no longer exists.'],
+    [404, 'This video does not exist or you do not have access to it.'],
     [500, 'The video could not be loaded.'],
     [null, 'The video could not be loaded.'],
   ])('after status %s it says why', (status, title) => {

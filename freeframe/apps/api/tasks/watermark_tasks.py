@@ -11,6 +11,7 @@ from .celery_app import celery_app
 from ..database import SessionLocal
 from ..models.asset import Asset, MediaFile
 from ..config import settings
+from packages.transcoder.untrusted import ffmpeg_input
 
 
 def _publish_event(project_id: str, event_type: str, payload: dict):
@@ -93,7 +94,7 @@ def apply_watermark(
             if vf_filters:
                 cmd = [
                     "ffmpeg", "-y",
-                    "-i", local_path,
+                    *ffmpeg_input(local_path),
                     "-vf", ",".join(vf_filters),
                     "-c:a", "copy",
                     output_path,

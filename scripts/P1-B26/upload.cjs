@@ -73,13 +73,14 @@ async function accepted(page, name, file, timeoutMs) {
     await page.waitForTimeout(1000);
   }
   notice = (await page.locator('[data-video-notice]').textContent()) || '';
+  const error = await page.locator('[data-video-error]').first().evaluate(el => el.classList.contains('hidden') ? '' : el.textContent);
   const list = await rows(page);
   const ready = list.filter(r => r.status === 'ready').length > before;
   const frame = page.locator('iframe[data-video-frame]:visible');
   const playerShown = await frame.count() > 0;
   await shot(page, `${name}-accepted`);
   record(`${name}-accepted`, ready && labels.size > 0 && hint && /ready to play/.test(notice) && playerShown,
-    { seconds: (Date.now() - started) / 1000, labels: [...labels], hint, notice, playerShown });
+    { seconds: (Date.now() - started) / 1000, labels: [...labels], hint, notice, playerShown, error, rows: list.length });
 }
 
 async function missingVideo(page) {
@@ -99,7 +100,7 @@ async function missingVideo(page) {
   const loading = await page.getByText('Loading asset...').count();
   await shot(page, 'missing-video');
   const status = await alert.getAttribute('data-asset-load-error');
-  record('missing-video-message', /no longer exists/.test(text) && loading === 0 && status === '404', { text, status, url: page.url().replace(/#.*/, '') });
+  record('missing-video-message', /does not exist or you do not have access/.test(text) && loading === 0 && status === '404', { text, status, url: page.url().replace(/#.*/, '') });
 }
 
 async function main() {
@@ -123,6 +124,12 @@ async function main() {
       fs.writeFileSync(cut, data.subarray(0, Math.floor(data.length / 2)));
       await refused(page, 'neplatne', '/media/neplatne.mp4');
       await refused(page, 'prerusene', cut);
+      // P1-B26 review: a playlist pointing at an internal address is refused, never followed.
+      const playlist = path.join(output, 'playlist.mp4');
+      fs.writeFileSync(playlist, '#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\nhttp://jrc-redis:6379/secret.ts\n#EXT-X-ENDLIST\n');
+      await refused(page, 'playlist', playlist);
+      // FreeFrame allows 5 new uploads per user per minute (upload_initiate); this run makes 6.
+      await page.waitForTimeout(61000);
       await accepted(page, 'kratke-1s', '/media/kratke-1s.mp4', 240000);
       await accepted(page, 'video-webm', '/media/video.webm', 240000);
       await accepted(page, 'ctverec-mov', '/media/ctverec.mov', 240000);

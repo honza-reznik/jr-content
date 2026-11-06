@@ -10,7 +10,7 @@ describe('assetLoadError', () => {
   })
 
   it('says a missing video no longer exists', () => {
-    expect(assetLoadError(404)).toMatchObject({ title: 'This video no longer exists.', retry: false })
+    expect(assetLoadError(404)).toMatchObject({ title: 'This video does not exist or you do not have access to it.', retry: false })
   })
 
   it('offers a retry for anything else, including no status at all', () => {

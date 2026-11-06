@@ -21,10 +21,12 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass
 
 from .redact import redact_presigned_urls
+from .untrusted import ffmpeg_input, ffprobe_input
 
 PLAYABLE = "playable"
 UNREADABLE = "unreadable"
@@ -41,6 +43,8 @@ _UNREADABLE_MARKERS = (
     "does not contain any stream",
     "unsupported codec",
     "invalid frame dimensions",
+    # untrusted.py refused the container: a playlist, concat script, SDP, ...
+    "not on whitelist",
 )
 # "Decoder (codec xyz) not found for input stream #0:0" names the codec in between.
 _UNREADABLE_PATTERNS = (re.compile(r"decoder \([^)]*\) not found"),)
@@ -122,6 +126,20 @@ def _failed(stderr: str, what: str) -> SourceCheck:
     return SourceCheck(UNKNOWN, detail or what)
 
 
+# The check runs inside an API request on an untrusted file: one decoding thread
+# and a hard ceiling on address space and CPU time, so a crafted file cannot take
+# the API container's memory or cores with it. Applied by `prlimit` (util-linux)
+# rather than a preexec hook, which is unsafe in a threaded server.
+ADDRESS_SPACE_BYTES = 2 * 1024**3
+
+
+def _limits(seconds: float) -> list[str]:
+    prlimit = shutil.which("prlimit")
+    if not prlimit:
+        return []
+    return [prlimit, f"--as={ADDRESS_SPACE_BYTES}", f"--cpu={int(seconds) + 5}", "--"]
+
+
 def check_media_source(
     url: str,
     *,
@@ -138,9 +156,10 @@ def check_media_source(
     # ffmpeg's own network read limit (microseconds), below the process limit,
     # so a stalled read reports itself as a timeout instead of being killed.
     rw_timeout = str(int(max(1.0, min(probe_timeout, decode_timeout) - 0.5) * 1_000_000))
+    limits = _limits(max(probe_timeout, decode_timeout))
     probe_cmd = [
-        "ffprobe", "-v", "error", "-rw_timeout", rw_timeout,
-        "-print_format", "json", "-show_streams", "-show_format", url,
+        *limits, "ffprobe", "-v", "error", "-rw_timeout", rw_timeout,
+        "-print_format", "json", "-show_streams", "-show_format", *ffprobe_input(url),
     ]
     try:
         probe = run(probe_cmd, capture_output=True, text=True, errors="replace", timeout=probe_timeout)
@@ -168,8 +187,8 @@ def check_media_source(
     # one frame is the only way to know; it reads only the start of the file.
     selector = ["-map", "0:V:0", "-frames:v", "1"] if video is not None else ["-map", "0:a:0", "-frames:a", "1"]
     decode_cmd = [
-        "ffmpeg", "-nostdin", "-v", "error", "-xerror", "-rw_timeout", rw_timeout,
-        "-i", url, *selector, "-f", "framecrc", "-",
+        *limits, "ffmpeg", "-nostdin", "-v", "error", "-xerror", "-threads", "1", "-rw_timeout", rw_timeout,
+        *ffmpeg_input(url), *selector, "-threads", "1", "-f", "framecrc", "-",
     ]
     try:
         decoded = run(decode_cmd, capture_output=True, text=True, errors="replace", timeout=decode_timeout)

@@ -97,7 +97,10 @@ def _graph(cmd):
 
 def _global_args(cmd):
     """What comes before -i: the decode the command asks for."""
-    return cmd[2:cmd.index("-i")]
+    # P1-B26: the upload's own input options (whitelists, probe limits) come from
+    # untrusted.py right before -i; the hardware arguments are everything before them.
+    end = cmd.index("-protocol_whitelist") if "-protocol_whitelist" in cmd else cmd.index("-i")
+    return cmd[2:end]
 
 
 def _boxes(cmd):

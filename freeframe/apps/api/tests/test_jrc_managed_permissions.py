@@ -251,7 +251,8 @@ def test_real_membership_removal_revokes_already_issued_hls_token(client, real_d
         real_db.flush()
         assert client.get(url, follow_redirects=False).status_code == 403
         assert client.get(hls_url(client, token, "master.m3u8")).status_code == 403
-        assert client.get(f"/assets/{asset.id}/stream", headers=headers).status_code == 403
-        assert client.get(f"/assets/{asset.id}/versions", headers=headers).status_code == 403
-        assert client.get(f"/assets/{asset.id}/comments", headers=headers).status_code == 403
+        # P1-B26: asset routes answer like a missing asset once access is gone.
+        assert client.get(f"/assets/{asset.id}/stream", headers=headers).status_code == 404
+        assert client.get(f"/assets/{asset.id}/versions", headers=headers).status_code == 404
+        assert client.get(f"/assets/{asset.id}/comments", headers=headers).status_code == 404
         assert storage.get_object.call_count == 1

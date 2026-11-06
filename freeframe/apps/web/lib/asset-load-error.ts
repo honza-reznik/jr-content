@@ -18,9 +18,11 @@ export function assetLoadError(status: number | null | undefined): AssetLoadErro
     }
   }
   if (status === 404) {
+    // The API answers 404 both for a deleted video and for one in a client the
+    // person is not a member of, so that an id says nothing about what exists.
     return {
-      title: 'This video no longer exists.',
-      detail: 'It may have been deleted. Go back and choose another version or video.',
+      title: 'This video does not exist or you do not have access to it.',
+      detail: 'It may have been deleted. If you should see it, ask the team to add you to that client.',
       retry: false,
     }
   }
