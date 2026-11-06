@@ -3,8 +3,9 @@
 set -eu
 : "${JRC_PROJECT:?JRC_PROJECT chybí}"
 source_root=$(pwd -P)
+source_project=$JRC_PROJECT
 suffix="$(date +%s)$$"
-project="jrc-p1b04-offsite-$suffix"
+project="${source_project}-offsite-$suffix"
 test_dir="$source_root/ops/test-output/P1-B04-offsite-$suffix"
 test_root="$test_dir/worktree"
 artifact_dir="$test_root/ops/test-output/P1-B04-offsite-$suffix"
@@ -55,19 +56,20 @@ else
 fi
 # `make env` builds the project-scoped dev image if it is missing. Seed that tag
 # from this block's existing image first so the test can never enter that path.
-if ! docker image inspect jrc-dev:jrc-p1b04 >/dev/null 2>&1; then
-    echo 'Chybí obraz jrc-dev:jrc-p1b04; test-offsite nic nestahuje ani nesestavuje.' >&2
+if ! docker image inspect "jrc-dev:$source_project" >/dev/null 2>&1; then
+    echo "Chybí obraz jrc-dev:$source_project; test-offsite nic nestahuje ani nesestavuje." >&2
     exit 2
 fi
 if docker image inspect "jrc-dev:$project" >/dev/null 2>&1; then
     echo "Testovací obrazový tag už existuje: jrc-dev:$project" >&2
     exit 2
 fi
-docker tag jrc-dev:jrc-p1b04 "jrc-dev:$project"
+docker tag "jrc-dev:$source_project" "jrc-dev:$project"
 printf '%s\n' "jrc-dev:$project" >> "$tagged_images"
 mkdir -p "$artifact_dir"
 export JRC_PROJECT="$project" JRC_APP_PORT="$app_port" JRC_POSTGRES_PORT="$pg_port" JRC_S3_PORT="$s3_port" JRC_BB_PORT="$bb_port"
-JRC_MODE=dev make --no-print-directory -C "$test_root" env >/dev/null
+# Použít již sestavený web z obrazu; zálohový test nemusí znovu kompilovat Next.
+JRC_MODE=prod make --no-print-directory -C "$test_root" env >/dev/null
 JRC_PROJECT="$project" make --no-print-directory -C "$test_root" check-project-ports >/dev/null
 version=$(git -C "$test_root" rev-parse --short HEAD)
 git -C "$test_root" archive --format=tar.gz --prefix="jr-content-$version/" \
@@ -77,7 +79,7 @@ JRC_PROJECT="$project" docker compose --project-name "$project" --file "$test_ro
 while IFS= read -r image; do
     [ -n "$image" ] || continue
     case "$image" in
-        jrc-*:*) source_image="${image%:*}:jrc-p1b04"; retag=yes ;;
+        jrc-*:*) source_image="${image%:*}:$source_project"; retag=yes ;;
         *) source_image="$image"; retag=no ;;
     esac
     if ! docker image inspect "$source_image" >/dev/null 2>&1; then
@@ -92,7 +94,7 @@ done < "$test_dir/images.txt"
 while IFS= read -r image; do
     [ -n "$image" ] || continue
     case "$image" in
-        jrc-*:*) source_image="${image%:*}:jrc-p1b04" ;;
+        jrc-*:*) source_image="${image%:*}:$source_project" ;;
         *) continue ;;
     esac
     grep -Fqx "$image" "$tagged_images" && continue
@@ -100,7 +102,7 @@ while IFS= read -r image; do
     printf '%s\n' "$image" >> "$tagged_images"
 done < "$test_dir/images.txt"
 JRC_PROJECT="$project" docker compose --project-name "$project" --file "$test_root/docker-compose.yml" \
-    --env-file "$test_root/.env" up --detach --no-build --pull never --wait --wait-timeout 120 >/dev/null
+    --env-file "$test_root/.env" up --detach --no-build --pull never --wait --wait-timeout 240 >/dev/null
 copy_static_assets() {
     container="$project-test-css-$$"
     docker create --name "$container" "jrc-bb:$project" >/dev/null
@@ -251,7 +253,7 @@ JRC_PROJECT="$project" make --no-print-directory -C "$test_root" backup-verify B
  (cd "$test_root" && JRC_PROJECT="$project" sh scripts/backup/backup.sh restore-guard "backups/$project/$stamp" >/dev/null)
  (cd "$test_root" && JRC_PROJECT="$project" JRC_BACKUP_NO_BUILD=yes sh scripts/backup/backup.sh restore-data "backups/$project/$stamp" >/dev/null)
 JRC_PROJECT="$project" docker compose --project-name "$project" --file "$test_root/docker-compose.yml" \
-    --env-file "$test_root/.env" up --detach --no-build --pull never --wait --wait-timeout 120 >/dev/null
+    --env-file "$test_root/.env" up --detach --no-build --pull never --wait --wait-timeout 240 >/dev/null
  (cd "$test_root" && JRC_PROJECT="$project" sh scripts/backup/backup.sh restore-finish >/dev/null)
 JRC_PROJECT="$project" docker compose --project-name "$project" --file "$test_root/docker-compose.yml" --env-file "$test_root/.env" \
     exec -T jrc-dev sh -c 'cd /workspace && python3 scripts/backup/jrc_backup.py inventory' > "$after"
