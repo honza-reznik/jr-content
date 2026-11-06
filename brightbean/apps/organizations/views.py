@@ -10,12 +10,13 @@ from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.shortcuts import redirect, render
 from django.utils import timezone as django_tz
-from django.views.decorators.http import require_http_methods
+from django.views.decorators.http import require_http_methods, require_POST
 
 from apps.accounts.signup_links import custom_signup_url, signup_allowed
 from apps.common.validators import clean_display_name
 from apps.composer.models import PlatformPost, Post, Tag
 from apps.members.decorators import require_org_role
+from apps.members.middleware import activate_organization
 from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
@@ -49,6 +50,47 @@ COMMON_TIMEZONES = [
 
 
 @login_required
+@require_POST
+def switch_organization(request):
+    membership = (
+        OrgMembership.objects.select_related("organization")
+        .filter(
+            user=request.user,
+            organization_id=request.POST.get("organization_id")
+            if _valid_uuid(request.POST.get("organization_id"))
+            else None,
+            organization__deleted_at__isnull=True,
+        )
+        .first()
+    )
+    if not membership:
+        raise PermissionDenied("You are not a member of this organization.")
+    request.session["active_organization_id"] = str(membership.organization_id)
+    workspace_membership = (
+        WorkspaceMembership.objects.filter(
+            user=request.user,
+            workspace__organization=membership.organization,
+            workspace__is_archived=False,
+        )
+        .order_by("workspace__name", "workspace_id")
+        .first()
+    )
+    request.user.last_workspace_id = workspace_membership.workspace_id if workspace_membership else None
+    request.user.save(update_fields=["last_workspace_id"])
+    return redirect("dashboard")
+
+
+def _valid_uuid(value):
+    from uuid import UUID
+
+    try:
+        UUID(str(value))
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+@login_required
 @require_org_role(OrgMembership.OrgRole.ADMIN)
 @require_http_methods(["GET", "POST"])
 def settings_view(request):
@@ -56,19 +98,29 @@ def settings_view(request):
     is_owner = request.org_membership.org_role == OrgMembership.OrgRole.OWNER
 
     if request.method == "POST":
+        # ``org`` is the organization the submitted form was rendered for
+        # (bound by RBACMiddleware), not necessarily the session's selection.
         action = request.POST.get("action")
-        if action == "update_name":
-            _handle_name_update(request, org)
-        elif action == "update_timezone":
-            _handle_tz_update(request, org)
-        elif action == "delete_organization":
-            return _handle_org_deletion(request, org)
-        elif action == "delete_organization_now":
+        if action == "delete_organization_now":
             return _handle_immediate_org_deletion(request, org)
-        elif action == "cancel_deletion":
-            _handle_cancel_deletion(request, org)
+        handlers = {
+            "update_name": _handle_name_update,
+            "update_timezone": _handle_tz_update,
+            "delete_organization": _handle_org_deletion,
+            "cancel_deletion": _handle_cancel_deletion,
+        }
+        handler = handlers.get(action)
+        if handler is None or not handler(request, org):
+            # Show the same organization's page again with the error; an
+            # unsuccessful submission does not change the active organization.
+            return _render_settings(request, org, is_owner, status=400)
+        activate_organization(request, org)
         return redirect("organizations:settings")
 
+    return _render_settings(request, org, is_owner)
+
+
+def _render_settings(request, org, is_owner, status=200):
     context = {
         "organization": org,
         "settings_active": "general",
@@ -76,11 +128,11 @@ def settings_view(request):
         "common_timezones": COMMON_TIMEZONES,
         "all_timezones": sorted(available_timezones()),
     }
-    return render(request, "organizations/settings.html", context)
+    return render(request, "organizations/settings.html", context, status=status)
 
 
 @login_required
-@require_org_role(OrgMembership.OrgRole.MEMBER)
+@require_org_role(OrgMembership.OrgRole.ADMIN)
 def workspaces_view(request):
     org = request.org
     workspaces = (
@@ -127,11 +179,12 @@ def _handle_name_update(request, org):
     name = clean_display_name(request.POST.get("name", ""))
     if not name:
         messages.error(request, "Organization name cannot be empty.")
-        return
+        return False
 
     org.name = name
     org.save(update_fields=["name"])
     messages.success(request, "Organization name updated.")
+    return True
 
 
 def _handle_tz_update(request, org):
@@ -139,11 +192,12 @@ def _handle_tz_update(request, org):
     tz = request.POST.get("timezone", "").strip()
     if tz not in available_timezones():
         messages.error(request, "Invalid timezone.")
-        return
+        return False
 
     org.default_timezone = tz
     org.save(update_fields=["default_timezone"])
     messages.success(request, "Default timezone updated.")
+    return True
 
 
 @transaction.atomic
@@ -166,20 +220,21 @@ def _handle_org_deletion(request, org):
     execute_scheduled_org_deletion(str(org.id), schedule=grace)
 
     messages.success(request, "Organization scheduled for deletion in 14 days.")
-    return redirect("organizations:settings")
+    return True
 
 
 def _handle_immediate_org_deletion(request, org):
     """Permanently delete an organization right now (owner only).
 
-    Since v1 is one-org-per-user, deleting the org leaves the user with no
-    workspace/org context. Log them out and send them to signup so they can
-    start fresh.
+    Keep a multi-organization user signed in to their remaining organization.
+    Only a user whose account was removed needs to sign in or sign up again.
     """
     if request.org_membership.org_role != OrgMembership.OrgRole.OWNER:
         raise PermissionDenied
 
     from background_task.models import Task
+
+    from apps.accounts.models import User
 
     Task.objects.filter(
         task_name="apps.organizations.tasks.execute_scheduled_org_deletion",
@@ -187,6 +242,9 @@ def _handle_immediate_org_deletion(request, org):
     ).delete()
 
     org.hard_delete(requesting_user=request.user)
+    if User.objects.filter(pk=request.user.pk).exists():
+        request.session.pop("active_organization_id", None)
+        return redirect("dashboard")
     logout(request)
     # With SIGNUP_MODE invite/closed and no custom URL, the signup page would only
     # say sign-up is closed, so send them to log in instead.
@@ -215,6 +273,7 @@ def _handle_cancel_deletion(request, org):
     messages.success(
         request, "Organization deletion cancelled. Reconnect any YouTube channels removed when deletion was requested."
     )
+    return True
 
 
 @login_required

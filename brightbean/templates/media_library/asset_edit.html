@@ -116,6 +116,7 @@
   <!-- Hidden form -->
   <form x-ref="editForm" method="POST" action="{% if is_shared_library %}{% url 'media_library_org:shared_asset_edit' asset_id=asset.id %}{% else %}{% url 'media_library:asset_edit' workspace_id=workspace.id asset_id=asset.id %}{% endif %}">
     {% csrf_token %}
+    {% if is_shared_library %}<input type="hidden" name="organization_id" value="{{ request.org.pk|default:'' }}">{% endif %}
     <input type="hidden" name="crop_x" x-model="cropData.x">
     <input type="hidden" name="crop_y" x-model="cropData.y">
     <input type="hidden" name="crop_width" x-model="cropData.width">
@@ -182,6 +183,7 @@
         </a>
         <form method="POST" action="{% if is_shared_library %}{% url 'media_library_org:shared_asset_edit' asset_id=asset.id %}{% else %}{% url 'media_library:asset_edit' workspace_id=workspace.id asset_id=asset.id %}{% endif %}">
           {% csrf_token %}
+          {% if is_shared_library %}<input type="hidden" name="organization_id" value="{{ request.org.pk|default:'' }}">{% endif %}
           <input type="hidden" name="trim_start" :value="trimStart">
           <input type="hidden" name="trim_end" :value="trimEnd">
           <button type="submit"

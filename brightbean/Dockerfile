@@ -1,47 +1,57 @@
 FROM python:3.12-slim AS base
 
-ARG JRC_SOURCE_VERSION=unknown
-
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PORT=8000
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq-dev gcc curl ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+RUN rm -f /etc/apt/apt.conf.d/docker-clean
+RUN --mount=type=cache,id=jrc-bb-apt,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=jrc-bb-apt-lists,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get -o Binary::apt::APT::Keep-Downloaded-Packages=true install -y --no-install-recommends \
+    libpq-dev gcc curl ffmpeg
 
 # Install Node.js for Tailwind build
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,id=jrc-bb-apt,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=jrc-bb-apt-lists,target=/var/lib/apt/lists,sharing=locked \
+    printf 'Binary::apt::APT::Keep-Downloaded-Packages "true";\n' > /etc/apt/apt.conf.d/99-jrc-cache \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get -o Binary::apt::APT::Keep-Downloaded-Packages=true install -y nodejs
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,id=jrc-bb-pip,target=/root/.cache/pip pip install -r requirements.txt
 COPY requirements-jrc.txt .
-RUN pip install --no-cache-dir -r requirements-jrc.txt
+RUN --mount=type=cache,id=jrc-bb-pip,target=/root/.cache/pip pip install -r requirements-jrc.txt
 
 # JR Content F4-B01: stejné serverové schéma Markdownu jako v editoru, dostupné i pod bind mountem.
 COPY apps/jrc_texts/editor/package*.json /opt/jrc-texts/
-RUN npm ci --prefix /opt/jrc-texts --ignore-scripts --no-audit --no-fund
+RUN --mount=type=cache,id=jrc-npm,target=/root/.npm \
+    npm ci --prefix /opt/jrc-texts --ignore-scripts --no-audit --no-fund
+COPY theme/static_src/package*.json /app/theme/static_src/
+RUN --mount=type=cache,id=jrc-npm,target=/root/.npm \
+    cd theme/static_src && npm ci --no-audit --no-fund
 COPY apps/jrc_texts/editor/*.mjs /opt/jrc-texts/
-RUN npm run build --prefix /opt/jrc-texts
+RUN --network=none npm run build --prefix /opt/jrc-texts
 
-COPY . .
-RUN mkdir -p /opt/jrc-source \
-    && mv .jrc-source.tar.gz /opt/jrc-source/jr-content-${JRC_SOURCE_VERSION}.tar.gz
+COPY --exclude=.jrc-source.tar.gz . .
 RUN mkdir -p apps/jrc_texts/static/jrc_texts/dist \
     && cp /opt/jrc-texts/script.js apps/jrc_texts/static/jrc_texts/dist/script.js
 
 # Build Tailwind CSS
-RUN cd theme/static_src && npm ci --no-audit --no-fund && npm run build
+RUN --network=none cd theme/static_src && npm run build
 
 # Collect static files
-RUN DJANGO_SETTINGS_MODULE=config.settings.production \
+RUN --network=none DJANGO_SETTINGS_MODULE=config.settings.production \
     SECRET_KEY=build-placeholder \
     DATABASE_URL=sqlite:///tmp/build.db \
     python manage.py collectstatic --noinput
+
+# Verze ani archiv nesmějí zneplatnit vrstvy závislostí a statických souborů.
+ARG JRC_SOURCE_VERSION=unknown
+COPY .jrc-source.tar.gz /tmp/jrc-source.tar.gz
+RUN mkdir -p /opt/jrc-source \
+    && mv /tmp/jrc-source.tar.gz /opt/jrc-source/jr-content-${JRC_SOURCE_VERSION}.tar.gz
 
 EXPOSE 8000
 

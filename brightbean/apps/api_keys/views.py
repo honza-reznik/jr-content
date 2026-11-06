@@ -19,6 +19,7 @@ out-of-org account, or an unbacked permission gets the same
 from __future__ import annotations
 
 import functools
+from datetime import datetime, timedelta
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -35,8 +36,11 @@ from django.views.decorators.http import require_http_methods
 
 from apps.api_keys import services
 from apps.api_keys.models import ApiKey
+from apps.members.decorators import ensure_org_write_target
+from apps.members.middleware import activate_organization
 from apps.members.models import (
     PERMISSION_KEYS,
+    OrgMembership,
     WorkspaceMembership,
     has_org_permission,
 )
@@ -71,6 +75,7 @@ def _require_manage_api_keys(view_func):
 
     @functools.wraps(view_func)
     def _wrapped(request, *args, **kwargs):
+        ensure_org_write_target(request)
         org_membership = getattr(request, "org_membership", None)
         if not has_org_permission(org_membership, "manage_api_keys"):
             raise PermissionDenied("You need the manage_api_keys org permission to use this page.")
@@ -115,8 +120,7 @@ def list_keys(request):
     # One-time token reveal handed off from ``issue_key`` via the session
     # (Post/Redirect/Get). Pop it so it shows exactly once — a reload of
     # this page finds nothing and the modal stays closed.
-    reveal_token = request.session.pop("reveal_token", None)
-    reveal_key_name = request.session.pop("reveal_key_name", None)
+    reveal_token, reveal_key_name = _take_pending_reveal(request)
     context = {
         "settings_active": "api_keys",
         "rows": rows,
@@ -436,9 +440,68 @@ def issue_key(request):
     # DB-backed (``SESSION_ENGINE = ...sessions.backends.db``), so only the
     # opaque session id is in the cookie. ``list_keys`` pops the value, so
     # it's still shown exactly once and a later reload sees nothing.
-    request.session["reveal_token"] = issued.plaintext_token
-    request.session["reveal_key_name"] = issued.api_key.name
+    #
+    # The hand-off names the key and its organization (P1-B23): the list is
+    # rendered for the session's organization, which another tab may have
+    # changed, so the token is only shown on that organization's list and
+    # only while the user may still manage its keys.
+    request.session[PENDING_REVEAL_KEY] = {
+        "key_id": str(issued.api_key.pk),
+        "organization_id": str(workspace.organization_id),
+        "token": issued.plaintext_token,
+        "name": issued.api_key.name,
+        "issued_at": timezone.now().isoformat(),
+    }
+    activate_organization(request, workspace.organization)
     return redirect("api_keys:list")
+
+
+PENDING_REVEAL_KEY = "api_key_pending_reveal"
+# A token not collected by then is dropped; the key stays and can be revoked.
+PENDING_REVEAL_TTL = timedelta(minutes=10)
+
+
+def _take_pending_reveal(request):
+    """Return (token, name) of a just-issued key if it belongs on this page.
+
+    Shown once, on the list of the key's own organization, if the key is still
+    active and the user still has ``manage_api_keys`` there. A hand-off for
+    another organization waits (the user may open that list next); a stale,
+    revoked or no-longer-permitted one is discarded without being shown.
+    """
+    pending = request.session.get(PENDING_REVEAL_KEY)
+    if not pending:
+        return None, None
+    try:
+        issued_at = datetime.fromisoformat(pending["issued_at"])
+        key = (
+            ApiKey.objects.select_related("workspace")
+            .filter(pk=pending["key_id"], workspace__organization_id=pending["organization_id"])
+            .first()
+        )
+    except (KeyError, TypeError, ValueError, DjangoValidationError):
+        key, issued_at = None, None
+    membership = (
+        OrgMembership.objects.filter(
+            user=request.user,
+            organization_id=key.workspace.organization_id,
+            organization__deleted_at__isnull=True,
+        ).first()
+        if key is not None
+        else None
+    )
+    if (
+        key is None
+        or not key.is_active
+        or timezone.now() - issued_at > PENDING_REVEAL_TTL
+        or not has_org_permission(membership, "manage_api_keys")
+    ):
+        request.session.pop(PENDING_REVEAL_KEY, None)
+        return None, None
+    if request.org is None or key.workspace.organization_id != request.org.id:
+        return None, None
+    request.session.pop(PENDING_REVEAL_KEY, None)
+    return pending["token"], pending["name"]
 
 
 # ---------------------------------------------------------------------------
@@ -467,6 +530,7 @@ def revoke_key(request, key_id):
     if key.revoked_at is None:
         services.revoke_api_key(key)
         messages.success(request, f"Revoked key “{key.name}”.")
+        activate_organization(request, key.workspace.organization)
     else:
         messages.info(request, f"Key “{key.name}” was already revoked.")
     return redirect("api_keys:list")
@@ -531,4 +595,5 @@ def edit_key(request, key_id):
         return redirect("api_keys:list")
 
     messages.success(request, f"Updated “{key.name}”.")
+    activate_organization(request, key.workspace.organization)
     return redirect("api_keys:list")

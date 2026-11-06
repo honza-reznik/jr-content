@@ -5,17 +5,38 @@ import functools
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 
+SAFE_METHODS = ("GET", "HEAD", "OPTIONS", "TRACE")
+
+
+def ensure_org_write_target(request):
+    """Refuse an org-scoped write whose target organization came from the session.
+
+    The active organization in the session is shared by all tabs, so a form
+    rendered for organization A can be submitted after another tab switched
+    the session to B. Writes must therefore carry their own target (see
+    ``apps.members.middleware.ORG_TARGET_FIELD``), which the RBAC middleware
+    verifies and binds before the role check runs against it.
+    """
+    if request.method in SAFE_METHODS:
+        return
+    if not getattr(request, "org_target_bound", False):
+        raise PermissionDenied("This form does not say which organization it changes. Reload the page and try again.")
+
 
 def require_org_role(min_role):
     """Decorator that requires a minimum org role.
 
     Role hierarchy: owner > admin > member
+
+    Writes are checked against the organization the submitted page belongs to
+    (``ensure_org_write_target``), never against the session's selection.
     """
     role_hierarchy = {"owner": 3, "admin": 2, "member": 1}
 
     def decorator(view_func):
         @functools.wraps(view_func)
         def _wrapped(request, *args, **kwargs):
+            ensure_org_write_target(request)
             if not request.org_membership:
                 raise PermissionDenied("You are not a member of any organization.")
             user_level = role_hierarchy.get(request.org_membership.org_role, 0)
@@ -125,6 +146,7 @@ def require_org_permission(permission_key):
             # Make resolved context available to the view body.
             request.org_membership = membership
             request.org = membership.organization
+            request.org_target_bound = True
             return view_func(request, *args, **kwargs)
 
         return login_required(_wrapped)

@@ -1,5 +1,15 @@
 # Úpravy JR Content
 
+## 2026-11-05 — P1-B24
+
+- E-maily účtu mají společnou značku JR Content; odkazy používají veřejný původ a předponu
+  aplikace, nezávisle na historickém záznamu Site či vnitřním hostiteli požadavku. Reset pro
+  neznámou adresu při registraci jen na pozvánku vysvětlí další postup bez nefunkčního odkazu.
+- Pozvánka má sjednocený předmět i textovou část, upozornění také textovou patičku JR Content.
+- Migrace `members.0004` ukládá příjemce přijetí (`accepted_by`): návrat po registraci na již
+  přijatý odkaz přesměruje téhož uživatele s trvajícím členstvím do aplikace. Cizí návštěvník,
+  odvolané členství a historické přijaté pozvánky bez známého příjemce zůstávají odmítnuté.
+
 ## 2026-11-04 — P1-B09
 
 - Shotlist u obsahu: `ShotlistItem` (text, poznámka, hotovo, pořadí, kdo/kdy změnil) a historie
@@ -781,3 +791,27 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
   Brána: anonymní zápis přesměruje na přihlášení jako `login_required` (kromě tokenů připojení), workspace
   z těla formuláře bez členství je 404, archivovaný workspace 403 (jako RBAC), komentářové zápisy jedním
   příznakem `comment`. Testy upozornění o rozhodnutí klienta vedou obsah do klientské fáze dvoustupňového režimu.
+## 2026-11-06 · P1-B23 — Organizace a oprávnění nastavení
+
+- Osobní organizace/workspace vznikají jen při samostatné otevřené registraci. Vytvoření účtu přes ORM a přijetí pozvánky
+  je nezakládá; přijetí pozvánky nemaže členství v jiných organizacích. Samostatný demo účet se připravuje výslovně.
+- RBAC vybírá organizaci podle otevřeného workspace nebo ověřené volby v relaci. Menu nabízí přepínač pro více organizací;
+  seznamy workspaců, osobní profil i organizační stránky používají stejný kontext. Oprávnění vlastníka jiné organizace se nepřenáší.
+- Členové, organizační nastavení a seznam správy workspaců vyžadují org owner/admin. Nastavení workspace, schvalování a profil
+  klienta vyžadují workspace owner/manager na GET i POST; role manager má odpovídající oprávnění v registru.
+- Smazání jedné organizace zachová účet a členství v ostatních, nepřipravuje nové osobní organizace.
+- `manage.py jrc_repair_organizations` standardně jen vypíše kandidáty. `--apply --backup-file <nový privátní soubor>`
+  doplní chybějící běžná členství a smaže jen nedotčené prázdné osobní organizace; `--restore <soubor>` změny vrátí.
+  Příkaz se nespouští automaticky při migraci ani při požadavku webu. Produkční použití je až po záloze a kontrole výpisu.
+- Zápis na adrese bez workspace/organizace v URL (organizační nastavení, nový workspace, tým a pozvánky, API klíče, sdílená
+  knihovna médií) míří na organizaci, kterou ukazovala odeslaná stránka: formuláře posílají `organization_id`, htmx/fetch
+  hlavičku `X-JRC-Organization-Id` (z `data-jrc-organization-id` v `base.html`). `RBACMiddleware` cíl ověří proti členství
+  a role se kontroluje vůči němu; `require_org_role` a správa API klíčů zápis bez uvedeného cíle odmítnou (403). Volba
+  organizace v relaci, sdílená všemi kartami, slouží jen k zobrazení. Aktivní organizaci mění jen skutečně úspěšná akce:
+  zobrazená stránka workspace (GET 2xx, ne htmx/XHR) nebo zápis, který pohled výslovně potvrdí `activate_organization`;
+  chybný formulář nastavení organizace se znovu zobrazí (400) pro tutéž organizaci.
+- Jednorázové zobrazení API tokenu nese ID klíče a organizace; ukáže se jen na seznamu té organizace při platném klíči
+  a oprávnění `manage_api_keys`, jinak se zahodí (nejpozději po 10 minutách).
+- Výběr účtů po OAuth (`social_accounts:select_account`) je svázaný s ID toku (`?flow=` a skryté pole); každý tok má
+  vlastní záznam v relaci a před zápisem se znovu ověří přístup k workspace.
+- Zpětné volání OAuth sociálních sítí bere organizaci z workspace v podepsaném stavu, ne z relace.

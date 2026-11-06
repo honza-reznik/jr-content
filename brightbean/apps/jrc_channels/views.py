@@ -23,6 +23,8 @@ def _membership(request, workspace_id, *, editing=False):
         workspace__is_archived=False,
         workspace__organization__deleted_at__isnull=True,
     )
+    if membership.workspace_role not in {"owner", "manager"}:
+        raise PermissionDenied("You do not have permission to manage workspace settings.")
     if editing and not membership.effective_permissions.get("manage_social_accounts"):
         raise PermissionDenied("You do not have permission to manage channels.")
     return membership

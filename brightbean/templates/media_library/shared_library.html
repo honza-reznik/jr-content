@@ -88,6 +88,7 @@ function uploadShared(files) {
   if (!files || files.length === 0) return;
   const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
   const formData = new FormData();
+  formData.append('organization_id', '{{ request.org.pk|default:'' }}');
   Array.from(files).forEach(f => formData.append('files', f));
 
   fetch('{% url "media_library_org:shared_upload" %}', {

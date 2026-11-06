@@ -5,7 +5,7 @@ from django.http import Http404
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_http_methods, require_POST
 
-from apps.members.decorators import require_org_role
+from apps.members.decorators import require_org_role, require_workspace_role
 from apps.members.models import OrgMembership, WorkspaceMembership
 
 from .models import Workspace
@@ -13,7 +13,9 @@ from .models import Workspace
 
 @login_required
 def workspace_list(request):
-    memberships = WorkspaceMembership.objects.filter(user=request.user).select_related("workspace")
+    memberships = WorkspaceMembership.objects.filter(
+        user=request.user, workspace__organization=request.org
+    ).select_related("workspace")
     workspaces = [m.workspace for m in memberships if not m.workspace.is_archived]
     return render(request, "workspaces/list.html", {"workspaces": workspaces})
 
@@ -49,6 +51,7 @@ def workspace_create(request):
 
 
 @login_required
+@require_workspace_role("manager")
 @require_http_methods(["GET", "POST"])
 def workspace_settings(request, workspace_id):
     try:
@@ -81,7 +84,7 @@ def workspace_settings(request, workspace_id):
                 workspace.is_archived = True
                 workspace.save(update_fields=["is_archived"])
             messages.success(request, f'Workspace "{workspace.name}" has been archived.')
-            return redirect("organizations:workspaces")
+            return redirect("dashboard")
 
         if action == "unarchive_workspace" and is_owner_or_manager:
             workspace.is_archived = False
@@ -102,7 +105,7 @@ def workspace_settings(request, workspace_id):
                 workspace_name = workspace.name
                 workspace.delete()
             messages.success(request, f'Workspace "{workspace_name}" has been permanently deleted.')
-            return redirect("organizations:workspaces")
+            return redirect("dashboard")
 
         name = request.POST.get("name", "").strip()
 
@@ -157,6 +160,7 @@ def workspace_settings(request, workspace_id):
 
 
 @login_required
+@require_workspace_role("manager")
 @require_http_methods(["GET", "POST"])
 def approvals_settings(request, workspace_id):
     try:

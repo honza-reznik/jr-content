@@ -1,9 +1,10 @@
-{{ notification.title }}
+{% autoescape off %}{{ notification.title }}
 
 {{ notification.body }}
 
 {% if action_link %}View details: {{ action_link }}{% endif %}
 
 ---
+JR Content
 You received this because of your notification settings.
-Manage preferences: {{ app_url }}{% url 'notifications:preferences' %}
+Manage preferences: {{ app_url }}{% url 'notifications:preferences' %}{% endautoescape %}
