@@ -1,1 +1,1 @@
-{% autoescape off %}Confirm your email for Brightbean{% endautoescape %}
+{% include "account/email/email_confirmation_subject.txt" %}

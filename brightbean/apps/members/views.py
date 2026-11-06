@@ -233,7 +233,19 @@ def accept_invite(request, token):
     except Invitation.DoesNotExist:
         return render(request, "members/invite_expired.html", status=404)
 
-    if invitation.is_expired or invitation.is_accepted:
+    # Signup already claims the invitation before allauth follows its `next`
+    # URL back here. Only its actual recipient may revisit that completed link;
+    # never grant memberships a second time or reveal it to another visitor.
+    if invitation.is_accepted:
+        if (
+            request.user.is_authenticated
+            and invitation.accepted_by_id == request.user.pk
+            and OrgMembership.objects.filter(user=request.user, organization=invitation.organization).exists()
+        ):
+            return redirect("dashboard")
+        return render(request, "members/invite_expired.html")
+
+    if invitation.is_expired:
         return render(request, "members/invite_expired.html")
 
     # Resolve workspace names for display

@@ -107,12 +107,21 @@ class AccountAdapter(DefaultAccountAdapter):
             custom = custom_signup_url(request)
             if custom:
                 context = {**context, "signup_url": build_absolute_uri(request, custom)}
+        if getattr(settings, "JRC_UI_ENABLED", False):
+            from apps.jrc_ui.mail import account_mail_context
+
+            context = account_mail_context(context)
         return super().render_mail(
             template_prefix,
             email,
             context,
             headers={**(headers or {}), **transactional()},
         )
+
+    def format_email_subject(self, subject):
+        if getattr(settings, "JRC_UI_ENABLED", False):
+            return "[JR Content] " + subject
+        return super().format_email_subject(subject)
 
 
 class SocialAccountAdapter(DefaultSocialAccountAdapter):

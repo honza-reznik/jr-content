@@ -144,6 +144,13 @@ class Invitation(models.Model):
     token = models.CharField(max_length=255, unique=True, default=_generate_invitation_token)
     expires_at = models.DateTimeField()
     accepted_at = models.DateTimeField(blank=True, null=True)
+    accepted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="accepted_invitations",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     # How many times this address has been mailed about this invitation, and
     # when it last was. On the row rather than in the cache on purpose: the

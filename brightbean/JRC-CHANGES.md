@@ -1,5 +1,15 @@
 # Úpravy JR Content
 
+## 2026-11-05 — P1-B24
+
+- E-maily účtu mají společnou značku JR Content; odkazy používají veřejný původ a předponu
+  aplikace, nezávisle na historickém záznamu Site či vnitřním hostiteli požadavku. Reset pro
+  neznámou adresu při registraci jen na pozvánku vysvětlí další postup bez nefunkčního odkazu.
+- Pozvánka má sjednocený předmět i textovou část, upozornění také textovou patičku JR Content.
+- Migrace `members.0004` ukládá příjemce přijetí (`accepted_by`): návrat po registraci na již
+  přijatý odkaz přesměruje téhož uživatele s trvajícím členstvím do aplikace. Cizí návštěvník,
+  odvolané členství a historické přijaté pozvánky bez známého příjemce zůstávají odmítnuté.
+
 ## 2026-11-04 — P1-B09
 
 - Shotlist u obsahu: `ShotlistItem` (text, poznámka, hotovo, pořadí, kdo/kdy změnil) a historie
