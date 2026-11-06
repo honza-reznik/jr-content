@@ -38,6 +38,9 @@ window.tagInput = function (initialTags, saveUrl, suggestionsUrl) {
         headers: {
           'Content-Type': 'application/json',
           'X-CSRFToken': csrfToken,
+          // JR Content P1-B23: shared-library tags belong to the organization
+          // this page shows, not to the one another tab made active.
+          'X-JRC-Organization-Id': document.body.dataset.jrcOrganizationId || '',
         },
         body: JSON.stringify(this.tags),
       });

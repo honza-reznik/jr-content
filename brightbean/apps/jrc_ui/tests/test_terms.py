@@ -46,7 +46,12 @@ def test_terms_is_off_in_mvp_and_wrapped_middleware_is_configured():
 
 @pytest.mark.django_db
 def test_new_user_goes_straight_into_the_app(client):
+    from apps.accounts.signals import provision_organization_and_workspace
+
     user = _new_user()
+    # Administratively created accounts get no implicit organization (P1-B23);
+    # this owner is given one explicitly, as the operator would.
+    provision_organization_and_workspace(user)
     response = _login(client, user.email)
     assert response.status_code == 200
     assert all("accept-terms" not in url for url in _visited(response))

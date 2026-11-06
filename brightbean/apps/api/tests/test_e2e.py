@@ -63,8 +63,10 @@ def user(db):
         name="E2E",
         tos_accepted_at=timezone.now(),
     )
-    # The signup signal already gave them an OrgMembership in "My
-    # Organization"; promote them to OWNER so they can issue keys.
+    # Prepare a standalone owner explicitly; ORM account creation has no organization.
+    from apps.accounts.signals import provision_organization_and_workspace
+
+    provision_organization_and_workspace(u)
     om = u.org_memberships.first()
     om.org_role = OrgMembership.OrgRole.OWNER
     om.save(update_fields=["org_role"])

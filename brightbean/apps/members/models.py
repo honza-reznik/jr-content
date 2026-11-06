@@ -205,7 +205,7 @@ BUILTIN_ROLE_PERMISSIONS = {
         "view_analytics": True,
         "use_inbox": True,
         "reply_from_inbox": True,
-        "manage_workspace_settings": False,
+        "manage_workspace_settings": True,
         "upload_media": True,
         "edit_media": True,
         "delete_media": True,

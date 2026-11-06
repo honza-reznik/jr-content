@@ -25,6 +25,7 @@
                   @htmx:after-request.window="if(event.detail.successful) { showInviteModal = false; document.getElementById('no-invites-placeholder')?.remove(); document.getElementById('invite-error').textContent = ''; }"
                   class="px-6 py-5 overflow-y-auto">
                 {% csrf_token %}
+                <input type="hidden" name="organization_id" value="{{ request.org.pk|default:'' }}">
 
                 <!-- Email -->
                 <div class="mb-5">

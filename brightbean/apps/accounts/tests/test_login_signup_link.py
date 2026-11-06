@@ -8,6 +8,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.accounts.signals import provision_organization_and_workspace
 from apps.members.models import Invitation, OrgMembership
 from apps.organizations.models import Organization
 
@@ -105,11 +106,15 @@ class TestOrgDeletionRedirect:
             password="testpass123",
             tos_accepted_at=timezone.now(),
         )
+        provision_organization_and_workspace(user)
         client.force_login(user)
         return user
 
     def _delete_org_now(self, client):
-        return client.post(reverse("organizations:settings"), {"action": "delete_organization_now"})
+        org_id = client.get(reverse("organizations:settings")).wsgi_request.org.pk
+        return client.post(
+            reverse("organizations:settings"), {"action": "delete_organization_now", "organization_id": org_id}
+        )
 
     def test_redirects_to_builtin_signup_by_default(self, client, owner):
         assert OrgMembership.objects.filter(user=owner, org_role=OrgMembership.OrgRole.OWNER).exists()

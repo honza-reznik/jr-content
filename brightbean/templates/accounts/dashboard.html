@@ -45,6 +45,7 @@
             text-align: left;
         ">
             {% csrf_token %}
+            <input type="hidden" name="organization_id" value="{{ request.org.pk|default:'' }}">
             <label style="
                 display: block;
                 font-size: 0.8125rem;

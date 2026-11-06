@@ -18,8 +18,11 @@ from apps.members.services import create_invitation, resend_invitation
 
 @pytest.fixture
 def owner(db):
-    # post_save provisions "My Organization" with this user as owner.
-    return User.objects.create_user(email="owner@example.com", password="x", tos_accepted_at=timezone.now())
+    from apps.accounts.signals import provision_organization_and_workspace
+
+    user = User.objects.create_user(email="owner@example.com", password="x", tos_accepted_at=timezone.now())
+    provision_organization_and_workspace(user)
+    return user
 
 
 @pytest.fixture
@@ -87,11 +90,11 @@ class TestCreateInvitation:
 
 
 @pytest.mark.django_db
-def test_members_view_shows_the_reason(settings, client, owner):
+def test_members_view_shows_the_reason(settings, client, org, owner):
     settings.SIGNUP_MODE = "closed"
     client.force_login(owner)
 
-    response = client.post(reverse("members:invite"), {"email": "stranger@example.com"})
+    response = client.post(reverse("members:invite"), {"email": "stranger@example.com", "organization_id": org.pk})
 
     assert response.status_code == 422
     assert b"Sign-up is closed" in response.content

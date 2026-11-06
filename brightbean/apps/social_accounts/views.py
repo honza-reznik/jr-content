@@ -16,6 +16,7 @@ from django.core import signing
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 from django_ratelimit.decorators import ratelimit
@@ -40,6 +41,12 @@ logger = logging.getLogger(__name__)
 
 OAUTH_STATE_MAX_AGE = 600  # 10 minutes
 OAUTH_SESSION_KEY = "social_oauth"
+# Pending multi-account selections, one per finished OAuth flow, keyed by a
+# random flow id that the picker form carries (P1-B23). The session is shared
+# by all tabs, so a single slot would let a picker opened for workspace A
+# submit into the workspace of a later flow for B.
+OAUTH_PAGE_SELECT_KEY = "oauth_page_select"
+OAUTH_PAGE_SELECT_MAX_FLOWS = 3
 
 
 def _get_visible_platform_choices():
@@ -324,9 +331,16 @@ def oauth_callback(request, platform):
     # Re-check workspace membership - user may have lost access during OAuth
     from apps.members.models import WorkspaceMembership
 
-    ws_membership = WorkspaceMembership.objects.filter(user=request.user, workspace_id=workspace_id).first()
+    ws_membership = (
+        WorkspaceMembership.objects.filter(user=request.user, workspace_id=workspace_id)
+        .select_related("workspace")
+        .first()
+    )
     if not ws_membership:
         raise PermissionDenied("You no longer have access to this workspace.")
+    # The callback URL has no workspace in it, so request.org is only the
+    # session's current selection; the signed state names the real target.
+    target_org_id = ws_membership.workspace.organization_id
     perms = ws_membership.effective_permissions
     if not perms.get("manage_social_accounts", False):
         raise PermissionDenied("You no longer have permission to manage social accounts.")
@@ -337,7 +351,7 @@ def oauth_callback(request, platform):
         if platform == PlatformCredential.Platform.MASTODON:
             extra_creds = _resolve_mastodon_extra_creds(session_data)
 
-        provider = _get_provider_for_platform(platform, request.org.id, **extra_creds)
+        provider = _get_provider_for_platform(platform, target_org_id, **extra_creds)
         redirect_uri = redirect_uri_from_request(request)
         tokens = provider.exchange_code(code, redirect_uri, **pkce_kwargs(session_data.get("code_verifier")))
 
@@ -362,8 +376,10 @@ def oauth_callback(request, platform):
                 )
                 for page in pages:
                     page["already_connected"] = page["id"] in existing_ids
-                # Store in session for account selection
-                request.session["oauth_page_select"] = {
+                # Store in session for account selection, under this flow's id.
+                flow_id = secrets.token_urlsafe(16)
+                flows = _page_select_flows(request)
+                flows[flow_id] = {
                     "workspace_id": workspace_id,
                     "platform": platform,
                     "user_tokens": {
@@ -382,7 +398,11 @@ def oauth_callback(request, platform):
                     },
                     "pages": pages,
                 }
-                return redirect("social_accounts:select_account")
+                # Keep only the newest few; each carries platform tokens.
+                for stale in list(flows)[:-OAUTH_PAGE_SELECT_MAX_FLOWS]:
+                    flows.pop(stale)
+                request.session[OAUTH_PAGE_SELECT_KEY] = flows
+                return redirect(f"{reverse('social_accounts:select_account')}?flow={flow_id}")
             else:
                 if platform == PlatformCredential.Platform.LINKEDIN_COMPANY:
                     warning = (
@@ -452,15 +472,53 @@ def oauth_callback(request, platform):
 # ------------------------------------------------------------------
 
 
+def _page_select_flows(request):
+    flows = request.session.get(OAUTH_PAGE_SELECT_KEY)
+    # Anything but the per-flow mapping (e.g. the former single slot) is dropped.
+    if not isinstance(flows, dict) or any(not isinstance(v, dict) or "pages" not in v for v in flows.values()):
+        return {}
+    return dict(flows)
+
+
+def _discard_page_select_flow(request, flow_id):
+    flows = _page_select_flows(request)
+    flows.pop(flow_id, None)
+    if flows:
+        request.session[OAUTH_PAGE_SELECT_KEY] = flows
+    else:
+        request.session.pop(OAUTH_PAGE_SELECT_KEY, None)
+
+
 @login_required
 def select_account(request):
-    """Show page/account selection after multi-page OAuth."""
-    page_data = request.session.get("oauth_page_select")
+    """Show page/account selection after multi-page OAuth.
+
+    The picker is bound to one OAuth flow (``flow`` in the URL and form), and
+    access to that flow's workspace is checked again on every request, so
+    access removed after the callback stops the write.
+    """
+    flow_id = request.POST.get("flow") or request.GET.get("flow") or ""
+    page_data = _page_select_flows(request).get(flow_id)
     if not page_data:
         messages.error(request, "No accounts to select. Please start over.")
         return redirect("dashboard")
 
     workspace_id = page_data["workspace_id"]
+    from apps.members.models import WorkspaceMembership
+
+    ws_membership = (
+        WorkspaceMembership.objects.filter(
+            user=request.user,
+            workspace_id=workspace_id,
+            workspace__is_archived=False,
+            workspace__organization__deleted_at__isnull=True,
+        )
+        .select_related("custom_role")
+        .first()
+    )
+    if not ws_membership or not ws_membership.effective_permissions.get("manage_social_accounts", False):
+        _discard_page_select_flow(request, flow_id)
+        raise PermissionDenied("You no longer have permission to manage social accounts in this workspace.")
 
     def _render_picker():
         # Resolve publishability here rather than in the template: Django
@@ -475,6 +533,7 @@ def select_account(request):
                 "pages": rows,
                 "platform": page_data["platform"],
                 "workspace_id": workspace_id,
+                "flow_id": flow_id,
             },
         )
 
@@ -538,7 +597,7 @@ def select_account(request):
             )
             connected.append(page["name"])
 
-    request.session.pop("oauth_page_select", None)
+    _discard_page_select_flow(request, flow_id)
 
     if connected:
         names = ", ".join(connected)

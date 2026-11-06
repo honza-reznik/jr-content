@@ -333,7 +333,9 @@ def test_org_request_purges_youtube_immediately_and_preserves_other_platforms(ch
     other_post = PlatformPost.objects.create(post=old.post, social_account=other)
     client = Client()
     client.force_login(user)
-    result = client.post(reverse("organizations:settings"), {"action": "delete_organization"})
+    result = client.post(
+        reverse("organizations:settings"), {"action": "delete_organization", "organization_id": org.pk}
+    )
     assert result.status_code == 302
     assert not SocialAccount.objects.filter(pk=channel.pk).exists()
     assert PlatformPost.objects.filter(pk=other_post.pk).exists()

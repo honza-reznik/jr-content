@@ -8,6 +8,7 @@ from django.db import transaction
 from django.urls import reverse
 from django.utils import timezone
 
+from apps.accounts.signals import provision_organization_and_workspace
 from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.workspaces.models import Workspace
 
@@ -47,6 +48,8 @@ class Command(BaseCommand):
                 name="Ella (demo)",
                 tos_accepted_at=timezone.now(),
             )
+            # This command intentionally creates a standalone demo owner.
+            provision_organization_and_workspace(user)
             # Never create a shared demo password.
             user.set_unusable_password()
             user.save(update_fields=["password"])
