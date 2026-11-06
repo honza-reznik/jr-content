@@ -24,6 +24,7 @@ from django.views.decorators.http import require_GET, require_POST
 from django_ratelimit.decorators import ratelimit
 
 from apps.common.mail import transactional
+from apps.common.outbox import queue_email
 from apps.credentials.models import PlatformCredential
 from apps.members.decorators import require_permission
 from apps.members.models import WorkspaceMembership
@@ -194,18 +195,11 @@ def send_link_email(request, workspace_id, link_id):
         headers=transactional(),
     )
     msg.attach_alternative(html_content, "text/html")
-    # send() returns the number accepted, and the outbound budget drops a
-    # message by returning 0 rather than raising. Telling someone the link was
-    # sent when it was not is how they end up waiting for an email that is never
-    # coming.
-    if not msg.send(fail_silently=False):
-        messages.error(
-            request,
-            "We could not send that link right now. Please try again shortly.",
-        )
-        return redirect("social_accounts:list", workspace_id=workspace_id)
+    # Queued for the worker (P1-B33): the click must not wait for the mail server. A
+    # message the outbound budget declines is therefore reported by the worker's log, not here.
+    queue_email(msg)
 
-    messages.success(request, f"Connection link sent to {email}.")
+    messages.success(request, f"Connection link is on its way to {email}.")
     return redirect("social_accounts:list", workspace_id=workspace_id)
 
 

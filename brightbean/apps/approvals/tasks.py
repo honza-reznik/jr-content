@@ -165,7 +165,7 @@ def _escalate(post, stage):
             user=membership.user,
             event_type=EventType.APPROVAL_STALLED,
             title="Stalled post needs attention",
-            body=f'A post in {workspace.name} has been stuck in {stage_label} after multiple reminders: "{post.caption_snippet}"',
+            body=f'A post in {workspace.name} has been stuck in {stage_label} after multiple reminders: "{content_label(post)}"',
             data={
                 "post_id": str(post.id),
                 "workspace_id": str(workspace.id),

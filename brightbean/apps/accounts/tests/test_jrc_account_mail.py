@@ -16,6 +16,7 @@ from django.urls import reverse, set_script_prefix
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.common.testing import run_email_queue
 from apps.members.models import Invitation, OrgMembership
 from apps.members.services import _send_invite_email
 from apps.organizations.models import Organization
@@ -86,6 +87,7 @@ def test_every_allauth_email(public_mail, kind):
         "deleted_email": "previous@example.invalid",
     }
     get_adapter().send_mail("account/email/" + kind, user.email, context)
+    run_email_queue()
     content = assert_mail(mail.outbox[-1])
     if kind == "unknown_account":
         assert "/accounts/signup/" not in content
@@ -102,6 +104,7 @@ def test_invitation_mail(public_mail):
         expires_at=timezone.now() + timedelta(days=7),
     )
     assert _send_invite_email(invite)
+    run_email_queue()
     assert_mail(mail.outbox[-1])
 
 
@@ -163,6 +166,7 @@ def test_unknown_account_without_request(settings, prefix, mode):
         "nobody@example.invalid",
         {"email": "nobody@example.invalid", "signup_url": "http://old.invalid/accounts/signup/"},
     )
+    run_email_queue()
     body = mail.outbox[-1].body
     assert ("/accounts/signup/" in body) == (mode == "open")
     assert "https://content.example.invalid" + prefix + "/" in body

@@ -19,6 +19,7 @@ import pytest
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.common.testing import run_email_queue
 from apps.notifications.engine import (
     BATCH_SIZE_TRIGGER,
     BATCH_WINDOW_MINUTES,
@@ -242,6 +243,7 @@ class TestDigestModeUser:
 class TestEveryoneElseIsUnaffected:
     def test_immediate_email_still_goes_out_immediately(self, user, mailoutbox):
         notify(user, IMMEDIATE_EMAIL_EVENT, "Changes requested")
+        run_email_queue()
 
         assert len(mailoutbox) == 1
         delivery = email_deliveries(user).get()
@@ -252,6 +254,7 @@ class TestEveryoneElseIsUnaffected:
     def test_digest_mode_off_explicitly_is_also_unaffected(self, user, mailoutbox):
         QuietHours.objects.create(user=user, digest_mode=False)
         notify(user, IMMEDIATE_EMAIL_EVENT, "Changes requested")
+        run_email_queue()
 
         assert len(mailoutbox) == 1
         assert email_deliveries(user).get().batch_queued_at is None

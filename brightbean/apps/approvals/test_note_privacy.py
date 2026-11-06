@@ -11,6 +11,7 @@ from django.urls import reverse
 from apps.approvals import comments, services
 from apps.approvals.models import PostComment
 from apps.approvals.test_workflow import ApprovalWorkflowBase
+from apps.common.testing import run_email_queue
 from apps.members.models import WorkspaceMembership
 from apps.notifications import engine
 from apps.notifications.models import Channel, EventType, Notification, NotificationDelivery
@@ -31,6 +32,7 @@ class NoteNotificationPrivacyTests(ApprovalWorkflowBase):
                     post = self._post("pending_review")
                     mail.outbox.clear()
                     service(post, self.reviewer, self.ws, SECRET)
+                    run_email_queue()
                     notification = Notification.objects.get(user=self.author, data__post_id=str(post.pk))
                     self.assertEqual(notification.body, GENERIC_NOTE_BODIES[event])
                     self.assertEqual(notification.data["note_visibility"], "internal")

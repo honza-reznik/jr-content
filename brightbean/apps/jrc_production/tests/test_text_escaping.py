@@ -17,6 +17,7 @@ from django.utils.html import escape
 
 from apps.accounts.models import User
 from apps.approvals.comments import create_comment
+from apps.common.testing import run_email_queue
 from apps.jrc_channels.services import create_manual_channel
 from apps.jrc_production import shotlist
 from apps.jrc_production.services import create_content, move_content
@@ -165,6 +166,7 @@ def test_notification_email_has_plain_text_once_and_html_escaped_once(content, u
     mail.outbox.clear()
 
     texts.save(draft.pk, user, expected_revision=0, content=doc("Changed " + PAYLOAD))
+    run_email_queue()
 
     message = mail.outbox[-1]
     assert f'for "Title {PAYLOAD}"' in message.body

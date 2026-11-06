@@ -15,6 +15,7 @@ from django.core import mail
 from django.urls import reverse
 from django.utils import timezone
 
+from apps.common.testing import run_email_queue
 from apps.notifications.engine import (
     BATCH_CLAIM_TIMEOUT,
     BATCH_MAX_ITEMS,
@@ -218,6 +219,7 @@ def test_two_users_get_their_own_digest(user, django_user_model):
 def test_an_unbatched_event_still_sends_immediately(user):
     """Only the events in BATCHED_EMAIL_EVENTS are held back."""
     notify(user, EventType.SOCIAL_ACCOUNT_DISCONNECTED, "TikTok disconnected")
+    run_email_queue()
     assert len(mail.outbox) == 1
 
 

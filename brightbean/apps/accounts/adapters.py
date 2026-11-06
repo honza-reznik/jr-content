@@ -1,14 +1,17 @@
 from allauth.account.adapter import DefaultAccountAdapter
+from allauth.core import context as allauth_context
 from allauth.core.exceptions import ImmediateHttpResponse
 from allauth.socialaccount.adapter import DefaultSocialAccountAdapter
 from allauth.utils import build_absolute_uri
 from django.conf import settings
+from django.contrib.sites.shortcuts import get_current_site
 from django.db import transaction
 from django.shortcuts import redirect, render
 
 from apps.accounts.models import OAuthConnection
 from apps.accounts.signup_links import custom_signup_url, mark_invite_lapsed, signup_allowed
 from apps.common.mail import transactional
+from apps.common.outbox import queue_email
 
 
 def _signup_refused_response(request):
@@ -99,6 +102,20 @@ class AccountAdapter(DefaultAccountAdapter):
         return create_account_under_invitation(
             request, lambda: super(AccountAdapter, self).save_user(request, user, form)
         )
+
+    def send_mail(self, template_prefix, email, context):
+        """Queue allauth's mail for the worker instead of sending it in the request.
+
+        Every allauth mail (confirmation, reset, the "unknown account" notice, login
+        codes) passes here, so the request takes the same short time whether or not the
+        address has an account: sending took seconds and its length told an outsider which
+        addresses are registered. The body of ``DefaultAccountAdapter.send_mail`` is kept;
+        the final send is replaced by ``queue_email``.
+        """
+        request = allauth_context.request
+        ctx = {"request": request, "email": email, "current_site": get_current_site(request)}
+        ctx.update(context)
+        queue_email(self.render_mail(template_prefix, email, ctx))
 
     def render_mail(self, template_prefix, email, context, headers=None):
         if "signup_url" in context:

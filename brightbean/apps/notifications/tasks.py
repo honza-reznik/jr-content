@@ -22,6 +22,25 @@ NOTIFICATION_BATCH_INTERVAL_SECONDS = 60
 
 
 @background(schedule=0)
+def dispatch_notification_delivery(delivery_id):
+    """Send one queued e-mail or webhook delivery (written by ``engine.queue_delivery``).
+
+    Never raises (see ``send_batched_email_digests`` for why); a transient failure leaves
+    the delivery PENDING with a backoff that ``retry_failed_deliveries`` acts on.
+    """
+    from .engine import _dispatch
+    from .models import NotificationDelivery
+
+    try:
+        delivery = NotificationDelivery.objects.select_related("notification", "notification__user").get(pk=delivery_id)
+        _dispatch(delivery)
+    except NotificationDelivery.DoesNotExist:
+        logger.info("Delivery %s no longer exists", delivery_id)
+    except Exception:
+        logger.exception("Dispatching delivery %s failed", delivery_id)
+
+
+@background(schedule=0)
 def retry_failed_deliveries():
     """Retry pending notification deliveries that are past their backoff window.
 

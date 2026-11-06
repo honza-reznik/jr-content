@@ -34,9 +34,9 @@ def test_invitation_email_and_anonymous_redirect_keep_prefix(prefix):
         is_accepted=False,
     )
     with (
-        patch.object(services, "_reserve_invite_send", return_value=object()),
+        patch.object(services, "_reserve_invite_send", return_value={"previous_last_sent_at": None}),
         patch.object(services, "render_to_string", return_value="mail") as render,
-        patch.object(services, "send_or_raise"),
+        patch.object(services, "queue_email"),
         override_settings(APP_URL="http://testserver"),
     ):
         services._send_invite_email(invitation)

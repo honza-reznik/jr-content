@@ -12,6 +12,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.common.testing import run_email_queue
 from apps.members.models import Invitation, OrgMembership
 from apps.members.services import create_invitation, resend_invitation
 
@@ -57,6 +58,7 @@ class TestCreateInvitation:
         User.objects.create_user(email="Colleague@Example.com", password="x")
 
         invitation = _invite(org, owner, "colleague@example.com")
+        run_email_queue()
 
         assert invitation.pk
         assert len(mail.outbox) == 1

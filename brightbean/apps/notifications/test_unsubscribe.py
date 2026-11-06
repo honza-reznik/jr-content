@@ -9,6 +9,7 @@ import pytest
 from django.core import mail, signing
 from django.urls import reverse
 
+from apps.common.testing import run_email_queue
 from apps.notifications.engine import notify
 from apps.notifications.models import Channel, EventType, NotificationPreference
 from apps.notifications.unsubscribe import SALT, make_token
@@ -58,10 +59,12 @@ def test_the_page_a_get_returns_can_complete_the_unsubscribe(client, user):
 @pytest.mark.django_db
 def test_unsubscribing_actually_stops_the_email(client, user):
     notify(user, EventType.SOCIAL_ACCOUNT_DISCONNECTED, "TikTok disconnected")
+    run_email_queue()
     assert len(mail.outbox) == 1
 
     client.post(url_for(user))
     notify(user, EventType.SOCIAL_ACCOUNT_DISCONNECTED, "YouTube disconnected")
+    run_email_queue()
 
     assert len(mail.outbox) == 1, "no further email for that event type"
 
@@ -71,6 +74,7 @@ def test_it_only_silences_the_one_event_type(client, user):
     client.post(url_for(user, EventType.SOCIAL_ACCOUNT_DISCONNECTED))
 
     notify(user, EventType.POST_SUBMITTED, "Post submitted")
+    run_email_queue()
     assert len(mail.outbox) == 1
 
 
@@ -94,6 +98,7 @@ def test_a_token_naming_an_unknown_event_is_rejected(client, user):
 @pytest.mark.django_db
 def test_notification_email_carries_the_one_click_headers(user):
     notify(user, EventType.SOCIAL_ACCOUNT_DISCONNECTED, "TikTok disconnected")
+    run_email_queue()
 
     headers = mail.outbox[0].extra_headers
     assert headers["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"

@@ -276,7 +276,7 @@ def approve_post(target, user, workspace, comment=""):
         for recipient, is_author in _decision_recipients(post, workspace, user):
             if is_author:
                 title = "Post approved"
-                body = f'Your post "{post.caption_snippet}" was approved by {user.display_name}.'
+                body = f'Your post "{content_label(post)}" was approved by {user.display_name}.'
             else:
                 title = "Client approved a post"
                 body = f'{user.display_name} approved "{content_label(post)}".'
