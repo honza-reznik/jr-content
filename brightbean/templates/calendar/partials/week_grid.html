@@ -3,7 +3,8 @@ Week view - 7 columns, hourly rows.
 Context: week_days, week_slots, workspace.
 {% endcomment %}
 
-<div class="bg-white overflow-auto" style="animation: slideUp 200ms cubic-bezier(0.16,1,0.3,1) both; max-height: calc(100vh - 200px);">
+{% include "calendar/partials/mobile_agenda.html" %}
+<div class="calendar-desktop-grid calendar-time-grid bg-white" style="animation: slideUp 200ms cubic-bezier(0.16,1,0.3,1) both;">
     <!-- Day headers -->
     <div class="grid grid-cols-[72px_repeat(7,minmax(0,1fr))] border-b border-stone-200 sticky top-0 bg-white z-10">
         <div class="border-r border-stone-200"></div>

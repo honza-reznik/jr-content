@@ -5,4 +5,8 @@
 .jrc-thumb-empty { height: 6rem; width: 100%; }
 @media (min-width: 640px) { .jrc-thumb-empty { width: 10rem; } }
 [data-thumbnail-pick]:focus-within { outline: 2px solid #fdba74; outline-offset: 2px; }
+/* Absolutní sr-only vstup musí patřit ke svému štítku. Jeho statická poloha
+   za obsahem jinak přeskočí vnitřní scroll a prodlouží celý dokument. */
+[data-thumbnail-pick] { position: relative; }
+[data-thumbnail-input] { top: 0; left: 0; }
 [data-thumbnail-form].is-uploading [data-thumbnail-pick] { opacity: .6; pointer-events: none; }

@@ -962,7 +962,8 @@
                     {% endfor %}
                 </div>
                 {% endif %}
-                <div class="flex-1 min-h-0 flex flex-col overflow-y-auto overflow-x-hidden">
+                {# Contain absolute accessibility elements inside the scrolling area. #}
+                <div class="{% block content_container_classes %}relative flex-1 min-h-0 flex flex-col overflow-y-auto overflow-x-hidden{% endblock %}">
                 {% block content %}{% endblock %}
                 </div>
             </main>

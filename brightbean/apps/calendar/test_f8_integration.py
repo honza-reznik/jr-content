@@ -187,6 +187,57 @@ class F8CalendarIntegrationTests(TestCase):
                 self.assertEqual(slots[0]["compose_date"], target_date.isoformat())
                 self.assertEqual(slots[0]["compose_time"], slot_time.strftime("%H:%M"))
 
+    def test_mobile_agenda_keeps_all_posts_and_filters_in_full_and_partial_views(self):
+        scheduled_at = datetime(2026, 11, 6, 12, 0, tzinfo=ZoneInfo("UTC"))
+        posts = [self._content(f"Agenda item {index}", PlatformPost.Status.SCHEDULED) for index in range(5)]
+        PlatformPost.objects.filter(post__in=posts).update(scheduled_at=scheduled_at)
+        PlatformPost.objects.create(
+            post=posts[0],
+            social_account=self.disabled_account,
+            status=PlatformPost.Status.SCHEDULED,
+            scheduled_at=scheduled_at,
+        )
+        url = reverse("calendar:calendar", args=[self.workspace.pk])
+        for user in (self.owner, self.client_user):
+            self.client.force_login(user)
+            for view in ("month", "week"):
+                for headers in ({}, {"HTTP_HX_REQUEST": "true"}):
+                    with self.subTest(user=user.pk, view=view, headers=headers):
+                        params = {"mode": "calendar", "view": view, "date": "2026-11-06"}
+                        response = self.client.get(url, params, **headers)
+                        self.assertEqual(response.status_code, 200)
+                        days = response.context["mobile_calendar_days"]
+                        self.assertEqual(len(days) % 7, 0)
+                        self.assertEqual({day["date"].weekday() for day in days}, set(range(7)))
+                        rows = [row for day in days for row in day["all_posts"]]
+                        self.assertEqual({row.post_id for row in rows}, {post.pk for post in posts})
+                        self.assertEqual(len(rows), 5)
+                        self.assertContains(response, 'aria-label="Calendar by day"')
+                        hidden = self.client.get(url, {**params, "channel": str(self.disabled_account.pk)}, **headers)
+                        self.assertFalse(any(day["all_posts"] for day in hidden.context["mobile_calendar_days"]))
+
+    def test_mobile_week_agenda_keeps_slot_compose_timezone_and_empty_days(self):
+        self.workspace.timezone = "Europe/Prague"
+        self.workspace.save(update_fields=["timezone"])
+        PostingSlot.objects.create(social_account=self.enabled_account, day_of_week=4, time=time(9, 30))
+        self.client.force_login(self.owner)
+        response = self.client.get(
+            reverse("calendar:calendar", args=[self.workspace.pk]),
+            {"mode": "calendar", "view": "week", "date": "2026-11-06", "tz": "UTC", "_switch_mode": "1"},
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.status_code, 200)
+        days = response.context["mobile_calendar_days"]
+        self.assertEqual(len(days), 7)
+        self.assertEqual([day["date"].weekday() for day in days], list(range(7)))
+        self.assertEqual(days[4]["compose_date"], "2026-11-06")
+        self.assertEqual(days[4]["compose_time"], "10:00")
+        slots = days[4]["slots"]
+        self.assertEqual(len(slots), 1)
+        self.assertEqual(slots[0]["time_label"], "08:30")
+        self.assertEqual(slots[0]["compose_date"], "2026-11-06")
+        self.assertEqual(slots[0]["compose_time"], "09:30")
+
     def test_waiting_for_me_is_workspace_and_role_scoped(self):
         self._content("Team review item", PlatformPost.Status.PENDING_REVIEW)
         client_changes = self._content("Client change item", PlatformPost.Status.CHANGES_REQUESTED)

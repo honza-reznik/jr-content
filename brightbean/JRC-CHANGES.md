@@ -1,5 +1,14 @@
 # Úpravy JR Content
 
+## 2026-11-06 — P1-B28
+
+- Publish na telefonu zobrazuje měsíc a týden jako seznam všech dnů; zachovává filtry,
+  všechny položky dne, svátky, události měsíce a odkazy pro plánování. Desktop ponechává mřížku.
+- Sdílená šablona dovoluje stránce zvolit obsah v přirozené výšce. Publish tak posouvá
+  hlavní oblast včetně čekajících položek a neuzavírá kalendář do zbytku výšky okna.
+- Skryté vstupy náhledů, popisky a stavové texty detailu mají souřadnice uvnitř svého
+  kontejneru; nahrání náhledu ani fokus formuláře neprodlužují vnější dokument.
+- Výběr kanálu v Manage channels se vejde do kontejneru i s dlouhým názvem.
 ## 2026-11-05 — P1-B24
 
 - E-maily účtu mají společnou značku JR Content; odkazy používají veřejný původ a předponu

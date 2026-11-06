@@ -1,4 +1,7 @@
 .jrc-content-tabs { position: relative; }
+/* Native selects keep the intrinsic width of their longest option in flex rows.
+   Constrain the control itself so long channel names stay inside Manage channels. */
+#content-channels select { min-width: 0; max-width: 100%; }
 .jrc-content-tabs nav { scrollbar-width: thin; scroll-padding-inline: 32px; }
 .jrc-tabs-arrow {
     position: absolute;

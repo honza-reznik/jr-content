@@ -35,11 +35,11 @@
 </div>
 {% endblock %}
 
+{# The main element scrolls the entire Publish page, including Waiting for me. #}
+{% block content_container_classes %}relative flex flex-col shrink-0 min-w-0{% endblock %}
 {% block extra_head %}
+<link rel="stylesheet" href="{% static 'calendar/layout.css' %}">
 <style>
-    /* Fix parent overflow clipping the calendar */
-    main:has(#publish-body) > div { overflow: visible !important; }
-
     /* Calendar-specific styles */
     .cal-day {
         min-height: 80px;
