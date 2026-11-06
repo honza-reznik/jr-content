@@ -5,6 +5,7 @@ swallowed a send failure. A refused address or a spent email budget therefore
 locked the client out entirely while the manager was told the link had gone.
 """
 
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
@@ -13,7 +14,11 @@ from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.client_portal.models import MagicLinkToken
-from apps.client_portal.services import generate_magic_link
+from apps.client_portal.services import generate_magic_link as _generate_magic_link
+from apps.common import outbox
+from apps.common.mail import EmailNotSentError
+from apps.common.models import OutgoingEmail
+from apps.common.testing import run_email_queue
 from apps.members.models import WorkspaceMembership
 from apps.organizations.models import Organization
 from apps.workspaces.models import Workspace
@@ -33,6 +38,13 @@ def client_setup(db):
         user=client_user, workspace=workspace, workspace_role=WorkspaceMembership.WorkspaceRole.CLIENT
     )
     return workspace, client_user, manager
+
+
+def generate_magic_link(**kwargs):
+    """Generate the link and let the worker send the email (P1-B33: requests only queue mail)."""
+    token = _generate_magic_link(**kwargs)
+    run_email_queue()
+    return token
 
 
 def active_tokens(client_user, workspace):
@@ -61,27 +73,28 @@ def test_a_dropped_send_leaves_the_existing_link_working(client_setup):
     existing = generate_magic_link(workspace=workspace, client_user=client_user, created_by=manager)
     mail.outbox.clear()
 
-    with (
-        patch("apps.client_portal.services.EmailMultiAlternatives.send", return_value=0),
-        pytest.raises(ValueError, match="could not send"),
-    ):
+    with patch("apps.common.outbox.send_or_raise", side_effect=EmailNotSentError("budget")):
         generate_magic_link(workspace=workspace, client_user=client_user, created_by=manager)
 
     assert mail.outbox == []
     assert [t.pk for t in active_tokens(client_user, workspace)] == [existing.pk]
+    assert MagicLinkToken.objects.count() == 1, "the undelivered token must not be left behind"
 
 
 @pytest.mark.django_db
-def test_a_raising_send_leaves_the_existing_link_working(client_setup):
+def test_a_send_that_keeps_failing_leaves_the_existing_link_working(client_setup):
     workspace, client_user, manager = client_setup
     existing = generate_magic_link(workspace=workspace, client_user=client_user, created_by=manager)
     mail.outbox.clear()
 
-    with (
-        patch("apps.client_portal.services.EmailMultiAlternatives.send", side_effect=RuntimeError("smtp down")),
-        pytest.raises(ValueError, match="could not send"),
-    ):
+    with patch("apps.common.outbox.send_or_raise", side_effect=RuntimeError("smtp down")):
         generate_magic_link(workspace=workspace, client_user=client_user, created_by=manager)
+        # Until the worker has given up, both links work: nothing is taken away unsent.
+        assert active_tokens(client_user, workspace).count() == 2
+        for _ in range(outbox.MAX_ATTEMPTS):
+            OutgoingEmail.objects.update(next_attempt_at=timezone.now() - timedelta(seconds=1))
+            for pk in list(OutgoingEmail.objects.filter(status="pending").values_list("pk", flat=True)):
+                outbox.deliver(str(pk))
 
     assert [t.pk for t in active_tokens(client_user, workspace)] == [existing.pk]
     assert MagicLinkToken.objects.count() == 1, "the undelivered token must not be left behind"

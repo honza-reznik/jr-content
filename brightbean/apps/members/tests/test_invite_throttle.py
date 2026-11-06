@@ -16,8 +16,13 @@ from django.test import override_settings
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.common import outbox
+from apps.common.mail import EmailNotSentError
+from apps.common.models import OutgoingEmail
+from apps.common.testing import run_email_queue
 from apps.members.models import Invitation, OrgMembership
-from apps.members.services import create_invitation, resend_invitation, revoke_invitation
+from apps.members.services import create_invitation, revoke_invitation
+from apps.members.services import resend_invitation as _resend_invitation
 from apps.organizations.models import Organization
 
 
@@ -36,7 +41,8 @@ def owner(db, org):
 
 
 def invite(org, owner, email="invitee@example.com"):
-    return create_invitation(
+    """Create an invitation and let the worker send it (P1-B33: requests only queue mail)."""
+    invitation = create_invitation(
         org=org,
         email=email,
         org_role=OrgMembership.OrgRole.MEMBER,
@@ -44,6 +50,22 @@ def invite(org, owner, email="invitee@example.com"):
         invited_by=owner,
         inviter=owner,
     )
+    run_email_queue()
+    return invitation
+
+
+def resend_invitation(invitation):
+    result = _resend_invitation(invitation)
+    run_email_queue()
+    return result
+
+
+def give_up_on_every_queued_email():
+    """Run the worker's retries until it stops trying, as it does after ``MAX_ATTEMPTS``."""
+    for _ in range(outbox.MAX_ATTEMPTS):
+        OutgoingEmail.objects.update(next_attempt_at=timezone.now() - datetime.timedelta(seconds=1))
+        for pk in list(OutgoingEmail.objects.filter(status="pending").values_list("pk", flat=True)):
+            outbox.deliver(str(pk))
 
 
 @pytest.mark.django_db
@@ -175,19 +197,23 @@ def test_a_duplicate_pending_invitation_is_still_refused(org, owner):
 
 
 @pytest.mark.django_db
-def test_a_send_that_fails_does_not_burn_the_allowance(org, owner, monkeypatch):
-    """A misconfigured mail server must not cost the recipient their invites."""
-    from apps.members import services
+def test_a_send_that_fails_does_not_burn_the_allowance(org, owner):
+    """A misconfigured mail server must not cost the recipient their invites.
 
-    def boom(*args, **kwargs):
-        raise RuntimeError("smtp down")
+    The slot is taken when the email is queued and handed back by the worker once the email
+    has finally not been sent.
+    """
+    with patch("apps.common.outbox.send_or_raise", side_effect=RuntimeError("smtp down")):
+        invitation = invite(org, owner)
+        invitation.refresh_from_db()
+        assert invitation.send_count == 1, "queued: the slot is held while the worker still retries"
 
-    monkeypatch.setattr(services.EmailMultiAlternatives, "send", boom)
-    invitation = invite(org, owner)
+        give_up_on_every_queued_email()
 
     invitation.refresh_from_db()
     assert invitation.send_count == 0
     assert invitation.last_sent_at is None
+    assert len(mail.outbox) == 0
 
 
 @pytest.mark.django_db
@@ -241,20 +267,17 @@ def test_a_dropped_send_gives_the_slot_back(org, owner):
     invitation = invite(org, owner)
     assert invitation.send_count == 1
 
-    with (
-        patch("apps.members.services.EmailMultiAlternatives.send", return_value=0),
-        pytest.raises(ValueError, match="could not send"),
-    ):
+    with patch("apps.common.outbox.send_or_raise", side_effect=EmailNotSentError("budget")):
         resend_invitation(invitation)
 
-    invitation.refresh_from_db()
+    invitation = Invitation.objects.get(pk=invitation.pk)
     assert invitation.send_count == 1, "a dropped send must not be charged"
     assert len(mail.outbox) == 1
 
 
 @pytest.mark.django_db
 def test_a_creation_whose_email_is_dropped_does_not_claim_it_was_sent(org, owner):
-    with patch("apps.members.services.EmailMultiAlternatives.send", return_value=0):
+    with patch("apps.common.outbox.send_or_raise", side_effect=EmailNotSentError("budget")):
         invitation = invite(org, owner)
 
     invitation.refresh_from_db()

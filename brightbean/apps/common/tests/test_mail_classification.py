@@ -16,6 +16,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.common.mail import EMAIL_CLASS_HEADER
+from apps.common.testing import run_email_queue
 from apps.members.models import OrgMembership
 from apps.organizations.models import Organization
 
@@ -60,6 +61,7 @@ def test_a_password_reset_reaches_a_recipient_whose_allowance_is_spent(client, a
     mail.outbox.clear()
 
     res = client.post(reverse("account_reset_password"), {"email": account.email})
+    run_email_queue()
 
     assert res.status_code in (200, 302)
     assert len(mail.outbox) == 1, "a password reset must not be eaten by the notification cap"
@@ -101,6 +103,7 @@ def test_an_invitation_reaches_a_recipient_whose_allowance_is_spent(account):
         invited_by=owner,
         inviter=owner,
     )
+    run_email_queue()
 
     assert len(mail.outbox) == 1
 
@@ -115,5 +118,6 @@ def test_the_global_cap_still_stops_transactional_mail(client, account):
     mail.outbox.clear()
 
     client.post(reverse("account_reset_password"), {"email": account.email})
+    run_email_queue()
 
     assert mail.outbox == []

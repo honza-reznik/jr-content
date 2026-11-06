@@ -43,6 +43,10 @@ logger = logging.getLogger(__name__)
 
 MAX_RETRY_ATTEMPTS = 3
 RETRY_BACKOFF_MINUTES = [1, 5, 30]
+# A queued delivery is picked up by the sweep only if its task has not run by then.
+QUEUE_GRACE = timedelta(minutes=2)
+# How long a delivery being sent is untouchable by another worker.
+DISPATCH_LEASE = timedelta(minutes=3)
 # Cap how many deliveries a single retry sweep processes, so a PENDING backlog
 # that accumulated before the periodic retry was scheduled drains gradually
 # across runs instead of bursting all at once.
@@ -223,9 +227,30 @@ def notify(
             # next_retry_at, which would also describe a row whose inline
             # dispatch was cut short by a deploy or an OOM kill.
             continue
-        _dispatch(delivery)
+        if channel == Channel.IN_APP:
+            # A database row already written above; nothing to wait for.
+            _dispatch(delivery)
+        else:
+            queue_delivery(delivery)
 
     return notification
+
+
+def queue_delivery(delivery: NotificationDelivery) -> None:
+    """Hand an e-mail or webhook delivery to the worker (P1-B33).
+
+    A request must not wait for a mail server or a remote URL, and a delivery must not
+    run for a notification whose transaction is rolled back. So the task is written in the
+    caller's transaction: the worker sees it only after commit, and it survives a restart
+    (it is a row). ``next_retry_at`` is set a little ahead as the safety net: if the task
+    is lost, the periodic ``retry_failed_deliveries`` sweep picks the row up after
+    ``QUEUE_GRACE``. ``_dispatch`` claims the row atomically, so the task and the sweep can
+    never both send it.
+    """
+    from .tasks import dispatch_notification_delivery
+
+    NotificationDelivery.objects.filter(pk=delivery.pk).update(next_retry_at=timezone.now() + QUEUE_GRACE)
+    dispatch_notification_delivery(str(delivery.pk))
 
 
 def _resolve_channels(user, event_type: str, pref_cache: dict | None = None) -> list[str]:
@@ -340,8 +365,15 @@ def _dispatch(delivery: NotificationDelivery) -> None:
         delivery.next_retry_at = None
         delivery.save(update_fields=["status", "error_message", "next_retry_at"])
         return
+    # Claim the row: only the caller that moves ``attempts`` from the value it read wins.
+    # The task and the retry sweep can both reach the same delivery; exactly one sends.
+    claimed = NotificationDelivery.objects.filter(
+        pk=delivery.pk, status=DeliveryStatus.PENDING, attempts=delivery.attempts
+    ).update(attempts=F("attempts") + 1, next_retry_at=timezone.now() + DISPATCH_LEASE)
+    if not claimed:
+        return
     delivery.attempts += 1
-    delivery.save(update_fields=["attempts"])
+    delivery.next_retry_at = timezone.now() + DISPATCH_LEASE
 
     try:
         if delivery.channel == Channel.IN_APP:
@@ -356,7 +388,8 @@ def _dispatch(delivery: NotificationDelivery) -> None:
 
         delivery.status = DeliveryStatus.DELIVERED
         delivery.delivered_at = timezone.now()
-        delivery.save(update_fields=["status", "delivered_at"])
+        delivery.next_retry_at = None
+        delivery.save(update_fields=["status", "delivered_at", "next_retry_at"])
 
     except EmailNotSentError as exc:
         # The outbound budget declined this one. Retrying would just spend the
@@ -366,7 +399,8 @@ def _dispatch(delivery: NotificationDelivery) -> None:
         logger.info("Delivery %s not sent: %s", delivery.id, exc)
         delivery.status = DeliveryStatus.FAILED
         delivery.error_message = str(exc)[:500]
-        delivery.save(update_fields=["status", "error_message"])
+        delivery.next_retry_at = None
+        delivery.save(update_fields=["status", "error_message", "next_retry_at"])
 
     except Exception as exc:
         logger.exception("Delivery failed: %s", delivery.id)

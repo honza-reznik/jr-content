@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.accounts.signals import provision_organization_and_workspace
+from apps.common.testing import run_email_queue
 from apps.members.models import Invitation, OrgMembership
 from apps.organizations.models import Organization
 
@@ -78,12 +79,14 @@ class TestLoginSignupLink:
 class TestUnknownAccountEmail:
     def test_links_builtin_signup_by_default(self, client):
         client.post(reverse("account_reset_password"), {"email": "nobody@example.com"})
+        run_email_queue()
 
         assert len(mail.outbox) == 1
         assert "http://testserver/accounts/signup/" in mail.outbox[0].body
 
     def test_links_custom_signup_url(self, client, custom_signup_url):
         client.post(reverse("account_reset_password"), {"email": "nobody@example.com"})
+        run_email_queue()
 
         assert len(mail.outbox) == 1
         assert CUSTOM in mail.outbox[0].body
@@ -93,6 +96,7 @@ class TestUnknownAccountEmail:
         settings.CUSTOM_SIGNUP_URL = "/waitlist/"
 
         client.post(reverse("account_reset_password"), {"email": "nobody@example.com"})
+        run_email_queue()
 
         assert "http://testserver/waitlist/" in mail.outbox[0].body
 

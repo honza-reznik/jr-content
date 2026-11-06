@@ -19,6 +19,8 @@ it silently multiplies by the worker count the first time the app scales out.
 
 from __future__ import annotations
 
+import uuid
+
 from django.db import models
 
 
@@ -75,3 +77,56 @@ class EmailSuppression(models.Model):
 
     def __str__(self) -> str:
         return f"{self.address} ({self.reason})"
+
+
+class OutgoingEmail(models.Model):
+    """One email waiting for the worker to send it (the outbox, P1-B33).
+
+    A request never talks to the mail server: it writes this row (and the task that
+    delivers it) in its own transaction, so the email exists exactly when the data it
+    is about exists, survives a restart, and is retried by the worker when the server
+    is briefly unreachable. ``apps.common.outbox`` owns the lifecycle.
+
+    The bodies hold one-time links (invitation, login, reset), so they are erased as soon
+    as the row is finished; only the metadata stays for a while.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        SENT = "sent", "Sent"
+        FAILED = "failed", "Failed"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
+    # Doubles as the lease: the worker pushes it forward while it holds the row, so a
+    # sweep never starts a second delivery of an email that is being sent right now.
+    next_attempt_at = models.DateTimeField(db_index=True)
+    attempts = models.PositiveIntegerField(default=0)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.CharField(max_length=200, blank=True, default="")
+
+    subject = models.CharField(max_length=998)
+    from_email = models.CharField(max_length=320, blank=True, default="")
+    to = models.JSONField(default=list)
+    cc = models.JSONField(default=list, blank=True)
+    bcc = models.JSONField(default=list, blank=True)
+    reply_to = models.JSONField(default=list, blank=True)
+    # Erased when the row is finished (see class docstring).
+    body_text = models.TextField(blank=True, default="")
+    content_subtype = models.CharField(max_length=10, default="plain")
+    alternatives = models.JSONField(default=list, blank=True)
+    headers = models.JSONField(default=dict, blank=True)
+
+    # Dotted ``module:function`` names run once when the email has been sent / has
+    # definitively not been sent, with ``callback_args`` as keyword arguments.
+    on_success = models.CharField(max_length=200, blank=True, default="")
+    on_failure = models.CharField(max_length=200, blank=True, default="")
+    callback_args = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "common_outgoing_email"
+        indexes = [models.Index(fields=["status", "next_attempt_at"])]
+
+    def __str__(self) -> str:
+        return f"{self.subject[:60]} ({self.status})"

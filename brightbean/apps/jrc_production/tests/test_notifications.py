@@ -17,6 +17,7 @@ from apps.accounts.models import User
 from apps.approvals import services as approvals
 from apps.approvals.models import ApprovalAction
 from apps.approvals.tasks import _remind_reviewers
+from apps.common.testing import run_email_queue
 from apps.jrc_channels.services import create_manual_channel
 from apps.jrc_production.notifications import notify_text_version
 from apps.jrc_production.services import can_decide, create_content, move_content, request_content_changes
@@ -571,6 +572,7 @@ def test_client_approval_tells_the_team_with_a_link(workspace, everyone, content
     assert {n.user.email.split("@")[0] for n in approved} == {"test", "mia", "eddie", "cora"}
     assert not any(n.user in (everyone["client"], everyone["viewer"]) for n in Notification.objects.all())
     for notification in approved:
+        assert '""' not in notification.body
         assert notification.data["action_url"] == content_path(content, "approval")
         assert "Ella" in notification.body or "Ella" in notification.title or "approved" in notification.body
     assert {n.title for n in approved} == {"Post approved", "Client approved a post"}
@@ -666,6 +668,7 @@ def test_email_of_a_content_notification_is_console_or_local_with_an_absolute_li
 
     with override_settings(APP_URL="http://127.0.0.1:13000"):
         save_script(content, owner, SECRET_SCRIPT)
+        run_email_queue()
 
     assert len(mail.outbox) == 1
     message = mail.outbox[0]
@@ -711,6 +714,65 @@ def test_decision_text_for_the_author_is_unchanged(workspace, everyone, content)
     notification = got(everyone["owner"], EventType.POST_APPROVED)[0]
     assert notification.title == "Post approved" and "approved by Mia" in notification.body
     assert ApprovalAction.objects.filter(post=content, action="approved").exists()
+
+
+# ---- P1-B33: every notification names the content the same way -----------------------------------
+
+
+def test_the_author_is_told_the_content_title_when_the_content_has_no_caption(workspace, everyone, content):
+    """The content was created with a title and no caption: the author's text used the caption (empty)."""
+    assert content.caption == ""
+    set_mode(workspace, SINGLE)
+    to_review(content, everyone["owner"])
+    Notification.objects.all().delete()
+    approvals.approve_post(content, everyone["manager"], workspace)
+
+    notification = got(everyone["owner"], EventType.POST_APPROVED)[0]
+    assert 'Your post "Ella garden reel" was approved by Mia' in notification.body
+    assert '""' not in notification.body
+
+
+def test_untitled_content_without_caption_still_gets_a_readable_name(content):
+    from apps.notifications.audience import content_label
+
+    content.title = ""
+    content.save(update_fields=["title"])
+    assert content_label(content) == "Untitled content"
+
+
+def test_no_notification_of_any_kind_quotes_an_empty_name(workspace, everyone, content):
+    """Run the approval life of one content item (and the stall escalation) and read every text produced."""
+    from apps.approvals.tasks import _escalate
+
+    set_mode(workspace, SINGLE)
+    to_review(content, everyone["owner"])
+    approvals.approve_post(content, everyone["manager"], workspace)
+    _escalate(content, "pending_review")
+
+    notifications = list(Notification.objects.all())
+    assert {n.event_type for n in notifications} >= {
+        EventType.POST_SUBMITTED,
+        EventType.POST_APPROVED,
+        EventType.APPROVAL_STALLED,
+    }
+    for notification in notifications:
+        assert '""' not in notification.body, (notification.event_type, notification.title, notification.body)
+        assert "Ella garden reel" in notification.body
+
+
+def test_notification_texts_never_build_the_name_from_the_caption_alone():
+    """The cause of E-08-rg2-01: a second way of naming content. Only ``content_label`` may do it."""
+    import pathlib
+
+    import apps
+
+    root = pathlib.Path(apps.__file__).parent
+    offenders = []
+    for path in list(root.glob("approvals/*.py")) + list(root.glob("jrc_production/*.py")):
+        text = path.read_text()
+        if "notify(" in text and "caption_snippet" in text:
+            offenders.append(path.name)
+    assert offenders == []
 
 
 # ---- Review fixes (Luna 04:18) ----------------------------------------------------------------

@@ -9,7 +9,8 @@ from django.db.models import F, Q
 from django.template.loader import render_to_string
 from django.utils import timezone
 
-from apps.common.mail import EmailNotSentError, send_or_raise, transactional
+from apps.common.mail import transactional
+from apps.common.outbox import queue_email
 from apps.workspaces.models import Workspace
 
 from .models import Invitation, OrgMembership, WorkspaceMembership
@@ -561,10 +562,13 @@ def _release_invite_send(invitation, receipt) -> None:
 
 
 def _send_invite_email(invitation) -> bool:
-    """Send the invite email for an invitation. Returns whether it went out.
+    """Queue the invite email for an invitation. Returns whether it was queued.
 
-    The slot is reserved before the send and released if the send fails, so the
-    accounting is atomic without charging for mail nobody received.
+    The slot is reserved now and given back by ``release_invite_send_after_failure``
+    (run by the worker) if the email in the end does not go out, so the accounting is
+    atomic without charging for mail nobody received. The request itself never waits for
+    the mail server (P1-B33): queueing is two inserts, in the transaction that reserved
+    the slot.
     """
     receipt = _reserve_invite_send(invitation)
     if receipt is None:
@@ -602,14 +606,31 @@ def _send_invite_email(invitation) -> bool:
     msg.attach_alternative(html_content, "text/html")
 
     try:
-        send_or_raise(msg)
-    except EmailNotSentError:
-        logger.warning("Invite email to %s was not sent", invitation.email)
-        _release_invite_send(invitation, receipt)
-        return False
+        queue_email(
+            msg,
+            on_failure="apps.members.services:release_invite_send_after_failure",
+            callback_args={
+                "invitation_id": str(invitation.pk),
+                "previous_last_sent_at": receipt["previous_last_sent_at"].isoformat()
+                if receipt["previous_last_sent_at"]
+                else None,
+            },
+        )
     except Exception:
-        logger.exception("Failed to send invite email to %s", invitation.email)
+        logger.exception("Could not queue invite email to %s", invitation.email)
         _release_invite_send(invitation, receipt)
         return False
 
     return True
+
+
+def release_invite_send_after_failure(invitation_id, previous_last_sent_at) -> None:
+    """Outbox callback: the invite email was finally not sent, so give the slot back."""
+    from django.utils.dateparse import parse_datetime
+
+    previous = parse_datetime(previous_last_sent_at) if previous_last_sent_at else None
+    invitation = Invitation.objects.filter(pk=invitation_id).first()
+    if invitation is None:
+        return
+    logger.warning("Invite email to %s was not sent; slot released", invitation.email)
+    _release_invite_send(invitation, {"previous_last_sent_at": previous})

@@ -8,10 +8,12 @@ import logging
 from django.conf import settings
 from django.contrib.auth import login
 from django.core.mail import EmailMultiAlternatives
+from django.db import transaction
 from django.template.loader import render_to_string
 from django.utils import timezone
 
-from apps.common.mail import send_or_raise, transactional
+from apps.common.mail import transactional
+from apps.common.outbox import queue_email
 from apps.members.models import WorkspaceMembership
 
 from .models import MagicLinkToken
@@ -19,6 +21,7 @@ from .models import MagicLinkToken
 logger = logging.getLogger(__name__)
 
 
+@transaction.atomic
 def generate_magic_link(workspace, client_user, created_by):
     """Generate a magic link for a client user and send it via email.
 
@@ -31,9 +34,10 @@ def generate_magic_link(workspace, client_user, created_by):
         The created MagicLinkToken.
 
     Raises:
-        ValueError: If the user is not a client of this workspace, or the email
-            could not be sent — in which case no new token is left behind and
-            any existing link keeps working.
+        ValueError: If the user is not a client of this workspace.
+
+    The email is queued, not sent (``apps.common.outbox``); if it is finally not
+    delivered the new token is discarded and any existing link keeps working.
     """
     # Validate client has client role in workspace
     membership = WorkspaceMembership.objects.filter(
@@ -94,20 +98,28 @@ def generate_magic_link(workspace, client_user, created_by):
     )
     msg.attach_alternative(html_content, "text/html")
 
-    try:
-        send_or_raise(msg)
-    except Exception as exc:
-        logger.exception("Failed to send magic link email to %s", client_user.email)
-        # Roll the new token back so we do not leave a link nobody was told
-        # about, and leave the client's existing one working.
-        MagicLinkToken.objects.filter(pk=token.pk).delete()
-        raise ValueError("We could not send that link right now. Please try again shortly.") from exc
+    # The worker sends it (P1-B33): the manager's click returns at once. Until the email
+    # is really out, the client's existing links keep working; ``on_success`` retires them,
+    # ``on_failure`` removes the replacement nobody was told about.
+    queue_email(
+        msg,
+        on_success="apps.client_portal.services:retire_superseded_links",
+        on_failure="apps.client_portal.services:discard_unsent_link",
+        callback_args={"token_id": str(token.pk), "superseded": [str(pk) for pk in superseded]},
+    )
+    return token
 
-    # The replacement is on its way, so the old links can go.
+
+def retire_superseded_links(token_id, superseded) -> None:
+    """Outbox callback: the replacement link was sent, so the old links can go."""
     if superseded:
         MagicLinkToken.objects.filter(pk__in=superseded).update(expires_at=timezone.now())
 
-    return token
+
+def discard_unsent_link(token_id, superseded) -> None:
+    """Outbox callback: the email never left, so drop the link and keep the old ones working."""
+    logger.warning("Magic link email was not sent; token %s discarded", token_id)
+    MagicLinkToken.objects.filter(pk=token_id).delete()
 
 
 def peek_magic_link(token_string):
