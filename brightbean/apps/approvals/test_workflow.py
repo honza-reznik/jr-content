@@ -152,6 +152,11 @@ class HoldTests(ApprovalWorkflowBase):
 
 
 class TwoStageFlowTests(ApprovalWorkflowBase):
+    def setUp(self):
+        super().setUp()
+        self.client_user = _make_user("approving-client@example.invalid")
+        WorkspaceMembership.objects.create(user=self.client_user, workspace=self.ws, workspace_role="client")
+
     def test_submit_approve_client_hold_path(self):
         self.ws.approval_workflow_mode = "required_internal_and_client"
         self.ws.save(update_fields=["approval_workflow_mode"])
@@ -163,10 +168,10 @@ class TwoStageFlowTests(ApprovalWorkflowBase):
         services.approve_post(post, self.reviewer, self.ws)  # internal → client stage
         self.assertEqual(post.platform_posts.get().status, "pending_client")
 
-        services.approve_post(post, self.author, self.ws)  # client sign-off
+        services.approve_post(post, self.client_user, self.ws)  # client sign-off
         self.assertEqual(post.platform_posts.get().status, "approved")
 
-        services.request_hold(post, self.author, self.ws, "Hold for a sec")
+        services.request_hold(post, self.client_user, self.ws, "Hold for a sec")
         self.assertEqual(post.platform_posts.get().status, "on_hold")
 
     def test_two_stage_defers_approved_notification_to_client_signoff(self):
@@ -183,7 +188,7 @@ class TwoStageFlowTests(ApprovalWorkflowBase):
         self.assertFalse(Notification.objects.filter(user=self.author, event_type=EventType.POST_APPROVED).exists())
 
         # Client sign-off reaches approved — now the author is notified.
-        services.approve_post(post, self.reviewer, self.ws)
+        services.approve_post(post, self.client_user, self.ws)
         self.assertEqual(post.platform_posts.get().status, "approved")
         self.assertTrue(Notification.objects.filter(user=self.author, event_type=EventType.POST_APPROVED).exists())
 

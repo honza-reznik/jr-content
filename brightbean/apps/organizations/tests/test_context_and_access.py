@@ -162,7 +162,9 @@ def test_workspace_owner_is_not_organization_owner(role, access, client):
     OrgMembership.objects.filter(user=user, organization=org).update(org_role="member")
     for name in ["organizations:settings", "organizations:workspaces", "members:list", "api_keys:list"]:
         assert client.get(reverse(name)).status_code == 403
-        assert client.post(reverse(name), {"action": "update_name", "name": "Forbidden"}).status_code == 403
+        # organizations:settings is an org write (403); the listings are reads (405, P1-B25).
+        expected = 403 if name == "organizations:settings" else 405
+        assert client.post(reverse(name), {"action": "update_name", "name": "Forbidden"}).status_code == expected
     assert client.get(reverse("workspaces:settings", args=[workspace.pk])).status_code == 200
     assert client.post(reverse("workspaces:settings", args=[workspace.pk]), {"name": "Saved"}).status_code == 302
     org.refresh_from_db()
@@ -436,10 +438,12 @@ def test_action_get_cannot_mutate(role, access, client, name, method, ids, data)
 )
 def test_listing_post_cannot_bypass_org_permissions(role, access, client, name):
     org = access[1]
-    expected = (405 if name == "members:list" else 200) if role in {"owner", "org_admin"} else 403
-    assert client.post(reverse(name), {"organization_id": str(org.pk)}).status_code == expected
-    # Without naming its organization the write is refused for every role.
-    assert client.post(reverse(name)).status_code == 403
+    # P1-B25: listings are reviewed reads (jrc_ui.write_access.READ_VIEWS); the shared write
+    # gate refuses any write to them before the view runs, for every role, with or without a target.
+    assert client.post(reverse(name), {"organization_id": str(org.pk)}).status_code == 405
+    assert client.post(reverse(name)).status_code == 405
+    expected = 200 if role in {"owner", "org_admin"} else 403
+    assert client.get(reverse(name)).status_code == expected
 
 
 @pytest.mark.parametrize("role", ["owner", "org_admin"])

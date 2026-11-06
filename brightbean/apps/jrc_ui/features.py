@@ -80,6 +80,8 @@ def configure_ui(namespace):
         "apps.jrc_ui.middleware.TermsAcceptanceMiddleware" if item == upstream_terms else item
         for item in namespace["MIDDLEWARE"]
     ]
+    rbac = "apps.members.middleware.RBACMiddleware"
+    middleware.insert(middleware.index(rbac) + 1, "apps.jrc_ui.write_access.WriteAccessMiddleware")
     namespace["MIDDLEWARE"] = ["apps.jrc_ui.middleware.FeatureMiddleware", *middleware]
     processors = namespace["TEMPLATES"][0]["OPTIONS"]["context_processors"]
     replacements = {

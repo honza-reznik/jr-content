@@ -65,12 +65,9 @@ def decides_at_step(workspace, membership, step):
     """Is this member the one to decide while the content waits in ``step`` (F7-B03, mirrors ``can_decide``)?
 
     ``step`` is ``pending_review`` or ``pending_client``. One-stage workspaces: anyone with
-    ``approve_posts``. Two-stage (team first, then client): the team decides in ``pending_review``,
+    ``approve_posts`` on the team side. Two-stage (team first, then client): the team decides in ``pending_review``,
     the client in ``pending_client``.
     """
-    if not membership.effective_permissions.get("approve_posts", False):
-        return False
-    if workspace.approval_workflow_mode != "required_internal_and_client":
-        return True
-    is_client_side = membership.workspace_role == WorkspaceMembership.WorkspaceRole.CLIENT
-    return is_client_side if step == "pending_client" else not is_client_side
+    from apps.members.permissions import can_decide_at_step
+
+    return can_decide_at_step(membership, step)
