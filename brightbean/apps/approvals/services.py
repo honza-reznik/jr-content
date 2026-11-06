@@ -17,7 +17,7 @@ from django.db import transaction
 
 from apps.composer.models import PlatformPost, Post
 from apps.members.models import WorkspaceMembership
-from apps.members.permissions import can_decide_at_step, client_approval_required
+from apps.members.permissions import can_decide_at_step, client_approval_required, review_available
 from apps.notifications.audience import (
     active_memberships,
     content_label,
@@ -185,8 +185,18 @@ def _decision_recipients(post, workspace, actor):
 # ---------------------------------------------------------------------------
 
 
+REVIEW_UNAVAILABLE = "Approvals are turned off for this client (No approvals), so there is no review step."
+
+
+def _require_review_available(workspace):
+    """Every submission to review passes here: none in "No approvals" (P1-B32, ``review_available``)."""
+    if not review_available(workspace):
+        raise ValueError(REVIEW_UNAVAILABLE)
+
+
 def submit_for_review(target, user, workspace):
     """Submit a post (or single platform post) for internal review."""
+    _require_review_available(workspace)
     post, targets, is_bundled = _resolve_targets(
         target, eligible_from_states={"draft", "changes_requested", "rejected"}
     )
@@ -416,6 +426,7 @@ def resume_hold(target, user, workspace):
 
 def resubmit_post(target, user, workspace):
     """Resubmit a post after changes/rejection — or re-review an edited approved post."""
+    _require_review_available(workspace)
     post, targets, is_bundled = _resolve_targets(
         target, eligible_from_states={"changes_requested", "rejected", "approved"}
     )

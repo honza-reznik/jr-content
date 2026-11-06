@@ -23,6 +23,11 @@
         {% endif %}
     </div>
 
+    {% if cannot_schedule %}
+    <p class="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 mb-4 max-w-md mx-auto" data-cannot-schedule>
+        Dated posts were kept as drafts on their dates, because scheduling needs publishing rights. Someone who can publish schedules them.
+    </p>
+    {% endif %}
     {% if approval_needed %}
     <p class="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 mb-4 max-w-md mx-auto" data-approval-needed>
         Dated posts were kept as drafts on their dates, because this workspace needs {{ approval_needed }} before anything is scheduled.

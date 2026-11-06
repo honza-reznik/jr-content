@@ -237,6 +237,9 @@ class ProposedPublishAtSaveTests(TestCase):
     def test_submit_for_approval_with_blank_panel_preserves_proposed(self):
         # A proposal set via the API must survive being routed through approval
         # even when the submit POST carries no schedule-panel values.
+        # P1-B32: routing through approval needs a mode with a review step.
+        self.ws.approval_workflow_mode = "optional"
+        self.ws.save(update_fields=["approval_workflow_mode"])
         post = create_post(
             workspace=self.ws,
             social_account=self.sa,

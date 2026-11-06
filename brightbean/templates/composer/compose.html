@@ -1463,8 +1463,10 @@
                 {% endif %}
 
                 {% if not post_is_readonly %}
-                <!-- Publish split-button -->
+                <!-- Publish split-button. P1-B32: planning (queue, now, schedule) only with the planning
+                     right (can_publish = can_schedule); others keep the panel as a proposed time for Save Draft. -->
                 <div class="relative inline-flex flex-shrink-0" id="publish-anchor">
+                    {% if can_publish %}
                     <!-- Mode selector (left) -->
                     <button type="button" id="publish-mode-btn"
                             :disabled="selectedAccounts.length === 0"
@@ -1481,9 +1483,19 @@
                             class="inline-flex items-center gap-1.5 pl-3 sm:pl-4 pr-3 sm:pr-5 py-2 text-sm font-semibold text-white bg-orange-500 rounded-r-lg hover:bg-orange-600 border border-orange-500 hover:border-orange-600 shadow-sm transition-all duration-150 cursor-pointer">
                         <span id="publish-action-label">Add to Queue</span>
                     </button>
+                    {% else %}
+                    <!-- Proposed time only (no planning right) -->
+                    <button type="button" id="publish-mode-btn" data-propose-only
+                            class="inline-flex items-center gap-1.5 px-2 sm:px-3 py-2 text-sm font-semibold text-orange-700 bg-orange-100 rounded-lg hover:bg-orange-200 border border-orange-200 transition-all duration-150 cursor-pointer">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                        <span class="hidden sm:inline">Proposed time</span>
+                        <svg class="w-3 h-3 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/></svg>
+                    </button>
+                    {% endif %}
 
                     <!-- Mode popover - positioned above -->
                     <div id="publish-popover" class="hidden absolute bottom-full right-0 mb-2 w-72 max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-xl border border-stone-200/80" style="z-index: 50;">
+                            {% if can_publish %}
                             <!-- Main menu -->
                             <div id="publish-menu" class="p-1.5">
                                 <!-- Next Available -->
@@ -1539,14 +1551,19 @@
                                     </div>
                                 </button>
                             </div>
+                            {% endif %}
 
                             <!-- Schedule sub-view -->
-                            <div id="publish-schedule-view" class="hidden p-4">
+                            <div id="publish-schedule-view" class="{% if can_publish %}hidden {% endif %}p-4">
                                 <div class="flex items-center gap-2 mb-4">
+                                    {% if can_publish %}
                                     <button type="button" id="publish-schedule-back" class="w-6 h-6 rounded-md hover:bg-stone-100 flex items-center justify-center transition-colors">
                                         <svg class="w-4 h-4 text-stone-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
                                     </button>
                                     <span class="text-sm font-semibold text-stone-800">Schedule Post</span>
+                                    {% else %}
+                                    <span class="text-sm font-semibold text-stone-800">Proposed time</span>
+                                    {% endif %}
                                 </div>
 
                                 <div class="space-y-3">
@@ -1566,15 +1583,21 @@
 
                                 <div id="schedule-error" class="hidden text-xs text-red-500 mt-1"></div>
 
-                                {% if not post_is_scheduled %}
+                                {% if not can_publish %}
+                                <p class="mt-3 text-xs text-stone-400 leading-relaxed" data-propose-only-hint>
+                                    Saving as a draft keeps this as a <span class="font-medium text-stone-500">proposed</span> time. Scheduling and publishing need publishing rights.
+                                </p>
+                                {% elif not post_is_scheduled %}
                                 <p class="mt-3 text-xs text-stone-400 leading-relaxed">
                                     Saving as a draft keeps this as a <span class="font-medium text-stone-500">proposed</span> time. Use <span class="font-medium text-stone-500">Set Schedule</span> to publish at this time.
                                 </p>
                                 {% endif %}
 
+                                {% if can_publish %}
                                 <button type="button" id="publish-schedule-confirm" class="mt-4 w-full py-2 text-sm font-semibold text-white bg-orange-500 rounded-lg hover:bg-orange-600 transition-colors cursor-pointer">
                                     Set Schedule
                                 </button>
+                                {% endif %}
                             </div>
                     </div>
                 </div>
@@ -2971,6 +2994,8 @@ function composerApp() {
     const backBtn = document.getElementById('publish-schedule-back');
     const scheduleConfirm = document.getElementById('publish-schedule-confirm');
     if (!modeBtn || !popover) return;
+    // P1-B32: without the planning right the popover only holds the proposed-time panel.
+    const proposeOnly = !actionBtn;
 
     // Icon SVG paths by key
     const icons = {
@@ -2982,10 +3007,11 @@ function composerApp() {
 
     function showPopover() { popover.classList.remove('hidden'); }
     function hidePopover() { popover.classList.add('hidden'); showMenu(); }
-    function showMenu() { menu.classList.remove('hidden'); scheduleView.classList.add('hidden'); }
-    function showSchedule() { menu.classList.add('hidden'); scheduleView.classList.remove('hidden'); }
+    function showMenu() { if (proposeOnly) return; menu.classList.remove('hidden'); scheduleView.classList.add('hidden'); }
+    function showSchedule() { if (proposeOnly) return; menu.classList.add('hidden'); scheduleView.classList.remove('hidden'); }
 
     function setMode(mode, label, actionLabelText, iconKey) {
+        if (proposeOnly) return;
         modeLabel.textContent = label;
         actionLabel.textContent = actionLabelText;
         actionBtn.value = mode;

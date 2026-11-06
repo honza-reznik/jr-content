@@ -362,6 +362,19 @@ def transition_platform_post(
     return platform_post
 
 
+# P1-B32: channel copies a "schedule this existing content" request plans (REST ``/posts/{id}/schedule``,
+# MCP ``schedule_draft``): those not yet planned that may move straight to ``scheduled``. Drafts and
+# approved copies alike, as in the composer and on the board; whether one may go out in this workspace
+# is ``require_release_allowed`` in ``transition_platform_post``. Copies in review, sent back or on hold
+# stay where they are.
+PLANNABLE_STATUSES = frozenset({"draft", "approved"})
+
+
+def copies_to_schedule(post):
+    """The channel copies of ``post`` a schedule request moves to ``scheduled`` (P1-B32)."""
+    return [pp for pp in post.platform_posts.all() if pp.status in PLANNABLE_STATUSES]
+
+
 def clone_post(post, *, author=None):
     """Create a fresh DRAFT duplicate of *post* (Clone / Repost).
 

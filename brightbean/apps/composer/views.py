@@ -35,6 +35,7 @@ from apps.common.validators import (
 from apps.media_library.models import MediaAsset
 from apps.members.decorators import require_permission
 from apps.members.models import WorkspaceMembership
+from apps.members.permissions import can_schedule, review_available
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 from providers import is_video_only, requires_media
@@ -480,14 +481,18 @@ _RELEASING_ACTIONS = frozenset({"schedule", "publish_now", "add_to_queue", "add_
 
 
 def _validate_approval_release(request, post, workspace, action, *, post_id):
-    """Refuse a schedule / publish / queue action the approval workflow does not allow yet (P1-B27).
+    """Refuse a schedule / publish / queue action the actor or the approval workflow does not allow (P1-B27).
 
-    Every copy the action would move to ``scheduled`` is checked with the shared rule
-    (``require_release_allowed``): new copies and copies that hop through draft count as drafts.
-    Refused up front, before anything is saved, so a refused action changes nothing.
+    Planning needs the one planning right (``can_schedule``, P1-B32) for every such action, not only
+    Publish now. Every copy the action would move to ``scheduled`` is checked with the shared rule
+    (``require_release_allowed``) on its real status: new copies count as drafts; a copy on hold, sent
+    back or rejected is never released by a hidden hop through draft (P1-B32). Refused up front,
+    before anything is saved, so a refused action changes nothing.
     """
     if action not in _RELEASING_ACTIONS:
         return None
+    if not can_schedule(request.workspace_membership):
+        raise PermissionDenied("You do not have permission to schedule or publish content.")
     scope = _get_account_scope(request)
     existing = {str(pp.social_account_id): pp for pp in post.platform_posts.all()} if post_id else {}
     for account_id in _parse_selected_account_ids(request.POST.get("selected_accounts", "")):
@@ -498,10 +503,9 @@ def _validate_approval_release(request, post, workspace, action, *, post_id):
             status = "draft"
         elif pp.status == "scheduled":
             status = None  # already went out; only its time changes
-        elif pp.can_transition_to("scheduled"):
+        elif pp.can_transition_to("scheduled") or pp.can_transition_to("draft"):
+            # Its real status decides; on hold / sent back / rejected never go out from here.
             status = pp.status
-        elif pp.can_transition_to("draft"):
-            status = "draft"  # _transition_post_children hops through draft
         else:
             status = None  # stays where it is (in review, published): nothing goes out
         if status is None:
@@ -803,7 +807,8 @@ def compose(request, workspace_id, post_id=None):
     # Permissions for action buttons
     membership = request.workspace_membership
     perms = membership.effective_permissions if membership else {}
-    can_publish = perms.get("publish_directly", False)
+    # P1-B32: the composer offers planning (queue, now, schedule) only with the one planning right.
+    can_publish = can_schedule(membership)
     can_approve = perms.get("approve_posts", False)
     ws_role = membership.workspace_role if membership else None
     can_view_internal_notes = ws_role not in ("client", "viewer") if ws_role else True
@@ -828,13 +833,18 @@ def compose(request, workspace_id, post_id=None):
 
     # Approval workflow context
     workflow_mode = workspace.approval_workflow_mode
+    # P1-B32: "No approvals" has no review step (``review_available``, same rule as the
+    # board and the approval services), so neither button exists there.
+    has_review = review_available(workspace)
     # A read-only post is done with the workflow — neither button applies.
-    show_resubmit_button = not post_is_readonly and any(
-        pp.status in ("changes_requested", "rejected", "approved") for pp in platform_post_list
+    show_resubmit_button = (
+        has_review
+        and not post_is_readonly
+        and any(pp.status in ("changes_requested", "rejected", "approved") for pp in platform_post_list)
     )
     # Fresh drafts get "Submit for Approval"; posts already in the workflow
     # (changes-requested / rejected / approved-but-edited) get "Resubmit" instead.
-    show_submit_button = workflow_mode != "none" and not show_resubmit_button and not post_is_readonly
+    show_submit_button = has_review and not post_is_readonly and not show_resubmit_button
     # Once the post is committed to publishing, the Schedule Post panel re-times
     # a live schedule; while still a draft it captures a *proposed* time on save.
     # Mirror _capture_proposed_publish_at's guard exactly (scheduled_at OR a
@@ -992,6 +1002,9 @@ def compose(request, workspace_id, post_id=None):
     return render(request, "composer/compose.html", context)
 
 
+_NO_HOP_TARGETS = frozenset({"draft", "scheduled", "publishing"})  # draft itself, or going out
+
+
 def _transition_post_children(post, target, *, allow_via_draft=True, only=None):
     """Transition every (or selected) PlatformPost child of *post* to *target*.
 
@@ -1002,6 +1015,10 @@ def _transition_post_children(post, target, *, allow_via_draft=True, only=None):
 
     ``only`` may be an iterable of PlatformPost IDs to restrict the operation
     to a subset of children.
+
+    Never through draft into ``scheduled``/``publishing`` (P1-B32): the hop would
+    turn a copy on hold, sent back or rejected into a releasable draft behind the
+    approval workflow's back (``release_blocker``). Such copies are skipped.
     """
     children = post.platform_posts.all()
     if only is not None:
@@ -1015,7 +1032,7 @@ def _transition_post_children(post, target, *, allow_via_draft=True, only=None):
         try:
             if pp.can_transition_to(target):
                 pp.transition_to(target)
-            elif allow_via_draft and pp.can_transition_to("draft") and target != "draft":
+            elif allow_via_draft and pp.can_transition_to("draft") and target not in _NO_HOP_TARGETS:
                 pp.transition_to("draft")
                 if pp.can_transition_to(target):
                     pp.transition_to(target)
@@ -1148,6 +1165,11 @@ def save_post(request, workspace_id, post_id=None):
     release_error = _validate_approval_release(request, post, workspace, action, post_id=post_id)
     if release_error is not None:
         return release_error
+    if action in ("submit_for_approval", "resubmit_for_approval") and not review_available(workspace):
+        # P1-B32: refused before anything is saved, like the approval service would refuse it.
+        from apps.approvals.services import REVIEW_UNAVAILABLE
+
+        return JsonResponse({"errors": {"approval": REVIEW_UNAVAILABLE}}, status=400)
 
     media_error = _validate_required_media(request, post, workspace, action)
     if media_error is not None:
@@ -1182,11 +1204,8 @@ def save_post(request, workspace_id, post_id=None):
         else:
             return JsonResponse({"errors": {"schedule": "Date and time required."}}, status=400)
     elif action == "publish_now":
-        # Server-side permission check - only roles with publish_directly can bypass approval
-        membership = request.workspace_membership
-        perms = membership.effective_permissions if membership else {}
-        if not perms.get("publish_directly", False):
-            raise PermissionDenied("You do not have permission to publish directly.")
+        # The planning right was checked with every other releasing action
+        # (``_validate_approval_release``, P1-B32).
         now_dt = timezone.now()
         post.scheduled_at = now_dt
         post.proposed_publish_at = None
@@ -1447,7 +1466,7 @@ def transition_platform_post(request, workspace_id, post_id, platform_post_id):
     membership = request.workspace_membership
     perms = membership.effective_permissions if membership else {}
     approval_states = {"approved", "pending_review", "pending_client", "changes_requested", "rejected"}
-    if target in ("scheduled", "publishing") and not perms.get("publish_directly", False):
+    if target in ("scheduled", "publishing") and not can_schedule(membership):
         raise PermissionDenied("You do not have permission to schedule this post.")
     if target in approval_states and not perms.get("approve_posts", False) and target != "pending_review":
         raise PermissionDenied("You do not have permission to make approval decisions.")
@@ -3814,9 +3833,12 @@ def csv_confirm_import(request, workspace_id):
     drafted_platforms: set[str] = set()
     # P1-B27: where the approval workflow requires approval, imported rows stay drafts on their
     # date and go through review like any other draft (the shared release rule).
+    # P1-B32: dates are only planned with the one planning right (``can_schedule``); without it a
+    # dated row is a draft on its date, as for a member who cannot schedule anywhere else.
     from apps.members.permissions import approval_requirement_text, release_blocker
 
     approval_needed = release_blocker(workspace, "draft")
+    may_schedule = can_schedule(request.workspace_membership)
 
     for row in rows:
         try:
@@ -3850,7 +3872,7 @@ def csv_confirm_import(request, workspace_id):
                     t = datetime.strptime(time_str, "%H:%M").time() if time_str else time_cls(9, 0)
                     naive_dt = datetime.combine(d, t)
                     post.scheduled_at = naive_dt.replace(tzinfo=tz)
-                    initial_pp_status = "draft" if approval_needed else "scheduled"
+                    initial_pp_status = "scheduled" if may_schedule and not approval_needed else "draft"
 
             # First comment
             if "first_comment" in mapping and mapping["first_comment"] < len(row):
@@ -3920,7 +3942,8 @@ def csv_confirm_import(request, workspace_id):
             "total_rows": len(rows),
             "drafted_count": drafted_count,
             "drafted_platforms": get_text_list(sorted(drafted_platforms), "and"),
-            "approval_needed": approval_requirement_text(workspace) if approval_needed else "",
+            "approval_needed": approval_requirement_text(workspace) if approval_needed and may_schedule else "",
+            "cannot_schedule": not may_schedule,
         },
     )
 

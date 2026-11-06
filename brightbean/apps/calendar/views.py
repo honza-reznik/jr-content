@@ -20,6 +20,7 @@ from apps.common.validators import is_valid_hex_color
 from apps.composer.models import ContentCategory, PlatformPost, Post
 from apps.members.decorators import require_permission
 from apps.members.models import WorkspaceMembership
+from apps.members.permissions import can_schedule
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 
@@ -55,6 +56,9 @@ COMMON_TIMEZONES = [
 # rather than merely re-timing. Because that promotion hands the row to the
 # publisher, it is gated on ``publish_directly`` — see ``reschedule_post``.
 _IMPLICIT_SCHEDULE_STATUSES = ("draft", "failed")
+# P1-B32: a drop that schedules the row or moves its publication time plans it, which needs the
+# one planning right (``can_schedule``) as in the composer, the JR detail and REST PATCH.
+_PLANNING_DROP_STATUSES = (*_IMPLICIT_SCHEDULE_STATUSES, "scheduled")
 
 
 def _slots_updated_response(account_id):
@@ -653,6 +657,8 @@ def _get_tab_context(request, workspace, tab: str) -> dict:
         "workspace": workspace,
         "display_timezone": display_tz,
         "has_connected_accounts": has_connected_accounts,
+        # P1-B32: offer Publish only with the planning right the server checks.
+        "can_schedule": can_schedule(getattr(request, "workspace_membership", None)),
     }
 
     platform_posts: QuerySet[PlatformPost]
@@ -880,6 +886,7 @@ def calendar_view(request, workspace_id):
         "show_holidays": show_holidays,
         "waiting_items": _waiting_for_me(workspace, request.user),
         "is_today_in_view": is_today_in_view,
+        "can_schedule": can_schedule(getattr(request, "workspace_membership", None)),
         **publish_ctx,
     }
 
@@ -1324,11 +1331,12 @@ def reschedule_post(request, workspace_id):
     can_edit = is_own_post or perms.get("edit_others_posts", False)
     if not can_edit:
         return JsonResponse({"error": "Permission denied."}, status=403)
-    # Dropping a draft/failed chip promotes it to "scheduled" below, which is the
-    # publish privilege every other scheduling path gates on (the composer's chip
-    # transition, save_post's publish-now branch, REST /schedule). Reject rather
+    # Dropping a draft/failed chip promotes it to "scheduled" below, and dropping a
+    # scheduled chip moves its publication time: both plan the post, which every
+    # other planning path gates on the same right (``can_schedule``: composer,
+    # JR detail and board, REST /schedule and PATCH scheduled_at). Reject rather
     # than silently degrading the drop to a time-only move.
-    if pp.status in _IMPLICIT_SCHEDULE_STATUSES and not perms.get("publish_directly", False):
+    if pp.status in _PLANNING_DROP_STATUSES and not can_schedule(membership):
         return JsonResponse({"error": "You do not have permission to schedule this post."}, status=403)
     # The same drop hands the row to the publisher, so refuse one that can only
     # fail there — an image-only TikTok draft, a pin with no board or image.
@@ -1489,7 +1497,7 @@ def bulk_platform_action(request, workspace_id):
     # the approval workflow — the privilege the composer's chip transition,
     # save_post's publish-now branch and REST /schedule all gate on. Draft and
     # delete stay under plain edit rights.
-    if action == "publish" and not perms.get("publish_directly", False):
+    if action == "publish" and not can_schedule(membership):
         return JsonResponse({"error": "You do not have permission to publish directly."}, status=403)
 
     # Ordered by the time each row is currently due, because the publish branch

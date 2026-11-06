@@ -23,7 +23,7 @@ from apps.jrc_texts.models import TextDocument, TextVersion
 from apps.jrc_texts.services import ConflictError
 from apps.jrc_video.downloads import can_download_final, missing_for_publication
 from apps.members.models import WorkspaceMembership
-from apps.members.permissions import can_comment, can_moderate_comments, can_publish_directly
+from apps.members.permissions import can_comment, can_moderate_comments, can_publish_directly, can_schedule
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 
@@ -448,7 +448,7 @@ def content_detail(request, workspace_id, post_id):
     date_target = ""
     date_error = ""
     if request.method == "POST" and request.POST.get("action") == "set_date":
-        if membership.workspace_role == "viewer" or not membership.effective_permissions.get("publish_directly", False):
+        if not can_schedule(membership):
             raise PermissionDenied("You cannot schedule content.")
         active_tab = "publish"
         try:
@@ -691,8 +691,7 @@ def content_detail(request, workspace_id, post_id):
             # what is offered and for the reasons shown next to an unavailable action.
             schedule_blocker = publication_blocker(variant)
             may_schedule = (
-                membership.workspace_role != "viewer"
-                and membership.effective_permissions.get("publish_directly", False)
+                can_schedule(membership)
                 and getattr(getattr(account, "jrc_channel", None), "is_enabled", False)
                 and account.jrc_channel.kind in {"manual", "custom"}
             )
