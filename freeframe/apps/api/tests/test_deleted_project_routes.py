@@ -40,7 +40,9 @@ from apps.api.tests.test_share_links_trashed_content import (  # noqa: F401  (fi
 )
 
 GONE = (404, {"detail": "Project not found"})
-NO_ACCESS = (403, {"detail": "Access denied"})
+# P1-B26: an asset nobody may reach answers like one that does not exist, so its
+# id says nothing about whether it exists (was 403 "Access denied").
+NO_ACCESS = (404, {"detail": "Asset not found"})
 
 
 class StorageReached(Exception):

@@ -100,7 +100,8 @@ def test_replacement_keeps_history_and_channels_independent(post, variant, works
 
 
 @pytest.mark.parametrize(
-    "invalid", ["missing", "empty", "html", "gif", "truncated-jpeg", "truncated-png", "oversize", "pixels", "type"]
+    "invalid",
+    ["missing", "empty", "html", "gif", "truncated-jpeg", "truncated-png", "oversize", "pixels", "type", "svg", "text"],
 )
 def test_invalid_upload_creates_no_version_or_file(post, variant, user, invalid, monkeypatch):
     picture = image_upload()
@@ -124,6 +125,12 @@ def test_invalid_upload_creates_no_version_or_file(post, variant, user, invalid,
         monkeypatch.setattr(services, "MAX_PIXELS", 10)
     elif invalid == "type":
         picture.name, picture.content_type = "a.txt", "text/plain"
+    elif invalid == "svg":
+        # P1-B26: a vector image is not a raster thumbnail, whatever its name says.
+        svg = b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>'
+        picture = SimpleUploadedFile("nahled.png", svg, content_type="image/png")
+    elif invalid == "text":
+        picture = SimpleUploadedFile("nahled.png", b"not an image at all\n", content_type="image/png")
     with pytest.raises(ValidationError):
         services.upload_thumbnail(post, variant, user, picture, services.member(post.workspace, user))
     assert not ChannelThumbnail.objects.exists()

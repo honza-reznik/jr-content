@@ -87,6 +87,8 @@ def _probe_source_timecode(media_file: Optional[MediaFile], spec) -> Optional[st
     if not isinstance(raw_key, str) or not raw_key:
         return None
 
+    from packages.transcoder.untrusted import ffprobe_input
+
     try:
         source_url = s3_service.generate_internal_presigned_get_url(raw_key, expires_in=300)
         result = subprocess.run(
@@ -98,7 +100,7 @@ def _probe_source_timecode(media_file: Optional[MediaFile], spec) -> Optional[st
                 "stream=codec_type:stream_tags=timecode:format_tags=timecode",
                 "-of",
                 "json",
-                source_url,
+                *ffprobe_input(source_url),
             ],
             capture_output=True,
             text=True,

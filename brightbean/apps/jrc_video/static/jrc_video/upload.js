@@ -71,6 +71,14 @@
     var meta = document.createElement("p"); meta.className = "text-xs text-stone-500";
     meta.textContent = [v.uploaded_by, v.uploaded_at, v.duration, v.resolution].filter(Boolean).join(" · ");
     left.appendChild(title); left.appendChild(meta);
+    if (v.status === "processing") {
+      // P1-B26: say that the wait is expected and needs nothing from the person.
+      var hint = document.createElement("p"); hint.setAttribute("data-video-hint", "");
+      hint.className = "text-xs text-stone-500";
+      hint.textContent = "Conversion runs on the server and can take several minutes for a large video. " +
+        "You can leave this page; this list and the player update by themselves.";
+      left.appendChild(hint);
+    }
     var right = document.createElement("div"); right.className = "flex items-center gap-2";
     var canResume = v.mine && v.status === "uploading" && card.dataset.canUpload === "1";
     if (canResume && !(active && active.version === v.id)) {
@@ -90,10 +98,25 @@
     return b;
   }
 
+  // Last status seen per version, to tell the person when a conversion ends (P1-B26).
+  var seenStatus = null;
+
+  function announce(card, data) {
+    data.versions.forEach(function (v) {
+      var before = seenStatus && seenStatus[v.id];
+      if (before !== "processing" && before !== "uploading") return;
+      if (v.status === "ready") setNotice("v" + v.number + " is converted and ready to play.");
+      else if (v.status === "failed") fail(card, "Conversion of v" + v.number + " failed. Please upload the video again.");
+    });
+  }
+
   function render(channels) {
+    var nextSeen = {};
     channels.forEach(function (data) {
       var card = root.querySelector('[data-video-channel="' + CSS.escape(data.key) + '"]');
+      data.versions.forEach(function (v) { nextSeen[v.id] = v.status; });
       if (!card) return;
+      announce(card, data);
       var list = card.querySelector("[data-video-versions]");
       list.textContent = "";
       if (!data.versions.length) {
@@ -103,6 +126,7 @@
       }
       data.versions.forEach(function (v) { list.appendChild(renderRow(card, v)); });
     });
+    seenStatus = nextSeen;
     // The player toolbar (video-tab.js) follows the same feed.
     root.dispatchEvent(new CustomEvent("jrc-video:channels", { detail: channels }));
   }
@@ -226,7 +250,7 @@
   }
 
   async function finish(card, info) {
-    setProgress(card, "Finishing upload…", 1, false);
+    setProgress(card, "Checking the video…", 1, false);
     var lastError;
     for (var attempt = 0; attempt < 4; attempt++) {
       try {
@@ -253,7 +277,11 @@
       setNotice("Upload finished. The video is being converted.");
     } catch (error) {
       if (active.aborted) { hideProgress(card); }
-      else {
+      else if (error.status === 422) {
+        // The content was checked after the upload and refused; nothing to continue (P1-B26).
+        hideProgress(card);
+        fail(card, error.message);
+      } else {
         hideProgress(card);
         fail(card, (error.status ? error.message : "The connection was interrupted.") +
           " Your progress is saved: choose “Continue upload” to send only what is missing.");

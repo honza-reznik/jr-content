@@ -403,7 +403,8 @@ def test_previews_and_attachments_have_short_real_signatures_and_cannot_be_renew
     # S3 capabilities expire within 180 s; the API cannot issue replacements.
     for path in paths:
         response = client.get(path, headers=ctx.headers)
-        assert response.status_code == 403 or response.json() == [], (path, response.text)
+        # P1-B26: an asset route answers 404 once access is gone, like a missing asset.
+        assert response.status_code in (403, 404) or response.json() == [], (path, response.text)
         assert list(_signed_urls(response.json())) == []
 
 

@@ -665,3 +665,106 @@ def test_status_is_not_cached_and_never_carries_tokens(client, ff, workspace, us
     response = client.get(url("upload_status", workspace, setup))
     assert "no-store" in response["Cache-Control"] or "no-cache" in response["Cache-Control"]
     assert b"token" not in response.content.lower()
+
+
+# --- P1-B26: unplayable content refused at once, conversion progress -----------------
+
+
+def complete(client, workspace, post, info):
+    return post_json(
+        client,
+        url("upload_complete", workspace, post, ("version_id", info["version"])),
+        {"s3_key": info["s3_key"], "upload_id": info["upload_id"]},
+    )
+
+
+def test_refused_content_is_a_clear_message_and_leaves_no_version(client, ff, workspace, user, setup):
+    """FreeFrame checked the bytes (not the extension), discarded the version and answered 422."""
+    client.force_login(user)
+    info = started(client, workspace, setup)
+    asset = str(VideoVersion.objects.get().video.ff_asset_id)
+    ff.fail[("POST", "/upload/complete")] = 422
+    ff.fail[("GET", "/assets/")] = 404  # the asset had no other version, so FreeFrame removed it too
+    response = complete(client, workspace, setup, info)
+    assert response.status_code == 422
+    assert response.json()["error"] == uploads.UNPLAYABLE_MESSAGE
+    assert "not a playable video" in response.json()["error"]
+    assert not VideoVersion.objects.exists() and not VideoAsset.objects.exists()
+    # The channel is free for the next, correct file, which starts a new FreeFrame asset.
+    del ff.fail[("POST", "/upload/complete")], ff.fail[("GET", "/assets/")]
+    assert start(client, workspace, setup).status_code == 200
+    assert VideoAsset.objects.get().ff_asset_id != uuid.UUID(asset)
+
+
+def test_refused_new_version_keeps_the_video_and_its_earlier_versions(client, ff, workspace, user, setup):
+    client.force_login(user)
+    first = started(client, workspace, setup)
+    assert complete(client, workspace, setup, first).status_code == 200
+    second = started(client, workspace, setup)
+    asset = str(VideoAsset.objects.get().ff_asset_id)
+    ff.versions[asset] = [item for item in ff.versions[asset] if item["id"] == ff.versions[asset][0]["id"]]
+    ff.fail[("POST", "/upload/complete")] = 422
+    assert complete(client, workspace, setup, second).status_code == 422
+    assert [v.number for v in VideoVersion.objects.all()] == [1]
+    assert VideoAsset.objects.count() == 1
+
+
+def test_refusal_whose_removal_cannot_be_confirmed_keeps_the_row_for_the_refresh(client, ff, workspace, user, setup):
+    client.force_login(user)
+    info = started(client, workspace, setup)
+    ff.fail[("POST", "/upload/complete")] = 422
+    ff.fail[("GET", "/assets/")] = 503
+    assert complete(client, workspace, setup, info).status_code == 422
+    assert VideoVersion.objects.get().status == "uploading"
+    # Once FreeFrame answers again, the version it no longer lists is shown as failed, not converting.
+    del ff.fail[("GET", "/assets/")]
+    asset = str(VideoAsset.objects.get().ff_asset_id)
+    ff.versions[asset] = []
+    row = client.get(url("upload_status", workspace, setup)).json()["channels"][0]["versions"][0]
+    assert row["status"] == "failed"
+
+
+def test_conversion_progress_is_shown_while_it_runs_and_dropped_when_ready(client, ff, workspace, user, setup):
+    from django.core.cache import cache
+
+    cache.clear()
+    client.force_login(user)
+    info = started(client, workspace, setup)
+    assert complete(client, workspace, setup, info).status_code == 200
+    asset = str(VideoAsset.objects.get().ff_asset_id)
+    item = ff.versions[asset][0]
+
+    item.update(processing_status="processing")  # queued: no percent yet
+    row = client.get(url("upload_status", workspace, setup)).json()["channels"][0]["versions"][0]
+    assert row["status_label"] == "Converting" and row["progress"] is None
+
+    item.update(processing_percent=42)
+    row = client.get(url("upload_status", workspace, setup)).json()["channels"][0]["versions"][0]
+    assert row["status_label"] == "Converting · 42 %" and row["progress"] == 42
+    page = client.get(
+        reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.id, "post_id": setup.id})
+        + "?tab=video"
+    )
+    assert "Converting · 42 %" in page.content.decode() and b"data-video-hint" in page.content
+
+    item.update(processing_status="ready", processing_percent=None)
+    row = client.get(url("upload_status", workspace, setup)).json()["channels"][0]["versions"][0]
+    assert row["status_label"] == "Ready" and row["progress"] is None
+    assert cache.get(uploads.PROGRESS_CACHE_KEY.format(info["version"])) is None
+
+
+@pytest.mark.parametrize("junk", ["42", True, 3.5, -5, 250])
+def test_conversion_progress_accepts_only_whole_numbers_and_clamps(client, ff, workspace, user, setup, junk):
+    from django.core.cache import cache
+
+    cache.clear()
+    client.force_login(user)
+    info = started(client, workspace, setup)
+    complete(client, workspace, setup, info)
+    item = ff.versions[str(VideoAsset.objects.get().ff_asset_id)][0]
+    item.update(processing_status="processing", processing_percent=7)
+    client.get(url("upload_status", workspace, setup))  # an earlier, valid percent must not linger
+    item.update(processing_percent=junk)
+    row = client.get(url("upload_status", workspace, setup)).json()["channels"][0]["versions"][0]
+    expected = {-5: 0, 250: 100}.get(junk) if isinstance(junk, int) and not isinstance(junk, bool) else None
+    assert row["progress"] == expected

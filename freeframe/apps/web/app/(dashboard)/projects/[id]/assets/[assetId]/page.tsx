@@ -10,6 +10,7 @@ import { AudioPlayer } from '@/components/review/audio-player'
 import { MobileCommentSheet, PEEK_PX, type SheetState } from '@/components/review/mobile-comment-sheet'
 import { useMediaQuery } from '@/hooks/use-media-query'
 import { useMediaTransport } from '@/hooks/use-media-transport'
+import { useStageCap } from '@/hooks/use-stage-cap'
 import { ImageViewer } from '@/components/review/image-viewer'
 import { AnnotationCanvas } from '@/components/review/annotation-canvas'
 import { AnnotationOverlay } from '@/components/review/annotation-overlay'
@@ -31,6 +32,7 @@ import { useBreadcrumbStore } from '@/stores/breadcrumb-store'
 import { useViewStore } from '@/stores/view-store'
 import { sortAssets } from '@/lib/sort-assets'
 import { canCompare } from '@/lib/compare-time'
+import { assetLoadError } from '@/lib/asset-load-error'
 import {
   ArrowLeft,
   ChevronLeft,
@@ -59,7 +61,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const isEmbed = useEmbedMode()
-  const { asset, versions, isLoading, refetchComments, refetchVersions } = useReview()
+  const { asset, versions, isLoading, errorStatus, refetchComments, refetchVersions } = useReview()
   const { currentVersion, isDrawingMode, focusedCommentId, playheadTime, seekTo, setFocusedCommentId, setActiveAnnotation, setTimeFormat } = useReviewStore()
   const { user } = useAuthStore()
   const startVersionUpload = useUploadStore((s) => s.startVersionUpload)
@@ -118,18 +120,9 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   // sheet covered the bottom.
   //
   // Capping instead of shifting means the whole frame stays visible at every
-  // sheet state and the picture scales rather than moves. 60px is the control
-  // stack below it (12px progress wrapper + 48px transport row).
-  useEffect(() => {
-    const root = reviewRootRef.current
-    if (!root) return
-    if (!useSheet) {
-      root.style.removeProperty('--ff-stage-max')
-      return
-    }
-    const available = root.clientHeight - sheetHeight - 60
-    root.style.setProperty('--ff-stage-max', `${Math.max(80, available)}px`)
-  }, [useSheet, sheetHeight])
+  // sheet state and the picture scales rather than moves. The player reports
+  // the measured height of its controls, comment markers included (P1-B26).
+  const { onControlsHeight } = useStageCap(reviewRootRef, useSheet, sheetHeight)
 
 
   const deepLinkApplied = useRef(false)
@@ -301,6 +294,31 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [prevAsset, nextAsset, searchParams])
 
+  // Finished loading without an asset: say why instead of loading forever (P1-B26).
+  if (!isLoading && !asset) {
+    const failure = assetLoadError(errorStatus)
+    return (
+      <div className="flex h-full items-center justify-center px-6">
+        <div role="alert" data-asset-load-error={errorStatus ?? 'unknown'} className="flex max-w-sm flex-col items-center gap-3 text-center">
+          <div className="h-12 w-12 rounded-full bg-status-error/10 flex items-center justify-center">
+            <Info className="h-6 w-6 text-status-error" />
+          </div>
+          <p className="text-sm font-medium text-text-primary">{failure.title}</p>
+          <p className="text-xs text-text-tertiary">{failure.detail}</p>
+          {failure.retry && (
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-text-primary hover:bg-bg-hover"
+            >
+              Try again
+            </button>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   if (isLoading || !asset) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -397,6 +415,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
           <VideoPlayer
             assetId={asset.id}
             comments={comments}
+            onControlsHeight={onControlsHeight}
             className="flex-1 min-h-0"
             overlay={
               <>

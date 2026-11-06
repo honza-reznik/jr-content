@@ -14,6 +14,8 @@ import boto3
 from botocore.config import Config
 from .base import BaseTranscoder, TranscodeJob, TranscodeResult, VideoMetadata
 from .redact import redact_presigned_urls, redacted_timeout
+from .source_check import is_unreadable_source
+from .untrusted import ffmpeg_input, ffprobe_input, own_hls_input
 
 # FFmpeg's uppercase `V` excludes streams flagged with the attached_pic disposition.
 _PRIMARY_VIDEO_STREAM = "V:0"
@@ -1625,7 +1627,7 @@ class FFmpegTranscoder(BaseTranscoder):
                     "ffprobe", "-v", "error", "-select_streams", _PRIMARY_VIDEO_STREAM,
                     "-read_intervals", interval,
                     "-show_entries", "packet=pts_time,flags",
-                    "-print_format", "json", input_url,
+                    "-print_format", "json", *ffprobe_input(input_url),
                 ],
                 timeout=300, label="ffprobe",
             )
@@ -1695,7 +1697,7 @@ class FFmpegTranscoder(BaseTranscoder):
             traced = subprocess.run(
                 [
                     "ffmpeg", "-v", "trace", *seek, "-t", f"{length:g}",
-                    "-i", input_url, "-map", f"0:{_PRIMARY_VIDEO_STREAM}", "-c", "copy",
+                    *ffmpeg_input(input_url), "-map", f"0:{_PRIMARY_VIDEO_STREAM}", "-c", "copy",
                     "-bsf:v", "trace_headers", "-f", "null", "-",
                 ],
                 capture_output=True, text=True, errors="replace", timeout=600,
@@ -1826,7 +1828,7 @@ class FFmpegTranscoder(BaseTranscoder):
             self._run(
                 [
                     "ffmpeg", "-y",
-                    "-i", str(playlist),
+                    *own_hls_input(str(playlist)),
                     "-c", "copy",
                     # AAC inside MPEG-TS is ADTS-framed and MP4 wants the bare
                     # stream with an ASC in the sample entry. Recent ffmpeg
@@ -1859,7 +1861,7 @@ class FFmpegTranscoder(BaseTranscoder):
         cmd = [
             "ffprobe", "-v", "error", "-print_format", "json",
             "-show_streams", "-select_streams", _PRIMARY_VIDEO_STREAM,
-            "-show_format", input_url,
+            "-show_format", *ffprobe_input(input_url),
         ]
         stdout = self._run(cmd, timeout=120, label="ffprobe")
         meta = parse_probe_metadata(json.loads(stdout))
@@ -1873,7 +1875,7 @@ class FFmpegTranscoder(BaseTranscoder):
         thumb_dir = tempfile.mkdtemp()
         try:
             cmd = [
-                "ffmpeg", "-i", input_url, "-map", f"0:{_PRIMARY_VIDEO_STREAM}",
+                "ffmpeg", *ffmpeg_input(input_url), "-map", f"0:{_PRIMARY_VIDEO_STREAM}",
                 "-vf", f"fps=0.1,{_THUMB_GEOMETRY},format=yuvj420p",
                 "-q:v", "2",
                 f"{thumb_dir}/thumb_%04d.jpg",
@@ -1907,7 +1909,7 @@ class FFmpegTranscoder(BaseTranscoder):
             cmd = [
                 "ffprobe", "-v", "error", "-print_format", "json",
                 "-show_streams", "-select_streams", _PRIMARY_VIDEO_STREAM,
-                "-show_format", input_url,
+                "-show_format", *ffprobe_input(input_url),
             ]
             vid_info = self._run(cmd, timeout=120, label="ffprobe")
             vid_data = json.loads(vid_info)
@@ -1944,7 +1946,7 @@ class FFmpegTranscoder(BaseTranscoder):
             # 2. Check if input has an audio stream
             audio_cmd = [
                 "ffprobe", "-v", "error", "-print_format", "json",
-                "-show_streams", "-select_streams", "a", input_url,
+                "-show_streams", "-select_streams", "a", *ffprobe_input(input_url),
             ]
             audio_result = self._run(audio_cmd, timeout=120, label="ffprobe")
             audio_streams = json.loads(audio_result).get("streams") or []
@@ -2079,7 +2081,7 @@ class FFmpegTranscoder(BaseTranscoder):
                 thing being avoided.
                 """
                 cmd = [
-                    "ffmpeg", "-y", "-i", input_url,
+                    "ffmpeg", "-y", *ffmpeg_input(input_url),
                     "-map", f"0:{_PRIMARY_VIDEO_STREAM}",
                 ]
                 if has_audio:
@@ -2242,7 +2244,7 @@ class FFmpegTranscoder(BaseTranscoder):
                     ffmpeg_cmd += cpu_upload["args"]
                 elif not dv_software:
                     ffmpeg_cmd += _BACKEND_HWACCEL.get(backend, [])
-                ffmpeg_cmd += ["-i", input_url]
+                ffmpeg_cmd += ffmpeg_input(input_url)
                 ffmpeg_cmd += ["-filter_complex", filter_complex]
                 if cpu_plan is not None:
                     ffmpeg_cmd += ["-filter_complex_threads", str(cpu_plan[1])]
@@ -2531,7 +2533,7 @@ class FFmpegTranscoder(BaseTranscoder):
             thumb_path = work_dir / "thumb_0001.jpg"
             thumb_vf = _thumbnail_filter(is_hdr, dv_software)
             thumb_cmd = [
-                "ffmpeg", "-y", "-i", input_url,
+                "ffmpeg", "-y", *ffmpeg_input(input_url),
                 "-vf", thumb_vf, "-q:v", "2", "-frames:v", "1",
                 str(work_dir / "thumb_%04d.jpg"),
             ]
@@ -2559,7 +2561,10 @@ class FFmpegTranscoder(BaseTranscoder):
         except Exception as e:
             # The runners already scrub what they raise; this catches anything
             # else on its way to the SSE event and the logs.
-            return TranscodeResult(success=False, error=redact_presigned_urls(str(e)))
+            error = redact_presigned_urls(str(e))
+            return TranscodeResult(
+                success=False, error=error, unreadable_source=is_unreadable_source(error),
+            )
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
 

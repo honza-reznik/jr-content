@@ -384,10 +384,11 @@ def test_no_signed_in_path_reaches_a_trashed_projects_assets(client, db):
     for user, asset in who:
         for path in reads:
             r = client.get(f"/assets/{asset.id}{path}", headers=_auth(user))
-            assert r.status_code == 403, (user.name, path)
+            # P1-B26: an asset nobody may reach answers like one that does not exist.
+            assert r.status_code == 404, (user.name, path)
     for user in (w.editor, w.direct):
         r = client.post(f"/assets/{w.A.id}/comments", json=comment, headers=_auth(user))
-        assert r.status_code == 403, user.name
+        assert r.status_code == 404, user.name  # P1-B26: like a missing asset
 
 
 def test_my_assets_and_folders_leave_out_a_trashed_project(client, db):

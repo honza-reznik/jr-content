@@ -433,7 +433,7 @@ def test_someone_without_access_cannot_list_downloads(
 
     response = client.get(f"/assets/{asset.id}/downloads", headers=auth_headers)
 
-    assert response.status_code == 403
+    assert response.status_code == 404  # P1-B26: no access answers like a missing asset
 
 
 @patch("apps.api.routers.assets.generate_presigned_get_url", return_value="https://s3/x")
@@ -447,7 +447,7 @@ def test_someone_without_access_cannot_download_the_original(
         f"/assets/{asset.id}/stream?download=true&rendition=original", headers=auth_headers
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 404  # P1-B26: no access answers like a missing asset
     mock_presign.assert_not_called()
 
 

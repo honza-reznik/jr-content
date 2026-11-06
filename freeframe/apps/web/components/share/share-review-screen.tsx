@@ -17,6 +17,7 @@ import { useReviewStore } from '@/stores/review-store'
 import { MobileCommentSheet, PEEK_PX, type SheetState } from '@/components/review/mobile-comment-sheet'
 import { useMediaQuery } from '@/hooks/use-media-query'
 import { useMediaTransport } from '@/hooks/use-media-transport'
+import { useStageCap } from '@/hooks/use-stage-cap'
 import { formatTimecode } from '@/lib/utils'
 import type { SharePermission } from '@/types'
 import { fetchShareDownloadOptions, handleDownload } from './share-download'
@@ -129,18 +130,9 @@ function ShareReviewInner({
   // sheet covered the bottom.
   //
   // Capping instead of shifting means the whole frame stays visible at every
-  // sheet state and the picture scales rather than moves. 60px is the control
-  // stack below it (12px progress wrapper + 48px transport row).
-  React.useEffect(() => {
-    const root = reviewRootRef.current
-    if (!root) return
-    if (!useSheet) {
-      root.style.removeProperty('--ff-stage-max')
-      return
-    }
-    const available = root.clientHeight - sheetHeight - 60
-    root.style.setProperty('--ff-stage-max', `${Math.max(80, available)}px`)
-  }, [useSheet, sheetHeight])
+  // sheet state and the picture scales rather than moves. The player reports
+  // the measured height of its controls, comment markers included (P1-B26).
+  const { onControlsHeight } = useStageCap(reviewRootRef, useSheet, sheetHeight)
 
   const [activeTab, setActiveTab] = React.useState<'comments' | 'fields'>('comments')
   const [AnnotationOverlay, setAnnotationOverlay] = React.useState<any>(null)
@@ -324,6 +316,7 @@ function ShareReviewInner({
             <VideoPlayer
               assetId={asset.id}
               comments={comments}
+              onControlsHeight={onControlsHeight}
               className="flex-1"
               initialStreamUrl={(asset as any).stream_url}
               overlay={

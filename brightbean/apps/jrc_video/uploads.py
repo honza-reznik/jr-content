@@ -13,6 +13,7 @@ import uuid
 from urllib.parse import parse_qs, urlsplit
 
 from django.conf import settings
+from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
 
@@ -41,6 +42,14 @@ MAX_PART_URL_SECONDS = 900
 MAX_FILENAME_LENGTH = 200
 MAX_PART_NUMBER = 10000
 UNFINISHED = (VideoVersion.Status.UPLOADING, VideoVersion.Status.PROCESSING)
+UNPLAYABLE_MESSAGE = (
+    "This file is not a playable video, so it was not added. "
+    "Check that it is a complete video file (MP4, MOV, WebM or MKV) and upload it again."
+)
+# P1-B26: latest conversion percent from FreeFrame, kept only in the cache (it changes
+# every few seconds and has no value once the version is ready).
+PROGRESS_CACHE_KEY = "jrc_video:progress:{}"
+PROGRESS_CACHE_SECONDS = 15 * 60
 
 
 class UploadError(Exception):
@@ -90,6 +99,9 @@ def _user_message(exc):
         return "This upload cannot be continued.", 409
     if code == 400:
         return "The video service refused this file.", 400
+    if code == 422:
+        # P1-B26: FreeFrame checked the uploaded content and it is not playable media.
+        return UNPLAYABLE_MESSAGE, 422
     return "The video service is unavailable. Try again in a minute.", 503
 
 
@@ -115,10 +127,26 @@ def _int(value, minimum=0):
     return value
 
 
-def _label(version):
+def _label(version, percent=None):
     if version.status == VideoVersion.Status.FAILED:
         return "Conversion failed. Please upload the video again."
+    if version.status == VideoVersion.Status.PROCESSING:
+        # Percent comes from the running conversion; without it (queued, or not known) plain "Converting".
+        return f"Converting · {percent} %" if percent is not None else VideoVersion.Status(version.status).label
     return VideoVersion.Status(version.status).label
+
+
+def _progress(versions):
+    """Conversion percents of the given versions that are converting, from the cache."""
+    keys = {PROGRESS_CACHE_KEY.format(v.pk): v.pk for v in versions if v.status == VideoVersion.Status.PROCESSING}
+    if not keys:
+        return {}
+    try:
+        found = cache.get_many(list(keys))
+    except Exception:  # noqa: BLE001 - the list shows without progress
+        logger.warning("Could not read video conversion progress", exc_info=True)
+        return {}
+    return {keys[key]: value for key, value in found.items() if isinstance(value, int)}
 
 
 def _accounts_ready(user, workspace):
@@ -369,17 +397,27 @@ def complete_upload(user, workspace, post, version_id, *, s3_key, upload_id):
     _require_current_editor(user, post)
     if not isinstance(upload_id, str) or not upload_id or not _key_matches(version, s3_key):
         raise UploadError("Invalid upload.", 403)
-    _call(
-        user,
-        "POST",
-        "/upload/complete",
-        {
-            "s3_key": s3_key,
-            "upload_id": upload_id,
-            "asset_id": str(version.video.ff_asset_id),
-            "version_id": str(version.ff_version_id),
-        },
-    )
+    try:
+        _call(
+            user,
+            "POST",
+            "/upload/complete",
+            {
+                "s3_key": s3_key,
+                "upload_id": upload_id,
+                "asset_id": str(version.video.ff_asset_id),
+                "version_id": str(version.ff_version_id),
+            },
+        )
+    except UploadError as exc:
+        if exc.status == 422:
+            # FreeFrame refused the content and discarded the version; the mirror goes too,
+            # so no "Converting" row is left behind for a file that will never play.
+            try:
+                _forget_if_removed(user, version)
+            except UploadError:
+                logger.warning("Could not confirm removal of refused upload %s; the status refresh will", version.pk)
+        raise
     VideoVersion.objects.filter(pk=version.pk, status=VideoVersion.Status.UPLOADING).update(
         status=VideoVersion.Status.PROCESSING
     )
@@ -412,6 +450,11 @@ def abort_upload(user, workspace, post, version_id, *, s3_key, upload_id):
     # version was discarded: FreeFrame can discover that completion won a race
     # with this request and leave the assembled version in place. Only remove our
     # mirror after the authoritative version list confirms it is gone.
+    return _forget_if_removed(user, version)
+
+
+def _forget_if_removed(user, version):
+    """Drop the local mirror once FreeFrame's version list confirms the version is gone."""
     remote_asset_missing = False
     try:
         remote_versions = _call(user, "GET", f"/assets/{version.video.ff_asset_id}/versions")
@@ -452,6 +495,12 @@ def _apply_remote(version, remote):
         value = media.get(key)
         return kind(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
 
+    percent = remote.get("processing_percent")
+    if status == VideoVersion.Status.PROCESSING and isinstance(percent, int) and not isinstance(percent, bool):
+        _remember_progress(version, max(0, min(100, percent)))
+    else:
+        _remember_progress(version, None)
+
     changes = {
         "status": status,
         "duration_s": number("duration_seconds", float),
@@ -472,6 +521,17 @@ def _apply_remote(version, remote):
         return
     if any(getattr(version, key) != value for key, value in changes.items()):
         VideoVersion.objects.filter(pk=version.pk).update(**changes)
+
+
+def _remember_progress(version, percent):
+    key = PROGRESS_CACHE_KEY.format(version.pk)
+    try:
+        if percent is None:
+            cache.delete(key)
+        else:
+            cache.set(key, percent, PROGRESS_CACHE_SECONDS)
+    except Exception:  # noqa: BLE001 - progress is information only
+        logger.warning("Could not store video conversion progress", exc_info=True)
 
 
 def _refresh_videos(videos, client_for):
@@ -524,7 +584,7 @@ def refresh_all_unfinished():
     return len(videos)
 
 
-def _version_row(version, user):
+def _version_row(version, user, percent=None):
     resolution = f"{version.width}×{version.height}" if version.width and version.height else ""
     return {
         "id": str(version.pk),
@@ -532,7 +592,8 @@ def _version_row(version, user):
         "is_final": version.video.final_version_id == version.pk,
         "number": version.number,
         "status": version.status,
-        "status_label": _label(version),
+        "status_label": _label(version, percent),
+        "progress": percent if version.status == VideoVersion.Status.PROCESSING else None,
         "filename": version.original_filename,
         "size_bytes": version.size_bytes,
         "uploaded_at": timezone.localtime(version.uploaded_at).strftime("%b %-d, %Y · %H:%M"),
@@ -565,7 +626,9 @@ def channel_cards(user, post, membership):
     for account in _enabled_caption_accounts(post):
         variant = variants.get(account.pk)
         video = videos.get(variant.pk) if variant else None
-        versions = [_version_row(v, user) for v in video.versions.all()] if video else []
+        rows = list(video.versions.all()) if video else []
+        percents = _progress(rows)
+        versions = [_version_row(v, user, percents.get(v.pk)) for v in rows]
         final = video.final_version if video and video.final_version_id else None
         cards.append(
             {

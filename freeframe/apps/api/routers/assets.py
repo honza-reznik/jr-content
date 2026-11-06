@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request, Response
 from sqlalchemy.orm import Session
 from sqlalchemy import func, literal, select
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
@@ -336,11 +337,37 @@ def list_asset_versions(
     for f in all_files:
         files_by_version.setdefault(f.version_id, []).append(f)
 
+    percents = _conversion_percents(
+        [v.id for v in versions if v.processing_status == ProcessingStatus.processing]
+    )
     for v in versions:
         vr = AssetVersionResponse.model_validate(v)
         vr.files = [MediaFileResponse.model_validate(f) for f in files_by_version.get(v.id, [])]
+        vr.processing_percent = percents.get(v.id)
         result.append(vr)
     return result
+
+
+def _conversion_percents(version_ids) -> dict:
+    """Latest percent the worker recorded per converting version (P1-B26). Best-effort."""
+    if not version_ids:
+        return {}
+    from ..services.event_service import _get_sync_redis
+    from ..tasks.transcode_tasks import _PROGRESS_KEY
+
+    try:
+        values = _get_sync_redis().mget([_PROGRESS_KEY.format(v) for v in version_ids])
+    except Exception:  # noqa: BLE001 - the list must load without progress
+        logging.getLogger(__name__).warning("could not read conversion progress", exc_info=True)
+        return {}
+    percents = {}
+    for version_id, value in zip(version_ids, values):
+        try:
+            percent = int(value)
+        except (TypeError, ValueError):
+            continue
+        percents[version_id] = max(0, min(100, percent))
+    return percents
 
 
 def _ready_media_file(

@@ -211,8 +211,15 @@ def can_access_asset(db: Session, asset: Asset, user: User) -> bool:
 
 
 def require_asset_access(db: Session, asset: Asset, user: User) -> None:
+    """404 for an asset the user cannot reach, the same answer as for one that does not exist.
+
+    JR Content P1-B26: a 403 here told anyone with an account that a video with
+    that id exists in some project they are not in, while a made-up id got 404.
+    Every asset route resolves the asset and then calls this, so one answer here
+    removes that difference everywhere.
+    """
     if not can_access_asset(db, asset, user):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
 
 
 def get_asset_share_permission(db: Session, asset: Asset, user: User) -> SharePermission:
