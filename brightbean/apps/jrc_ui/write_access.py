@@ -23,14 +23,20 @@ class WriteRule:
     domain: str = ""
     # Comment writers (add/reply/edit/delete/resolve) of every surface share ``can_comment``.
     comment: bool = False
+    # Organization writes (domain "organization"): minimum org role or org permission,
+    # checked against the organization the request itself names (P1-B23), never the session.
+    org_role: str = ""
+    org_permission: str = ""
 
 
 WRITE_RULES = {}
 
 
-def _rules(namespace, names, *permissions, owned_object="", domain="", comment=False):
+def _rules(namespace, names, *permissions, owned_object="", domain="", comment=False, org_role="", org_permission=""):
     for name in names.split():
-        WRITE_RULES[f"{namespace}:{name}"] = WriteRule(permissions, owned_object, domain, comment)
+        WRITE_RULES[f"{namespace}:{name}"] = WriteRule(
+            permissions, owned_object, domain, comment, org_role, org_permission
+        )
 
 
 _rules(
@@ -104,6 +110,26 @@ _rules("jrc_texts", "script concept concept_to_script", domain="service")
 _rules("jrc_video", "upload_start upload_part upload_complete upload_abort video_final", domain="service")
 _rules("jrc_thumbnails", "upload", domain="service")
 
+# Organization-scoped writes on global URLs (no workspace in the path). The target
+# organization is the one the submitted page names (``organization_id`` field or
+# ``X-JRC-Organization-Id`` header, bound by RBACMiddleware); the role is checked
+# against that organization. The views keep their own decorators as a second check.
+_rules("organizations", "settings", domain="organization", org_role="admin")
+_rules(
+    "members",
+    "invite resend_invite revoke_invite update_role remove manage_workspaces",
+    domain="organization",
+    org_role="admin",
+)
+_rules("workspaces", "create", domain="organization", org_role="admin")
+_rules(
+    "media_library_org",
+    "shared_upload shared_asset_edit shared_asset_delete shared_asset_tags",
+    domain="organization",
+    org_role="admin",
+)
+_rules("api_keys", "issue revoke edit", domain="organization", org_permission="manage_api_keys")
+
 # Exact exceptions, never a namespace wildcard. These resolve their own user,
 # organization, portal token or signed service identity; no URL workspace exists.
 # P1-B23 owns the organization/workspace settings checks and their tests.
@@ -115,26 +141,11 @@ DELEGATED_WRITES = {
     "accounts:settings": "authenticated current user (including password recheck)",
     "accounts:logout": "CSRF protected logout",
     "accounts:dismiss_review_banner": "authenticated current user",
-    "organizations:settings": "organization administrator; P1-B23",
     "organizations:switch": "authenticated organization member; P1-B23",
-    "members:invite": "organization administrator; P1-B23",
-    "members:resend_invite": "organization administrator; P1-B23",
-    "members:revoke_invite": "organization administrator; P1-B23",
     "members:accept_invite": "invitation token and matching email; P1-B24",
-    "members:update_role": "organization administrator; P1-B23",
-    "members:remove": "organization administrator; P1-B23",
-    "members:manage_workspaces": "organization administrator; P1-B23",
-    "workspaces:create": "organization administrator; P1-B23",
     "workspaces:settings": "workspace owner/manager; P1-B23",
     "workspaces:approvals_settings": "workspace owner/manager; P1-B23",
     "settings_manager:index": "staff only",
-    "api_keys:issue": "organization manage_api_keys and grant intersection; P1-B23",
-    "api_keys:revoke": "organization manage_api_keys; P1-B23",
-    "api_keys:edit": "organization manage_api_keys and grant intersection; P1-B23",
-    "media_library_org:shared_upload": "organization owner/admin",
-    "media_library_org:shared_asset_edit": "organization owner/admin",
-    "media_library_org:shared_asset_delete": "organization owner/admin",
-    "media_library_org:shared_asset_tags": "organization owner/admin",
     "notifications:mark_as_read": "notification recipient",
     "notifications:mark_all_read": "authenticated current user",
     "notifications:preferences": "authenticated current user",
@@ -266,6 +277,9 @@ def enforce_write_rule(request, rule, kwargs):
         if not link.is_active or link.workspace.is_archived:
             raise PermissionDenied("This connection link is no longer active.")
         return
+    if rule.domain == "organization":
+        _enforce_org_rule(request, rule)
+        return
     if rule.domain == "service" and "workspace_id" not in kwargs:
         # Board writers resolve the submitted workspace, never last_workspace. A workspace
         # the user does not belong to is reported as missing, like a foreign URL workspace.
@@ -320,6 +334,27 @@ def enforce_write_rule(request, rule, kwargs):
         _require_author(request, membership, "post", kwargs)
     if rule.owned_object:
         _require_author(request, membership, rule.owned_object, kwargs)
+
+
+_ORG_ROLE_LEVEL = {"owner": 3, "admin": 2, "member": 1}
+
+
+def _enforce_org_rule(request, rule):
+    """Authorize an organization write against the organization the request names."""
+    from apps.members.models import has_org_permission
+
+    if not request.user.is_active:
+        raise PermissionDenied("Organization membership required.")
+    if not getattr(request, "org_target_bound", False):
+        # The session's active organization is shared by every tab: a write must name its target.
+        raise PermissionDenied("This form does not say which organization it changes. Reload the page and try again.")
+    membership = getattr(request, "org_membership", None)
+    if membership is None or membership.organization.deleted_at is not None:
+        raise PermissionDenied("Organization membership required.")
+    if rule.org_role and _ORG_ROLE_LEVEL.get(membership.org_role, 0) < _ORG_ROLE_LEVEL[rule.org_role]:
+        raise PermissionDenied("You cannot change this organization.")
+    if rule.org_permission and not has_org_permission(membership, rule.org_permission):
+        raise PermissionDenied("You cannot change this organization.")
 
 
 def _require_author(request, membership, kind, kwargs):

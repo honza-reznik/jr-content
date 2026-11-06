@@ -331,6 +331,8 @@ SESSION_KEYS = {
     '"portal_workspace_id"': "portal session is bound to one workspace by its magic link; posts are addressed by "
     "id in the URL and only found inside that workspace (a mismatch is 404, never another workspace)",
     'f"pending_media_{workspace.id}"': "pending uploads keyed by the workspace in the URL, filtered by it",
+    'f"pending_media_{membership.workspace_id}"': "same pending uploads, read by the P1-B25 write gate; the "
+    "membership is the one of the workspace in the URL",
     'f"csv_import_{workspace.id}"': "import payload keyed by the workspace in the URL",
     'f"csv_mapping_{workspace.id}"': "import mapping keyed by the workspace in the URL",
     'f"thumbnail_error:{variant.pk}"': "flash message for one variant",

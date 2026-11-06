@@ -69,7 +69,7 @@ def test_registered_workspace_writes_reject_missing_permission(workspace, user, 
     covered = []
     for key, path, callback in registered_app_urls():
         rule = WRITE_RULES.get(key)
-        if not rule or (method == "POST" and rule.domain in {"service", "connection_token"}):
+        if not rule or (method == "POST" and rule.domain in {"service", "connection_token", "organization"}):
             continue  # Domain writers are exercised by the HTTP tests below and their own suites.
         kwargs = {}
         for converter, name in re.findall(r"<([^:>]+):([^>]+)>", path):
@@ -203,6 +203,70 @@ def test_reviewed_read_views_refuse_every_unsafe_method(user):
             assert response.status_code == 405, (key, method)
         covered += 1
     assert covered
+
+
+ORG_WRITES = {
+    # Independent expectations (P1-B23 views): minimum org role or org permission.
+    "organizations:settings": "admin",
+    "members:invite": "admin",
+    "members:resend_invite": "admin",
+    "members:revoke_invite": "admin",
+    "members:update_role": "admin",
+    "members:remove": "admin",
+    "members:manage_workspaces": "admin",
+    "workspaces:create": "admin",
+    "media_library_org:shared_upload": "admin",
+    "media_library_org:shared_asset_edit": "admin",
+    "media_library_org:shared_asset_delete": "admin",
+    "media_library_org:shared_asset_tags": "admin",
+    "api_keys:issue": "admin",  # manage_api_keys: owner and admin
+    "api_keys:revoke": "admin",
+    "api_keys:edit": "admin",
+}
+
+
+def test_org_registry_matches_the_organization_target_audit():
+    """P1-B23 lists every global route that uses the organization context; each one is
+    either an organization write of this gate or a reviewed read (405 for writes)."""
+    from apps.organizations.tests.test_write_target import ORG_WRITE_ROUTES
+
+    org_rules = {key for key, rule in WRITE_RULES.items() if rule.domain == "organization"}
+    assert org_rules <= ORG_WRITE_ROUTES
+    assert ORG_WRITE_ROUTES - org_rules <= READ_VIEWS
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("org_role", ["owner", "admin", "member", "nonmember"])
+@pytest.mark.parametrize("bound", [True, False])
+def test_organization_writes_check_the_role_in_the_named_target(user, organization, org_role, bound):
+    """Every org write on a global URL is authorized against the organization the page named.
+
+    ``org_target_bound`` is set by RBACMiddleware only when the request carried
+    ``organization_id`` / ``X-JRC-Organization-Id`` of an organization the user belongs to.
+    """
+    from apps.members.models import OrgMembership
+
+    assert {key for key, rule in WRITE_RULES.items() if rule.domain == "organization"} == set(ORG_WRITES)
+    membership = None
+    if org_role != "nonmember":
+        membership = OrgMembership.objects.create(user=user, organization=organization, org_role=org_role)
+    middleware = WriteAccessMiddleware(lambda request: None)
+    level = {"owner": 3, "admin": 2, "member": 1, "nonmember": 0}
+    paths = {key: path for key, path, _ in registered_app_urls()}
+    for key, needed in ORG_WRITES.items():
+        kwargs = {name: uuid4() for _converter, name in re.findall(r"<([^:>]+):([^>]+)>", paths[key])}
+        url = reverse(key, kwargs=kwargs)
+        request = RequestFactory().post(url)
+        request.user = user
+        request.org_membership = membership
+        request.org_target_bound = bound and membership is not None
+        request.resolver_match = resolve(url)
+        allowed = request.org_target_bound and level[org_role] >= level[needed]
+        if allowed:
+            assert middleware.process_view(request, None, (), kwargs) is None, key
+        else:
+            with pytest.raises(PermissionDenied):
+                middleware.process_view(request, None, (), kwargs)
 
 
 def test_new_unregistered_app_write_fails_closed():

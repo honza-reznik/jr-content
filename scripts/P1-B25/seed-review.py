@@ -25,7 +25,9 @@ team_only, _ = Workspace.objects.get_or_create(
 )
 WorkspaceMembership.objects.get_or_create(workspace=team_only, user=owner, defaults={'workspace_role': 'owner'})
 WorkspaceMembership.objects.get_or_create(workspace=team_only, user=client_user, defaults={'workspace_role': 'client'})
-team_account = account.__class__.objects.create(workspace=team_only, platform='instagram', account_name='P1-B25 team only')
+team_account, _ = account.__class__.objects.get_or_create(
+    workspace=team_only, platform='instagram', account_platform_id='', defaults={'account_name': 'P1-B25 team only'}
+)
 result['team_only_workspace'] = str(team_only.pk)
 for name, status in [('team_only_review', 'pending_review'), ('team_only_client', 'pending_client')]:
     post = Post.objects.create(workspace=team_only, author=owner, title='Review '+name, caption='Original')
