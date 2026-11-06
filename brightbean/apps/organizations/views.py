@@ -18,6 +18,7 @@ from apps.composer.models import PlatformPost, Post, Tag
 from apps.members.decorators import require_org_role
 from apps.members.middleware import activate_organization
 from apps.members.models import OrgMembership, WorkspaceMembership
+from apps.members.services import member_workspaces
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 
@@ -286,14 +287,7 @@ def cross_workspace_calendar(request):
         return HttpResponseForbidden("Organization required.")
 
     # Get workspaces the user has membership in
-    user_workspace_ids = set(
-        WorkspaceMembership.objects.filter(user=request.user).values_list("workspace_id", flat=True)
-    )
-    workspaces = Workspace.objects.filter(
-        organization=org,
-        id__in=user_workspace_ids,
-        is_archived=False,
-    ).order_by("name")
+    workspaces = member_workspaces(request.user, org)
 
     # Workspace filter
     selected_ws_ids = request.GET.getlist("workspace")

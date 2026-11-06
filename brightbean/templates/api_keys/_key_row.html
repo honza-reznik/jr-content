@@ -163,7 +163,7 @@
                                 <label for="edit-expires-{{ row.id }}" class="block text-sm font-semibold mb-1" style="color: var(--text-primary);">
                                     Expires at <span class="font-normal" style="color: var(--text-tertiary);">(optional)</span>
                                 </label>
-                                <input type="date" id="edit-expires-{{ row.id }}" name="expires_at"
+                                <input type="date" id="edit-expires-{{ row.id }}" name="expires_at" min="{{ issuance.min_expires }}"
                                        value="{{ row.expires_at|date:'Y-m-d' }}"
                                        class="input-focus w-full px-3 py-2 text-sm rounded-lg outline-none transition-colors"
                                        style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);">
@@ -251,6 +251,59 @@
         </template>
     </div>
 
+    </div>
+    {% else %}
+    <div class="flex items-center gap-2" x-data="{ showDeleteModal: false }">
+        <button type="button"
+                @click="showDeleteModal = true"
+                class="btn-neutral px-4 py-1.5 text-xs font-medium rounded-full cursor-pointer whitespace-nowrap"
+                style="background: var(--error-soft, #FEE2E2); color: var(--error-700, #B91C1C);">
+            Delete
+        </button>
+
+        <template x-teleport="body">
+            <div x-show="showDeleteModal" x-transition.opacity
+                 @keydown.escape.window="showDeleteModal = false"
+                 class="fixed inset-0 z-50 flex items-center justify-center"
+                 style="background: rgba(0,0,0,0.4);">
+                <div @click.outside="showDeleteModal = false"
+                     x-show="showDeleteModal" x-transition
+                     class="w-full max-w-md mx-4 rounded-xl flex flex-col"
+                     style="background: var(--surface-0); border: 1px solid var(--border); box-shadow: 0 10px 40px rgba(0,0,0,0.18);">
+                    <div class="flex items-start justify-between px-6 pt-6 pb-4">
+                        <div>
+                            <h3 class="text-lg font-semibold" style="color: var(--text-primary);">Delete API key</h3>
+                            <p class="text-xs mt-1" style="color: var(--text-tertiary);">This can't be undone.</p>
+                        </div>
+                        <button type="button" @click="showDeleteModal = false"
+                                class="text-xl leading-none px-2 cursor-pointer"
+                                style="color: var(--text-tertiary);">&times;</button>
+                    </div>
+
+                    <p class="px-6 pb-2 text-sm" style="color: var(--text-secondary);">
+                        Delete the {% if row.status == "expired" %}expired{% else %}revoked{% endif %} key
+                        <strong style="color: var(--text-primary);">{{ row.name }}</strong>?
+                        It already stopped working; this removes it from the list together with its usage history.
+                    </p>
+
+                    <form method="POST" action="{% url 'api_keys:delete' row.id %}"
+                          class="flex items-center justify-end gap-3 px-6 pt-5 pb-6">
+                        {% csrf_token %}
+                        <input type="hidden" name="organization_id" value="{{ request.org.pk|default:'' }}">
+                        <button type="button" @click="showDeleteModal = false"
+                                class="btn-neutral px-4 py-2 text-sm font-medium rounded-full cursor-pointer"
+                                style="background: var(--neutral-100); color: var(--text-primary);">
+                            Cancel
+                        </button>
+                        <button type="submit"
+                                class="px-5 py-2 text-sm font-medium rounded-full cursor-pointer"
+                                style="background: var(--error-700, #B91C1C); color: white;">
+                            Delete key
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </template>
     </div>
     {% endif %}
 </div>

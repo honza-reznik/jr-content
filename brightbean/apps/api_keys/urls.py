@@ -19,6 +19,7 @@ urlpatterns = [
     path("issue/", views.issue_key, name="issue"),
     path("<uuid:key_id>/revoke/", views.revoke_key, name="revoke"),
     path("<uuid:key_id>/edit/", views.edit_key, name="edit"),
+    path("<uuid:key_id>/delete/", views.delete_key, name="delete"),
     # HTMX partial — cascades the workspace dropdown into a list of
     # connected SocialAccounts + the permission catalog grantable to
     # the issuer in that workspace.

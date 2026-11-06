@@ -232,6 +232,7 @@ ORG_WRITE_ROUTES = {
     "api_keys:issue",
     "api_keys:revoke",
     "api_keys:edit",
+    "api_keys:delete",
     "api_keys:workspace_options",
     "organizations:workspaces",
     "members:list",
@@ -437,6 +438,7 @@ def _issue_in_a(client, user, org_a, ws_a):
             "name": "Key A",
             "workspace_id": str(ws_a.pk),
             "social_account_ids": [str(account.pk)],
+            "permissions": ["create_posts"],
             ORG_TARGET_FIELD: str(org_a.pk),
         },
     )
