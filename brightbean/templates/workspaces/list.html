@@ -57,6 +57,7 @@
         <h3 style="font-size: 0.875rem; font-weight: 600; color: var(--text-primary); margin-bottom: 12px;">New workspace</h3>
         <form method="post" action="{% url 'workspaces:create' %}" class="flex flex-col sm:flex-row gap-2.5 sm:items-end">
             {% csrf_token %}
+            <input type="hidden" name="organization_id" value="{{ request.org.pk|default:'' }}">
             <div style="flex: 1;">
                 <input
                     type="text"

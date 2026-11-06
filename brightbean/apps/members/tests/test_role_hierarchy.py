@@ -46,6 +46,8 @@ class InviteRoleHierarchyTests(TestCase):
 
     def setUp(self):
         self.org = Organization.objects.create(name="Test Org")
+        # The team page sends the organization it shows with every htmx write (P1-B23).
+        self.client.defaults["HTTP_X_JRC_ORGANIZATION_ID"] = str(self.org.pk)
         self.workspace_a = Workspace.objects.create(organization=self.org, name="WS-A")
         self.workspace_b = Workspace.objects.create(organization=self.org, name="WS-B")
 
@@ -218,6 +220,8 @@ class UpdateMemberRoleHierarchyTests(TestCase):
 
     def setUp(self):
         self.org = Organization.objects.create(name="Test Org")
+        # The team page sends the organization it shows with every htmx write (P1-B23).
+        self.client.defaults["HTTP_X_JRC_ORGANIZATION_ID"] = str(self.org.pk)
         self.owner = _make_user("owner@example.com")
         self.other_owner = _make_user("owner2@example.com")
         self.admin = _make_user("admin@example.com")
@@ -254,6 +258,8 @@ class ManageWorkspacesExistingRoleTests(TestCase):
 
     def setUp(self):
         self.org = Organization.objects.create(name="Test Org")
+        # The team page sends the organization it shows with every htmx write (P1-B23).
+        self.client.defaults["HTTP_X_JRC_ORGANIZATION_ID"] = str(self.org.pk)
         self.workspace = Workspace.objects.create(organization=self.org, name="WS")
         self.admin = _make_user("admin@example.com")
         self.victim = _make_user("victim@example.com")

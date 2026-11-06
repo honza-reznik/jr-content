@@ -13,6 +13,7 @@ from apps.workspaces.models import Workspace
 
 from . import services
 from .decorators import require_org_role
+from .middleware import activate_organization
 from .models import Invitation, OrgMembership, WorkspaceMembership
 
 
@@ -38,7 +39,7 @@ def _org_role_choices_for(membership):
 
 
 @login_required
-@require_org_role("member")
+@require_org_role("admin")
 @require_GET
 def member_list(request):
     """Show all org members and pending invitations."""
@@ -124,6 +125,15 @@ def invite_member(request):
     email = request.POST.get("email", "").strip()
     org_role = request.POST.get("org_role", OrgMembership.OrgRole.MEMBER)
 
+    org_workspace_ids = {
+        str(pk) for pk in Workspace.objects.filter(organization=org, is_archived=False).values_list("id", flat=True)
+    }
+    if any(
+        key.startswith("ws_") and not key.startswith("ws_role_") and key[3:] not in org_workspace_ids
+        for key in request.POST
+    ):
+        return HttpResponse("Workspace does not belong to this organization.", status=422)
+
     # Parse workspace assignments from form
     workspace_assignments = []
     org_workspaces = Workspace.objects.filter(organization=org, is_archived=False)
@@ -163,6 +173,7 @@ def invite_member(request):
                 "invite_url": _invite_url(invitation),
             },
         )
+    activate_organization(request, request.org)  # Non-htmx fallback after a successful change.
     return redirect("members:list")
 
 
@@ -193,6 +204,7 @@ def resend_invite(request, invitation_id):
                 "invite_url": _invite_url(invitation),
             },
         )
+    activate_organization(request, request.org)  # Non-htmx fallback after a successful change.
     return redirect("members:list")
 
 
@@ -218,6 +230,7 @@ def revoke_invite(request, invitation_id):
 
     if request.headers.get("HX-Request"):
         return HttpResponse(status=200, headers={"HX-Trigger": "inviteRevoked"})
+    activate_organization(request, request.org)  # Non-htmx fallback after a successful change.
     return redirect("members:list")
 
 
@@ -330,6 +343,7 @@ def update_member_role(request, membership_id):
                 "org_role_choices": _org_role_choices_for(request.org_membership),
             },
         )
+    activate_organization(request, request.org)  # Non-htmx fallback after a successful change.
     return redirect("members:list")
 
 
@@ -355,6 +369,7 @@ def remove_member(request, membership_id):
 
     if request.headers.get("HX-Request"):
         return HttpResponse(status=200, headers={"HX-Trigger": "memberRemoved"})
+    activate_organization(request, request.org)  # Non-htmx fallback after a successful change.
     return redirect("members:list")
 
 
@@ -413,6 +428,7 @@ def manage_workspaces(request, membership_id):
                     "org_role_choices": _org_role_choices_for(request.org_membership),
                 },
             )
+        activate_organization(request, request.org)  # Non-htmx fallback after a successful change.
         return redirect("members:list")
 
     # GET - render assignment form

@@ -24,6 +24,7 @@ def sidebar_context(request):
         WorkspaceMembership.objects.filter(
             user=request.user,
             workspace__is_archived=False,
+            workspace__organization=getattr(request, "org", None),
         )
         .select_related("workspace")
         .order_by("workspace__name")
@@ -134,6 +135,12 @@ def sidebar_context(request):
     return {
         "sidebar_workspaces": sidebar_workspaces,
         "can_create_workspace": can_create_workspace,
+        "can_manage_organization": can_create_workspace,
+        "can_manage_workspace": bool(
+            getattr(request, "workspace_membership", None)
+            and request.workspace_membership.workspace_role in ("owner", "manager")
+        ),
+        "organization_memberships": getattr(request, "organization_memberships", []),
         "sidebar_channels": sidebar_channels,
         "sidebar_unhealthy_channels": sidebar_unhealthy_channels,
         "sidebar_connectable_platforms": sidebar_connectable_platforms,

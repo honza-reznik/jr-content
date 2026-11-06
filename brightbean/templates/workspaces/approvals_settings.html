@@ -61,7 +61,7 @@
 
     <p class="text-xs mt-6" style="color: var(--text-tertiary);">
         Reviewers are workspace members with the "Approve posts" permission.
-        Manage them on the <a href="{% url 'members:list' %}" class="underline" style="color: var(--text-secondary);">Members</a> page.
+        {% if can_manage_organization %}Manage them on the <a href="{% url 'members:list' %}" class="underline" style="color: var(--text-secondary);">Members</a> page.{% else %}Ask an organization owner or admin to manage reviewer access.{% endif %}
     </p>
 </div>
 {% endblock %}

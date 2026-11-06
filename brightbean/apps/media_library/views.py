@@ -12,6 +12,7 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 
 from apps.common.validators import normalize_tags
 from apps.members.decorators import require_org_role, require_permission
+from apps.members.middleware import activate_organization
 
 from .models import MediaAsset, MediaFolder
 from .services import (
@@ -875,6 +876,9 @@ def shared_upload(request):
                 }
             )
 
+    if any(r["status"] == "ok" for r in results):
+        # P1-B23: the page reloaded after the upload shows the library it went to.
+        activate_organization(request, org)
     if request.htmx:
         assets = MediaAsset.objects.filter(id__in=[r["id"] for r in results if r["status"] == "ok"])
         return render(
@@ -1011,6 +1015,8 @@ def shared_asset_edit(request, asset_id):
                 )
                 process_video_trim(str(version.id), start_seconds, end_seconds)
 
+        # P1-B23: the detail page after the edit is looked up in the active organization.
+        activate_organization(request, org)
         return redirect("media_library_org:shared_asset_detail", asset_id=asset.id)
 
     context = {

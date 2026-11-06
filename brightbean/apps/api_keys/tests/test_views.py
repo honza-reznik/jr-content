@@ -55,14 +55,10 @@ def member_user(db):
 
 @pytest.fixture
 def organization(admin_user):
-    """Use the OrgMembership auto-created by ``apps.accounts.signals`` so
-    that RBACMiddleware picks the same one our tests do. Creating a
-    second ``Organization`` here would diverge from the real signup
-    flow — the middleware uses ``.first()`` and would resolve the
-    auto-created "My Organization" instead, breaking every workspace
-    lookup downstream.
-    """
-    return admin_user.org_memberships.first().organization
+    from apps.accounts.signals import provision_organization_and_workspace
+
+    provision_organization_and_workspace(admin_user)
+    return admin_user.org_memberships.get().organization
 
 
 @pytest.fixture
@@ -85,16 +81,11 @@ def admin_memberships(db, admin_user, organization, workspace):
 
 @pytest.fixture
 def member_membership(db, member_user):
-    """Downgrade ``member_user``'s auto-created OrgMembership to MEMBER.
+    from apps.organizations.models import Organization
 
-    They live in their own ``My Organization`` (the signup signal made
-    one). For the "forbidden" check we don't need them in admin's org —
-    just somewhere where they lack ``manage_api_keys``.
-    """
-    membership = member_user.org_memberships.first()
-    membership.org_role = OrgMembership.OrgRole.MEMBER
-    membership.save(update_fields=["org_role"])
-    return membership
+    return OrgMembership.objects.create(
+        user=member_user, organization=Organization.objects.create(name="Member org"), org_role="member"
+    )
 
 
 @pytest.fixture
@@ -124,8 +115,12 @@ def disconnected_account(db, workspace):
 
 
 @pytest.fixture
-def admin_client(client, admin_user, admin_memberships):
+def admin_client(client, admin_user, admin_memberships, organization):
     client.force_login(admin_user)
+    # The API-keys forms name the organization they were rendered for (P1-B23);
+    # the request target is bound the same way whether it arrives as the hidden
+    # field or as the page header (see apps/organizations/tests/test_write_target.py).
+    client.defaults["HTTP_X_JRC_ORGANIZATION_ID"] = str(organization.pk)
     return client
 
 

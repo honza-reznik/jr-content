@@ -27,8 +27,7 @@ def create_account_under_invitation(request, save):
     either accepted the invite — one link, two accounts. Here the invitation row
     is locked for the transaction that creates the account and accepted inside
     it: a second request waits on the lock, then finds the invite used, and its
-    account is rolled back. ``apps.accounts.signals`` then only moves the new
-    user out of their auto-provisioned org.
+    account is rolled back. No personal organization is provisioned.
 
     Re-entrant, because a social signup through the form saves via both adapters.
     """

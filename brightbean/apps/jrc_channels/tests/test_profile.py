@@ -134,16 +134,13 @@ def test_off_and_on_preserve_post_and_channel_details(editor, workspace, user, n
 
 
 @pytest.mark.parametrize("role", ["editor", "contributor", "client", "viewer"])
-def test_read_only_roles_cannot_mutate_channels(editor, workspace, user, role):
+def test_read_only_roles_cannot_access_channel_settings(editor, workspace, user, role):
     membership = WorkspaceMembership.objects.get(user=user, workspace=workspace)
     membership.workspace_role = role
     membership.save()
     account = create_manual_channel(workspace, "custom", "Forendors")
     response = editor.get(url(workspace))
-    assert response.status_code == 200
-    assert b"Add a channel" not in response.content
-    assert b"Edit channel" not in response.content
-    assert b"Turn off" not in response.content
+    assert response.status_code == 403
     for target, data in [
         (url(workspace), {"platform": "instagram", "name": "Other"}),
         (url(workspace, "edit", account), {"name": "Changed"}),

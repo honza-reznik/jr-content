@@ -51,8 +51,9 @@ class InvitationCopyLinkTests(TestCase):
         member.save(update_fields=["last_workspace_id"])
         self.client.force_login(member)
         response = self.client.get(reverse("members:list"), follow=True)
-        self.assertNotContains(response, "test-invite-token")
-        self.assertNotContains(response, "data-copy-text=")
+        self.assertEqual(response.status_code, 403)
+        self.assertNotContains(response, "test-invite-token", status_code=403)
+        self.assertNotContains(response, "data-copy-text=", status_code=403)
 
     def test_htmx_create_and_resend_render_copy_link_without_missing_attribute(self):
         self.client.force_login(self.user)
@@ -62,11 +63,13 @@ class InvitationCopyLinkTests(TestCase):
                     reverse("members:invite"),
                     {"email": self.invite.email},
                     HTTP_HX_REQUEST="true",
+                    HTTP_X_JRC_ORGANIZATION_ID=str(self.org.pk),
                 )
             with patch("apps.members.views.services.resend_invitation", return_value=None):
                 resent = self.client.post(
                     reverse("members:resend_invite", kwargs={"invitation_id": self.invite.pk}),
                     HTTP_HX_REQUEST="true",
+                    HTTP_X_JRC_ORGANIZATION_ID=str(self.org.pk),
                 )
 
         expected = "https://public.example/jrc/members/invite/test-invite-token/accept/"

@@ -48,6 +48,9 @@ def user(db):
         name="R2",
         tos_accepted_at=timezone.now(),
     )
+    from apps.accounts.signals import provision_organization_and_workspace
+
+    provision_organization_and_workspace(u)
     om = u.org_memberships.first()
     om.org_role = OrgMembership.OrgRole.OWNER
     om.save(update_fields=["org_role"])
@@ -440,6 +443,8 @@ class TestMalformedUuidHandling:
                 "name": "bad-uuid",
                 "workspace_id": "not-a-uuid",
                 "social_account_ids": ["00000000-0000-0000-0000-000000000000"],
+                # The rendered form names its organization (P1-B23).
+                "organization_id": str(user.org_memberships.get().organization_id),
             },
             follow=True,
         )
