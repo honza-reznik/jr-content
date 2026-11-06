@@ -32,6 +32,10 @@ def _no_network(db, monkeypatch):
 
 @pytest.fixture
 def workspace(organization, user):
-    workspace = Workspace.objects.create(organization=organization, name="Production test")
+    # P1-B32: the production flow includes Review, which "No approvals" does not have; "Optional approvals"
+    # behaves like "No approvals" otherwise (drafts may go out). Mode-specific tests set their own mode.
+    workspace = Workspace.objects.create(
+        organization=organization, name="Production test", approval_workflow_mode="optional"
+    )
     WorkspaceMembership.objects.create(workspace=workspace, user=user, workspace_role="owner")
     return workspace

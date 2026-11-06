@@ -11,8 +11,31 @@ def require_authored_content(permissions, user_id, author_id):
         raise PermissionDenied("You cannot change this content.")
 
 
+def can_schedule(membership):
+    """Who may plan content to go out: set its publication date, schedule, queue or publish it now (P1-B32).
+
+    The one rule for every planning path: JR detail (Set date) and board (Ready), composer (Schedule,
+    Publish now, Add to queue / Prioritise, chip), calendar (drag, re-timing, bulk Publish), CSV import
+    with dates, REST and MCP. It needs ``publish_directly``; a viewer never plans, even with a custom
+    role. ``membership`` may also be an API key's membership: the plain key shim has no
+    ``workspace_role`` and its permissions already are the key's grants AND the issuer's. Whether the
+    copy itself may go out yet is decided separately by the approval workflow (``release_blocker``).
+    """
+    if not membership or getattr(membership, "workspace_role", None) == "viewer":
+        return False
+    user = getattr(membership, "user", None)
+    workspace = getattr(membership, "workspace", None)
+    if user is None or not user.is_active or workspace is None or workspace.is_archived:
+        return False
+    return bool(membership.effective_permissions.get("publish_directly", False))
+
+
 def can_publish_directly(membership):
-    """Whether this workspace member may publish content and download final videos."""
+    """Whether this workspace member may mark content as published and download final videos.
+
+    Wider than ``can_schedule``: the client also marks manual publications and downloads the final
+    files (JR rule since F5-B07), but never plans them.
+    """
     return bool(
         membership
         and membership.workspace_role != "viewer"
@@ -44,6 +67,16 @@ def approval_required(workspace):
     draft directly; in "Optional" a review is offered but not required.
     """
     return workspace.approval_workflow_mode in APPROVAL_REQUIRED_MODES
+
+
+def review_available(workspace):
+    """Is there a review step at all? Not in "No approvals" (PM decision 6. 11., P1-B32).
+
+    The one source for offering and accepting a submission to review: the board and JR detail
+    (``available_moves``, also behind REST/MCP stage), the composer buttons and the approval
+    services every submission goes through. "Optional approvals" keeps the voluntary review.
+    """
+    return workspace.approval_workflow_mode != "none"
 
 
 def client_approval_required(workspace):

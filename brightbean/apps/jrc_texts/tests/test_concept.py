@@ -302,6 +302,10 @@ def test_concept_version_notifies_like_the_script(workspace, user):
     assert notifications[0].data["action_url"] == content_path(post, "concept")
     # The client side is told only once the content is in Review, the same as for the script.
     assert not Notification.objects.filter(user=ella).exists()
+    # P1-B32: Review exists only where the approval mode has one.
+    workspace.approval_workflow_mode = "optional"
+    workspace.save(update_fields=["approval_workflow_mode"])
+    post.workspace.refresh_from_db()
     move_content(post, "review", user, expected_stage="idea")
     Notification.objects.all().delete()
     save_concept(login(user), post, "Second idea")

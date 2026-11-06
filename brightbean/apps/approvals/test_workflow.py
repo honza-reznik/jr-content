@@ -33,7 +33,9 @@ def _make_user(email):
 class ApprovalWorkflowBase(TestCase):
     def setUp(self):
         self.org = Organization.objects.create(name="Org")
-        self.ws = Workspace.objects.create(organization=self.org, name="WS")
+        # P1-B32: the approval workflow needs a mode with a review step ("No approvals" has none);
+        # "Optional approvals" lets drafts out like "No approvals" does.
+        self.ws = Workspace.objects.create(organization=self.org, name="WS", approval_workflow_mode="optional")
         self.reviewer = _make_user("reviewer@example.com")
         self.author = _make_user("author@example.com")
         OrgMembership.objects.create(user=self.reviewer, organization=self.org, org_role="owner")
@@ -330,6 +332,8 @@ class ApprovedEditReReviewTests(ApprovalWorkflowBase):
         from datetime import timedelta
 
         when = timezone.now() + timedelta(days=1)
+        # P1-B32: scheduling needs publishing rights (the reviewer), not the contributor author's.
+        self.client.force_login(self.reviewer)
         resp = self.client.post(
             self.save_url,
             data=self._payload(
@@ -348,6 +352,8 @@ class ApprovedEditReReviewTests(ApprovalWorkflowBase):
         from datetime import timedelta
 
         when = timezone.now() + timedelta(days=1)
+        # P1-B32: scheduling needs publishing rights (the reviewer), not the contributor author's.
+        self.client.force_login(self.reviewer)
         resp = self.client.post(
             self.save_url,
             data=self._payload(

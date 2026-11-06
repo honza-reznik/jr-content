@@ -38,7 +38,10 @@ def _jrc_mode():
 
 @pytest.fixture
 def workspace(organization, user):
-    workspace = Workspace.objects.create(organization=organization, name="Content API")
+    # P1-B32: stage moves include Review, which exists only where the mode has a review step.
+    workspace = Workspace.objects.create(
+        organization=organization, name="Content API", approval_workflow_mode="optional"
+    )
     WorkspaceMembership.objects.create(workspace=workspace, user=user, workspace_role="owner")
     return workspace
 

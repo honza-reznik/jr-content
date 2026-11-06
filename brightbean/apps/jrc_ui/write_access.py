@@ -313,6 +313,12 @@ def enforce_write_rule(request, rule, kwargs):
     permissions = membership.effective_permissions
     if any(not permissions.get(key, False) for key in rule.permissions):
         raise PermissionDenied("You cannot perform this action in this workspace.")
+    if "publish_directly" in rule.permissions:
+        # P1-B32: planning (queues and their slots) follows the one planning rule, as every other path.
+        from apps.members.permissions import can_schedule
+
+        if not can_schedule(membership):
+            raise PermissionDenied("You cannot perform this action in this workspace.")
     # Idea create/edit and form saves can upload files as well as write text.
     # A custom role's text permission must never imply upload_media.
     if request.resolver_match.namespace == "composer" and request.FILES and not permissions.get("upload_media", False):
@@ -329,8 +335,11 @@ def enforce_write_rule(request, rule, kwargs):
             return
         if not permissions.get("create_posts", False):
             raise PermissionDenied("Content editing permission required.")
-        if target in {"scheduled", "publishing", "published"} and not permissions.get("publish_directly", False):
-            raise PermissionDenied("Publishing permission required.")
+        if target in {"scheduled", "publishing", "published"}:
+            from apps.members.permissions import can_schedule
+
+            if not can_schedule(membership):
+                raise PermissionDenied("Publishing permission required.")
         _require_author(request, membership, "post", kwargs)
     if rule.owned_object:
         _require_author(request, membership, rule.owned_object, kwargs)

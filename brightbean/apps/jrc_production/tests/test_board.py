@@ -255,7 +255,7 @@ def test_review_and_approval_use_brightbean_services(post, user):
     assert set(ApprovalAction.objects.values_list("action", flat=True)) == {"submitted", "approved"}
 
 
-@pytest.mark.parametrize("mode", ["none", "required_internal", "required_internal_and_client"])
+@pytest.mark.parametrize("mode", ["optional", "required_internal", "required_internal_and_client"])
 def test_manual_plan_uses_approved_state_and_syncs_every_channel(post, workspace, user, mode):
     extra = create_manual_channel(workspace, "custom", "Ella Forendors")
     PlatformPost.objects.create(post=post, social_account=extra)

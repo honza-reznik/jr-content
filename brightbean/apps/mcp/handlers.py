@@ -27,7 +27,7 @@ from apps.api.limits import check_platform_quota
 from apps.api.pagination import decode_offset_cursor, encode_offset_cursor
 from apps.api.schemas import PostResponse
 from apps.composer.models import PlatformPost, Post
-from apps.composer.services import create_post, transition_platform_post
+from apps.composer.services import copies_to_schedule, create_post, transition_platform_post
 from apps.inbox.models import InboxMessage, InboxReply
 from apps.inbox.services import (
     ReplyStateError,
@@ -67,6 +67,14 @@ def _require_perm(context: dict[str, Any], permission_key: str) -> None:
     membership = context["membership"]
     if not membership.effective_permissions.get(permission_key, False):
         raise JsonRpcError(INVALID_PARAMS, f"Permission denied: {permission_key}")
+
+
+def _require_schedule(context: dict[str, Any]) -> None:
+    """Planning content needs the same right as everywhere else (``can_schedule``, P1-B32)."""
+    from apps.members.permissions import can_schedule
+
+    if not can_schedule(context["membership"]):
+        raise JsonRpcError(INVALID_PARAMS, "Permission denied: publish_directly")
 
 
 def _require_post_edit(context, post):
@@ -708,7 +716,7 @@ def _schedule_post(args: dict, context: dict[str, Any]) -> dict:
     # on ``publish_directly`` (see apps/composer/views.py:797). Tools/
     # call to ``schedule_post`` requires the same.
     _require_perm(context, "create_posts")
-    _require_perm(context, "publish_directly")
+    _require_schedule(context)
     api_key = context["api_key"]
     if "social_account_id" not in args:
         raise JsonRpcError(INVALID_PARAMS, "social_account_id is required")
@@ -967,7 +975,7 @@ register_tool(
 
 
 def _schedule_draft(args: dict, context: dict[str, Any]) -> dict:
-    """Promote every draft child of an existing post to ``scheduled``.
+    """Promote every draft or approved child of an existing post to ``scheduled``.
 
     Mirrors the REST ``POST /api/v1/posts/{post_id}/schedule`` route.
     Closes the asymmetry where MCP previously had no way to transition
@@ -981,7 +989,7 @@ def _schedule_draft(args: dict, context: dict[str, Any]) -> dict:
     _require_perm(context, "create_posts")
     # Same permission contract as the REST route: pushing a post into
     # the publisher's poll loop requires ``publish_directly``.
-    _require_perm(context, "publish_directly")
+    _require_schedule(context)
     if "post_id" not in args:
         raise JsonRpcError(INVALID_PARAMS, "post_id is required")
     if "scheduled_at" not in args:
@@ -991,9 +999,10 @@ def _schedule_draft(args: dict, context: dict[str, Any]) -> dict:
     api_key = context["api_key"]
     post = _get_post_for_key(api_key, args["post_id"])
     _require_post_edit(context, post)
-    drafts = [pp for pp in post.platform_posts.all() if pp.status == "draft"]
+    # Drafts and approved copies, as REST and the composer (P1-B32).
+    drafts = copies_to_schedule(post)
     if not drafts:
-        raise JsonRpcError(INVALID_PARAMS, "No draft platform posts to schedule")
+        raise JsonRpcError(INVALID_PARAMS, "No draft or approved platform posts to schedule")
 
     # Per-platform 24h quota check, one per child, BEFORE we mutate
     # anything — over-quota fails the whole call with no partial commit.
@@ -1025,8 +1034,9 @@ register_tool(
     Tool(
         name="schedule_draft",
         description=(
-            "Schedule an EXISTING draft post — transitions every draft child to scheduled "
-            "at the given UTC timestamp. Use this for the two-step flow "
+            "Schedule an EXISTING draft or approved post — transitions every draft or approved child "
+            "to scheduled at the given UTC timestamp (where the workspace requires approval, only "
+            "approved children may go out). Use this for the two-step flow "
             "'create_draft now, schedule_draft later'. For one-shot create-and-schedule, "
             "use schedule_post instead. Requires both create_posts and publish_directly. "
             "Refused when the post can't publish: accounts with requires_video need a video "

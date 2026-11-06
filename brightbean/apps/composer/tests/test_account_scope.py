@@ -466,6 +466,9 @@ class VideoOnlyPlatformTests(AccountScopeTestsBase):
         self.assertEqual(self.tt_pp.status, PlatformPost.Status.FAILED)
 
     def test_every_committing_action_is_checked(self):
+        # P1-B32: submitting for review exists only where the mode has a review step.
+        self.workspace.approval_workflow_mode = "optional"
+        self.workspace.save(update_fields=["approval_workflow_mode"])
         for action in ("schedule", "add_to_queue", "add_to_queue_priority", "submit_for_approval"):
             with self.subTest(action=action):
                 response = self.client.post(self.save_url, data=self._payload(action=action))

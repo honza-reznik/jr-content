@@ -41,6 +41,7 @@ from apps.api.schemas import (
 )
 from apps.composer.models import Post
 from apps.composer.services import (
+    copies_to_schedule,
     create_post,
     media_change_blocker,
     sync_post_scheduled_at,
@@ -67,6 +68,14 @@ def _require_perm(request: HttpRequest, key: str) -> None:
     membership = getattr(request, "workspace_membership", None)
     if membership is None or not membership.effective_permissions.get(key, False):
         raise HttpError(403, f"Permission denied: {key}")
+
+
+def _require_schedule(request: HttpRequest) -> None:
+    """Planning content needs the same right as everywhere else (``can_schedule``, P1-B32)."""
+    from apps.members.permissions import can_schedule
+
+    if not can_schedule(getattr(request, "workspace_membership", None)):
+        raise HttpError(403, "Permission denied: publish_directly")
 
 
 def _resolve_account(request: HttpRequest, social_account_id: uuid.UUID) -> SocialAccount:
@@ -175,7 +184,7 @@ def create(request, payload: CreatePostRequest):
     # that contract — a key issued with only ``create_posts`` can park
     # drafts but cannot send them into the publisher's poll loop.
     if payload.action == "schedule":
-        _require_perm(request, "publish_directly")
+        _require_schedule(request)
 
     # ---- Cheap validation runs BEFORE we touch the idempotency table.
     # The motivation: an early failure here (403, 422) would otherwise
@@ -354,7 +363,7 @@ def update(request, post_id: uuid.UUID, payload: UpdatePostRequest):
     # permission, and the PATCH route must do the same to stay consistent.
     # Codex PR #53 security review (round 4) caught this gap.
     if payload.scheduled_at is not None and post.platform_posts.filter(status="scheduled").exists():
-        _require_perm(request, "publish_directly")
+        _require_schedule(request)
 
     # ---- Validate-everything-first.
     #
@@ -447,24 +456,26 @@ def update(request, post_id: uuid.UUID, payload: UpdatePostRequest):
     return _post_to_response(request, post)
 
 
-@router.post("/{post_id}/schedule", response=PostResponse, summary="Schedule a draft")
+@router.post("/{post_id}/schedule", response=PostResponse, summary="Schedule a draft or approved post")
 def schedule(request, post_id: uuid.UUID, payload: ScheduleRequest):
     enforce_http_rate_limits(request, is_write=True)
     # Same ``publish_directly`` contract as the create-with-schedule
     # branch: only keys that can publish-directly may push a post into
     # the SCHEDULED state. See ``create``.
     _require_perm(request, "create_posts")
-    _require_perm(request, "publish_directly")
+    _require_schedule(request)
     post = _get_workspace_post(request, post_id, for_write=True)
     if not post.platform_posts.exists():
         raise HttpError(422, "Add a channel before scheduling content.")
 
-    # Schedule every draft child; a single-account key produces one child,
-    # but defensively we apply the transition to all draft children so we
-    # don't half-schedule.
-    drafts = list(post.platform_posts.filter(status="draft"))
+    # Schedule every child still waiting for a plan — drafts and approved
+    # copies, as the composer and the board do (P1-B32; the approval workflow
+    # is checked per copy in ``transition_platform_post``). A single-account
+    # key produces one child, but defensively we apply the transition to all
+    # of them so we don't half-schedule.
+    drafts = copies_to_schedule(post)
     if not drafts:
-        raise HttpError(409, "No draft platform posts to schedule.")
+        raise HttpError(409, "No draft or approved platform posts to schedule.")
 
     # Quota check is per-account, so we evaluate it once per child before
     # we touch any state. Doing the checks first means an over-quota

@@ -89,11 +89,13 @@ Shows all scheduled platform posts grouped by date. Loaded via HTMX into #tab-co
                             {{ pp.post.created_at|timesince }} ago
                         </span>
                         <div class="flex items-center gap-1.5">
+                            {% if can_schedule %}
                             <a href="{% url 'composer:compose_edit' workspace_id=workspace.id post_id=pp.post_id %}?account={{ pp.social_account_id }}&action=publish_now"
                                class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-full border border-stone-200 text-stone-600 hover:border-stone-300 hover:text-stone-800 transition-colors">
                                 <svg class="w-3.5 h-3.5 rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
                                 Publish
                             </a>
+                            {% endif %}
                             {% include "calendar/partials/_post_actions_menu.html" with post_id=pp.post_id account_id=pp.social_account_id %}
                         </div>
                     </div>

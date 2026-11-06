@@ -11,7 +11,7 @@ from apps.composer.services import remove_platform_posts, sync_post_scheduled_at
 from apps.jrc_channels.models import ChannelProfile
 from apps.members.models import WorkspaceMembership
 from apps.members.note_visibility import note_audience
-from apps.members.permissions import can_publish_directly, release_blocker
+from apps.members.permissions import can_publish_directly, can_schedule, release_blocker, review_available
 
 from .models import ManualPublication, PipelineStage, PostProduction, ProductionStage, StageChange
 
@@ -168,7 +168,9 @@ def available_moves(post, membership):
         moves.extend(stage for stage in ProductionStage.values if stage != pipeline_stage(post))
     if children and can_edit and statuses <= {"draft", "changes_requested", "rejected", "approved", "scheduled"}:
         if statuses <= {"draft", "changes_requested", "rejected"}:
-            moves.append(PipelineStage.REVIEW)
+            if review_available(post.workspace):
+                # P1-B32: no review step in "No approvals" (the same rule refuses it in the service).
+                moves.append(PipelineStage.REVIEW)
             if statuses & {"changes_requested", "rejected"}:
                 moves.append(ProductionStage.EDITING)
         else:
@@ -177,7 +179,7 @@ def available_moves(post, membership):
         moves.append(PipelineStage.APPROVED)
     if (
         children
-        and permissions.get("publish_directly", False)
+        and can_schedule(membership)
         and statuses <= {"draft", "approved"}
         and not any(release_blocker(post.workspace, status) for status in statuses)
     ):
@@ -294,7 +296,7 @@ def set_publication_date(post, platform_post_id, user, scheduled_at):
     """Plan one manual copy using the board's scheduling permission and state rules."""
     post = Post.objects.select_for_update(of=("self",)).select_related("workspace").get(pk=post.pk)
     membership = content_membership(post.workspace, user)
-    if membership.workspace_role == "viewer" or not membership.effective_permissions.get("publish_directly", False):
+    if not can_schedule(membership):
         raise PermissionDenied("You cannot schedule content.")
     child = (
         post.platform_posts.select_for_update(of=("self",))
