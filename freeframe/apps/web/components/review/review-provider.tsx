@@ -11,7 +11,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { useReviewStore } from "@/stores/review-store";
 import type { AssetResponse, AssetVersion, Comment } from "@/types";
 
@@ -35,6 +35,8 @@ interface ReviewContextValue {
   comments: Comment[];
   isLoading: boolean;
   error: string | null;
+  /** HTTP status of the failed asset load (403, 404, ...), null when it did not fail with one. */
+  errorStatus: number | null;
   addComment: (payload: CreateCommentPayload) => Promise<Comment>;
   resolveComment: (commentId: string) => Promise<void>;
   seekTo: (time: number) => void;
@@ -71,6 +73,7 @@ export function ReviewProvider({
   const [comments, setComments] = useState<Comment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [errorStatus, setErrorStatus] = useState<number | null>(null);
   const pauseHandlerRef = useRef<(() => void) | null>(null);
 
   const { setCurrentAsset, setCurrentVersion, setPlayheadTime, currentVersion } =
@@ -197,6 +200,8 @@ export function ReviewProvider({
     } catch (err) {
       if (!mountedRef.current) return;
       setError(err instanceof Error ? err.message : "Failed to load asset");
+      // The page shows a message per status instead of loading forever (JR Content P1-B26).
+      setErrorStatus(err instanceof ApiError ? err.status : null);
     }
   }, [assetId, shareToken, shareSessionParam, preferredVersionId, setCurrentAsset, setCurrentVersion]);
 
@@ -249,6 +254,7 @@ export function ReviewProvider({
   useEffect(() => {
     setIsLoading(true);
     setError(null);
+    setErrorStatus(null);
     // In share mode, comments are version-scoped and fetched by the effect below once
     // the version is known — so the first (and only) comments request is already scoped
     // to the viewed version, avoiding an all-versions flash on open.
@@ -381,6 +387,7 @@ export function ReviewProvider({
       comments,
       isLoading,
       error,
+      errorStatus,
       addComment,
       resolveComment,
       seekTo,
@@ -396,6 +403,7 @@ export function ReviewProvider({
       comments,
       isLoading,
       error,
+      errorStatus,
       addComment,
       resolveComment,
       seekTo,

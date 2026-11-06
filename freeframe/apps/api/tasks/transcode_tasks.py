@@ -45,12 +45,54 @@ def _database_unavailable(exc):
 
 
 _PENDING_FAILURES = "transcode:pending-failures"
+# Latest conversion percent per version (JR Content P1-B26). Read by the version
+# list so a client polling it can show progress; SSE alone reaches only an open
+# FreeFrame page. Expires on its own if a worker dies mid-conversion.
+_PROGRESS_KEY = "transcode:progress:{}"
+_PROGRESS_TTL_SECONDS = 6 * 3600
 _DATABASE_FAILURE = "Video conversion stopped after repeated database connection failures. Please upload the video again."
 
 
 def _failure_store():
     from ..services.event_service import _get_sync_redis
     return _get_sync_redis()
+
+
+def _record_progress(version_id, percent):
+    """Best-effort: progress is information, never a reason to fail a conversion."""
+    try:
+        _failure_store().set(_PROGRESS_KEY.format(version_id), int(percent), ex=_PROGRESS_TTL_SECONDS)
+        return True
+    except Exception:
+        log.warning("Could not record conversion progress for version %s", version_id)
+        return False
+
+
+def _clear_progress(version_id):
+    try:
+        _failure_store().delete(_PROGRESS_KEY.format(version_id))
+    except Exception:
+        log.warning("Could not clear conversion progress for version %s", version_id)
+
+
+def _unreadable(exc):
+    """A failure that says the uploaded bytes are not usable media (P1-B26).
+
+    Such a file reads the same on every attempt, so retrying only delays the
+    answer -- behind every other conversion in the single-slot queue. Anything
+    not positively recognised stays retryable.
+    """
+    import subprocess
+    from packages.transcoder.source_check import UnreadableSource, is_unreadable_source
+
+    if isinstance(exc, UnreadableSource):
+        return True
+    if isinstance(exc, subprocess.CalledProcessError):
+        stderr = exc.stderr
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", "replace")
+        return is_unreadable_source(stderr or "")
+    return False
 
 
 def _close_session(db):
@@ -163,6 +205,7 @@ def process_asset(self, asset_id: str, version_id: str):
 
         version.processing_status = ProcessingStatus.ready
         db.commit()
+        _clear_progress(version_id)
         _publish_event(str(asset.project_id), "transcode_complete", {
             "asset_id": asset_id,
             "version_id": version_id,
@@ -173,6 +216,12 @@ def process_asset(self, asset_id: str, version_id: str):
         from packages.transcoder.redact import redact_presigned_urls
 
         error = _DATABASE_FAILURE if _database_unavailable(exc) else redact_presigned_urls(str(exc))
+        _clear_progress(version_id)
+        if _unreadable(exc):
+            # Permanent: record it now, without the retries meant for a failed read.
+            log.warning("Version %s is not usable media; failing without retry: %s", version_id, error)
+            _record_failure(asset_id, version_id, error)
+            return
         if final_attempt:
             _record_failure(asset_id, version_id, error)
             raise
@@ -213,6 +262,8 @@ def _process_video(
     # draining ffmpeg's stdout -- so paying it ~100 times would stall the encode
     # behind a full pipe. One failure is enough to stop trying for this job.
     progress_ok = {"enabled": True, "high_water": -1}
+    # Started, 0 %: distinguishes a running conversion from one still queued.
+    _record_progress(str(version.id), 0)
 
     def _on_progress(percent: int) -> None:
         if not progress_ok["enabled"]:
@@ -223,11 +274,12 @@ def _process_video(
         if percent <= progress_ok["high_water"]:
             return
         progress_ok["high_water"] = percent
+        recorded = _record_progress(str(version.id), percent)
         delivered = _publish_event(str(asset.project_id), "transcode_progress", {
             "asset_id": str(asset.id),
             "percent": percent,
         })
-        if delivered is False:
+        if delivered is False or not recorded:
             progress_ok["enabled"] = False
 
     job = TranscodeJob(
@@ -257,6 +309,9 @@ def _process_video(
         return
 
     if not result.success:
+        if result.unreadable_source:
+            from packages.transcoder.source_check import UnreadableSource
+            raise UnreadableSource(f"Transcode failed: {result.error}")
         raise RuntimeError(f"Transcode failed: {result.error}")
 
     media_file.s3_key_processed = result.hls_prefix

@@ -32,6 +32,9 @@ class AssetVersionResponse(BaseModel):
     # When the upload last moved. Lets a client that only has history to go on
     # tell an upload still running on another device from one that stopped.
     last_activity_at: Optional[datetime] = None
+    # JR Content P1-B26: how far a running conversion is (0-100). None while the
+    # version waits in the queue, after it finished, or when it is not known.
+    processing_percent: Optional[int] = None
     files: list[MediaFileResponse] = []
     model_config = {"from_attributes": True}
 

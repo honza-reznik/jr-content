@@ -14,6 +14,7 @@ import boto3
 from botocore.config import Config
 from .base import BaseTranscoder, TranscodeJob, TranscodeResult, VideoMetadata
 from .redact import redact_presigned_urls, redacted_timeout
+from .source_check import is_unreadable_source
 
 # FFmpeg's uppercase `V` excludes streams flagged with the attached_pic disposition.
 _PRIMARY_VIDEO_STREAM = "V:0"
@@ -2559,7 +2560,10 @@ class FFmpegTranscoder(BaseTranscoder):
         except Exception as e:
             # The runners already scrub what they raise; this catches anything
             # else on its way to the SSE event and the logs.
-            return TranscodeResult(success=False, error=redact_presigned_urls(str(e)))
+            error = redact_presigned_urls(str(e))
+            return TranscodeResult(
+                success=False, error=error, unreadable_source=is_unreadable_source(error),
+            )
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
 

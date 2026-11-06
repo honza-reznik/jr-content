@@ -54,6 +54,11 @@ class TranscodeResult:
     thumbnail_keys: list[str] = field(default_factory=list)
     waveform_key: Optional[str] = None
     error: Optional[str] = None
+    # True when the error says the uploaded bytes are not usable media (JR Content
+    # P1-B26): no container, no decodable stream, a cut-off file. Reading the
+    # same bytes again cannot help, so the caller fails at once instead of
+    # retrying. A failed *read* (storage, network, timeout) leaves this False.
+    unreadable_source: bool = False
     duration_seconds: Optional[float] = None
     width: Optional[int] = None
     height: Optional[int] = None

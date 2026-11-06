@@ -652,6 +652,8 @@ def complete_upload(
         # Read the ids before the commit: `expire_on_commit` is on, so touching
         # them afterwards costs a fresh SELECT per completion.
         asset_id, version_id = version.asset_id, version.id
+        # The content, not the extension, decides whether a conversion is queued.
+        _reject_unplayable(db, version, media_file, current_user)
         _reconcile_size()
 
         # Claim the version rather than assigning to it. The status check above is
@@ -821,6 +823,73 @@ def complete_upload(
             listed - started, assembled - listed, finished - assembled,
         )
     return response
+
+
+# JR Content P1-B26: a completed upload is checked by content before it is queued.
+# Short limits: this runs inside the request, and running out of time only means
+# "could not tell", which leaves the decision to the conversion.
+UNPLAYABLE_DETAIL = (
+    "This file is not a video that can be played. "
+    "Check that it is a complete video file and upload it again."
+)
+SOURCE_PROBE_SECONDS = 4.0
+SOURCE_DECODE_SECONDS = 6.0
+
+
+def _reject_unplayable(db: Session, version: AssetVersion, media_file: MediaFile, current_user: User) -> None:
+    """Refuse an assembled upload whose bytes are not usable media, before anything is queued.
+
+    The extension and the browser's type said "video"; only the content can say
+    otherwise. An unreadable file is thrown away exactly like a discarded upload
+    (the version is soft-deleted, its bytes removed) and answered with 422, so
+    it never becomes a version that sits at "processing". A check that cannot
+    decide -- storage slow or unreachable -- lets the upload through; the
+    conversion then answers with its own bounded retries.
+    """
+    from packages.transcoder.source_check import UNKNOWN, check_media_source
+    from ..services.s3_service import generate_internal_presigned_get_url
+
+    # The type recorded at initiate, as for the asset itself (mime_to_asset_type).
+    # Images are converted by a different pipeline and are not probed here.
+    mime = media_file.mime_type
+    if not isinstance(mime, str) or not mime.startswith(("video/", "audio/")):
+        return
+    try:
+        url = generate_internal_presigned_get_url(media_file.s3_key_raw, expires_in=300)
+    except Exception:  # noqa: BLE001 - the conversion will read it again
+        logger.warning("could not sign a probe address for upload %s", version.id, exc_info=True)
+        return
+    check = check_media_source(url, probe_timeout=SOURCE_PROBE_SECONDS, decode_timeout=SOURCE_DECODE_SECONDS)
+    if not check.unreadable:
+        if check.verdict == UNKNOWN:
+            logger.warning("content check of upload %s was inconclusive: %s", version.id, check.reason)
+        return
+
+    # Same lock and re-read as a discard: a concurrent completion may have
+    # claimed the version during the probe, and that one must not be deleted.
+    locked = (
+        db.query(AssetVersion)
+        .filter(AssetVersion.id == version.id)
+        .populate_existing()
+        .with_for_update()
+        .first()
+    )
+    if locked is not None and locked.deleted_at is None and locked.processing_status != ProcessingStatus.uploading:
+        db.rollback()
+        return
+    if locked is not None and locked.deleted_at is None:
+        from ..tasks.cleanup_tasks import _dispose_version_files, _strip_asset_with_no_versions
+
+        asset_id = locked.asset_id
+        _dispose_version_files(db, locked)
+        db.flush()
+        stripped = _may_remove_asset(db, asset_id, current_user) and _strip_asset_with_no_versions(db, asset_id)
+        db.commit()
+        logger.warning(
+            "upload %s refused by content check (%s); version discarded, asset %s %s",
+            version.id, check.reason[:300], asset_id, "removed with it" if stripped else "kept",
+        )
+    raise HTTPException(status_code=422, detail=UNPLAYABLE_DETAIL)
 
 
 def _trigger_processing(asset_id: uuid.UUID, version_id: uuid.UUID):

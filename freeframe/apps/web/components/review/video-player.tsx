@@ -39,6 +39,12 @@ interface VideoPlayerProps {
   className?: string;
   /** Pre-fetched stream URL (for share mode — skips authenticated API call) */
   initialStreamUrl?: string | null;
+  /**
+   * Measured height in px of the controls under the stage (progress area with
+   * its comment markers, and the transport row). The review screens subtract it
+   * when they cap the stage above the mobile comment sheet (P1-B26).
+   */
+  onControlsHeight?: (px: number) => void;
 }
 
 // ─── Video frame constraint ──────────────────────────────────────────────────
@@ -132,8 +138,29 @@ export function VideoPlayer({
   overlay,
   className,
   initialStreamUrl,
+  onControlsHeight,
 }: VideoPlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const progressRowRef = useRef<HTMLDivElement>(null);
+  const transportRowRef = useRef<HTMLDivElement>(null);
+
+  // Report the real height of everything below the stage. A row of comment
+  // markers appears once there is a comment, and the transport row grows by the
+  // safe-area inset on a phone, so no constant is right for every case.
+  useEffect(() => {
+    if (!onControlsHeight) return;
+    const rows = [progressRowRef.current, transportRowRef.current].filter(
+      (el): el is HTMLDivElement => el !== null,
+    );
+    if (!rows.length) return;
+    const report = () =>
+      onControlsHeight(rows.reduce((sum, el) => sum + el.getBoundingClientRect().height, 0));
+    report();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(report);
+    rows.forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, [onControlsHeight]);
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [loop, setLoop] = useState(false);
 
@@ -470,7 +497,7 @@ export function VideoPlayer({
       </div>
 
       {/* Progress bar */}
-      <div className="shrink-0 bg-bg-primary">
+      <div ref={progressRowRef} data-player-controls="progress" className="shrink-0 bg-bg-primary">
         <ProgressBar
           currentTime={currentTime}
           duration={duration}
@@ -483,6 +510,8 @@ export function VideoPlayer({
 
       {/* Bottom transport bar (matches audio player style) */}
       <div
+        ref={transportRowRef}
+        data-player-controls="transport"
         className={cn(
           "flex items-center justify-between bg-bg-secondary/80 border-t border-border shrink-0",
           // min-h, not h: the row carries its own safe-area padding below, and a
