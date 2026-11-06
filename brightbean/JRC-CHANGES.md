@@ -761,3 +761,23 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
 - `BudgetedEmailBackend` hlásí pevně danou kategorii chyby a číselný SMTP/TLS kód. Nepropouští text odpovědi serveru,
   adresy ani přihlašovací údaje do výjimky či logu.
 - `make test-smtp-tls` ověřuje oba režimy přes skutečný relay s lokálním certifikátem a autentizací; zahrnuto v `make test`.
+
+
+## 2026-11-06 · P1-B25 — společná kontrola zápisů a dokončení revize
+
+- `jrc_ui.write_access`: registr webových zápisů odmítá neznámé cesty a kontroluje práva, aktivní členství,
+  workspace a autorství. Servisní cesty již kontrolu členství nepřeskakují; nástěnka ověřuje cíl z formuláře.
+- `composer.views`: společná autorizace zamčeného cíle pro uložení i autosave z URL/formuláře; ochrana
+  publikovaných dat a nové schválení po změně se uplatní v obou případech. Neplatný cíl končí 404,
+  účty připojované autosave jsou omezené na cílový workspace. Schvalovací přechody chipů používají služby approvals.
+- `members.permissions`, `approvals`, `jrc_production`, `notifications`: společné pravidlo fáze a režimu
+  schvalování (klient jen po týmu, viewer nikdy), atomické hromadné rozhodnutí, společná pravidla komentování
+  a moderace. Viewer je jen pro čtení; klient nesmaže cizí komentář. Stejná pravidla řídí formuláře.
+- Testy registru zahrnují všechny webové cesty i klasifikaci čtecích MCP nástrojů; nezávislé regresní případy
+  pokrývají skutečné cíle, fáze, komentáře, servisní vstupy a odmítnutí bez změny dat. Docker spouštěče
+  v `scripts/P1-B25/` omezují testy i Chromium na 3 GiB, Node 2048 MiB a běh kratší než 10 minut.
+- Dokončení (Claude Opus): hromadné rozhodnutí autorizuje všechny vybrané obsahy před prvním přechodem
+  (žádné upozornění o vrácené změně); tým v jednostupňovém režimu rozhodne i kopie zbylé v `pending_client`.
+  Brána: anonymní zápis přesměruje na přihlášení jako `login_required` (kromě tokenů připojení), workspace
+  z těla formuláře bez členství je 404, archivovaný workspace 403 (jako RBAC), komentářové zápisy jedním
+  příznakem `comment`. Testy upozornění o rozhodnutí klienta vedou obsah do klientské fáze dvoustupňového režimu.

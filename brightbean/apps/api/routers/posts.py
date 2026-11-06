@@ -115,7 +115,7 @@ def _post_to_response(request: HttpRequest, post: Post) -> PostResponse:
     return PostResponse.from_post(post, include_internal_notes=_can_view_internal_notes(request))
 
 
-def _get_workspace_post(request: HttpRequest, post_id: uuid.UUID) -> Post:
+def _get_workspace_post(request: HttpRequest, post_id: uuid.UUID, *, for_write=False) -> Post:
     """Fetch a Post that belongs to the key's workspace **and** whose every
     ``PlatformPost`` child targets a ``SocialAccount`` in the key's
     allowlist.
@@ -146,6 +146,17 @@ def _get_workspace_post(request: HttpRequest, post_id: uuid.UUID) -> Post:
     # Foreign child → leaking even via a read would be a confused-deputy.
     if not pp_account_ids.issubset(allowed_ids):
         raise Http404()
+    if for_write:
+        from django.core.exceptions import PermissionDenied
+
+        from apps.members.permissions import require_authored_content
+
+        try:
+            require_authored_content(
+                request.workspace_membership.effective_permissions, request.user.pk, post.author_id
+            )
+        except PermissionDenied as exc:
+            raise HttpError(403, str(exc)) from exc
     return post
 
 
@@ -323,7 +334,7 @@ def retrieve(request, post_id: uuid.UUID):
 def update(request, post_id: uuid.UUID, payload: UpdatePostRequest):
     enforce_http_rate_limits(request, is_write=True)
     _require_perm(request, "create_posts")  # mirrors composer's create-or-edit perm
-    post = _get_workspace_post(request, post_id)
+    post = _get_workspace_post(request, post_id, for_write=True)
 
     # The post-level caption is the starting text of every channel copy of JR Content; once a copy has
     # versions it would change nothing, before that it would move the text without a version (F9-B01).
@@ -444,7 +455,7 @@ def schedule(request, post_id: uuid.UUID, payload: ScheduleRequest):
     # the SCHEDULED state. See ``create``.
     _require_perm(request, "create_posts")
     _require_perm(request, "publish_directly")
-    post = _get_workspace_post(request, post_id)
+    post = _get_workspace_post(request, post_id, for_write=True)
     if not post.platform_posts.exists():
         raise HttpError(422, "Add a channel before scheduling content.")
 
@@ -485,7 +496,7 @@ def schedule(request, post_id: uuid.UUID, payload: ScheduleRequest):
 def cancel(request, post_id: uuid.UUID):
     enforce_http_rate_limits(request, is_write=True)
     _require_perm(request, "create_posts")
-    post = _get_workspace_post(request, post_id)
+    post = _get_workspace_post(request, post_id, for_write=True)
 
     scheduled_children = list(post.platform_posts.filter(status="scheduled"))
     if not scheduled_children:

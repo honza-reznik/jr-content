@@ -294,6 +294,14 @@ def to_review(post, user):
     return move_content(post, "review", user, expected_stage="idea")
 
 
+def to_client_step(post, everyone):
+    """P1-B25: a client decides only at the client step of the two-stage workflow."""
+    set_mode(post.workspace, TWO_STAGE)
+    to_review(post, everyone["owner"])
+    move_content(post, "approved", everyone["owner"], expected_stage="review")
+    assert set(post.platform_posts.values_list("status", flat=True)) == {"pending_client"}
+
+
 def got(user, event_type=None):
     qs = Notification.objects.filter(user=user)
     if event_type:
@@ -502,13 +510,14 @@ def test_two_stage_submit_asks_the_team_first_and_the_client_afterwards(workspac
     assert NotificationDelivery.objects.filter(notification=ask, channel=Channel.IN_APP).exists()
 
 
-def test_single_stage_submit_asks_everyone_who_can_decide_including_the_client(workspace, everyone, content):
+def test_single_stage_submit_asks_only_team_deciders(workspace, everyone, content):
     set_mode(workspace, SINGLE)
 
     to_review(content, everyone["owner"])
 
     assert receivers(EventType.POST_SUBMITTED) == {"mia"}
-    assert receivers(EventType.CLIENT_APPROVAL_REQUESTED) == {"ella"}
+    assert receivers(EventType.CLIENT_APPROVAL_REQUESTED) == set()
+    assert got(everyone["client"]) == []
     assert got(everyone["viewer"]) == [] and got(everyone["editor"]) == [] and got(everyone["contributor"]) == []
 
 
@@ -553,8 +562,7 @@ def test_reminder_for_the_team_step_skips_the_client_in_two_stage_mode(workspace
 
 
 def test_client_approval_tells_the_team_with_a_link(workspace, everyone, content):
-    set_mode(workspace, SINGLE)
-    to_review(content, everyone["owner"])
+    to_client_step(content, everyone)
     Notification.objects.all().delete()
 
     move_content(content, "approved", everyone["client"], expected_stage="review")
@@ -569,8 +577,7 @@ def test_client_approval_tells_the_team_with_a_link(workspace, everyone, content
 
 
 def test_client_request_for_changes_quotes_the_comment_to_the_team_only(workspace, everyone, content):
-    set_mode(workspace, SINGLE)
-    to_review(content, everyone["owner"])
+    to_client_step(content, everyone)
     Notification.objects.all().delete()
 
     request_content_changes(content, everyone["client"], "Please cut the ending at 0:17.", expected_stage="review")
@@ -615,9 +622,8 @@ def test_team_request_for_changes_stays_with_the_author_and_hides_the_internal_n
 
 
 def test_hold_requested_by_the_client_reaches_only_the_team(workspace, everyone, content):
-    set_mode(workspace, SINGLE)
     other_client = person(workspace, "client", "Greta")
-    to_review(content, everyone["owner"])
+    to_client_step(content, everyone)
     move_content(content, "approved", everyone["client"], expected_stage="review")
     Notification.objects.all().delete()
 

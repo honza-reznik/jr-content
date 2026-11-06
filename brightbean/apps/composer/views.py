@@ -221,6 +221,18 @@ def _children_are_readonly(children):
     return derive_post_status([pp.status for pp in children]) in READONLY_STATUSES
 
 
+def _write_target(request, workspace, post_id):
+    """Authorize the actual locked target, independent of its transport."""
+    from apps.members.permissions import require_authored_content
+
+    if not _is_valid_uuid(str(post_id)):
+        raise Http404
+    post = get_object_or_404(Post.objects.select_for_update(), id=post_id, workspace=workspace)
+    membership = request.workspace_membership
+    require_authored_content(membership.effective_permissions, request.user.pk, post.author_id)
+    return post
+
+
 def _is_readonly_write(request, post):
     """Whether every PlatformPost this request would touch has already published.
 
@@ -1067,12 +1079,7 @@ def save_post(request, workspace_id, post_id=None):
     action = request.POST.get("action", "save_draft")
 
     if post_id:
-        post = get_object_or_404(Post.objects.select_for_update(), id=post_id, workspace=workspace)
-        # Enforce edit permissions: authors can edit their own, others need edit_others_posts
-        membership = request.workspace_membership
-        perms = membership.effective_permissions if membership else {}
-        if post.author != request.user and not perms.get("edit_others_posts", False):
-            raise PermissionDenied("You do not have permission to edit this post.")
+        post = _write_target(request, workspace, post_id)
         # Reject before the form binds, so an already-published post is never
         # mutated in memory. Catches every action, including the ``save_draft``
         # default a POST with no ``action`` falls back to.
@@ -1403,6 +1410,30 @@ def transition_platform_post(request, workspace_id, post_id, platform_post_id):
     if target in approval_states and not perms.get("approve_posts", False) and target != "pending_review":
         raise PermissionDenied("You do not have permission to make approval decisions.")
 
+    if target in {"pending_review", "approved", "pending_client", "changes_requested", "rejected"}:
+        from apps.approvals import services as approvals
+
+        if target == "pending_client" and workspace.approval_workflow_mode != "required_internal_and_client":
+            raise PermissionDenied("Client review is not enabled.")
+        try:
+            if target == "pending_review":
+                if pp.status == "pending_review":
+                    return JsonResponse({"ok": True, "status": pp.status, "noop": True})
+                if pp.status in {"approved", "changes_requested", "rejected"}:
+                    approvals.resubmit_post(pp, request.user, workspace)
+                else:
+                    approvals.submit_for_review(pp, request.user, workspace)
+            elif target in {"approved", "pending_client"}:
+                approvals.approve_post(pp, request.user, workspace)
+            elif target == "changes_requested":
+                approvals.request_changes(pp, request.user, workspace, request.POST.get("comment", ""))
+            else:
+                approvals.reject_post(pp, request.user, workspace, request.POST.get("comment", ""))
+        except ValueError as exc:
+            return JsonResponse({"error": str(exc)}, status=400)
+        pp.refresh_from_db()
+        return JsonResponse({"ok": True, "status": pp.status, "platform_post_id": str(pp.id)})
+
     if pp.status == target:
         return JsonResponse({"ok": True, "status": pp.status, "noop": True})
 
@@ -1444,35 +1475,18 @@ def autosave(request, workspace_id, post_id=None):
     """
     workspace = _get_workspace(request, workspace_id)
 
-    is_new = False
+    # Resolve first, then apply identical object checks regardless of whether
+    # the client sent the identity in the URL or the form body.
+    target_id = post_id or request.POST.get("_autosave_post_id", "").strip()
+    is_new = not target_id
     orig_content = None
-    if post_id:
-        post = get_object_or_404(Post.objects.select_for_update(), id=post_id, workspace=workspace)
-        # Enforce edit permissions on existing posts
-        membership = request.workspace_membership
-        perms = membership.effective_permissions if membership else {}
-        if post.author != request.user and not perms.get("edit_others_posts", False):
-            raise PermissionDenied("You do not have permission to edit this post.")
-        # A published post is read-only: silently stop saving rather than
-        # overwriting live content every 30 seconds. This returns 200 with the
-        # indicator markup on purpose — the response swaps into #autosave-status,
-        # so a 4xx here would fire the global error toast on every tick.
+    if target_id:
+        post = _write_target(request, workspace, target_id)
         if _is_readonly_write(request, post):
             return HttpResponse('<span class="text-xs text-gray-400">Read-only — not saved</span>')
         orig_content = _base_content_snapshot(post)
     else:
-        # Check if a previous autosave already created a draft for this session
-        # by looking for the post_id passed from the client
-        client_post_id = request.POST.get("_autosave_post_id", "").strip()
-        if client_post_id:
-            try:
-                post = Post.objects.select_for_update().get(id=client_post_id, workspace=workspace)
-            except Post.DoesNotExist:
-                post = Post(workspace=workspace, author=request.user)
-                is_new = True
-        else:
-            post = Post(workspace=workspace, author=request.user)
-            is_new = True
+        post = Post(workspace=workspace, author=request.user)
 
     if not is_new:
         selection_error = _caption_selection_error(request, post)
@@ -1515,10 +1529,10 @@ def autosave(request, workspace_id, post_id=None):
     # Sync platform selections
     selected_ids = _parse_selected_account_ids(request.POST.get("selected_accounts", ""))
     _remove_deselected_platform_posts(request, post, selected_ids)
-    for acc_id in selected_ids:
+    for account in SocialAccount.objects.filter(pk__in=selected_ids, workspace=workspace):
         PlatformPost.objects.get_or_create(
             post=post,
-            social_account_id=acc_id,
+            social_account=account,
         )
 
     # Option A: an autosave that changed an approved post's content reverts it to

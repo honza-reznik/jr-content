@@ -23,7 +23,7 @@ from apps.jrc_texts.models import TextDocument, TextVersion
 from apps.jrc_texts.services import ConflictError
 from apps.jrc_video.downloads import can_download_final
 from apps.members.models import WorkspaceMembership
-from apps.members.permissions import can_publish_directly
+from apps.members.permissions import can_comment, can_moderate_comments, can_publish_directly
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 
@@ -741,7 +741,8 @@ def content_detail(request, workspace_id, post_id):
             "can_view_internal_notes": can_view_internal_notes,
             "can_edit_posts": text_services.can_edit_text(post, membership),
             "comments": comments,
-            "can_resolve_comments": not is_client and membership.effective_permissions.get("approve_posts", False),
+            "can_resolve_comments": can_moderate_comments(membership),
+            "can_comment": can_comment(membership),
             "comment_visibility_default": (
                 PostComment.Visibility.EXTERNAL if is_client else PostComment.Visibility.INTERNAL
             ),

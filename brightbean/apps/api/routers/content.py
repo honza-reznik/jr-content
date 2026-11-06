@@ -68,6 +68,8 @@ class _KeyMembership:
     """
 
     def __init__(self, membership, key_permissions):
+        self.user = membership.user
+        self.workspace = membership.workspace
         self.user_id = membership.user_id
         self.workspace_role = membership.workspace_role
         self.custom_role_id = membership.custom_role_id

@@ -165,7 +165,7 @@ class CommentPrivacyTests(ApprovalWorkflowBase):
                     self.client.post(
                         reverse("approvals:edit_comment", args=[self.ws.pk, post.pk, comment.pk]), {"body": "Rewritten"}
                     ).status_code,
-                    404,
+                    403 if role == "viewer" else 404,
                 )
                 with pytest.raises(PermissionError):
                     comments.update_comment(comment.pk, self.author, "Rewritten", workspace=self.ws)
@@ -177,11 +177,18 @@ class CommentPrivacyTests(ApprovalWorkflowBase):
                 )
                 with pytest.raises(PermissionError):
                     comments.update_comment(reply.pk, self.author, "Rewritten", workspace=self.ws)
-                external = comments.create_comment(post, self.author, "Shared")
+                if role == "viewer":
+                    with pytest.raises(PermissionError):
+                        comments.create_comment(post, self.author, "Shared")
+                    external = PostComment.objects.create(
+                        post=post, author=self.author, body="Shared", visibility="external"
+                    )
+                else:
+                    external = comments.create_comment(post, self.author, "Shared")
                 response = self.client.post(
                     reverse("approvals:edit_comment", args=[self.ws.pk, post.pk, external.pk]),
                     {"body": "Updated shared"},
                 )
-                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.status_code, 403 if role == "viewer" else 200)
                 external.refresh_from_db()
-                self.assertEqual(external.body, "Updated shared")
+                self.assertEqual(external.body, "Shared" if role == "viewer" else "Updated shared")

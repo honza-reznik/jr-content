@@ -9,6 +9,7 @@ from collections import defaultdict
 from django.utils import timezone
 
 from apps.members.models import WorkspaceMembership
+from apps.members.permissions import can_comment, can_moderate_comments
 from apps.notifications.audience import content_path
 from apps.notifications.engine import notify
 from apps.notifications.models import EventType
@@ -58,8 +59,8 @@ def create_comment(post, author, body, visibility=None, parent_id=None, attachme
         raise ValueError("Attachment exceeds 5MB limit.")
 
     membership = WorkspaceMembership.objects.filter(user=author, workspace=post.workspace).first()
-    if membership is None:
-        raise PermissionError("You are not a member of this workspace.")
+    if not can_comment(membership):
+        raise PermissionError("You cannot comment in this workspace.")
     is_client = membership.workspace_role in (
         WorkspaceMembership.WorkspaceRole.CLIENT,
         WorkspaceMembership.WorkspaceRole.VIEWER,
@@ -127,8 +128,13 @@ def update_comment(comment_id, user, body, *, workspace=None):
 
     if not comment:
         raise ValueError("Comment not found.")
-    if comment.author_id != user.id:
-        raise PermissionError("Only the comment author can edit.")
+    membership = (
+        WorkspaceMembership.objects.select_related("user", "workspace", "custom_role")
+        .filter(user=user, workspace=comment.post.workspace)
+        .first()
+    )
+    if not can_comment(membership) or comment.author_id != user.id:
+        raise PermissionError("Only an active comment author can edit.")
     if not can_view_comment(comment, user):
         raise PermissionError("You don't have permission to edit this comment.")
 
@@ -162,9 +168,9 @@ def delete_comment(comment_id, user, workspace, *, post):
     )
 
     is_author = comment.author_id == user.id
-    can_moderate = membership and membership.effective_permissions.get("approve_posts", False)
+    can_moderate = can_moderate_comments(membership)
 
-    if not is_author and not can_moderate:
+    if not can_comment(membership) or (not is_author and not can_moderate):
         raise PermissionError("You don't have permission to delete this comment.")
 
     comment.deleted_at = timezone.now()
@@ -239,12 +245,7 @@ def resolve_comment(comment_id, user, workspace, *, resolved=True):
     membership = (
         WorkspaceMembership.objects.filter(user=user, workspace=workspace).select_related("custom_role").first()
     )
-    if membership is None:
-        raise PermissionError("You are not a member of this workspace.")
-    if membership.workspace_role in (
-        WorkspaceMembership.WorkspaceRole.CLIENT,
-        WorkspaceMembership.WorkspaceRole.VIEWER,
-    ) or not membership.effective_permissions.get("approve_posts", False):
+    if not can_moderate_comments(membership) or not can_view_comment(comment, user):
         raise PermissionError("You do not have permission to resolve comments.")
 
     comment.is_resolved = bool(resolved)
