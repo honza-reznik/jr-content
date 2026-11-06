@@ -1013,6 +1013,7 @@ def _month_view_data(request, workspace, target_date, context):
                     "is_today": day == today,
                     "is_past": day < today,
                     "posts": day_posts[:3],
+                    "all_posts": day_posts,
                     "total_posts": len(day_posts),
                     "overflow": max(0, len(day_posts) - 3),
                     "holidays": day_holidays,
@@ -1028,6 +1029,7 @@ def _month_view_data(request, workspace, target_date, context):
     context.update(
         {
             "calendar_weeks": calendar_weeks,
+            "mobile_calendar_days": [day for week in calendar_weeks for day in week],
             "period_label": date(year, month, 1).strftime("%B %Y"),
             "prev_date": prev_month.isoformat(),
             "next_date": next_month.isoformat(),
@@ -1112,6 +1114,18 @@ def _week_view_data(request, workspace, target_date, context):
     context.update(
         {
             "week_days": week_days,
+            "mobile_calendar_days": [
+                {
+                    "date": day,
+                    "is_today": day == now.date(),
+                    "is_past": day < now.date(),
+                    "compose_date": _cell_compose_params(day, 9, display_tz, workspace_tz)[0],
+                    "compose_time": _cell_compose_params(day, 9, display_tz, workspace_tz)[1],
+                    "all_posts": [pp for hour in hours for pp in posts_by_slot.get((day, hour), [])],
+                    "slots": [slot for hour in hours for slot in slots_by_hour.get((day, hour), [])],
+                }
+                for day in week_days
+            ],
             "hours": hours,
             "week_slots": week_slots,
             "today": now.date(),

@@ -1,0 +1,33 @@
+{% load tz %}
+{# P1-B28: stejné filtrované položky jako v mřížce, na telefonu čitelné po dnech. #}
+<div class="calendar-mobile-agenda" aria-label="Calendar by day">
+    {% for day in mobile_calendar_days %}
+    <section class="calendar-agenda-day{% if day.is_today %} is-today{% endif %}" data-agenda-date="{{ day.date|date:'Y-m-d' }}">
+        <div class="calendar-agenda-heading">
+            <h3>{{ day.date|date:"l, M j" }}</h3>
+            {% if not day.is_past %}
+            <a class="calendar-slot-add" href="{% url 'composer:compose' workspace_id=workspace.id %}?scheduled_date={% if day.compose_date %}{{ day.compose_date }}{% else %}{{ day.date|date:'Y-m-d' }}{% endif %}&scheduled_time={{ day.compose_time|default:'09:00' }}" title="Create post">+</a>
+            {% endif %}
+        </div>
+        {% for holiday in day.holidays %}<p class="calendar-agenda-note">{{ holiday.emoji }} {{ holiday.name }}</p>{% endfor %}
+        {% for event in day.events %}<p class="calendar-agenda-note">{{ event.title }}</p>{% endfor %}
+        {% for pp in day.all_posts %}
+        <a class="post-chip pipeline-stage-{{ pp.pipeline_stage }}" href="{% url 'jrc_production:content_detail' workspace_id=workspace.id post_id=pp.post_id %}">
+            <time>{{ pp.effective_at|timezone:display_timezone|date:"H:i" }}</time>
+            <span class="calendar-agenda-title">{{ pp.post.title|default:pp.post.caption_snippet|default:"Untitled content" }}</span>
+            <span class="calendar-stage-label">{{ pp.pipeline_stage_label }}</span>
+        </a>
+        {% endfor %}
+        {% for slot in day.slots %}
+        <div class="calendar-channel-slot">
+            <span class="calendar-agenda-title">{{ slot.account.account_name|default:slot.account.account_handle }}</span>
+            <time>{{ slot.time_label }}</time>
+            {% if not slot.is_past %}
+            <a class="calendar-slot-add" href="{% url 'composer:compose' workspace_id=workspace.id %}?account={{ slot.account.id }}&scheduled_date={{ slot.compose_date }}&scheduled_time={{ slot.compose_time }}" title="Schedule post for {{ slot.account.account_name }} at {{ slot.time_label }}">+</a>
+            {% else %}<span class="calendar-slot-state">Open</span>{% endif %}
+        </div>
+        {% endfor %}
+        {% if not day.all_posts and not day.events and not day.slots %}<p class="calendar-agenda-note">No scheduled content</p>{% endif %}
+    </section>
+    {% endfor %}
+</div>

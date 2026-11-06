@@ -3,7 +3,7 @@ Calendar mode shell for the Publish page.
 Toolbar: nav arrows + period + Today + view dropdown | right: filter dropdowns.
 {% endcomment %}
 
-<div class="flex-1 flex flex-col min-h-0 -mx-3 sm:-mx-4 lg:-mx-6"
+<div class="calendar-layout flex-1 flex flex-col min-h-0 -mx-3 sm:-mx-4 lg:-mx-6"
      x-data="{ ...calendarApp(), showEventForm: false, viewOpen: false }"
      @calendar-refresh.window="htmx.trigger('#calendar-content', 'refresh')"
      hx-trigger="calendarRefresh from:body"
