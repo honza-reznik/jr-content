@@ -18,6 +18,15 @@ from django.utils import timezone
 from apps.accounts.models import User
 from apps.members.models import Invitation, OrgMembership
 from apps.members.services import _send_invite_email
+from apps.organizations.models import Organization
+
+
+def _owner_with_org(email="owner@example.invalid", **extra):
+    """Vlastník s výslovně založenou organizací (registrace organizaci nezakládá – P1-B23)."""
+    owner = User.objects.create_user(email=email, **extra)
+    org = Organization.objects.create(name="Test Organization")
+    OrgMembership.objects.create(user=owner, organization=org, org_role=OrgMembership.OrgRole.OWNER)
+    return owner, org
 
 
 @pytest.fixture
@@ -85,8 +94,7 @@ def test_every_allauth_email(public_mail, kind):
 
 @pytest.mark.django_db
 def test_invitation_mail(public_mail):
-    owner = User.objects.create_user(email="owner@example.invalid")
-    org = OrgMembership.objects.get(user=owner).organization
+    owner, org = _owner_with_org()
     invite = Invitation.objects.create(
         organization=org,
         invited_by=owner,
@@ -102,8 +110,7 @@ def test_signup_returns_to_accepted_invite(settings, client):
     settings.SIGNUP_MODE = "invite"
     settings.ACCOUNT_EMAIL_VERIFICATION = "none"
     settings.JRC_FEATURES = {"terms": False}
-    owner = User.objects.create_user(email="owner@example.invalid")
-    org = OrgMembership.objects.get(user=owner).organization
+    owner, org = _owner_with_org()
     invite = Invitation.objects.create(
         organization=org, invited_by=owner, email="new@example.invalid", expires_at=timezone.now() + timedelta(days=7)
     )
@@ -132,8 +139,7 @@ def test_signup_returns_to_accepted_invite(settings, client):
 
 @pytest.mark.django_db
 def test_historical_accepted_invite_stays_closed(client):
-    owner = User.objects.create_user(email="owner@example.invalid", tos_accepted_at=timezone.now())
-    org = OrgMembership.objects.get(user=owner).organization
+    owner, org = _owner_with_org(tos_accepted_at=timezone.now())
     invite = Invitation.objects.create(
         organization=org,
         email=owner.email,
