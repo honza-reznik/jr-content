@@ -60,7 +60,7 @@ reveal modal on top of the freshly-rendered list page.
                         <label for="expires_at" class="block text-sm font-semibold mb-1" style="color: var(--text-primary);">
                             Expires at <span class="font-normal" style="color: var(--text-tertiary);">(optional)</span>
                         </label>
-                        <input type="date" id="expires_at" name="expires_at"
+                        <input type="date" id="expires_at" name="expires_at" min="{{ issuance.min_expires }}"
                                class="input-focus w-full px-3 py-2 text-sm rounded-lg outline-none transition-colors"
                                style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);">
                     </div>

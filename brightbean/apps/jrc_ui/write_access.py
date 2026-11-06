@@ -128,7 +128,7 @@ _rules(
     domain="organization",
     org_role="admin",
 )
-_rules("api_keys", "issue revoke edit", domain="organization", org_permission="manage_api_keys")
+_rules("api_keys", "issue revoke edit delete", domain="organization", org_permission="manage_api_keys")
 
 # Exact exceptions, never a namespace wildcard. These resolve their own user,
 # organization, portal token or signed service identity; no URL workspace exists.

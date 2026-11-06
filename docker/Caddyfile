@@ -120,15 +120,36 @@
 		}
 	}
 	handle_path {$JRC_BASE_PATH}/* {
+		# Caddy řadí direktivy podle pevného pořadí (handle před respond), proto je
+		# zákaz admina také handle a stojí jako první; jinak by ho předběhly handle níže.
 		@admin path /admin /admin/*
-		respond @admin 404
+		handle @admin {
+			respond 404
+		}
 		header {
 			defer
 			X-Frame-Options DENY
 		}
-		reverse_proxy jrc-bb-web:8000 {
-			header_up Host {$JRC_PUBLIC_HOST}
-			header_up X-Real-IP {client_ip}
+		# P1-B29: schéma vstupu určuje veřejný původ, ne hlavička, kterou mohl poslat
+		# kdokoli. Při https původu (Funnel/Serve ukončuje TLS před Caddy, který vidí
+		# jen http) hlavičku vždy nastavíme sami: Bearer klíč REST/MCP projde za proxy
+		# i bez toho, že by Tailscale hlavičku poslal, a podvrhnout ji (ani jako "http")
+		# nejde. U http původu (místní/testovací prostředí) se hlavička nemění: Caddy ji
+		# od důvěryhodné brány (hostitel, Funnel) ponechá, od cizího odesílatele přepíše
+		# na http a Django ji navíc zahodí, pokud nepřišla z brány.
+		@httpsOrigin expression `'{$JRC_PUBLIC_ORIGIN}'.startsWith('https://')`
+		handle @httpsOrigin {
+			reverse_proxy jrc-bb-web:8000 {
+				header_up Host {$JRC_PUBLIC_HOST}
+				header_up X-Real-IP {client_ip}
+				header_up X-Forwarded-Proto https
+			}
+		}
+		handle {
+			reverse_proxy jrc-bb-web:8000 {
+				header_up Host {$JRC_PUBLIC_HOST}
+				header_up X-Real-IP {client_ip}
+			}
 		}
 	}
 }

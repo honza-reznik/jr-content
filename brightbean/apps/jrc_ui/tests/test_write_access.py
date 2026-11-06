@@ -222,6 +222,7 @@ ORG_WRITES = {
     "api_keys:issue": "admin",  # manage_api_keys: owner and admin
     "api_keys:revoke": "admin",
     "api_keys:edit": "admin",
+    "api_keys:delete": "admin",
 }
 
 

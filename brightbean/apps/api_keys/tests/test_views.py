@@ -13,6 +13,8 @@ Covers:
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 from django.urls import reverse
 from django.utils import timezone
@@ -352,11 +354,12 @@ class TestIssue:
                 "name": "tamper",
                 "workspace_id": str(foreign_ws.id),
                 "social_account_ids": [str(social_account.id)],
+                "permissions": ["create_posts"],
             },
             follow=True,
         )
         assert ApiKey.objects.count() == 0
-        assert b"not in this organisation" in r.content
+        assert b"not available to you in this organisation" in r.content
 
     def test_account_outside_workspace_rejected(self, admin_client, workspace, db):
         """Social account from a different workspace must not be accepted
@@ -379,6 +382,7 @@ class TestIssue:
                 "name": "tamper-account",
                 "workspace_id": str(workspace.id),
                 "social_account_ids": [str(foreign_sa.id)],
+                "permissions": ["create_posts"],
             },
             follow=True,
         )
@@ -395,6 +399,7 @@ class TestIssue:
                 "name": "tamper-uuid",
                 "workspace_id": str(workspace.id),
                 "social_account_ids": ["not-a-uuid"],
+                "permissions": ["create_posts"],
             },
             follow=True,
         )
@@ -549,18 +554,61 @@ class TestEditKey:
         assert key.permissions == ["create_posts"]
         assert set(key.social_accounts.values_list("id", flat=True)) == {social_account.id}
 
-    def test_empty_permissions_is_allowed(self, admin_client, admin_user, workspace, social_account):
-        """Submitting no permission checkboxes clears the (grantable) set —
-        an empty key is valid. admin_user is a workspace OWNER, so every perm
-        is theirs to grant and nothing is preserved."""
+    def test_empty_permissions_is_rejected(self, admin_client, admin_user, workspace, social_account):
+        """P1-B29: unticking every permission would leave a key that can do
+        nothing. admin_user is a workspace OWNER, so every perm is theirs to
+        grant and nothing would be preserved - the form refuses it."""
         key = self._issue(admin_user, workspace, social_account, ["create_posts"])
         r = admin_client.post(
             reverse("api_keys:edit", args=[key.id]),
             {"social_account_ids": [str(social_account.id)]},  # no permissions
+            follow=True,
+        )
+        assert b"Select at least one permission" in r.content
+        key.refresh_from_db()
+        assert key.permissions == ["create_posts"]
+
+    def test_past_expiry_is_rejected(self, admin_client, admin_user, workspace, social_account):
+        key = self._issue(admin_user, workspace, social_account, ["create_posts"])
+        r = admin_client.post(
+            reverse("api_keys:edit", args=[key.id]),
+            {
+                "permissions": ["create_posts"],
+                "social_account_ids": [str(social_account.id)],
+                "expires_at": "2020-01-01",
+            },
+            follow=True,
+        )
+        assert b"expiry date must be in the future" in r.content
+        key.refresh_from_db()
+        assert key.expires_at is None
+
+    def test_empty_permissions_kept_when_editor_cannot_grant_them(
+        self, admin_client, admin_user, workspace, social_account
+    ):
+        """A key that holds a permission the editor cannot grant keeps it, so
+        unticking everything does not make the key empty and is allowed."""
+        WorkspaceMembership.objects.filter(user=admin_user, workspace=workspace).update(
+            workspace_role=WorkspaceMembership.WorkspaceRole.EDITOR
+        )
+        held = {
+            k
+            for k, v in WorkspaceMembership.objects.get(
+                user=admin_user, workspace=workspace
+            ).effective_permissions.items()
+            if v
+        }
+        locked = next(k for k in PERMISSION_KEYS if k not in held)
+        key = self._issue(admin_user, workspace, social_account, [])
+        key.permissions = [locked]
+        key.save(update_fields=["permissions"])
+        r = admin_client.post(
+            reverse("api_keys:edit", args=[key.id]),
+            {"social_account_ids": [str(social_account.id)]},
         )
         assert r.status_code == 302
         key.refresh_from_db()
-        assert key.permissions == []
+        assert key.permissions == [locked]
 
     def test_inactive_key_is_rejected(self, admin_client, admin_user, workspace, social_account):
         from apps.api_keys import services
@@ -646,3 +694,263 @@ class TestEditKey:
         key.refresh_from_db()
         assert key.permissions == ["create_posts"]
         assert set(key.social_accounts.values_list("id", flat=True)) == {social_account.id}
+
+
+# ---------------------------------------------------------------------------
+# P1-B29: form validation, deletion of dead keys, workspace offer
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def foreign_workspace(db, organization, admin_user):
+    """A second workspace of the same organization the admin is NOT a member of."""
+    from apps.social_accounts.models import SocialAccount
+    from apps.workspaces.models import Workspace
+
+    ws = Workspace.objects.create(name="Foreign Client WS", organization=organization)
+    SocialAccount.objects.create(
+        workspace=ws,
+        platform="instagram",
+        account_platform_id="ig-foreign-b29",
+        account_name="Secret Foreign Channel",
+        connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+    )
+    return ws
+
+
+def _issue_payload(workspace, social_account, **extra):
+    payload = {
+        "name": "b29 bot",
+        "workspace_id": str(workspace.id),
+        "social_account_ids": [str(social_account.id)],
+        "permissions": ["create_posts"],
+    }
+    payload.update(extra)
+    return payload
+
+
+@pytest.mark.django_db
+class TestIssueValidation:
+    def test_no_permission_is_rejected(self, admin_client, workspace, social_account):
+        payload = _issue_payload(workspace, social_account)
+        payload["permissions"] = []
+        r = admin_client.post(reverse("api_keys:issue"), payload, follow=True)
+        assert b"Select at least one permission" in r.content
+        assert ApiKey.objects.count() == 0
+
+    @pytest.mark.parametrize("value", ["2020-01-01", "2020-01-01T10:00:00", "2020-01-01T10:00:00+00:00"])
+    def test_past_expiry_is_rejected(self, admin_client, workspace, social_account, value):
+        r = admin_client.post(
+            reverse("api_keys:issue"), _issue_payload(workspace, social_account, expires_at=value), follow=True
+        )
+        assert b"expiry date must be in the future" in r.content
+        assert ApiKey.objects.count() == 0
+
+    def test_past_moment_today_is_rejected_but_today_as_date_is_not(self, admin_client, workspace, social_account):
+        past = (timezone.now() - timedelta(minutes=1)).isoformat()
+        admin_client.post(reverse("api_keys:issue"), _issue_payload(workspace, social_account, expires_at=past))
+        assert ApiKey.objects.count() == 0
+        # A date-only value means the end of that day, so "today" is still valid.
+        today = timezone.localdate().isoformat()
+        admin_client.post(reverse("api_keys:issue"), _issue_payload(workspace, social_account, expires_at=today))
+        assert ApiKey.objects.count() == 1
+
+    def test_future_expiry_and_no_expiry_are_accepted(self, admin_client, workspace, social_account):
+        r = admin_client.post(
+            reverse("api_keys:issue"), _issue_payload(workspace, social_account, expires_at="2099-01-01")
+        )
+        assert r.status_code == 302
+        assert ApiKey.objects.get().expires_at.year == 2099
+
+    def test_form_has_min_date(self, admin_client, workspace):
+        html = admin_client.get(reverse("api_keys:list")).content.decode()
+        assert f'min="{timezone.localdate().isoformat()}"' in html
+
+    def test_service_refuses_past_expiry_for_every_caller(self, admin_user, workspace, social_account):
+        from apps.api_keys import services
+
+        with pytest.raises(ValueError, match="future"):
+            services.issue_api_key(
+                workspace=workspace,
+                social_accounts=[social_account],
+                issued_by=admin_user,
+                name="late",
+                permissions=["create_posts"],
+                expires_at=timezone.now() - timedelta(seconds=1),
+            )
+
+
+@pytest.mark.django_db
+class TestDeleteDeadKeys:
+    def _key(self, admin_user, workspace, social_account, name="dead"):
+        from apps.api_keys import services
+
+        return services.issue_api_key(
+            workspace=workspace,
+            social_accounts=[social_account],
+            issued_by=admin_user,
+            name=name,
+            permissions=["create_posts"],
+        ).api_key
+
+    def test_expired_key_shows_delete_and_can_be_deleted(self, admin_client, admin_user, workspace, social_account):
+        key = self._key(admin_user, workspace, social_account)
+        ApiKey.objects.filter(pk=key.pk).update(expires_at=timezone.now() - timedelta(days=1))
+        html = admin_client.get(reverse("api_keys:list")).content.decode()
+        assert reverse("api_keys:delete", args=[key.id]) in html
+        assert reverse("api_keys:edit", args=[key.id]) not in html
+        r = admin_client.post(reverse("api_keys:delete", args=[key.id]))
+        assert r.status_code == 302
+        assert not ApiKey.objects.filter(pk=key.pk).exists()
+
+    def test_revoked_key_can_be_deleted(self, admin_client, admin_user, workspace, social_account):
+        from apps.api_keys import services
+
+        key = self._key(admin_user, workspace, social_account)
+        services.revoke_api_key(key)
+        admin_client.post(reverse("api_keys:delete", args=[key.id]))
+        assert not ApiKey.objects.filter(pk=key.pk).exists()
+
+    def test_active_key_cannot_be_deleted(self, admin_client, admin_user, workspace, social_account):
+        key = self._key(admin_user, workspace, social_account)
+        r = admin_client.post(reverse("api_keys:delete", args=[key.id]), follow=True)
+        assert b"revoke it first" in r.content
+        assert ApiKey.objects.filter(pk=key.pk).exists()
+        # An active row offers Revoke, not Delete.
+        assert (
+            reverse("api_keys:delete", args=[key.id]) not in admin_client.get(reverse("api_keys:list")).content.decode()
+        )
+
+    def test_get_is_not_allowed(self, admin_client, admin_user, workspace, social_account):
+        key = self._key(admin_user, workspace, social_account)
+        assert admin_client.get(reverse("api_keys:delete", args=[key.id])).status_code == 405
+
+    def test_member_without_permission_is_forbidden(self, member_client):
+        from uuid import uuid4
+
+        assert member_client.post(reverse("api_keys:delete", args=[uuid4()])).status_code == 403
+
+    def test_foreign_org_key_404s(self, admin_client, db):
+        from apps.accounts.models import User
+        from apps.api_keys import services
+        from apps.organizations.models import Organization
+        from apps.social_accounts.models import SocialAccount
+        from apps.workspaces.models import Workspace
+
+        other_org = Organization.objects.create(name="Other del")
+        ws = Workspace.objects.create(name="Foreign del", organization=other_org)
+        user = User.objects.create_user(
+            email="foreign-del@example.com", password="x-testpass123", name="F", tos_accepted_at=timezone.now()
+        )
+        OrgMembership.objects.create(user=user, organization=other_org, org_role=OrgMembership.OrgRole.OWNER)
+        WorkspaceMembership.objects.create(user=user, workspace=ws, workspace_role="owner")
+        sa = SocialAccount.objects.create(
+            workspace=ws,
+            platform="linkedin_personal",
+            account_platform_id="li-del",
+            account_name="Del",
+            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        )
+        key = services.issue_api_key(
+            workspace=ws, social_accounts=[sa], issued_by=user, name="x", permissions=["create_posts"]
+        ).api_key
+        services.revoke_api_key(key)
+        assert admin_client.post(reverse("api_keys:delete", args=[key.id])).status_code == 404
+        assert ApiKey.objects.filter(pk=key.pk).exists()
+
+    def test_delete_needs_organization_target(self, admin_client, admin_user, workspace, social_account):
+        key = self._key(admin_user, workspace, social_account)
+        from apps.api_keys import services
+
+        services.revoke_api_key(key)
+        del admin_client.defaults["HTTP_X_JRC_ORGANIZATION_ID"]
+        assert admin_client.post(reverse("api_keys:delete", args=[key.id])).status_code == 403
+        assert ApiKey.objects.filter(pk=key.pk).exists()
+
+
+@pytest.mark.django_db
+class TestWorkspaceOfferIsMemberOnly:
+    def test_form_offers_only_own_workspaces(self, admin_client, workspace, foreign_workspace):
+        html = admin_client.get(reverse("api_keys:list")).content.decode()
+        assert workspace.name in html
+        assert foreign_workspace.name not in html
+        assert "Secret Foreign Channel" not in html
+
+    def test_partial_for_foreign_workspace_is_empty(self, admin_client, foreign_workspace):
+        r = admin_client.get(reverse("api_keys:workspace_options"), {"workspace_id": str(foreign_workspace.id)})
+        assert r.content == b""
+
+    def test_issue_for_foreign_workspace_is_refused_without_naming_anything(self, admin_client, foreign_workspace):
+        from apps.social_accounts.models import SocialAccount
+
+        account = SocialAccount.objects.get(workspace=foreign_workspace)
+        r = admin_client.post(
+            reverse("api_keys:issue"),
+            {
+                "name": "x",
+                "workspace_id": str(foreign_workspace.id),
+                "social_account_ids": [str(account.id)],
+                "permissions": ["create_posts"],
+            },
+            follow=True,
+        )
+        assert b"not available to you" in r.content
+        assert ApiKey.objects.count() == 0
+        assert b"Secret Foreign Channel" not in r.content
+
+    def test_org_owner_without_membership_gets_nothing_from_org_role(self, admin_client, admin_user, workspace):
+        """Organization role alone (admin_user is the org owner) never adds a workspace."""
+        WorkspaceMembership.objects.filter(user=admin_user, workspace=workspace).delete()
+        html = admin_client.get(reverse("api_keys:list")).content.decode()
+        assert workspace.name not in html.split('id="workspace_id"', 1)[-1].split("</select>", 1)[0]
+
+    def test_archived_workspace_is_not_offered(self, admin_client, workspace):
+        workspace.is_archived = True
+        workspace.save(update_fields=["is_archived"])
+        html = admin_client.get(reverse("api_keys:list")).content.decode()
+        assert workspace.name not in html.split('id="workspace_id"', 1)[-1].split("</select>", 1)[0]
+
+    def test_same_rule_as_sidebar_dashboard_and_workspace_list(
+        self, admin_client, admin_user, organization, workspace, foreign_workspace
+    ):
+        from apps.members.services import member_workspaces
+
+        expected = [w.name for w in member_workspaces(admin_user, organization)]
+        assert workspace.name in expected and foreign_workspace.name not in expected
+        html = admin_client.get(reverse("api_keys:list")).content.decode()
+        offered = html.split('id="workspace_id"', 1)[1].split("</select>", 1)[0]
+        assert all(name in offered for name in expected) and foreign_workspace.name not in offered
+        listing = admin_client.get(reverse("workspaces:list"))
+        assert foreign_workspace.name not in listing.content.decode()
+
+
+@pytest.mark.django_db
+class TestAuditSurvivesDeletion:
+    def test_audit_rows_keep_prefix_and_name_after_the_key_is_deleted(
+        self, admin_client, admin_user, workspace, social_account
+    ):
+        from django.test import RequestFactory
+
+        from apps.api import middleware
+        from apps.api_keys import services
+        from apps.api_keys.models import ApiKeyAuditLog
+
+        key = services.issue_api_key(
+            workspace=workspace,
+            social_accounts=[social_account],
+            issued_by=admin_user,
+            name="audited bot",
+            permissions=["create_posts"],
+        ).api_key
+        request = RequestFactory().post("/api/v1/posts/")
+        request.api_key = key
+        middleware.log_audit_entry(request, action="post.create", target_id=None, status_code=201)
+        row = ApiKeyAuditLog.objects.get()
+        assert (row.key_prefix, row.key_name) == (key.lookup_prefix, "audited bot")
+        services.revoke_api_key(key)
+        admin_client.post(reverse("api_keys:delete", args=[key.id]))
+        assert not ApiKey.objects.filter(pk=key.pk).exists()
+        row.refresh_from_db()
+        assert row.api_key_id is None
+        assert (row.key_prefix, row.key_name) == (key.lookup_prefix, "audited bot")
+        assert "audited bot" in str(row)

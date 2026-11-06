@@ -13,10 +13,9 @@ from .models import Workspace
 
 @login_required
 def workspace_list(request):
-    memberships = WorkspaceMembership.objects.filter(
-        user=request.user, workspace__organization=request.org
-    ).select_related("workspace")
-    workspaces = [m.workspace for m in memberships if not m.workspace.is_archived]
+    from apps.members.services import member_workspaces
+
+    workspaces = list(member_workspaces(request.user, request.org))
     return render(request, "workspaces/list.html", {"workspaces": workspaces})
 
 

@@ -133,6 +133,18 @@ class IssuedKey:
     plaintext_token: str
 
 
+PAST_EXPIRY_ERROR = "The expiry date must be in the future."
+# The web form refuses a key without any permission (views.py); the service itself
+# still accepts an empty set because a key without grants is a read-only key for
+# the REST/MCP API (see apps/api/tests/test_content_api.py).
+NO_PERMISSION_ERROR = "Select at least one permission."
+
+
+def expiry_in_past(expires_at) -> bool:
+    """True if ``expires_at`` is set and already over (a key that is dead on arrival)."""
+    return expires_at is not None and expires_at <= timezone.now()
+
+
 def issue_api_key(
     *,
     workspace,
@@ -169,6 +181,8 @@ def issue_api_key(
     for sa in sa_list:
         if sa.workspace_id != workspace.id:
             raise ValueError(f"SocialAccount {sa.id} does not belong to workspace {workspace.id}.")
+    if expiry_in_past(expires_at):
+        raise ValueError(PAST_EXPIRY_ERROR)
 
     # Org-level manage_api_keys gate — must be checked before any
     # workspace-permission logic so a non-admin who happens to have rich
@@ -277,6 +291,8 @@ def update_api_key(api_key: ApiKey, *, editor, permissions: list[str], social_ac
     editor_grantable = {k for k, v in membership.effective_permissions.items() if v and k in PERMISSION_KEYS}
     current = set(api_key.permissions or [])
     new_permissions = (set(permissions or []) & editor_grantable) | (current - editor_grantable)
+    if expiry_in_past(expires_at):
+        raise ValueError(PAST_EXPIRY_ERROR)
 
     with transaction.atomic():
         api_key.permissions = sorted(new_permissions)
@@ -298,6 +314,20 @@ def revoke_api_key(api_key: ApiKey) -> None:
         api_key.revoked_at = timezone.now()
         api_key.save(update_fields=["revoked_at"])
     invalidate_api_key_cache(api_key)
+
+
+def delete_api_key(api_key: ApiKey) -> None:
+    """Remove a key that is no longer usable (expired or revoked) for good.
+
+    An active key must be revoked first: deleting it outright would skip the
+    deliberate "agents start getting 401" step and a mis-click would be
+    unrecoverable. The cache entry is busted so nothing outlives the row. Audit
+    rows survive (``api_key`` becomes NULL; they carry the key's prefix and name).
+    """
+    if api_key.is_active:
+        raise ValueError("An active key cannot be deleted; revoke it first.")
+    invalidate_api_key_cache(api_key)
+    api_key.delete()
 
 
 def invalidate_api_key_cache(api_key: ApiKey) -> None:

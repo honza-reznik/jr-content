@@ -16,6 +16,7 @@ def health_check(request):
 def dashboard(request):
     """Main dashboard - redirects to last used workspace or shows org overview."""
     from apps.members.models import WorkspaceMembership
+    from apps.members.services import member_workspaces
 
     user = request.user
 
@@ -34,16 +35,11 @@ def dashboard(request):
         user.save(update_fields=["last_workspace_id"])
 
     # Fallback: try to find any workspace the user belongs to
-    membership = (
-        WorkspaceMembership.objects.filter(user=user, workspace__is_archived=False, workspace__organization=request.org)
-        .select_related("workspace")
-        .order_by("workspace__name", "workspace_id")
-        .first()
-    )
-    if membership:
-        user.last_workspace_id = membership.workspace.id
+    first_workspace = member_workspaces(user, request.org).first()
+    if first_workspace:
+        user.last_workspace_id = first_workspace.id
         user.save(update_fields=["last_workspace_id"])
-        return redirect("calendar:calendar", workspace_id=membership.workspace.id)
+        return redirect("calendar:calendar", workspace_id=first_workspace.id)
 
     return render(request, "accounts/dashboard.html")
 

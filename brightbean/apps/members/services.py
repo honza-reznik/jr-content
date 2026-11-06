@@ -18,6 +18,27 @@ logger = logging.getLogger(__name__)
 
 INVITE_EXPIRY_DAYS = 7
 
+
+def member_workspaces(user, organization):
+    """Workspaces of ``organization`` the user can work in (P1-B29).
+
+    The one rule behind every list that offers a workspace to a person: the
+    sidebar switcher, the workspace list, the dashboard fallback, the shared
+    calendar and the API-key form. A workspace belongs here only if the user
+    has a ``WorkspaceMembership`` in it and it is not archived. Organization
+    role alone (owner/admin) never adds a workspace, so a list built from this
+    cannot show a workspace - or the names of its channels - to someone who is
+    not a member of it. Returns a queryset ordered by name.
+    """
+    if user is None or organization is None or not getattr(user, "is_authenticated", False):
+        return Workspace.objects.none()
+    return Workspace.objects.filter(
+        organization=organization,
+        is_archived=False,
+        memberships__user=user,
+    ).order_by("name", "id")
+
+
 # Role hierarchies (must match decorators.py).
 ORG_ROLE_LEVEL = {
     OrgMembership.OrgRole.OWNER: 3,

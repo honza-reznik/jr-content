@@ -243,8 +243,10 @@ class TestVerifyToken:
             issued_by=workspace_owner.user,
             name="exp",
             permissions=[],
-            expires_at=timezone.now() - timedelta(seconds=1),
+            expires_at=timezone.now() + timedelta(hours=1),
         )
+        # The key runs out later (issuing one that is already over is refused).
+        ApiKey.objects.filter(pk=issued.api_key.pk).update(expires_at=timezone.now() - timedelta(seconds=1))
         # Bust cache so we see the fresh expiry state.
         from django.core.cache import cache as _cache
 

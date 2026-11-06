@@ -64,6 +64,8 @@ def log_audit_entry(
             api_key=None if is_oauth else api_key,
             actor_user=api_key.issued_by if is_oauth else None,
             actor_label="oauth" if is_oauth else "",
+            key_prefix="" if is_oauth else (getattr(api_key, "lookup_prefix", "") or "")[:16],
+            key_name="" if is_oauth else (getattr(api_key, "name", "") or "")[:100],
             action=action,
             target_id=target_id,
             method=request.method or "",

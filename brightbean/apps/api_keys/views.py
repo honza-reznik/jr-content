@@ -44,6 +44,7 @@ from apps.members.models import (
     WorkspaceMembership,
     has_org_permission,
 )
+from apps.members.services import member_workspaces
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 
@@ -56,6 +57,12 @@ from apps.workspaces.models import Workspace
 # grantable again — the set is empty until the next pre-ship permission
 # lands.
 _HIDDEN_FROM_ISSUANCE: set[str] = set()
+
+# P1-B29: a key is a deliberate grant. The form and the edit dialog refuse to
+# save one that can do nothing; the date check lives in ``services`` (one rule
+# for every caller).
+NO_PERMISSION_ERROR = services.NO_PERMISSION_ERROR
+PAST_EXPIRY_ERROR = services.PAST_EXPIRY_ERROR
 
 # ---------------------------------------------------------------------------
 # Authorization decorator
@@ -213,12 +220,12 @@ def _row_context(api_key: ApiKey, *, user, memo: dict) -> dict:
 def _initial_issuance_context(org, user) -> dict:
     """Build the initial state for the issuance modal.
 
-    The workspace dropdown is rendered server-side from the org's
-    workspaces; everything downstream (accounts, permissions) loads via
+    The workspace dropdown is rendered server-side from the workspaces the
+    issuer is a member of (``member_workspaces``, the same rule as the sidebar
+    switcher and the dashboard); everything downstream (accounts, permissions) loads via
     the HTMX partial on workspace change.
     """
-    workspaces = Workspace.objects.filter(organization=org, is_archived=False).order_by("name")
-    return {"workspaces": workspaces}
+    return {"workspaces": member_workspaces(user, org), "min_expires": timezone.localdate().isoformat()}
 
 
 # ---------------------------------------------------------------------------
@@ -242,8 +249,10 @@ def workspace_options_partial(request):
     if not workspace_id:
         return HttpResponse("")
     try:
-        workspace = Workspace.objects.get(id=workspace_id, organization=request.org)
+        workspace = member_workspaces(request.user, request.org).get(id=workspace_id)
     except (Workspace.DoesNotExist, ValueError, DjangoValidationError):
+        # P1-B29: only workspaces the user is a member of; a foreign workspace
+        # of the organization gets the same empty answer (no channel names).
         # Django's UUIDField raises ``django.core.exceptions.ValidationError``
         # (not ``ValueError``) when the input doesn't parse as a UUID,
         # so a tampered HTMX trigger like ``workspace_id=not-a-uuid``
@@ -390,16 +399,19 @@ def issue_key(request):
         errors.append("Workspace is required.")
     if not account_ids:
         errors.append("Select at least one connected account.")
+    if not permission_keys:
+        errors.append(NO_PERMISSION_ERROR)
 
     workspace = None
     if workspace_id and not errors:
         try:
-            workspace = Workspace.objects.get(id=workspace_id, organization=request.org)
+            workspace = member_workspaces(request.user, request.org).get(id=workspace_id)
         except (Workspace.DoesNotExist, ValueError, DjangoValidationError):
             # ``ValidationError`` covers the malformed-UUID path; see the
             # corresponding catch in ``workspace_options_partial`` for
-            # the full rationale.
-            errors.append("Selected workspace is not in this organisation.")
+            # the full rationale. Same answer for a foreign-organisation and a
+            # not-a-member workspace (P1-B29).
+            errors.append("Selected workspace is not available to you in this organisation.")
 
     accounts: list[SocialAccount] = []
     if workspace is not None:
@@ -410,6 +422,8 @@ def issue_key(request):
     expires_at, exp_err = _parse_expires_at(expires_at_str)
     if exp_err:
         errors.append(exp_err)
+    elif services.expiry_in_past(expires_at):
+        errors.append(PAST_EXPIRY_ERROR)
 
     if errors:
         for e in errors:
@@ -537,6 +551,37 @@ def revoke_key(request, key_id):
 
 
 # ---------------------------------------------------------------------------
+# Delete (expired / revoked keys)
+# ---------------------------------------------------------------------------
+
+
+@_require_manage_api_keys
+@require_http_methods(["POST"])
+def delete_key(request, key_id):
+    """Remove an expired or revoked key from the list for good (P1-B29).
+
+    Expired keys could neither be edited nor revoked, so they stayed in the
+    list forever. Active keys are refused: revoke first.
+    """
+    key = get_object_or_404(
+        ApiKey.objects.select_related("workspace", "workspace__organization"),
+        id=key_id,
+    )
+    if key.workspace.organization_id != request.org.id:
+        raise Http404()
+    name = key.name
+    organization = key.workspace.organization
+    try:
+        services.delete_api_key(key)
+    except ValueError as exc:
+        messages.error(request, str(exc))
+        return redirect("api_keys:list")
+    messages.success(request, f"Deleted key “{name}”.")
+    activate_organization(request, organization)
+    return redirect("api_keys:list")
+
+
+# ---------------------------------------------------------------------------
 # Edit
 # ---------------------------------------------------------------------------
 
@@ -571,11 +616,18 @@ def edit_key(request, key_id):
     errors: list[str] = []
     if not account_ids:
         errors.append("Select at least one connected account.")
+    # Permissions the editor cannot grant stay on the key (see update_api_key), so
+    # unticking everything is only an empty key if the key holds none of those.
+    grantable_keys = {k for k, _ in _grantable_permissions(request.user, key.workspace, include_hidden=True)}
+    if not permission_keys and not (set(key.permissions or []) - grantable_keys):
+        errors.append(NO_PERMISSION_ERROR)
     accounts, acct_err = _resolve_account_allowlist(account_ids, key.workspace)
     if acct_err:
         errors.append(acct_err)
     if exp_err:
         errors.append(exp_err)
+    elif services.expiry_in_past(expires_at):
+        errors.append(PAST_EXPIRY_ERROR)
 
     if errors:
         for e in errors:

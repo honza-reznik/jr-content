@@ -14,22 +14,13 @@ def sidebar_context(request):
     if not hasattr(request, "user") or not request.user.is_authenticated:
         return {}
 
-    from apps.members.models import WorkspaceMembership
+    from apps.members.services import member_workspaces
     from apps.social_accounts.models import AnalyticsPlatformConfig, PlatformVisibility, SocialAccount
 
     analytics_enabled_platforms = AnalyticsPlatformConfig.enabled_platforms()
 
     # User's workspaces (non-archived)
-    workspace_memberships = (
-        WorkspaceMembership.objects.filter(
-            user=request.user,
-            workspace__is_archived=False,
-            workspace__organization=getattr(request, "org", None),
-        )
-        .select_related("workspace")
-        .order_by("workspace__name")
-    )
-    sidebar_workspaces = [wm.workspace for wm in workspace_memberships]
+    sidebar_workspaces = list(member_workspaces(request.user, getattr(request, "org", None)))
 
     # Connected channels for the current workspace
     sidebar_channels = []
