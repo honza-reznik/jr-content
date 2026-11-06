@@ -5,6 +5,7 @@ import uuid
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from django.contrib.auth import get_user_model
 from django.test import Client
 from django.utils import timezone
 
@@ -160,3 +161,119 @@ def test_logout_requires_csrf_and_always_leads_through_freeframe(browser):
     assert response["Referrer-Policy"] == "no-referrer"
     assert "_auth_user_id" not in browser.session
     assert response.cookies["jrc_sso_binding"]["max-age"] == 0
+
+
+# ---- P1-B30 (E-13b-ex10-04): another client's video gets the same clear refusal as no client at all ----------
+
+NO_ACCESS = b"You do not have access to video."
+
+
+@pytest.fixture
+def other_client(organization):
+    """Another client of the same organization with its synchronized project and one channel video."""
+    from apps.jrc_channels.services import create_manual_channel
+    from apps.jrc_production.services import create_content
+    from apps.jrc_video.models import VideoAsset, VideoProject
+
+    other = Workspace.objects.create(organization=organization, name="Another client")
+    owner = get_user_model().objects.create_user(
+        email="other-owner@example.test", password="x-unused-1", name="Other", tos_accepted_at=timezone.now()
+    )
+    WorkspaceMembership.objects.create(user=owner, workspace=other, workspace_role="owner")
+    create_manual_channel(other, "instagram", "Other Instagram")
+    post = create_content(
+        other, "Other video", owner, social_account_ids=other.social_accounts.values_list("pk", flat=True)
+    )
+    project = VideoProject.objects.create(workspace=other, ff_project_id=uuid.uuid4(), synced_at=timezone.now())
+    asset = VideoAsset.objects.create(platform_post=post.platform_posts.get(), ff_asset_id=uuid.uuid4())
+    return {"workspace": other, "project": project.ff_project_id, "asset": asset.ff_asset_id}
+
+
+@pytest.fixture
+def own_project(workspace):
+    from apps.jrc_video.models import VideoProject
+
+    return VideoProject.objects.create(workspace=workspace, ff_project_id=uuid.uuid4(), synced_at=timezone.now())
+
+
+def sso_post(browser, next_path):
+    browser.get("/video-sso/")
+    return browser.post("/video-sso/", {"next": next_path, "csrfmiddlewaretoken": browser.cookies["csrftoken"].value})
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "/projects/{project}",
+        "/projects/{project}/assets/{asset}?embed=1&version=1",
+        "/projects/{project}/assets/{asset}",
+        "/projects/{own}/assets/{asset}?embed=1",
+        "/assets/{asset}",
+        "/projects/{project}/settings",
+    ],
+)
+def test_other_clients_video_is_refused_before_sign_in_with_the_clear_message(
+    browser, other_client, own_project, template
+):
+    next_path = template.format(
+        project=other_client["project"], asset=other_client["asset"], own=own_project.ff_project_id
+    )
+
+    for response in (browser.get("/video-sso/", {"next": next_path}), sso_post(browser, next_path)):
+        assert response.status_code == 403
+        assert NO_ACCESS in response.content
+        assert "jrc_sso_binding" not in response.cookies
+        assert "#ticket=" not in response.get("Location", "")
+
+
+def test_no_client_at_all_gets_the_same_page(browser, user):
+    WorkspaceMembership.objects.filter(user=user).delete()
+    for response in (browser.get("/video-sso/", {"next": "/projects"}), sso_post(browser, "/projects")):
+        assert response.status_code == 403
+        assert NO_ACCESS in response.content and b"Back to JR Content" in response.content
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "/projects",
+        "/projects/{own}",
+        "/projects/{own}/assets/{own_asset}?embed=1&version=1",
+        "/projects/{unknown}/assets/{unknown}",
+        "/notifications",
+    ],
+)
+def test_own_client_and_unknown_ids_still_sign_in(browser, user, workspace, own_project, template):
+    from apps.jrc_channels.services import create_manual_channel
+    from apps.jrc_production.services import create_content
+    from apps.jrc_video.models import VideoAsset
+
+    WorkspaceMembership.objects.filter(workspace=workspace, user=user).update(workspace_role="owner")
+    create_manual_channel(workspace, "instagram", "Own Instagram")
+    post = create_content(
+        workspace, "Own video", user, social_account_ids=workspace.social_accounts.values_list("pk", flat=True)
+    )
+    own_asset = VideoAsset.objects.create(platform_post=post.platform_posts.get(), ff_asset_id=uuid.uuid4())
+    next_path = template.format(own=own_project.ff_project_id, own_asset=own_asset.ff_asset_id, unknown=uuid.uuid4())
+
+    response = sso_post(browser, next_path)
+
+    assert response.status_code == 302
+    assert decode(parse_qs(urlsplit(response.url).fragment)["ticket"][0])["next"] == next_path
+
+
+@pytest.mark.parametrize("change", ["removed", "archived"])
+def test_access_ends_with_the_membership_of_that_client(browser, user, workspace, own_project, other_client, change):
+    WorkspaceMembership.objects.create(user=user, workspace=other_client["workspace"], workspace_role="client")
+    next_path = f"/projects/{other_client['project']}/assets/{other_client['asset']}?embed=1"
+    assert sso_post(browser, next_path).status_code == 302
+
+    if change == "removed":
+        WorkspaceMembership.objects.filter(user=user, workspace=other_client["workspace"]).delete()
+    else:
+        Workspace.objects.filter(pk=other_client["workspace"].pk).update(is_archived=True)
+
+    response = sso_post(browser, next_path)
+    assert response.status_code == 403 and NO_ACCESS in response.content
+    # The own client is not affected.
+    assert sso_post(browser, f"/projects/{own_project.ff_project_id}").status_code == 302

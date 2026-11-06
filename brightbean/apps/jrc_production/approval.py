@@ -5,6 +5,7 @@ Read-only helpers. Every decision goes through ``services.move_content`` (approv
 """
 
 from apps.approvals.models import ApprovalAction
+from apps.jrc_texts.content import content_to_plain_text
 from apps.jrc_texts.models import TextDocument, TextVersion
 from apps.jrc_texts.services import latest_saved_captions
 
@@ -59,7 +60,8 @@ def _script_summary(post):
         return None
     return {
         "number": version.number,
-        "text": version.text,
+        # P1-B30: the editor content, never the Markdown in ``version.text`` (its entities would show).
+        "text": content_to_plain_text(version.content),
         "saved_at": version.finalized_at or version.created_at,
     }
 

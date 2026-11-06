@@ -1,7 +1,7 @@
 import pytest
 from django.core.exceptions import ValidationError
 
-from apps.jrc_texts.content import content_to_markdown, markdown_to_content, normalize_content
+from apps.jrc_texts.content import content_to_markdown, content_to_plain_text, markdown_to_content, normalize_content
 
 
 @pytest.mark.parametrize(
@@ -61,3 +61,53 @@ def test_missing_ambiguous_and_oversized_payloads_are_rejected():
         normalize_content(content={}, markdown="both")
     with pytest.raises(ValidationError, match="too large"):
         markdown_to_content("x" * 1_000_001)
+
+
+# ---- P1-B30: plain text for previews comes from the editor content, never from the Markdown ----------------
+
+
+@pytest.mark.parametrize(
+    "markdown, expected",
+    [
+        ("<script>alert(1)</script> & \"q\" 's'", "<script>alert(1)</script> & \"q\" 's'"),
+        ("a < b > c &amp; d", "a < b > c & d"),
+        ("Doslovné \\*hvězdy\\* a \\\\ lomítko", "Doslovné *hvězdy* a \\ lomítko"),
+        ("# Nadpis\n\nOdstavec s **tučným** a *kurzívou*.", "Nadpis\n\nOdstavec s tučným a kurzívou."),
+        ("- První\n  - Vnořená\n- Druhá", "• První\n  • Vnořená\n• Druhá"),
+        ("5. Pátý\n6. Šestý", "5. Pátý\n6. Šestý"),
+        ("- [ ] Natočit\n- [x] Hotovo", "☐ Natočit\n☑ Hotovo"),
+        ("> Citace\n\n```\nkód <b>\n```", "> Citace\n\nkód <b>"),
+        ("Řádek  \ndalší", "Řádek\ndalší"),
+        ("", ""),
+    ],
+)
+def test_plain_text_is_what_people_wrote(markdown, expected):
+    content = markdown_to_content(markdown)
+    assert content_to_plain_text(content) == expected
+    # The stored Markdown differs for exactly the characters that broke the Approval preview.
+    if "<" in expected or "&" in expected:
+        assert content_to_markdown(content) != expected
+
+
+def test_plain_text_keeps_paragraph_breaks_and_hard_breaks():
+    content = {
+        "type": "doc",
+        "content": [
+            {
+                "type": "paragraph",
+                "content": [{"type": "text", "text": "One"}, {"type": "hardBreak"}, {"type": "text", "text": "two"}],
+            },
+            {"type": "horizontalRule"},
+            {"type": "paragraph"},
+            {
+                "type": "paragraph",
+                "content": [{"type": "text", "text": "Three &amp; <b>", "marks": [{"type": "bold"}]}],
+            },
+        ],
+    }
+    assert content_to_plain_text(content) == "One\ntwo\n\n———\n\n\n\nThree &amp; <b>"
+
+
+@pytest.mark.parametrize("content", [None, "", "text", [], {}, {"type": "paragraph"}, {"type": "doc", "content": "x"}])
+def test_plain_text_of_something_else_is_empty(content):
+    assert content_to_plain_text(content) == ""
