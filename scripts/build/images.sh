@@ -9,6 +9,11 @@ project=${JRC_PROJECT:?Spusť přes make s JRC_PROJECT}
 [[ $project =~ ^jrc(-[a-z0-9-]+)?$ ]] || exit 2
 source scripts/build/cache.sh
 prepare_build_cache
+# Stejný zámek jako při převzetí cache, společný všem worktree. Deskriptor
+# zůstává otevřený až do konce této dávky (i při chybě se zavře s procesem).
+# Zamykáme před čtením index.json a odemykáme až po dokončení všech exportů.
+exec {build_cache_lock}>"$cache_root/build.lock"
+flock "$build_cache_lock"
 for image in "$@"; do
     args=()
     case $image in

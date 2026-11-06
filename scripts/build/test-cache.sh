@@ -30,8 +30,8 @@ printf 'new index' > "$first/dev/index.json"
 [[ $(cat "$first/dev/index.json") == 'new index' ]]
 # Zámek sdíleného kořene zadrží i druhý worktree.
 (
-    source scripts/build/cache.sh
-    prepare_build_cache
+    exec {holder_lock}>"$first/build.lock"
+    flock "$holder_lock"
     touch "$temporary/locked"
     sleep 1
     touch "$temporary/released"
@@ -83,4 +83,74 @@ if bash scripts/build/images.sh dev; then exit 1; else [[ $? == 125 ]]; fi
 grep -q -- "--cache-from type=local,src=$first/dev" "$TEST_DOCKER_LOG"
 grep -q -- "--cache-to type=local,dest=$first/dev,mode=max" "$TEST_DOCKER_LOG"
 grep -q 'status=125' ops/logs/build-download.log
-echo 'OK: sdílená cesta worktree, místní převzetí, zámek a přímé sestavení pod hlídačem.'
+
+# Dva skutečné spouštěče z různých worktree, tentýž export dev; jen Docker
+# je simulovaný. První běh držíme uvnitř importu/exportu, druhý musí čekat.
+cat > "$temporary/bin/docker" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+mkdir "$TEST_BUILD_ACTIVE"
+trap 'rmdir "$TEST_BUILD_ACTIVE"' EXIT
+printf 'start %s\n' "$TEST_RUN_ID" >> "$TEST_BUILD_EVENTS"
+cache=
+while (( $# )); do
+    if [[ $1 == --cache-to ]]; then
+        cache=${2#type=local,dest=}
+        cache=${cache%,mode=max}
+    fi
+    shift
+done
+[[ $cache == "$TEST_CACHE_EXPORT" ]]
+if [[ $TEST_RUN_ID == second ]]; then
+    [[ $(cat "$cache/index.json") == 'complete first' ]]
+fi
+printf 'incomplete %s\n' "$TEST_RUN_ID" > "$cache/index.json"
+touch "$TEST_BUILD_MARKERS/started-$TEST_RUN_ID"
+if [[ $TEST_RUN_ID == first ]]; then
+    until [[ -f $TEST_BUILD_MARKERS/release ]]; do sleep 0.02; done
+fi
+printf 'complete %s\n' "$TEST_RUN_ID" > "$cache/index.json"
+printf 'end %s\n' "$TEST_RUN_ID" >> "$TEST_BUILD_EVENTS"
+exit "${TEST_BUILD_EXIT:-0}"
+MOCK
+export TEST_BUILD_ACTIVE="$temporary/build-active" TEST_BUILD_EVENTS="$temporary/build-events"
+export TEST_BUILD_MARKERS="$temporary/build-markers" TEST_CACHE_EXPORT="$first/dev"
+export JRC_BUILD_DOWNLOAD_LIMIT_MB=500
+printf 0 > "$TEST_COUNTER"
+wait_for_marker() {
+    for _ in {1..200}; do [[ ! -f $1 ]] || return 0; sleep 0.02; done
+    echo "Chybí značka: $1" >&2
+    return 1
+}
+for first_exit in 0 42; do
+    rm -rf "$TEST_BUILD_MARKERS"
+    mkdir "$TEST_BUILD_MARKERS"
+    : > "$TEST_BUILD_EVENTS"
+    TEST_RUN_ID=first TEST_BUILD_EXIT=$first_exit bash scripts/build/images.sh dev > "$temporary/first.log" 2>&1 &
+    first_pid=$!
+    wait_for_marker "$TEST_BUILD_MARKERS/started-first"
+    # Během simulovaného BuildKitu je zámek skutečně držený, nikoli jen při přípravě.
+    if flock -n "$first/build.lock" true; then
+        echo 'Import/export běží bez zámku' >&2; exit 1
+    fi
+    (
+        cd "$temporary/second"
+        touch "$TEST_BUILD_MARKERS/second-requested"
+        TEST_RUN_ID=second TEST_BUILD_EXIT=0 bash scripts/build/images.sh dev
+    ) > "$temporary/second.log" 2>&1 &
+    second_pid=$!
+    wait_for_marker "$TEST_BUILD_MARKERS/second-requested"
+    sleep 0.2
+    kill -0 "$second_pid"
+    [[ ! -e $TEST_BUILD_MARKERS/started-second ]]
+    touch "$TEST_BUILD_MARKERS/release"
+    first_status=0
+    wait "$first_pid" || first_status=$?
+    [[ $first_status == "$first_exit" ]]
+    wait "$second_pid"
+    printf 'start first\nend first\nstart second\nend second\n' > "$temporary/expected-events"
+    cmp "$temporary/expected-events" "$TEST_BUILD_EVENTS"
+    [[ $(cat "$first/dev/index.json") == 'complete second' ]]
+    flock -n "$first/build.lock" true
+done
+echo 'OK: sdílená cesta, převzetí, hlídač a souběžné importy/exporty ze dvou worktree; uvolnění zámku po úspěchu i chybě.'
