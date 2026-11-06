@@ -63,6 +63,7 @@ from .services import (
     publish_blocker,
     remove_platform_posts,
     require_publishable,
+    require_release_allowed,
     usable_media_types,
 )
 from .status import READONLY_STATUSES, derive_post_status
@@ -473,6 +474,43 @@ def _composer_media_types(request, post, workspace) -> set[str]:
         pending_ids = request.session.get(f"pending_media_{workspace.id}", [])
         media_types |= usable_media_types(MediaAsset.objects.filter(id__in=pending_ids, workspace=workspace))
     return media_types
+
+
+_RELEASING_ACTIONS = frozenset({"schedule", "publish_now", "add_to_queue", "add_to_queue_priority"})
+
+
+def _validate_approval_release(request, post, workspace, action, *, post_id):
+    """Refuse a schedule / publish / queue action the approval workflow does not allow yet (P1-B27).
+
+    Every copy the action would move to ``scheduled`` is checked with the shared rule
+    (``require_release_allowed``): new copies and copies that hop through draft count as drafts.
+    Refused up front, before anything is saved, so a refused action changes nothing.
+    """
+    if action not in _RELEASING_ACTIONS:
+        return None
+    scope = _get_account_scope(request)
+    existing = {str(pp.social_account_id): pp for pp in post.platform_posts.all()} if post_id else {}
+    for account_id in _parse_selected_account_ids(request.POST.get("selected_accounts", "")):
+        if scope and str(uuid.UUID(scope)) != str(uuid.UUID(account_id)):
+            continue
+        pp = existing.get(str(uuid.UUID(account_id)))
+        if pp is None:
+            status = "draft"
+        elif pp.status == "scheduled":
+            status = None  # already went out; only its time changes
+        elif pp.can_transition_to("scheduled"):
+            status = pp.status
+        elif pp.can_transition_to("draft"):
+            status = "draft"  # _transition_post_children hops through draft
+        else:
+            status = None  # stays where it is (in review, published): nothing goes out
+        if status is None:
+            continue
+        try:
+            require_release_allowed(workspace, status)
+        except ValueError as exc:
+            return JsonResponse({"errors": {"schedule": str(exc)}}, status=400)
+    return None
 
 
 def _validate_required_media(request, post, workspace, action):
@@ -1107,6 +1145,10 @@ def save_post(request, workspace_id, post_id=None):
     if pinterest_board_error is not None:
         return pinterest_board_error
 
+    release_error = _validate_approval_release(request, post, workspace, action, post_id=post_id)
+    if release_error is not None:
+        return release_error
+
     media_error = _validate_required_media(request, post, workspace, action)
     if media_error is not None:
         return media_error
@@ -1412,8 +1454,9 @@ def transition_platform_post(request, workspace_id, post_id, platform_post_id):
 
     if target in {"pending_review", "approved", "pending_client", "changes_requested", "rejected"}:
         from apps.approvals import services as approvals
+        from apps.members.permissions import client_approval_required
 
-        if target == "pending_client" and workspace.approval_workflow_mode != "required_internal_and_client":
+        if target == "pending_client" and not client_approval_required(workspace):
             raise PermissionDenied("Client review is not enabled.")
         try:
             if target == "pending_review":
@@ -1442,6 +1485,7 @@ def transition_platform_post(request, workspace_id, post_id, platform_post_id):
         # straight to the publisher, so a failed image-only TikTok row could
         # otherwise be "retried" into the same failure.
         try:
+            require_release_allowed(workspace, pp.status)
             require_publishable(pp)
         except ValueError as exc:
             return JsonResponse({"error": str(exc)}, status=400)
@@ -3768,6 +3812,11 @@ def csv_confirm_import(request, workspace_id):
     # rather than scheduled to fail, and the result screen says so.
     drafted_count = 0
     drafted_platforms: set[str] = set()
+    # P1-B27: where the approval workflow requires approval, imported rows stay drafts on their
+    # date and go through review like any other draft (the shared release rule).
+    from apps.members.permissions import approval_requirement_text, release_blocker
+
+    approval_needed = release_blocker(workspace, "draft")
 
     for row in rows:
         try:
@@ -3801,7 +3850,7 @@ def csv_confirm_import(request, workspace_id):
                     t = datetime.strptime(time_str, "%H:%M").time() if time_str else time_cls(9, 0)
                     naive_dt = datetime.combine(d, t)
                     post.scheduled_at = naive_dt.replace(tzinfo=tz)
-                    initial_pp_status = "scheduled"
+                    initial_pp_status = "draft" if approval_needed else "scheduled"
 
             # First comment
             if "first_comment" in mapping and mapping["first_comment"] < len(row):
@@ -3871,6 +3920,7 @@ def csv_confirm_import(request, workspace_id):
             "total_rows": len(rows),
             "drafted_count": drafted_count,
             "drafted_platforms": get_text_list(sorted(drafted_platforms), "and"),
+            "approval_needed": approval_requirement_text(workspace) if approval_needed else "",
         },
     )
 

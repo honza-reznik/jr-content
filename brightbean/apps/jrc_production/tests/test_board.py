@@ -308,6 +308,10 @@ def test_forbidden_move_is_atomic_in_service_and_http(post, workspace, user, htt
         review(post, user)
     elif initial == "approved":
         approve(post, user)
+    if (stage, initial) == ("ready", "idea"):
+        # P1-B27: Ready straight from a draft only where approval is not required (test_approval_modes).
+        workspace.approval_workflow_mode = "required_internal"
+        workspace.save(update_fields=["approval_workflow_mode"])
     before = list(post.platform_posts.values_list("status", flat=True))
     count = StageChange.objects.count()
     set_role(workspace, user, role)

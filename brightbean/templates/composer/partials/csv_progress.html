@@ -23,6 +23,11 @@
         {% endif %}
     </div>
 
+    {% if approval_needed %}
+    <p class="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 mb-4 max-w-md mx-auto" data-approval-needed>
+        Dated posts were kept as drafts on their dates, because this workspace needs {{ approval_needed }} before anything is scheduled.
+    </p>
+    {% endif %}
     {% if drafted_count > 0 %}
     <p class="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 mb-4 max-w-md mx-auto">
         {{ drafted_count }} {{ drafted_platforms }} post{{ drafted_count|pluralize }} {{ drafted_count|pluralize:"was,were" }} kept as draft{{ drafted_count|pluralize }} on {{ drafted_count|pluralize:"its date,their dates" }},

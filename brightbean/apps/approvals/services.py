@@ -17,7 +17,7 @@ from django.db import transaction
 
 from apps.composer.models import PlatformPost, Post
 from apps.members.models import WorkspaceMembership
-from apps.members.permissions import can_decide_at_step
+from apps.members.permissions import can_decide_at_step, client_approval_required
 from apps.notifications.audience import (
     active_memberships,
     content_label,
@@ -240,7 +240,7 @@ def approve_post(target, user, workspace, comment=""):
         eligible_from_states=_APPROVE_FROM,
     )
 
-    two_stage = workspace.approval_workflow_mode == "required_internal_and_client"
+    two_stage = client_approval_required(workspace)
     moved = []
     advanced_to_client = False
     with transaction.atomic():

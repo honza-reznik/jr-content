@@ -195,7 +195,8 @@ def create_post(
             )
 
     if status == "scheduled":
-        _require_approval_gate_passes(workspace)
+        # New copies start as drafts: the same rule as scheduling an existing draft (P1-B27).
+        require_release_allowed(workspace, "draft")
 
     media_ids = list(media_asset_ids or [])
     # Pull and validate all referenced assets in a single query — fail
@@ -321,8 +322,8 @@ def transition_platform_post(
     # promotes a draft to scheduled (REST `/schedule` route, any future
     # MCP transition tool, the composer's HTMX `transition_platform_post`
     # view) is covered.
-    if target_status == "scheduled":
-        _require_approval_gate_passes(platform_post.post.workspace)
+    if target_status in ("scheduled", "publishing"):
+        require_release_allowed(platform_post.post.workspace, platform_post.status)
         require_publishable(platform_post)
 
     with transaction.atomic():
@@ -429,25 +430,19 @@ def clone_post(post, *, author=None):
 # ---------------------------------------------------------------------------
 
 
-#: Workspace approval modes that BLOCK a direct draft → scheduled
-#: transition. The composer's HTMX path routes around this via a
-#: separate ``submit_for_approval`` action; the Agent API surface uses
-#: the same service layer so the constraint lives here once.
-_APPROVAL_MODES_BLOCKING_DIRECT_SCHEDULE = frozenset({"required_internal", "required_internal_and_client"})
+def require_release_allowed(workspace, status) -> None:
+    """Raise ``ValueError`` if the approval workflow keeps a copy in ``status`` from going out.
 
-
-def _require_approval_gate_passes(workspace) -> None:
-    """Raise ``ValueError`` if the workspace forbids direct scheduling.
-
-    Drafts are always allowed (they're explicit save-for-later);
-    scheduling implies "ready to publish," which is exactly what the
-    approval workflow gates.
+    The one rule (``apps.members.permissions.release_blocker``, P1-B27) for every path that
+    schedules or publishes: composer, calendar, CSV import, REST and MCP. "No approvals" and
+    "Optional approvals" let a draft go out directly; the required modes only after approval,
+    so an approved copy may be scheduled in every mode.
     """
-    if getattr(workspace, "approval_workflow_mode", "none") in _APPROVAL_MODES_BLOCKING_DIRECT_SCHEDULE:
-        raise ValueError(
-            "Workspace requires approval before scheduling; create the post as a "
-            "draft and route it through the approval workflow."
-        )
+    from apps.members.permissions import release_blocker
+
+    reason = release_blocker(workspace, status)
+    if reason:
+        raise ValueError(f"This content cannot be scheduled or published yet. {reason}")
 
 
 def usable_media_types(assets) -> set[str]:

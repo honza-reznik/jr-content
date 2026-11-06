@@ -8,6 +8,7 @@ from apps.approvals.models import ApprovalAction
 from apps.jrc_texts.content import content_to_plain_text
 from apps.jrc_texts.models import TextDocument, TextVersion
 from apps.jrc_texts.services import latest_saved_captions
+from apps.members.permissions import approval_required, client_approval_required
 
 from .services import can_decide
 
@@ -29,6 +30,14 @@ _STATUS_TEXT = {
 # Order in which a mixed set of channel statuses is described (the earliest step wins).
 _STATUS_ORDER = list(_STATUS_TEXT)
 
+# P1-B27: where the mode does not require approval, planned or published content may never have been
+# reviewed, so these states must not claim an approval.
+_STATUS_TEXT_WITHOUT_REQUIRED_APPROVAL = {
+    "scheduled": "Planned for publication.",
+    "publishing": "Being published.",
+    "failed": "Publishing failed; the team is looking into it.",
+}
+
 
 def post_statuses(post):
     return {pp.status for pp in post.platform_posts.all()}
@@ -43,13 +52,18 @@ def status_text(post, membership):
     statuses = post_statuses(post)
     if can_decide(post, membership, statuses):
         return "Waiting for your decision."
-    if membership.workspace_role == "client" and "pending_review" in statuses:
-        mode = post.workspace.approval_workflow_mode
-        if mode == "required_internal_and_client":
-            return "The team is checking this first. You will be asked to approve after that."
+    if (
+        membership.workspace_role == "client"
+        and "pending_review" in statuses
+        and client_approval_required(post.workspace)
+    ):
+        return "The team is checking this first. You will be asked to approve after that."
+    texts = _STATUS_TEXT
+    if not approval_required(post.workspace):
+        texts = {**_STATUS_TEXT, **_STATUS_TEXT_WITHOUT_REQUIRED_APPROVAL}
     for status in _STATUS_ORDER:
         if status in statuses:
-            return _STATUS_TEXT[status]
+            return texts[status]
     return ""
 
 
@@ -164,5 +178,5 @@ def approval_context(post, membership, accounts, *, can_view_internal_notes):
         "approval_status": status_text(post, membership),
         "approval_can_decide": decide,
         "approval_latest": _latest_decision(post, can_view_internal_notes),
-        "approval_two_stage": post.workspace.approval_workflow_mode == "required_internal_and_client",
+        "approval_two_stage": client_approval_required(post.workspace),
     }

@@ -13,7 +13,7 @@
       <form method="post" action="{% url 'jrc_production:move' workspace_id=post.workspace_id post_id=post.id %}">{% csrf_token %}
         <input type="hidden" name="expected_stage" value="{{ card.stage }}"><input type="hidden" name="client" value="{{ selected_client }}"><input type="hidden" name="channel" value="{{ selected_channel }}">
         <label for="move-{{ post.id }}">Move to</label><select id="move-{{ post.id }}" name="stage" required>{% for value,label in card.moves %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
-        {% if card.stage == "approved" %}<label for="date-{{ post.id }}">Publication date &amp; time<br>({{ post.workspace.effective_timezone }})</label><input id="date-{{ post.id }}" name="scheduled_at" type="datetime-local">{% endif %}
+        {% if card.can_plan %}<label for="date-{{ post.id }}">Publication date &amp; time<br>({{ post.workspace.effective_timezone }})</label><input id="date-{{ post.id }}" name="scheduled_at" type="datetime-local">{% endif %}
         <button class="board-primary" type="submit">Confirm move</button>
       </form>
     </details>

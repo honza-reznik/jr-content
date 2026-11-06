@@ -21,7 +21,7 @@ from apps.composer.models import PlatformPost, Post
 from apps.jrc_texts import services as text_services
 from apps.jrc_texts.models import TextDocument, TextVersion
 from apps.jrc_texts.services import ConflictError
-from apps.jrc_video.downloads import can_download_final
+from apps.jrc_video.downloads import can_download_final, missing_for_publication
 from apps.members.models import WorkspaceMembership
 from apps.members.permissions import can_comment, can_moderate_comments, can_publish_directly
 from apps.social_accounts.models import SocialAccount
@@ -40,6 +40,7 @@ from .services import (
     mark_published_manually,
     move_content,
     pipeline_stage,
+    publication_blocker,
     remove_content_channel,
     request_content_changes,
     set_publication_date,
@@ -77,10 +78,13 @@ def _board_card(post, membership, comment_count=0):
     stage = pipeline_stage(post)
     variants = post.platform_posts.all()
     planned = post.scheduled_at
+    moves = available_moves(post, membership)
     return {
         "post": post,
         "stage": stage,
-        "moves": [(value, PipelineStage(value).label) for value in available_moves(post, membership)],
+        "moves": [(value, PipelineStage(value).label) for value in moves],
+        # Ready needs a date; offered from Approved, and from a draft where approval is not required (P1-B27).
+        "can_plan": PipelineStage.READY in moves,
         "client_review": any(pp.status == "pending_client" for pp in variants),
         "date": planned or post.proposed_publish_at,
         "date_label": "Planned" if planned else "Proposed",
@@ -683,6 +687,17 @@ def content_detail(request, workspace_id, post_id):
             video_final = bool(
                 video and video.final_version_id and video.final_version.status == VideoVersion.Status.READY
             )
+            # P1-B27: the approval workflow, caption and final video come from the shared rule, both for
+            # what is offered and for the reasons shown next to an unavailable action.
+            schedule_blocker = publication_blocker(variant)
+            may_schedule = (
+                membership.workspace_role != "viewer"
+                and membership.effective_permissions.get("publish_directly", False)
+                and getattr(getattr(account, "jrc_channel", None), "is_enabled", False)
+                and account.jrc_channel.kind in {"manual", "custom"}
+            )
+            missing = missing_for_publication(variant, caption=caption, video=video)
+            download_missing = missing_for_publication(variant, caption=caption, video=video, download=True)
             publish_channels.append(
                 {
                     "variant": variant,
@@ -690,11 +705,8 @@ def content_detail(request, workspace_id, post_id):
                     "caption": caption,
                     "scheduled_at": scheduled_at,
                     "scheduled_label": (scheduled_at.strftime("%b %-d, %Y · %-I:%M %p %Z") if scheduled_at else ""),
-                    "can_schedule": membership.workspace_role != "viewer"
-                    and membership.effective_permissions.get("publish_directly", False)
-                    and variant.status in {PlatformPost.Status.APPROVED, PlatformPost.Status.SCHEDULED}
-                    and getattr(getattr(account, "jrc_channel", None), "is_enabled", False)
-                    and account.jrc_channel.kind in {"manual", "custom"},
+                    "can_schedule": may_schedule and not schedule_blocker,
+                    "schedule_blocker": schedule_blocker if may_schedule and publication is None else "",
                     "date_open": date_target == str(variant.pk),
                     "date_error": date_error if date_target == str(variant.pk) else "",
                     "date_form": date_form
@@ -708,10 +720,10 @@ def content_detail(request, workspace_id, post_id):
                     "has_video": bool(video),
                     "published": publication is not None,
                     "publication_url": publication.post_url if publication else "",
-                    "can_mark": can_publish
-                    and variant.status in {PlatformPost.Status.APPROVED, PlatformPost.Status.SCHEDULED}
-                    and bool(caption.strip())
-                    and (not video or video_final),
+                    "can_mark": can_publish and not publication_blocker(variant) and not missing,
+                    "can_publish": can_publish,
+                    "missing": missing,
+                    "download_missing": download_missing,
                     "download_url": reverse(
                         "jrc_video:final_download",
                         kwargs={"workspace_id": workspace.id, "post_id": post.id, "platform_post_id": variant.id},

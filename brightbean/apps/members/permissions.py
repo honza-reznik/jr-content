@@ -20,6 +20,66 @@ def can_publish_directly(membership):
     )
 
 
+# P1-B27: the approval workflow mode of a workspace (``Workspace.ApprovalWorkflowMode``) is read only here.
+# ``can_decide_at_step`` says who decides a review step; ``release_blocker`` says what must happen before
+# a channel copy may go out: be scheduled or published (any path: JR detail/board, composer, calendar,
+# CSV import, REST, MCP) or have its final files downloaded. The texts explaining a disabled action come
+# from the same rule, so the page never promises something the server refuses.
+APPROVAL_REQUIRED_MODES = frozenset({"required_internal", "required_internal_and_client"})
+TWO_STAGE_MODE = "required_internal_and_client"
+
+_RELEASE_BLOCKED_BY_STATUS = {
+    "pending_review": "It is waiting for a review decision.",
+    "pending_client": "It is waiting for the client's approval.",
+    "changes_requested": "Changes were requested. Move the content back to Editing and finish them first.",
+    "rejected": "It was rejected. Move the content back to Editing and rework it first.",
+    "on_hold": "It is on hold at the client's request.",
+}
+
+
+def approval_required(workspace):
+    """Must every channel copy be approved before it goes out ("Internal review required" and the two-stage mode)?
+
+    "No approvals" and "Optional approvals" let anyone with publishing rights schedule or publish a
+    draft directly; in "Optional" a review is offered but not required.
+    """
+    return workspace.approval_workflow_mode in APPROVAL_REQUIRED_MODES
+
+
+def client_approval_required(workspace):
+    """Two-stage mode: the team approves first, then the client signs off."""
+    return workspace.approval_workflow_mode == TWO_STAGE_MODE
+
+
+def approval_requirement_text(workspace):
+    """What approval this workspace needs before content goes out, for hints; empty when none is needed."""
+    if client_approval_required(workspace):
+        return "approval by the team and then the client"
+    if approval_required(workspace):
+        return "approval by the team"
+    return ""
+
+
+def release_blocker(workspace, status):
+    """Why a channel copy in ``status`` may not go out yet because of the approval workflow, or "".
+
+    "Go out" means being scheduled, published (also marked as published manually) or having its
+    final video and thumbnail downloaded. Copies that already went out (scheduled, publishing,
+    published, failed) and approved copies are never blocked by the workflow; a draft only when the
+    mode requires approval. Other conditions (publishing rights, caption, final video, channel kind)
+    are checked by the caller.
+    """
+    if status == "draft":
+        if approval_required(workspace):
+            return f"It needs {approval_requirement_text(workspace)} first."
+        return ""
+    return _RELEASE_BLOCKED_BY_STATUS.get(status, "")
+
+
+def can_release(workspace, status):
+    return not release_blocker(workspace, status)
+
+
 def can_decide_at_step(membership, step):
     """Who may decide (approve / request changes / reject) on a copy waiting in ``step`` (P1-B25).
 
@@ -33,7 +93,7 @@ def can_decide_at_step(membership, step):
         return False
     if membership.workspace_role == "viewer" or not membership.effective_permissions.get("approve_posts", False):
         return False
-    two_stage = membership.workspace.approval_workflow_mode == "required_internal_and_client"
+    two_stage = client_approval_required(membership.workspace)
     if membership.workspace_role == "client":
         return two_stage and step == "pending_client"
     if two_stage:
