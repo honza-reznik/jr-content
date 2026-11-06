@@ -120,8 +120,12 @@
 		}
 	}
 	handle_path {$JRC_BASE_PATH}/* {
+		# Caddy řadí direktivy podle pevného pořadí (handle před respond), proto je
+		# zákaz admina také handle a stojí jako první; jinak by ho předběhly handle níže.
 		@admin path /admin /admin/*
-		respond @admin 404
+		handle @admin {
+			respond 404
+		}
 		header {
 			defer
 			X-Frame-Options DENY

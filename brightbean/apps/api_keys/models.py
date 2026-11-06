@@ -140,12 +140,17 @@ class ApiKeyAuditLog(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     api_key = models.ForeignKey(
         ApiKey,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         related_name="audit_logs",
         null=True,
         blank=True,
-        help_text="Set for bb_studio_ key requests; null for OAuth callers (see actor_user).",
+        help_text="Set for bb_studio_ key requests; null for OAuth callers (see actor_user) "
+        "and after the key was deleted (key_prefix/key_name keep the row readable).",
     )
+    # P1-B29: deleting a dead key must not erase what it did. The row keeps the
+    # key's public prefix and name as they were when the request was made.
+    key_prefix = models.CharField(max_length=16, blank=True, default="")
+    key_name = models.CharField(max_length=100, blank=True, default="")
     # OAuth 2.1 MCP callers act as a *person*, not a minted key — there is no
     # ApiKey row to point at, so attribute the request to the user instead.
     actor_user = models.ForeignKey(
@@ -185,7 +190,7 @@ class ApiKeyAuditLog(models.Model):
         ]
 
     def __str__(self):
-        actor = self.api_key.name if self.api_key_id else (self.actor_label or "oauth")
+        actor = self.api_key.name if self.api_key_id else (self.key_name or self.actor_label or "oauth")
         return f"{self.action} -> {self.status_code} ({actor})"
 
 

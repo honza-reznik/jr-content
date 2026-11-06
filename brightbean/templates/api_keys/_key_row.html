@@ -283,7 +283,7 @@
                     <p class="px-6 pb-2 text-sm" style="color: var(--text-secondary);">
                         Delete the {% if row.status == "expired" %}expired{% else %}revoked{% endif %} key
                         <strong style="color: var(--text-primary);">{{ row.name }}</strong>?
-                        It already stopped working; this removes it from the list together with its usage history.
+                        It already stopped working; this removes it from the list. Its audit entries are kept.
                     </p>
 
                     <form method="POST" action="{% url 'api_keys:delete' row.id %}"

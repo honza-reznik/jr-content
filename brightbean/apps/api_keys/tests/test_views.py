@@ -922,3 +922,35 @@ class TestWorkspaceOfferIsMemberOnly:
         assert all(name in offered for name in expected) and foreign_workspace.name not in offered
         listing = admin_client.get(reverse("workspaces:list"))
         assert foreign_workspace.name not in listing.content.decode()
+
+
+@pytest.mark.django_db
+class TestAuditSurvivesDeletion:
+    def test_audit_rows_keep_prefix_and_name_after_the_key_is_deleted(
+        self, admin_client, admin_user, workspace, social_account
+    ):
+        from django.test import RequestFactory
+
+        from apps.api import middleware
+        from apps.api_keys import services
+        from apps.api_keys.models import ApiKeyAuditLog
+
+        key = services.issue_api_key(
+            workspace=workspace,
+            social_accounts=[social_account],
+            issued_by=admin_user,
+            name="audited bot",
+            permissions=["create_posts"],
+        ).api_key
+        request = RequestFactory().post("/api/v1/posts/")
+        request.api_key = key
+        middleware.log_audit_entry(request, action="post.create", target_id=None, status_code=201)
+        row = ApiKeyAuditLog.objects.get()
+        assert (row.key_prefix, row.key_name) == (key.lookup_prefix, "audited bot")
+        services.revoke_api_key(key)
+        admin_client.post(reverse("api_keys:delete", args=[key.id]))
+        assert not ApiKey.objects.filter(pk=key.pk).exists()
+        row.refresh_from_db()
+        assert row.api_key_id is None
+        assert (row.key_prefix, row.key_name) == (key.lookup_prefix, "audited bot")
+        assert "audited bot" in str(row)

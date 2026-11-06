@@ -321,7 +321,8 @@ def delete_api_key(api_key: ApiKey) -> None:
 
     An active key must be revoked first: deleting it outright would skip the
     deliberate "agents start getting 401" step and a mis-click would be
-    unrecoverable. The cache entry is busted so nothing outlives the row.
+    unrecoverable. The cache entry is busted so nothing outlives the row. Audit
+    rows survive (``api_key`` becomes NULL; they carry the key's prefix and name).
     """
     if api_key.is_active:
         raise ValueError("An active key cannot be deleted; revoke it first.")
