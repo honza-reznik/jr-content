@@ -389,6 +389,7 @@ services:
       - ./scripts:/jrc-scripts:ro
     networks: [internal]
   jrc-dev:
+    mem_limit: 2g
     image: jrc-dev:${JRC_PROJECT:?Spusťte s JRC_PROJECT}
     container_name: ${JRC_PROJECT:?JRC_PROJECT není nastavený, použij make (výchozí jrc) nebo JRC_PROJECT=jrc-<blok>}-dev
     restart: unless-stopped

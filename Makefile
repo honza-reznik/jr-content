@@ -71,10 +71,19 @@ test-p1b02-regressions:
 
 # Build a dirty tree only for an isolated test project; production build targets
 # above continue to reject dirty trees. The archive remains the HEAD snapshot.
-test-up: env check-project-ports
-	@set -eu; version="$$(git rev-parse --short HEAD)"; \
-	  git archive --format=tar.gz --prefix="jr-content-$$version/" --output=brightbean/.jrc-source.tar.gz HEAD
-	$(COMPOSE) up --detach --build --wait --wait-timeout 120
+test-up:
+	@test "$(JRC_PROJECT)" != jrc || { echo 'test-up vyžaduje oddělený projekt'; exit 1; }
+	bash scripts/build/download-guard.sh $(MAKE) --no-print-directory test-up-internal
+
+.PHONY: test-up-internal up-internal build-all build-infra
+# Interní cíle se spouštějí jedině pod hlídačem celé dávky.
+test-up-internal: restore-lock-check
+	@test "$${JRC_BUILD_GUARD_ACTIVE:-0}" = 1
+	$(MAKE) build
+	$(MAKE) env check-project-ports
+	bash scripts/build/images.sh bb ff-api ff-web ingress s3 smtp-relay
+	$(MAKE) runtime-images
+	$(COMPOSE) up --detach --no-build --pull never --wait --wait-timeout 120
 	# Zdrojový bind mount skryje CSS sestavené v obrazu; přeneseme oba artefakty jako v build-bb.
 	@set -eu; container="$(JRC_PROJECT)-test-css-$$$$"; \
 	  docker create --name "$$container" jrc-bb:$(JRC_PROJECT) >/dev/null; \
@@ -86,31 +95,48 @@ test-up: env check-project-ports
 	@sh scripts/workspace.sh remember
 
 build:
-	docker build --tag jrc-dev:$(JRC_PROJECT) --file docker/Dockerfile docker
+	bash scripts/build/download-guard.sh bash scripts/build/images.sh dev
 
 env:
 	@docker image inspect jrc-dev:$(JRC_PROJECT) >/dev/null 2>&1 || $(MAKE) build
 	@sh scripts/workspace.sh env
-	docker run --rm --name $(JRC_PROJECT)-env --network none --pull never \
+	docker run --rm --name $(JRC_PROJECT)-env --network none --pull never --memory 256m \
 	  --user "$(JRC_UID):$(JRC_GID)" --volume "$(CURDIR):/workspace" \
 	  --env JRC_APP_PORT --env JRC_POSTGRES_PORT --env JRC_S3_PORT --env JRC_BB_PORT \
 	  --env JRC_MODE --env JRC_PUBLIC_ORIGIN --env JRC_BASE_PATH \
-	  jrc-dev:$(JRC_PROJECT) node scripts/init-env.cjs
+	  jrc-dev:$(JRC_PROJECT) timeout 60s node --max-old-space-size=2048 scripts/init-env.cjs
 
 build-bb:
 	$(MAKE) --no-print-directory check-clean-worktree
 	# Worktree nesmějí přepsat obraz jinému ověřovacímu projektu.
-	@set -eu; archive=brightbean/.jrc-source.tar.gz; version="$$(git rev-parse --short HEAD)"; \
-	  git archive --format=tar.gz --prefix="jr-content-$$version/" --output="$$archive" HEAD; \
-	  docker build --build-arg JRC_SOURCE_VERSION="$$version" --tag jrc-bb:$(JRC_PROJECT) brightbean
+	bash scripts/build/download-guard.sh bash scripts/build/images.sh bb
 	# Zdrojový bind mount skryje CSS sestavené v obrazu; přeneseme je do worktree.
 	docker run --rm --network none --pull never --user "$(JRC_UID):$(JRC_GID)" \
 	  --volume "$(CURDIR)/brightbean:/source" jrc-bb:$(JRC_PROJECT) sh -c \
 	  'mkdir -p /source/theme/static/css/dist /source/apps/jrc_texts/static/jrc_texts/dist && cp /app/theme/static/css/dist/styles.css /source/theme/static/css/dist/styles.css && cp /opt/jrc-texts/script.js /source/apps/jrc_texts/static/jrc_texts/dist/script.js'
 
-build-ff: check-clean-worktree env
-	docker build --tag jrc-ff-api:$(JRC_PROJECT) --build-arg JRC_PROJECT=$(JRC_PROJECT) --file docker/Dockerfile.ff-api .
-	docker build --tag jrc-ff-web:$(JRC_PROJECT) --build-arg JRC_PROJECT=$(JRC_PROJECT) --build-arg JRC_BASE_PATH="$${JRC_BASE_PATH-$$(sed -n 's/^JRC_BASE_PATH=//p' .env)}" --file docker/Dockerfile.ff-web .
+build-ff: check-clean-worktree
+	bash scripts/build/download-guard.sh $(MAKE) --no-print-directory build-ff-internal
+
+.PHONY: build-ff-internal
+build-ff-internal:
+	@test "$${JRC_BUILD_GUARD_ACTIVE:-0}" = 1
+	$(MAKE) env
+	bash scripts/build/images.sh ff-api ff-web
+
+build-infra:
+	bash scripts/build/download-guard.sh bash scripts/build/images.sh ingress s3 smtp-relay
+
+build-all: check-clean-worktree
+	bash scripts/build/download-guard.sh $(MAKE) --no-print-directory build-all-internal
+
+.PHONY: build-all-internal
+build-all-internal:
+	@test "$${JRC_BUILD_GUARD_ACTIVE:-0}" = 1
+	$(MAKE) build
+	$(MAKE) env check-project-ports
+	bash scripts/build/images.sh ff-api ff-web ingress s3 smtp-relay
+	$(MAKE) build-bb
 
 # F2-B09a: během obnovy hlavního projektu se up/reset/down odmítají (zámek .jrc-restore.lock).
 restore-lock-check:
@@ -119,12 +145,28 @@ restore-lock-check:
 check-project-ports:
 	@sh scripts/check-project-ports.sh
 
-up: restore-lock-check env check-project-ports
-	$(MAKE) build
-	$(MAKE) build-bb
-	$(MAKE) build-ff
-	$(COMPOSE) up --detach --build --wait --wait-timeout 120
+up: restore-lock-check check-clean-worktree
+	bash scripts/build/download-guard.sh $(MAKE) --no-print-directory up-internal
+
+up-internal:
+	@test "$${JRC_BUILD_GUARD_ACTIVE:-0}" = 1
+	$(MAKE) build-all
+	$(MAKE) runtime-images
+	$(COMPOSE) up --detach --no-build --pull never --wait --wait-timeout 120
 	@sh scripts/workspace.sh remember
+
+# Na novém stroji mohou chybět i hotové provozní obrazy. Stahují se jen pokud
+# nejsou místně, pod stejným souhrnným hlídačem; Compose pak už nikdy nestahuje.
+.PHONY: runtime-images runtime-images-internal
+runtime-images:
+	bash scripts/build/download-guard.sh $(MAKE) --no-print-directory runtime-images-internal
+
+runtime-images-internal:
+	@test "$${JRC_BUILD_GUARD_ACTIVE:-0}" = 1
+	@set -eu; for image in postgres:18.6-bookworm redis:7-alpine python:3.12-slim; do \
+	  docker image inspect "$$image" >/dev/null 2>&1 || \
+	    bash scripts/build/download-guard.sh docker pull "$$image"; \
+	done
 
 down:
 	@sh scripts/restore-lock.sh check
@@ -141,7 +183,7 @@ shell:
 
 test: check-project-ports
 	@failed=0; \
-	for suite in test-smoke test-build-source test-bb test-ff test-backup-guards test-smtp-relay test-offsite; do \
+	for suite in test-build-cache test-smoke test-build-source test-bb test-ff test-backup-guards test-smtp-relay test-offsite; do \
 	  printf '\n=== %s ===\n' "$$suite"; \
 	  if $(MAKE) --no-print-directory "$$suite"; then \
 	    printf 'VÝSLEDEK: %s OK\n' "$$suite"; \
@@ -181,23 +223,23 @@ test-restore-e2e:
 
 test-smoke: test-proxy test-s3
 	@sh scripts/workspace.sh check
-	$(COMPOSE) exec -T jrc-dev bash scripts/smoke.sh
-	$(COMPOSE) exec -T jrc-dev node scripts/test-init-env.cjs
-	$(COMPOSE) exec -T jrc-bb-web python - web < scripts/smoke-bb.py
-	$(COMPOSE) exec -T jrc-bb-worker python - worker < scripts/smoke-bb.py
+	$(COMPOSE) exec -T -e NODE_OPTIONS=--max-old-space-size=2048 jrc-dev timeout 240s bash scripts/smoke.sh
+	$(COMPOSE) exec -T jrc-dev timeout 60s node --max-old-space-size=2048 scripts/test-init-env.cjs
+	$(COMPOSE) exec -T -e NODE_OPTIONS=--max-old-space-size=2048 jrc-bb-web timeout 120s python - web < scripts/smoke-bb.py
+	$(COMPOSE) exec -T -e NODE_OPTIONS=--max-old-space-size=2048 jrc-bb-worker timeout 120s python - worker < scripts/smoke-bb.py
 	$(COMPOSE) exec -T jrc-bb-web python manage.py shell < scripts/P1-B01/check-redis.py
 
 # Prohlížeč i HTTP požadavky běží v Dockeru proti skutečnému místnímu portu.
 test-proxy:
 	@sh scripts/workspace.sh check
-	docker run --rm --pull never --network host --user "$(JRC_UID):$(JRC_GID)" \
+	docker run --rm --pull never --network host --memory 1g --cpus 2 --user "$(JRC_UID):$(JRC_GID)" \
 	  --env-file .env --volume "$(CURDIR):/jrc" \
-	  jrc-dev:$(JRC_PROJECT) node /jrc/scripts/test-proxy.cjs
+	  jrc-dev:$(JRC_PROJECT) timeout 180s node --max-old-space-size=2048 /jrc/scripts/test-proxy.cjs
 
 # Úložiště S3 z pohledu prohlížeče (místní brána): klíče, soukromí jrc-app, CORS, kvóty (F2-B05).
 test-s3:
 	@sh scripts/workspace.sh check
-	docker run --rm --pull never --network host --user "$(JRC_UID):$(JRC_GID)" \
+	docker run --rm --pull never --network host --memory 1g --cpus 2 --user "$(JRC_UID):$(JRC_GID)" \
 	  --env-file .env --volume "$(CURDIR)/scripts:/jrc-scripts:ro" \
 	  jrc-dev:$(JRC_PROJECT) python3 /jrc-scripts/test-s3-storage.py
 	# Výpis bucketu obsahuje identifikátory klíčů; kontrolujeme jen řádek kvóty.
@@ -222,18 +264,19 @@ test-isolation:
 	$(COMPOSE) exec -T jrc-redis redis-cli CONFIG GET appendonly | grep -qx yes
 	$(COMPOSE) exec -T jrc-redis redis-cli CONFIG GET appendfsync | grep -qx always
 	@echo 'OK jrc-redis: appendonly yes, appendfsync always'
-	docker run --rm --pull never --network host --user "$(JRC_UID):$(JRC_GID)" \
+	docker run --rm --pull never --network host --memory 1g --cpus 2 --user "$(JRC_UID):$(JRC_GID)" \
 	  --env-file .env \
 	  --volume "$(CURDIR)/scripts:/jrc-scripts:ro" \
-	  jrc-dev:$(JRC_PROJECT) node /jrc-scripts/test-local-gate.cjs
+	  jrc-dev:$(JRC_PROJECT) timeout 180s node --max-old-space-size=2048 /jrc-scripts/test-local-gate.cjs
 
 test-ff-offline:
 	@sh scripts/workspace.sh check
-	$(COMPOSE) run --rm --no-deps -T jrc-ff-web node /jrc-scripts/test-ff-offline.cjs
+	@docker image inspect jrc-ff-web:$(JRC_PROJECT) >/dev/null
+	$(COMPOSE) --file docker/browser-limits.yml run --rm --no-deps --pull never -T jrc-ff-web timeout 600s node --max-old-space-size=2048 /jrc-scripts/test-ff-offline.cjs
 
 test-ff-tsc:
 	@sh scripts/workspace.sh check
-	$(COMPOSE) exec -T jrc-ff-web pnpm exec tsc --noEmit
+	$(COMPOSE) exec -T -e NODE_OPTIONS=--max-old-space-size=2048 jrc-ff-web timeout 600s pnpm exec tsc --noEmit
 
 test-ff: test-isolation test-ff-offline
 	@sh scripts/workspace.sh check
@@ -285,11 +328,11 @@ test-f7-b02-approval:
 
 test-ff-lint:
 	@sh scripts/workspace.sh check
-	$(COMPOSE) exec -T jrc-ff-web pnpm lint
+	$(COMPOSE) exec -T -e NODE_OPTIONS=--max-old-space-size=2048 jrc-ff-web timeout 600s pnpm lint
 
 test-ff-vitest:
 	@sh scripts/workspace.sh check
-	$(COMPOSE) exec -T -e NEXT_PUBLIC_BASE_PATH= -e JRC_PUBLIC_ORIGIN= jrc-ff-web pnpm test --maxWorkers=1 $(VITEST_ARGS)
+	$(COMPOSE) exec -T -e NODE_OPTIONS=--max-old-space-size=2048 -e NEXT_PUBLIC_BASE_PATH= -e JRC_PUBLIC_ORIGIN= jrc-ff-web timeout 600s pnpm test --maxWorkers=1 $(VITEST_ARGS)
 
 ff-account:
 	@sh scripts/workspace.sh check
@@ -341,3 +384,9 @@ test-backup: check-project-ports
 
 test-offsite:
 	sh scripts/backup/test-offsite.sh
+
+.PHONY: test-build-cache
+test-build-cache:
+	docker run --rm --pull never --network none --memory 512m --cpus 1 \
+	  --user "$(JRC_UID):$(JRC_GID)" --volume "$(CURDIR):/source:ro" \
+	  jrc-dev:$(JRC_PROJECT) bash /source/scripts/build/test-guard.sh

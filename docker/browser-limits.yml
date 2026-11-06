@@ -1,0 +1,4 @@
+# Jen jednorázový offline test: Chromium, studený Next dev server a Next build.
+services:
+  jrc-ff-web:
+    mem_limit: 3g
