@@ -174,7 +174,7 @@
                         <textarea id="caption-{{ forloop.counter }}" name="caption" rows="7" class="block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm text-stone-900 shadow-sm focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-200 disabled:bg-stone-50" data-caption-counter data-limit="{{ item.char_limit }}" data-escaped-chars="{{ item.escaped_chars }}" {% if not can_edit_captions %}readonly{% endif %}>{{ item.text }}</textarea>
                         <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
                             <p class="text-xs text-stone-500">Counted for {{ item.platform_label }}: <span data-caption-count>{{ item.char_count }}</span> / {{ item.char_limit }}</p>
-                            {% if can_edit_captions and item.reopens_review %}<p class="text-xs font-medium text-amber-700" data-reopens-review>Approved · saving a changed caption sends it back for re-approval</p>{% endif %}
+                            {% if can_edit_captions and item.reopens_review %}<p class="text-xs font-medium text-amber-700" data-reopens-review>{{ item.reopens_review }}</p>{% endif %}
                             {% if can_edit_captions %}<button type="submit" class="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-300">Save version</button>{% endif %}
                         </div>
                     </form>

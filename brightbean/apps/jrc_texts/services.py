@@ -23,6 +23,16 @@ class ConflictError(Exception):
     status_code = 409
 
 
+class CaptionSave(tuple):
+    """``(version, changed)`` of ``save_caption``; ``returned`` lists the copies the save sent back to
+    review (``apps.approvals.edits``, P1-B37), for the notice the caller shows."""
+
+    def __new__(cls, version, changed, returned):
+        result = super().__new__(cls, (version, changed))
+        result.returned = returned
+        return result
+
+
 def can_edit_text(post, membership):
     permissions = membership.effective_permissions
     return permissions.get("create_posts", False) and (
@@ -240,10 +250,11 @@ def save_caption(post_id, platform_post_id, user, text, *, base_version_id=None,
     the base must be the newest saved version (``ConflictError`` otherwise) and the caption
     is only ever written by a new version. A channel without history starts it from the
     caption it currently has, so ``base_version_id`` must then be empty.
-    Returns ``(version, changed)``; saving an identical text creates no version.
+    Returns ``(version, changed)`` (a ``CaptionSave``); saving an identical text creates no version.
 
-    Every caption write (JR detail, REST, MCP) goes through here, so here an approved copy whose
-    caption changed goes back to review where the approval mode requires it (P-025, P1-B36).
+    Every caption write (JR detail, REST, MCP) goes through here, so here a copy carrying an approval
+    whose caption changed goes back to review where the approval mode requires it, a planned one out
+    of the plan (P-025, P1-B36, P1-B37); ``.returned`` names those copies.
     """
     post = Post.objects.select_for_update().select_related("workspace").get(pk=post_id)
     _authorize(TextDocument(post=post), user, write=True)
@@ -254,8 +265,7 @@ def save_caption(post_id, platform_post_id, user, text, *, base_version_id=None,
     )
     before = reviewed_content(post)
     saved, changed = _save_caption_version(post, variant, user, text, base_version_id, source)
-    return_edited_to_review(post, before)
-    return saved, changed
+    return CaptionSave(saved, changed, return_edited_to_review(post, before))
 
 
 def _save_caption_version(post, variant, user, text, base_version_id, source):

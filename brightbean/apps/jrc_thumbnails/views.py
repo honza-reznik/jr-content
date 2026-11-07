@@ -9,6 +9,7 @@ from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
 from django.views.decorators.http import require_GET, require_POST
 
+from apps.approvals.edits import review_return_notice
 from apps.composer.models import PlatformPost, Post
 from apps.members.permissions import can_publish_directly
 from apps.workspaces.models import Workspace
@@ -40,7 +41,8 @@ def upload(request, workspace_id, post_id, platform_post_id):
     except ValidationError as exc:
         request.session[f"thumbnail_error:{variant.pk}"] = " ".join(exc.messages)
     else:
-        messages.success(request, f"Thumbnail uploaded as version {thumbnail.number}.")
+        notice = review_return_notice(thumbnail.returned, "thumbnail")
+        messages.success(request, f"Thumbnail uploaded as version {thumbnail.number}. {notice}".strip())
     tab = request.POST.get("tab")
     tab = tab if tab in RETURN_TABS else "caption"
     detail = reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.id, "post_id": post.id})

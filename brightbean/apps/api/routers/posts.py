@@ -401,7 +401,7 @@ def update(request, post_id: uuid.UUID, payload: UpdatePostRequest):
         if reason:
             raise HttpError(422, reason)
 
-    from apps.approvals.edits import return_edited_to_review, reviewed_content
+    from apps.approvals.edits import return_edited_to_review, review_return_notice, reviewed_content
 
     with transaction.atomic():
         before = reviewed_content(post)
@@ -452,13 +452,16 @@ def update(request, post_id: uuid.UUID, payload: UpdatePostRequest):
         if update_fields:
             post.save(update_fields=[*update_fields, "updated_at"])
 
-        # P-025: an approved copy whose text or media changed goes back to review where the mode requires it.
-        return_edited_to_review(post, before)
+        # P-025: a copy carrying an approval whose text or media changed goes back to review where the mode
+        # requires it; a planned one leaves the plan (P1-B37).
+        returned = return_edited_to_review(post, before)
         sync_post_scheduled_at(post)
 
     post.refresh_from_db()
     log_audit_entry(request, action="post.update", target_id=post.id, status_code=200)
-    return _post_to_response(request, post)
+    response = _post_to_response(request, post)
+    response.review_notice = review_return_notice(returned, "content")
+    return response
 
 
 @router.post("/{post_id}/schedule", response=PostResponse, summary="Schedule a draft or approved post")
@@ -517,11 +520,11 @@ def cancel(request, post_id: uuid.UUID):
     scheduled_children = list(post.platform_posts.filter(status="scheduled"))
     if not scheduled_children:
         raise HttpError(409, "No scheduled platform posts to cancel.")
-    from apps.members.permissions import can_unschedule
+    from apps.members.permissions import UNSCHEDULE_REFUSAL, can_unschedule
 
     # Taking content out of the plan is planning (P1-B36): the same rule as the calendar and composer.
     if not can_unschedule(request.workspace_membership, post):
-        raise HttpError(403, "Permission denied: publish_directly")
+        raise HttpError(403, UNSCHEDULE_REFUSAL)
 
     # Same atomic-loop reasoning as ``schedule``: any per-child transition
     # failure rolls back the whole cancellation. Half-cancelled posts

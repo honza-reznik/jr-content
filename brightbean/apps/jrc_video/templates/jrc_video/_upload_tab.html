@@ -36,6 +36,7 @@
                 </div>
                 <p data-video-final-info class="mt-2 hidden text-sm text-stone-600"></p>
                 <p data-video-final-error role="alert" class="mt-2 hidden rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800"></p>
+                <p data-video-final-notice role="status" class="mt-2 hidden rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800"></p>
                 <p data-video-player-note class="mt-3 rounded-lg border border-dashed border-stone-300 px-4 py-6 text-center text-sm text-stone-500">{% if not video_player_ready %}The video player is not available yet for this client. Ask an administrator to synchronize video.{% endif %}</p>
                 <form method="post" action="{% url 'video_sso' %}" target="jrc-video-frame-{{ forloop.counter }}" data-video-sso class="hidden">{% csrf_token %}<input type="hidden" name="next" value=""></form>
                 <iframe name="jrc-video-frame-{{ forloop.counter }}" title="Video player for {{ card.label }}" data-video-frame allow="fullscreen" allowfullscreen

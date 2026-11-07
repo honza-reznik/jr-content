@@ -16,7 +16,7 @@ from django.utils.dateparse import parse_datetime
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from apps.approvals import comments as comment_services
-from apps.approvals.edits import edit_reopens_review
+from apps.approvals.edits import review_return_hint, review_return_notice
 from apps.approvals.models import ApprovalAction, PostComment
 from apps.composer.models import PlatformPost, Post
 from apps.jrc_texts import services as text_services
@@ -406,7 +406,7 @@ def _caption_channels(post, submitted=None):
                 "old_diff": old_diff,
                 "new_diff": new_diff,
                 "previews": [preview] if preview else [],
-                "reopens_review": bool(variant and edit_reopens_review(variant)),
+                "reopens_review": review_return_hint(variant) if variant else "",
             }
         )
     return channels
@@ -479,6 +479,9 @@ def content_detail(request, workspace_id, post_id):
                 remove_content_channel(post, variant.pk, request.user)
         except ValidationError as exc:
             channel_error = " ".join(exc.messages)
+        except PermissionDenied as exc:
+            # P1-B37: the deletion rule explains itself (planned content needs the planning right).
+            channel_error = str(exc) or "You cannot change channels for this content."
         else:
             messages.success(request, "Content channels updated.")
             return redirect(f"{request.path}?tab={active_tab}#content-channels")
@@ -514,7 +517,7 @@ def content_detail(request, workspace_id, post_id):
                     if variant is None:
                         variant = _create_missing_copy(post, target.removeprefix("new:"))
                     base_id = request.POST.get("base_version", "")
-                    text_services.save_caption(
+                    result = text_services.save_caption(
                         post.pk, variant.pk, request.user, caption, base_version_id=base_id or None
                     )
             except ConflictError as exc:
@@ -522,12 +525,8 @@ def content_detail(request, workspace_id, post_id):
             except ValidationError as exc:
                 caption_error = " ".join(exc.messages)
             else:
-                was_approved = variant.status == PlatformPost.Status.APPROVED
-                variant.refresh_from_db(fields=["status"])
-                if was_approved and variant.status == PlatformPost.Status.PENDING_REVIEW:
-                    messages.success(request, "Caption saved as a new version. It goes back to review for approval.")
-                else:
-                    messages.success(request, "Caption saved as a new version.")
+                notice = review_return_notice(result.returned, "caption")
+                messages.success(request, f"Caption saved as a new version. {notice}".strip())
                 return redirect(f"{request.path}?tab=caption")
 
     caption_channels = _caption_channels(post, request.POST if request.method == "POST" else None)

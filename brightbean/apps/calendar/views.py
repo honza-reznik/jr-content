@@ -20,7 +20,7 @@ from apps.common.validators import is_valid_hex_color
 from apps.composer.models import ContentCategory, PlatformPost, Post
 from apps.members.decorators import require_permission
 from apps.members.models import WorkspaceMembership
-from apps.members.permissions import can_schedule, can_unschedule, is_planned
+from apps.members.permissions import can_schedule, can_unschedule, content_delete_blocker, is_planned
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 
@@ -1478,9 +1478,9 @@ def bulk_platform_action(request, workspace_id):
     # Publishing now hands rows straight to the publisher's poll loop, skipping
     # the approval workflow — the privilege the composer's chip transition,
     # save_post's publish-now branch and REST /schedule all gate on. Delete and
-    # Draft of unplanned rows stay under plain edit rights; Draft of a planned row
-    # takes it out of the plan, which needs the planning right (``can_unschedule``,
-    # checked below once the rows are known).
+    # Draft of unplanned rows stay under plain edit rights; Draft or Delete of a
+    # planned row takes it out of the plan, which needs the planning right
+    # (``can_unschedule``, ``content_delete_blocker``; checked below once the rows are known).
     if action == "publish" and not can_schedule(membership):
         return JsonResponse({"error": "You do not have permission to publish directly."}, status=403)
 
@@ -1516,6 +1516,24 @@ def bulk_platform_action(request, workspace_id):
                 {
                     "error": f"{len(refused)} selected {noun} planned. Only someone who can schedule content "
                     "may take it out of the plan, so nothing was moved to draft."
+                },
+                status=403,
+            )
+
+    if action == "delete":
+        # P1-B37: the one deletion rule (``content_delete_blocker``): a planned row only by someone who
+        # may take it out of the plan. Refuse the whole batch, as Draft and Publish do.
+        refused = [
+            pp
+            for pp in pps
+            if pp.status not in PlatformPost.PROTECTED_STATUSES and content_delete_blocker(membership, pp.post, [pp])
+        ]
+        if refused:
+            noun = "post is" if len(refused) == 1 else "posts are"
+            return JsonResponse(
+                {
+                    "error": f"{len(refused)} selected {noun} planned. Only someone who can schedule content "
+                    "may delete it, because deleting takes it out of the plan, so nothing was deleted."
                 },
                 status=403,
             )
@@ -1974,8 +1992,14 @@ def queue_entry_remove(request, workspace_id, queue_id, entry_id):
     if entry is not None:
         from .services import remove_from_queue
 
-        # Removing an entry takes its post out of the plan (P1-B36): same rule as bulk Draft.
-        if not can_unschedule(getattr(request, "workspace_membership", None), entry.post):
+        # Removing an entry takes its post out of the plan (P1-B36): same rule as bulk Draft. An entry
+        # whose channel copy is not planned (any more) takes nothing out of the plan (P1-B37).
+        copy = entry.post.platform_posts.filter(social_account=entry.queue.social_account).first()
+        if (
+            copy is not None
+            and is_planned(copy)
+            and not can_unschedule(getattr(request, "workspace_membership", None), entry.post)
+        ):
             return JsonResponse({"error": "You do not have permission to take this post out of the plan."}, status=403)
         remove_from_queue(entry)
 

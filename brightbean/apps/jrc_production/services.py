@@ -15,6 +15,7 @@ from apps.members.permissions import (
     can_publish_directly,
     can_schedule,
     can_unschedule,
+    content_delete_blocker,
     is_planned,
     release_blocker,
     review_available,
@@ -115,10 +116,14 @@ def add_content_channel(post, account_id, user):
 
 @transaction.atomic
 def remove_content_channel(post, platform_post_id, user):
+    """Remove one channel copy (JR detail and REST); the one deletion rule applies (P1-B37)."""
     post = _lock_channel_content(post, user)
     variants = post.platform_posts.filter(pk=platform_post_id)
     if not variants.exists():
         raise ValidationError("Choose a channel of this content.")
+    blocker = content_delete_blocker(content_membership(post.workspace, user), post, list(variants))
+    if blocker:
+        raise PermissionDenied(blocker)
     remove_platform_posts(variants)
 
 

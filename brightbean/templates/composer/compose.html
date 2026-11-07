@@ -403,7 +403,7 @@
                 <!-- Scheduled: editable, but warn that edits affect a live schedule -->
                 <div class="border border-amber-200 bg-amber-50 rounded-xl p-3 flex items-start gap-2">
                     <svg class="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"/></svg>
-                    <p class="text-xs text-amber-700">This post is <span class="font-semibold">scheduled</span>. Saving changes will affect the scheduled post.</p>
+                    <p class="text-xs text-amber-700" data-planned-edit-hint>This post is <span class="font-semibold">scheduled</span>. {% if edit_returns_to_review %}Saving changes takes it out of the plan and sends it back for re-approval.{% else %}Saving changes will affect the scheduled post.{% endif %}</p>
                 </div>
                 {% elif post_is_readonly %}
                 <!-- Published / publishing: read-only; Clone to repost an editable copy -->
@@ -1621,7 +1621,7 @@
             {% elif post.status == 'pending_client' %}
             <div class="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-100 mb-3">
                 <svg class="w-4 h-4 text-amber-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                <span class="text-sm font-medium text-amber-700">Awaiting client approval</span>
+                <span class="text-sm font-medium text-amber-700">{% if edit_returns_to_review %}Awaiting client approval - saving changes sends it back for re-approval{% else %}Awaiting client approval{% endif %}</span>
             </div>
             {% elif post.status == 'changes_requested' %}
             <div class="flex items-center gap-2 px-3 py-2 rounded-lg bg-orange-50 border border-orange-100 mb-3">
@@ -1641,7 +1641,7 @@
             {% elif post.status == 'on_hold' %}
             <div class="flex items-center gap-2 px-3 py-2 rounded-lg mb-3" style="background:#F5F3FF;border:1px solid #DDD6FE;">
                 <svg class="w-4 h-4 flex-shrink-0" style="color:#7C3AED;" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
-                <span class="text-sm font-medium" style="color:#6D28D9;">On hold - a client paused this; resume it from the approvals queue</span>
+                <span class="text-sm font-medium" style="color:#6D28D9;">On hold - a client paused this; resume it from the approvals queue{% if edit_returns_to_review %}. Saving changes sends it back for re-approval{% endif %}</span>
             </div>
             {% endif %}
 
@@ -2007,6 +2007,16 @@
         </span>
     </div>
 
+    <!-- Review notice (P1-B37): an edit sent channel copies back to review, planned ones out of the plan. -->
+    <div x-show="reviewNotice" x-cloak role="status" data-review-notice
+         class="fixed left-1/2 -translate-x-1/2 z-50 px-4 py-3 rounded-xl text-sm font-medium shadow-lg"
+         style="background:#FFFBEB;border:1px solid #FCD34D;color:#92400E;width:calc(100% - 2rem);max-width:36rem;bottom:8.5rem;">
+        <div class="flex items-start gap-2">
+            <span class="flex-1" x-text="reviewNotice"></span>
+            <button type="button" @click="reviewNotice = ''" class="text-xs font-semibold underline">Dismiss</button>
+        </div>
+    </div>
+
     <!-- Error toast -->
     <div x-show="formError" x-cloak
          class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl text-sm font-medium shadow-lg"
@@ -2123,6 +2133,7 @@ function composerApp() {
         showPreviewPanel: false,
         showSaveToast: false,
         formError: '',
+        reviewNotice: '',
         lastSaved: null,
         previewTimer: null,
         autosavedPostId: '{{ post.id|default:"" }}',
@@ -2282,6 +2293,11 @@ function composerApp() {
             // A rejected autosave must show its explanation on mobile too.
             document.body.addEventListener('captionSelectionConflict', (e) => {
                 this.formError = e.detail.message;
+            });
+
+            // P1-B37: any composer write (save, autosave, media) may send copies back to review.
+            document.body.addEventListener('htmx:afterRequest', (e) => {
+                this._takeReviewNotice(e.detail.xhr);
             });
 
             // Listen for autosaved events to capture the post ID on first save.
@@ -2507,7 +2523,7 @@ function composerApp() {
                 headers: { 'X-CSRFToken': csrf, 'Content-Type': 'application/json' },
                 body: JSON.stringify({ photos: Object.values(this.unsplashSelected) }),
             })
-                .then(r => r.json().then(data => ({ ok: r.ok, data })))
+                .then(r => { this._takeReviewNotice(r); return r.json().then(data => ({ ok: r.ok, data })); })
                 .then(({ ok, data }) => {
                     if (!ok) {
                         this.unsplashError = data.error || 'Import failed. Try again.';
@@ -2776,6 +2792,14 @@ function composerApp() {
             actionInput.remove();
         },
 
+        _takeReviewNotice(source) {
+            const raw = source && (source.getResponseHeader
+                ? source.getResponseHeader('X-JRC-Review-Notice')
+                : source.headers && source.headers.get('X-JRC-Review-Notice'));
+            if (raw) this.reviewNotice = decodeURIComponent(raw);
+            return !!raw;
+        },
+
         onFormSaved(event) {
             // Only react to the form's own submit, not htmx requests bubbling from
             // child elements (e.g. the pending-media remove button).
@@ -2783,7 +2807,9 @@ function composerApp() {
             const xhr = event.detail.xhr;
             if (event.detail.successful) {
                 const action = document.getElementById('publish-action-btn')?.value;
-                if (action === 'schedule' || action === 'publish_now' || action === 'add_to_queue' || action === 'add_to_queue_priority') {
+                // Stay here when the save sent copies back to review: the notice says why they were not planned.
+                const returned = this._takeReviewNotice(xhr);
+                if (!returned && (action === 'schedule' || action === 'publish_now' || action === 'add_to_queue' || action === 'add_to_queue_priority')) {
                     // Redirect to calendar after scheduling/publishing/queuing
                     window.location.href = '{% url "calendar:calendar" workspace_id=workspace.id %}';
                     return;
@@ -2916,6 +2942,7 @@ function composerApp() {
             xhr.addEventListener('load', function() {
                 self.isUploading = false;
                 if (xhr.status >= 200 && xhr.status < 300) {
+                    self._takeReviewNotice(xhr);
                     // Replace the upload placeholder with the server-rendered thumb
                     thumb.insertAdjacentHTML('afterend', xhr.responseText);
                     const inserted = thumb.nextElementSibling;

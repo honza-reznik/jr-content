@@ -113,7 +113,14 @@ def validate_image(upload):
 
 
 def upload_thumbnail(post, platform_post, user, upload, membership):
-    """Store a new version; the newest version is the channel's current thumbnail."""
+    """Store a new version; the newest version is the channel's current thumbnail.
+
+    The thumbnail goes out, so a new one after approval sends the copy back to review where the mode
+    requires approval, a planned one out of the plan (P-025, P1-B37); ``thumbnail.returned`` lists
+    those copies for the notice.
+    """
+    from apps.approvals.edits import return_edited_to_review, reviewed_content
+
     if platform_post.post_id != post.pk:
         raise ValidationError("Choose a channel of this content.")
     if not can_upload(post, membership):
@@ -123,9 +130,10 @@ def upload_thumbnail(post, platform_post, user, upload, membership):
 
     with transaction.atomic():
         # Same lock order as channel removal: the parent first, then the copy's history.
-        Post.objects.select_for_update().get(pk=post.pk)
+        post = Post.objects.select_for_update().select_related("workspace").get(pk=post.pk)
         if not post.platform_posts.filter(pk=platform_post.pk).exists():
             raise ValidationError("Choose a channel of this content.")
+        before = reviewed_content(post)
         last = ChannelThumbnail.objects.filter(platform_post=platform_post).aggregate(n=Max("number"))["n"] or 0
         thumbnail = ChannelThumbnail(
             id=uuid.uuid4(),
@@ -141,6 +149,7 @@ def upload_thumbnail(post, platform_post, user, upload, membership):
         )
         thumbnail.image.save(f"{thumbnail.id}.{found['extension']}", File(upload), save=False)
         thumbnail.save()
+        thumbnail.returned = return_edited_to_review(post, before)
     return thumbnail
 
 

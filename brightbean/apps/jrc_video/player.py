@@ -24,10 +24,21 @@ def can_mark_final(post, membership):
 
 
 def set_final(user, post, membership, version_id, *, final=True):
-    """Mark (or unmark) one converted version of a channel video as final for publishing."""
+    """Mark (or unmark) one converted version of a channel video as final for publishing.
+
+    The final version is what goes out, so a change of it after approval sends the copy back to
+    review where the mode requires approval, a planned one out of the plan (P-025, P1-B37);
+    ``review_notice`` in the result then says so.
+    """
+    from apps.approvals.edits import return_edited_to_review, review_return_notice, reviewed_content
+    from apps.composer.models import Post
+
     if not can_mark_final(post, membership):
         raise UploadError("You cannot mark a final version for this content.", 403)
     with transaction.atomic():
+        # Same lock order as caption saves and thumbnail uploads: the content first.
+        post = Post.objects.select_for_update().select_related("workspace").get(pk=post.pk)
+        before = reviewed_content(post)
         version = (
             VideoVersion.objects.filter(pk=version_id, video__platform_post__post=post).select_related("video").first()
         )
@@ -56,4 +67,9 @@ def set_final(user, post, membership, version_id, *, final=True):
             action=VideoActivity.Action.FINAL if final else VideoActivity.Action.UNFINAL,
         )
         video.save(update_fields=["final_version", "final_by", "final_at"])
-    return {"final": str(version.pk) if final else None}
+        returned = return_edited_to_review(post, before)
+    result = {"final": str(version.pk) if final else None}
+    notice = review_return_notice(returned, "final video")
+    if notice:
+        result["review_notice"] = notice
+    return result
