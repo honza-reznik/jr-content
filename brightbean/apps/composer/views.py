@@ -35,7 +35,7 @@ from apps.common.validators import (
 from apps.media_library.models import MediaAsset
 from apps.members.decorators import require_permission
 from apps.members.models import WorkspaceMembership
-from apps.members.permissions import can_schedule, review_available
+from apps.members.permissions import can_schedule, edit_returns_to_review, review_available
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 from providers import is_video_only, requires_media
@@ -987,6 +987,8 @@ def compose(request, workspace_id, post_id=None):
         "workflow_mode": workflow_mode,
         "show_submit_button": show_submit_button,
         "show_resubmit_button": show_resubmit_button,
+        # P1-B34: the "Approved" banner promises re-approval only where an edit really sends it back.
+        "edit_returns_to_review": edit_returns_to_review(workspace),
         "approval_history": approval_history,
         "latest_feedback": latest_feedback,
         "post_comments": post_comments,
@@ -1061,8 +1063,13 @@ def _revert_approved_to_review(post):
     content can't publish without a fresh review. (The explicit "Resubmit for
     review" button additionally notifies reviewers; this is the safety net for
     plain saves/autosaves.) Returns the reverted children.
+
+    P1-B34: only where the approval mode requires approval (``edit_returns_to_review``); in
+    "No approvals" and "Optional approvals" the content stays approved.
     """
     reverted = []
+    if not edit_returns_to_review(post.workspace):
+        return reverted
     for pp in post.platform_posts.all():
         if pp.status == "approved" and pp.can_transition_to("pending_review"):
             pp.transition_to("pending_review")
@@ -3721,6 +3728,65 @@ def csv_upload(request, workspace_id):
     )
 
 
+CSV_FIELDS = ("date", "time", "platforms", "caption", "media_url", "category", "tags", "first_comment")
+
+
+def _csv_cell(row, mapping, field):
+    """The stripped value of a mapped column, or "" when unmapped or the row is short."""
+    index = mapping.get(field)
+    return row[index].strip() if index is not None and index < len(row) else ""
+
+
+def _csv_channel_platforms(workspace):
+    """``(known, connected)`` platform values for CSV rows (P1-B34).
+
+    Both come from the channel model itself: the choices of ``SocialAccount.platform`` (upstream moved
+    them to ``PlatformCredential.Platform``) and the workspace's connected channels. A disabled JR
+    channel is disconnected (``jrc_channels.services.set_channel_enabled``), so it is not offered.
+    """
+    known = {value for value, _label in SocialAccount._meta.get_field("platform").choices}
+    connected = set(
+        SocialAccount.objects.for_workspace(workspace.id)
+        .filter(connection_status=SocialAccount.ConnectionStatus.CONNECTED)
+        .values_list("platform", flat=True)
+    )
+    return known, connected
+
+
+def _csv_row_problems(row, mapping, platforms):
+    """Why a CSV row cannot be imported, or ``[]`` (P1-B34).
+
+    The one check behind both steps: the preview lists these problems and the import skips exactly
+    the rows that have any, so "N invalid rows will be skipped" is what really happens.
+    """
+    known, connected = platforms
+    problems = []
+    if "date" in mapping:
+        date_val = _csv_cell(row, mapping, "date")
+        if not date_val:
+            problems.append("Date is empty")
+        else:
+            try:
+                datetime.strptime(date_val, "%Y-%m-%d")
+            except ValueError:
+                problems.append(f"Invalid date format '{date_val}' (expected YYYY-MM-DD)")
+    time_val = _csv_cell(row, mapping, "time")
+    if time_val:
+        try:
+            datetime.strptime(time_val, "%H:%M")
+        except ValueError:
+            problems.append(f"Invalid time format '{time_val}' (expected HH:MM)")
+    for platform in _csv_cell(row, mapping, "platforms").split(","):
+        platform = platform.strip().lower()
+        if platform and platform not in known:
+            problems.append(f"Unknown platform '{platform}'")
+        elif platform and platform not in connected:
+            problems.append(f"Platform '{platform}' is not connected")
+    if not _csv_cell(row, mapping, "caption"):
+        problems.append("Caption is empty")
+    return problems
+
+
 @login_required
 @require_permission("create_posts")
 @require_POST
@@ -3734,60 +3800,18 @@ def csv_preview(request, workspace_id):
 
     # Parse column mapping from POST
     mapping = {}
-    for field in ["date", "time", "platforms", "caption", "media_url", "category", "tags", "first_comment"]:
+    for field in CSV_FIELDS:
         col_idx = request.POST.get(f"map_{field}", "")
         if col_idx != "":
-            import contextlib
-
             with contextlib.suppress(ValueError, TypeError):
                 mapping[field] = int(col_idx)
 
     rows = csv_data["rows"]
     errors = []
     valid_count = 0
-
-    from apps.social_accounts.models import SocialAccount
-
-    valid_platforms = {p[0].lower() for p in SocialAccount.Platform.choices}
-    connected_accounts = set(
-        SocialAccount.objects.for_workspace(workspace.id)
-        .filter(connection_status=SocialAccount.ConnectionStatus.CONNECTED)
-        .values_list("platform", flat=True)
-    )
-
+    platforms = _csv_channel_platforms(workspace)
     for row_idx, row in enumerate(rows, start=2):  # Row 2 = first data row
-        row_errors = []
-
-        # Validate date
-        if "date" in mapping:
-            date_val = row[mapping["date"]].strip() if mapping["date"] < len(row) else ""
-            if date_val:
-                try:
-                    from datetime import date as date_cls
-
-                    date_cls.fromisoformat(date_val)
-                except ValueError:
-                    row_errors.append(f"Invalid date format '{date_val}' (expected YYYY-MM-DD)")
-            else:
-                row_errors.append("Date is empty")
-
-        # Validate platforms
-        if "platforms" in mapping:
-            platforms_val = row[mapping["platforms"]].strip() if mapping["platforms"] < len(row) else ""
-            if platforms_val:
-                for p in platforms_val.split(","):
-                    p = p.strip().lower()
-                    if p and p not in valid_platforms:
-                        row_errors.append(f"Unknown platform '{p}'")
-                    elif p and p not in connected_accounts:
-                        row_errors.append(f"Platform '{p}' is not connected")
-
-        # Validate caption
-        if "caption" in mapping:
-            caption_val = row[mapping["caption"]].strip() if mapping["caption"] < len(row) else ""
-            if not caption_val:
-                row_errors.append("Caption is empty")
-
+        row_errors = _csv_row_problems(row, mapping, platforms)
         if row_errors:
             errors.append({"row": row_idx, "errors": row_errors})
         else:
@@ -3809,6 +3833,60 @@ def csv_preview(request, workspace_id):
     )
 
 
+def _import_csv_row(request, workspace, row, mapping, may_go_out):
+    """Create the post and its channel copies for one valid CSV row (``_csv_row_problems`` is empty).
+
+    A dated row is scheduled when ``may_go_out`` (planning right and approval workflow allow it),
+    otherwise it is a draft on its date. Returns the platform labels of copies kept as drafts because
+    a CSV row can never satisfy their platform (no media, no Pinterest board).
+    """
+    import zoneinfo
+    from datetime import time as time_cls
+
+    post = Post(workspace=workspace, author=request.user, caption=_csv_cell(row, mapping, "caption"))
+    initial_pp_status = "draft"
+    date_str = _csv_cell(row, mapping, "date")
+    if date_str:
+        time_str = _csv_cell(row, mapping, "time")
+        tz = zoneinfo.ZoneInfo(workspace.effective_timezone or "UTC")
+        d = datetime.strptime(date_str, "%Y-%m-%d").date()
+        t = datetime.strptime(time_str, "%H:%M").time() if time_str else time_cls(9, 0)
+        post.scheduled_at = datetime.combine(d, t).replace(tzinfo=tz)
+        initial_pp_status = "scheduled" if may_go_out else "draft"
+    if "first_comment" in mapping:
+        post.first_comment = _csv_cell(row, mapping, "first_comment")
+    tags_raw = _csv_cell(row, mapping, "tags")
+    if tags_raw:
+        post.tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
+    cat_name = _csv_cell(row, mapping, "category")
+    if cat_name:
+        post.category, _ = ContentCategory.objects.get_or_create(
+            workspace=workspace, name=cat_name, defaults={"color": "#3B82F6"}
+        )
+    post.save()
+
+    drafted = []
+    for platform in _csv_cell(row, mapping, "platforms").split(","):
+        platform = platform.strip().lower()
+        if not platform:
+            continue
+        accounts = SocialAccount.objects.filter(
+            workspace=workspace,
+            platform=platform,
+            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        )
+        for acc in accounts:
+            status = initial_pp_status
+            if status == "scheduled" and publish_blocker(acc, media_types=set()):
+                status = "draft"
+            _pp, created = PlatformPost.objects.get_or_create(
+                post=post, social_account=acc, defaults={"status": status, "scheduled_at": post.scheduled_at}
+            )
+            if created and status != initial_pp_status:
+                drafted.append(acc.get_platform_display())
+    return drafted
+
+
 @login_required
 @require_permission("create_posts")
 @require_POST
@@ -3820,8 +3898,6 @@ def csv_confirm_import(request, workspace_id):
 
     if not csv_data or not mapping:
         return HttpResponse("No CSV data found. Please upload again.", status=400)
-
-    from apps.social_accounts.models import SocialAccount
 
     rows = csv_data["rows"]
     created_count = 0
@@ -3840,92 +3916,21 @@ def csv_confirm_import(request, workspace_id):
     approval_needed = release_blocker(workspace, "draft")
     may_schedule = can_schedule(request.workspace_membership)
 
+    platforms = _csv_channel_platforms(workspace)
     for row in rows:
+        # P1-B34: exactly the rows the preview reported as invalid are skipped (one check).
+        if _csv_row_problems(row, mapping, platforms):
+            error_count += 1
+            continue
         try:
-            caption = row[mapping["caption"]].strip() if "caption" in mapping and mapping["caption"] < len(row) else ""
-            if not caption:
-                error_count += 1
-                continue
-
-            post = Post(
-                workspace=workspace,
-                author=request.user,
-                caption=caption,
-            )
-            initial_pp_status = "draft"
-
-            # Date + time
-            if "date" in mapping and mapping["date"] < len(row):
-                date_str = row[mapping["date"]].strip()
-                time_str = ""
-                if "time" in mapping and mapping["time"] < len(row):
-                    time_str = row[mapping["time"]].strip()
-
-                if date_str:
-                    import zoneinfo
-
-                    ws_tz = workspace.effective_timezone or "UTC"
-                    tz = zoneinfo.ZoneInfo(ws_tz)
-                    from datetime import time as time_cls
-
-                    d = datetime.strptime(date_str, "%Y-%m-%d").date()
-                    t = datetime.strptime(time_str, "%H:%M").time() if time_str else time_cls(9, 0)
-                    naive_dt = datetime.combine(d, t)
-                    post.scheduled_at = naive_dt.replace(tzinfo=tz)
-                    initial_pp_status = "scheduled" if may_schedule and not approval_needed else "draft"
-
-            # First comment
-            if "first_comment" in mapping and mapping["first_comment"] < len(row):
-                post.first_comment = row[mapping["first_comment"]].strip()
-
-            # Tags
-            if "tags" in mapping and mapping["tags"] < len(row):
-                tags_raw = row[mapping["tags"]].strip()
-                if tags_raw:
-                    post.tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
-
-            # Category
-            if "category" in mapping and mapping["category"] < len(row):
-                cat_name = row[mapping["category"]].strip()
-                if cat_name:
-                    cat, _ = ContentCategory.objects.get_or_create(
-                        workspace=workspace,
-                        name=cat_name,
-                        defaults={"color": "#3B82F6"},
-                    )
-                    post.category = cat
-
-            post.save()
-
-            # Platforms
-            if "platforms" in mapping and mapping["platforms"] < len(row):
-                platforms_str = row[mapping["platforms"]].strip()
-                if platforms_str:
-                    for p in platforms_str.split(","):
-                        p = p.strip().lower()
-                        accounts = SocialAccount.objects.filter(
-                            workspace=workspace,
-                            platform=p,
-                            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
-                        )
-                        for acc in accounts:
-                            status = initial_pp_status
-                            if status == "scheduled" and publish_blocker(acc, media_types=set()):
-                                status = "draft"
-                            _pp, created = PlatformPost.objects.get_or_create(
-                                post=post,
-                                social_account=acc,
-                                defaults={
-                                    "status": status,
-                                    "scheduled_at": post.scheduled_at,
-                                },
-                            )
-                            if created and status != initial_pp_status:
-                                drafted_count += 1
-                                drafted_platforms.add(acc.get_platform_display())
-
+            # One savepoint per row: a row that fails half-way leaves no post without its channels.
+            with transaction.atomic():
+                drafted = _import_csv_row(request, workspace, row, mapping, may_schedule and not approval_needed)
             created_count += 1
+            drafted_count += len(drafted)
+            drafted_platforms.update(drafted)
         except Exception:
+            logger.exception("CSV import: row could not be imported")
             error_count += 1
 
     # Clean up session data

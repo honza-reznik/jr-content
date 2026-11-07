@@ -2,6 +2,7 @@
 Day view - single-day timeline with hourly divisions.
 Context: day_slots, target_date, workspace.
 {% endcomment %}
+{% load calendar_drag %}
 
 <div class="calendar-time-grid bg-white mx-auto" style="animation: slideUp 200ms cubic-bezier(0.16,1,0.3,1) both;">
 {% for cell in day_slots %}
@@ -44,10 +45,11 @@ Context: day_slots, target_date, workspace.
             </div>
             {% endif %}
             {% for pp in cell.posts %}
+            {% with movable=pp|can_drop:request.workspace_membership %}
             <a href="{% url 'jrc_production:content_detail' workspace_id=workspace.id post_id=pp.post_id %}"
-               class="post-chip pipeline-stage-{{ pp.pipeline_stage }}{% if pp.is_reschedulable %} is-draggable{% endif %}"
-               title="{% if pp.is_reschedulable %}Move or open{% else %}Open{% endif %}"
-               {% if pp.is_reschedulable %}draggable="true" data-platform-post-id="{{ pp.id }}"{% else %}draggable="false"{% endif %}>
+               class="post-chip pipeline-stage-{{ pp.pipeline_stage }}{% if movable %} is-draggable{% endif %}"
+               title="{% if movable %}Move or open{% else %}Open{% endif %}"
+               {% if movable %}draggable="true" data-platform-post-id="{{ pp.id }}"{% else %}draggable="false"{% endif %}>
                 {% if pp.is_bulk_selectable %}{% include "calendar/partials/_select_checkbox.html" with pp_id=pp.id %}{% endif %}
                 {% if pp.social_account %}<span class="w-4 h-4 rounded flex items-center justify-center pi-{{ pp.social_account.platform }} flex-shrink-0 text-white">
                     {% include "jrc_channels/icon.html" with account=pp.social_account calendar_icon=True %}
@@ -69,6 +71,7 @@ Context: day_slots, target_date, workspace.
                 </span>
                 {% endif %}
             </a>
+            {% endwith %}
             {% endfor %}
         </div>
     </div>

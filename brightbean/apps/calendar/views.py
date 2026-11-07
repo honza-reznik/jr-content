@@ -24,6 +24,7 @@ from apps.members.permissions import can_schedule
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 
+from .drag import IMPLICIT_SCHEDULE_STATUSES, drop_refusal
 from .holidays import get_holidays_for_range
 from .models import CustomCalendarEvent, PostingSlot, Queue, QueueEntry
 
@@ -51,14 +52,6 @@ COMMON_TIMEZONES = [
     "America/Los_Angeles",
     "America/New_York",
 ]
-
-# Statuses a calendar drop promotes to ``scheduled`` (implicit schedule / retry)
-# rather than merely re-timing. Because that promotion hands the row to the
-# publisher, it is gated on ``publish_directly`` — see ``reschedule_post``.
-_IMPLICIT_SCHEDULE_STATUSES = ("draft", "failed")
-# P1-B32: a drop that schedules the row or moves its publication time plans it, which needs the
-# one planning right (``can_schedule``) as in the composer, the JR detail and REST PATCH.
-_PLANNING_DROP_STATUSES = (*_IMPLICIT_SCHEDULE_STATUSES, "scheduled")
 
 
 def _slots_updated_response(account_id):
@@ -1304,7 +1297,7 @@ def publish_tab_sent(request, workspace_id):
 @require_POST
 def reschedule_post(request, workspace_id):
     """HTMX endpoint for drag-and-drop rescheduling of a single PlatformPost."""
-    from apps.composer.services import require_publishable, require_release_allowed, sync_post_scheduled_at
+    from apps.composer.services import require_publishable, sync_post_scheduled_at
 
     workspace = _get_workspace(request, workspace_id)
     platform_post_id = request.POST.get("platform_post_id") or request.POST.get("post_id")
@@ -1320,33 +1313,20 @@ def reschedule_post(request, workspace_id):
     )
     post = pp.post
 
-    # Only draggable statuses can be rescheduled (published/publishing can't).
-    if not pp.is_reschedulable:
-        return JsonResponse({"error": "Post cannot be rescheduled in its current status."}, status=400)
-
-    # Check RBAC
+    # P1-B34: one rule for the draggable chip and this drop (``drop_refusal``): status, edit rights,
+    # the planning right for every drop (also re-timing an approved or in-review copy) and, for a
+    # drop that schedules a draft, the approval workflow (``require_release_allowed``).
     membership = request.workspace_membership
-    perms = membership.effective_permissions if membership else {}
-    is_own_post = post.author_id == request.user.id
-    can_edit = is_own_post or perms.get("edit_others_posts", False)
-    if not can_edit:
-        return JsonResponse({"error": "Permission denied."}, status=403)
-    # Dropping a draft/failed chip promotes it to "scheduled" below, and dropping a
-    # scheduled chip moves its publication time: both plan the post, which every
-    # other planning path gates on the same right (``can_schedule``: composer,
-    # JR detail and board, REST /schedule and PATCH scheduled_at). Reject rather
-    # than silently degrading the drop to a time-only move.
-    if pp.status in _PLANNING_DROP_STATUSES and not can_schedule(membership):
-        return JsonResponse({"error": "You do not have permission to schedule this post."}, status=403)
+    refusal = drop_refusal(pp, membership)
+    if refusal:
+        status, message = refusal
+        return JsonResponse({"error": message}, status=status)
     # The same drop hands the row to the publisher, so refuse one that can only
     # fail there — an image-only TikTok draft, a pin with no board or image.
     # Checked out here because the ValueError handler below would report it as
     # a bad datetime.
-    # P1-B27: the same drop must also pass the approval workflow (a draft goes out directly only
-    # where the workspace mode does not require approval).
-    if pp.status in _IMPLICIT_SCHEDULE_STATUSES and pp.can_transition_to("scheduled"):
+    if pp.status in IMPLICIT_SCHEDULE_STATUSES and pp.can_transition_to("scheduled"):
         try:
-            require_release_allowed(workspace, pp.status)
             require_publishable(pp)
         except ValueError as exc:
             return JsonResponse({"error": str(exc)}, status=400)
@@ -1376,7 +1356,7 @@ def reschedule_post(request, workspace_id):
             pp.retry_count = 0
             pp.next_retry_at = None
             pp.platform_post_id = ""
-        if pp.status in _IMPLICIT_SCHEDULE_STATUSES and pp.can_transition_to("scheduled"):
+        if pp.status in IMPLICIT_SCHEDULE_STATUSES and pp.can_transition_to("scheduled"):
             pp.transition_to("scheduled")
         pp.save(update_fields=fields)
         # Keep any queue entry's slot mirror in step with the manual reschedule

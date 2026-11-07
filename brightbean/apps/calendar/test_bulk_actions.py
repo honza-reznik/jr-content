@@ -600,17 +600,18 @@ class ReschedulePermissionTests(BulkActionBase):
         pp.refresh_from_db()
         self.assertEqual(pp.status, "failed")
 
-    def test_editor_can_still_move_an_approved_chip(self):
-        """The gate is narrow: statuses that only re-time are unaffected."""
+    def test_editor_cannot_move_an_approved_chip(self):
+        """P1-B34: re-timing an approved copy changes its planned date too, which needs the planning right."""
         pp = self._pp("approved", scheduled_at=timezone.now() + timedelta(days=1))
+        before = pp.scheduled_at
         self.client.force_login(self.editor)
 
         response = self._reschedule(pp, timezone.now() + timedelta(days=4))
 
-        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response.status_code, 403)
         pp.refresh_from_db()
         self.assertEqual(pp.status, "approved")
-        self.assertGreater(pp.scheduled_at, timezone.now() + timedelta(days=3))
+        self.assertEqual(pp.scheduled_at, before)
 
     def test_owner_dragging_a_draft_schedules_it(self):
         pp = self._pp("draft")

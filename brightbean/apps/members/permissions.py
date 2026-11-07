@@ -79,6 +79,18 @@ def review_available(workspace):
     return workspace.approval_workflow_mode != "none"
 
 
+def edit_returns_to_review(workspace):
+    """Does editing approved content send it back to review (upstream "Option A")? (P1-B34)
+
+    Only where the mode requires approval: there an edit would otherwise go out unreviewed. In
+    "No approvals" there is no review step at all and in "Optional approvals" a draft may go out
+    without one, so an edit keeps the content approved instead of making it wait for a decision
+    nobody has to take. The single rule for every place that reverts on an edit (composer save,
+    autosave, media add/upload/remove).
+    """
+    return approval_required(workspace)
+
+
 def client_approval_required(workspace):
     """Two-stage mode: the team approves first, then the client signs off."""
     return workspace.approval_workflow_mode == TWO_STAGE_MODE

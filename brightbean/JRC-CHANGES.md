@@ -1,5 +1,19 @@
 # Úpravy JR Content
 
+## 2026-11-07 — P1-B34
+
+- CSV import (`composer.views`): náhled používal neexistující `SocialAccount.Platform` (upstream volby přesunul do
+  `PlatformCredential.Platform`) a vždy padal 500. Platformy se berou z volby pole `SocialAccount.platform`. Náhled
+  i import používají jednu kontrolu řádku (`_csv_row_problems`, nově i čas `HH:MM`): import přeskočí přesně řádky,
+  které náhled označil; každý řádek se ukládá ve vlastním savepointu (nevznikne příspěvek bez kanálů).
+- Úprava schváleného obsahu (upstream „Option A“: uložení, autosave, přidání/odebrání média) ho vrátí do Review
+  jen v režimech s povinným schválením (`permissions.edit_returns_to_review`); v „No approvals“ a „Optional
+  approvals“ zůstane schválený. Text v composeru („saving changes sends it back for re-approval“) podle téhož.
+- Kalendář: jedno pravidlo `calendar.drag.drop_refusal` pro přetahovatelný čip (filtr `can_drop`) i pro
+  `reschedule_post`. Každé přetažení mění plánovaný čas, proto vždy vyžaduje `can_schedule` (dřív schválené
+  a čekající kopie přesunul i editor); Draft jen tam, kde ho režim pustí ven.
+- Test `jrc_ui/tests/test_model_references.py`: každý import (i uvnitř funkcí) a každé `Model.atribut` v kódu existuje.
+
 ## 2026-11-06 — P1-B27
 
 - Režim schvalování se čte na jednom místě (`apps/members/permissions.py`): `can_decide_at_step` (kdo rozhoduje,
