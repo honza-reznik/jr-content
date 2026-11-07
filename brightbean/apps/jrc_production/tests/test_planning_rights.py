@@ -121,11 +121,11 @@ def _csv_import(client, workspace, when):
     first = client.post(f"{base}/", {"csv_file": upload})
     if first.status_code != 200:
         return first, None
-    # The preview step only stores this mapping; it is skipped here because it currently fails on its own
-    # (``SocialAccount.Platform`` does not exist, out of scope of P1-B32, see the block log).
-    session = client.session
-    session[f"csv_mapping_{workspace.id}"] = {"date": 0, "time": 1, "platforms": 2, "caption": 3}
-    session.save()
+    # P1-B34: the whole flow, the preview step stores the mapping.
+    preview = client.post(
+        f"{base}/preview/", {"map_date": "0", "map_time": "1", "map_platforms": "2", "map_caption": "3"}
+    )
+    assert preview.status_code == 200
     response = client.post(f"{base}/confirm/")
     variant = PlatformPost.objects.filter(post__workspace=workspace, post__caption="Imported with a date").first()
     return response, variant

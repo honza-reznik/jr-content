@@ -292,10 +292,16 @@ class HoldPublishGuardTests(ApprovalWorkflowBase):
 
 
 class ApprovedEditReReviewTests(ApprovalWorkflowBase):
-    """Editing an approved post must send it back for re-approval (Option A)."""
+    """Editing an approved post must send it back for re-approval (Option A).
+
+    P1-B34: only where the mode requires approval (``edit_returns_to_review``); the other modes are
+    covered by ``jrc_production/tests/test_import_edit_drag.py``.
+    """
 
     def setUp(self):
         super().setUp()
+        self.ws.approval_workflow_mode = "required_internal"
+        self.ws.save(update_fields=["approval_workflow_mode"])
         self.post = self._post("approved")
         self.client.force_login(self.author)
         self.save_url = reverse("composer:save_post_edit", kwargs={"workspace_id": self.ws.id, "post_id": self.post.id})
