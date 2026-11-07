@@ -34,7 +34,7 @@ from django.utils import timezone
 
 from apps.common.db import in_worker_thread, release_idle_connection
 from apps.common.worker import SHUTDOWN_REQUESTED
-from apps.composer.models import PlatformPost
+from apps.composer.models import PlatformPost, Post
 from apps.composer.services import publish_blocker, usable_media_types
 from apps.credentials.models import resolve_platform_credentials
 from apps.media_library.storage import download_to_path
@@ -477,10 +477,16 @@ class PublishEngine:
             # ones) so a concurrent client hold serializes against publishing:
             # request_hold()'s UPDATE on an approved sibling blocks on the locked
             # row until we commit, and we re-check on_hold here under the lock.
+            # JR Content (P1-B37): the content row first, then its copies by primary key – the one
+            # lock order of every copy-state writer (``composer.services.lock_copies``), so an edit
+            # sending a copy back to review and this claim serialize instead of overwriting each
+            # other or deadlocking. Only these rows: the joined account and workspace stay unlocked.
+            list(Post.objects.select_for_update(of=("self",)).filter(pk=post.id).values_list("pk"))
             locked = list(
-                PlatformPost.objects.select_for_update()
+                PlatformPost.objects.select_for_update(of=("self",))
                 .filter(post_id=post.id)
                 .select_related("social_account", "post__workspace")
+                .order_by("pk")
             )
 
             if any(pp.status == PlatformPost.Status.ON_HOLD for pp in locked):

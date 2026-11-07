@@ -310,12 +310,14 @@ def remove_from_queue(entry):
     """
     from django.db import transaction
 
-    from apps.composer.services import sync_post_scheduled_at, transition_platform_post
+    from apps.composer.services import lock_copies, sync_post_scheduled_at, transition_platform_post
 
     with transaction.atomic():
         post = entry.post
         queue = entry.queue
         _lock_channel(queue)
+        # JR Content (P1-B37): the copy's state under the publisher's lock order, never a stale read.
+        lock_copies([post.pk])
         pp = _platform_post_for(post, queue.social_account)
         # Clear the schedule for any non-protected child (scheduled OR failed),
         # not just 'scheduled', so a removed failed post stops rendering on the

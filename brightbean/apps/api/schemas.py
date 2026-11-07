@@ -314,6 +314,12 @@ class PostResponse(Schema):
     platform_posts: list[PlatformPostSummary]
     created_at: dt.datetime
     updated_at: dt.datetime
+    # JR Content (P1-B37): set by an update that sent channel copies back to review (P-025 A).
+    review_notice: str = Field(
+        "",
+        description="Set by an update that sent channel copies back to review (planned ones out of the plan); "
+        "empty otherwise.",
+    )
 
     @field_serializer("scheduled_at", "published_at", "proposed_publish_at", "created_at", "updated_at")
     def _serialize_dt(self, value: dt.datetime | None) -> str | None:

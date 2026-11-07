@@ -357,6 +357,7 @@ def _save_caption(args: dict, context: dict[str, Any]) -> dict:
     from django.http import Http404
 
     from apps.api.routers.content import _caption_response
+    from apps.approvals.edits import review_return_notice
     from apps.jrc_texts import services as text_services
 
     _content_write_key(context)
@@ -364,7 +365,7 @@ def _save_caption(args: dict, context: dict[str, Any]) -> dict:
     _content_editable(post, context)
     try:
         variant, _ = _caption_for_key(post, args["platform_post_id"], context)
-        _, changed = text_services.save_caption(
+        saved = text_services.save_caption(
             post.pk,
             variant.pk,
             context["api_key"].issued_by,
@@ -382,7 +383,8 @@ def _save_caption(args: dict, context: dict[str, Any]) -> dict:
         raise _content_error(" ".join(exc.messages), 422) from exc
     variant.refresh_from_db()
     result = _caption_response(post, variant, _content_membership(post, context))
-    return _wrap_text({**result.model_dump(mode="json"), "status": 201 if changed else 200})
+    result.review_notice = review_return_notice(saved.returned, "caption")
+    return _wrap_text({**result.model_dump(mode="json"), "status": 201 if saved[1] else 200})
 
 
 def _list_comments(args: dict, context: dict[str, Any]) -> dict:
@@ -522,7 +524,7 @@ def _register_content_tools() -> None:
     register_tool(
         Tool(
             name="jrc_save_caption",
-            description="Uloží popisek kanálu jako novou verzi a zkopíruje jej do varianty kanálu. Zadej `base_version` z aktuální verze; vynech jej jen před prvním uložením. Konflikt verze vrací 409 a překročení limitu kanálu 422.",
+            description="Uloží popisek kanálu jako novou verzi a zkopíruje jej do varianty kanálu. Zadej `base_version` z aktuální verze; vynech jej jen před prvním uložením. Konflikt verze vrací 409 a překročení limitu kanálu 422. Kde režim vyžaduje schválení, změněný popisek vrátí schválený, na klienta čekající, pozastavený, neúspěšný nebo naplánovaný kanál ke schválení (naplánovaný se stáhne z plánu); `review_notice` to popíše.",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -934,11 +936,11 @@ def _cancel_post(args: dict, context: dict[str, Any]) -> dict:
     scheduled = [pp for pp in post.platform_posts.all() if pp.status == "scheduled"]
     if not scheduled:
         raise JsonRpcError(INVALID_PARAMS, "No scheduled platform posts to cancel")
-    from apps.members.permissions import can_unschedule
+    from apps.members.permissions import UNSCHEDULE_REFUSAL, can_unschedule
 
     # Taking content out of the plan is planning (P1-B36): the same rule as REST /cancel and the calendar.
     if not can_unschedule(context["membership"], post):
-        raise JsonRpcError(INVALID_PARAMS, "Permission denied: publish_directly")
+        raise JsonRpcError(INVALID_PARAMS, UNSCHEDULE_REFUSAL)
     # Wrap the per-child loop in a single outer atomic so a mid-loop
     # ValueError (concurrent admin transition, state-machine rejection
     # on a later child) rolls back any earlier ``draft`` commits.

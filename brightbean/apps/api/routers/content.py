@@ -32,6 +32,7 @@ from apps.api.middleware import log_audit_entry
 from apps.api.routers.posts import _get_workspace_post, _post_to_response, _require_perm, _resolve_account
 from apps.api.schemas import PostResponse
 from apps.approvals import comments as comment_services
+from apps.approvals.edits import review_return_notice
 from apps.composer.models import PlatformPost, Post
 from apps.jrc_production.models import PipelineStage
 from apps.jrc_production.services import (
@@ -312,6 +313,11 @@ class CaptionResponse(Schema):
     text: str = Field(description="The newest saved caption, or the caption the copy has before its first version.")
     version: VersionInfo | None = Field(description="Null until the first version is saved.")
     versions: list[VersionInfo]
+    review_notice: str = Field(
+        "",
+        description="Set by a write that sent the copy back to review (and out of the plan, when it was planned); "
+        "empty otherwise.",
+    )
 
 
 class CaptionWrite(Schema):
@@ -408,7 +414,7 @@ def _caption_write(request, post_id, platform_post_id, payload: CaptionWrite):
         raise HttpError(403, "You cannot edit texts for this post.")
     text = payload.text.replace("\r\n", "\n").replace("\r", "\n")
     with _http_errors():
-        _, changed = text_services.save_caption(
+        saved = text_services.save_caption(
             post.pk,
             variant.pk,
             request.user,
@@ -417,8 +423,9 @@ def _caption_write(request, post_id, platform_post_id, payload: CaptionWrite):
             source="api",
         )
     variant.refresh_from_db()
-    status = 201 if changed else 200
+    status = 201 if saved[1] else 200
     result = _caption_response(post, variant, membership)
+    result.review_notice = review_return_notice(saved.returned, "caption")
     log_audit_entry(request, action="caption.write", target_id=variant.id, status_code=status)
     return status, result
 
@@ -426,7 +433,9 @@ def _caption_write(request, post_id, platform_post_id, payload: CaptionWrite):
 _CAPTION_DOC = """A write is always a new version, copied to the channel's caption field; history is never overwritten.
 Limit of the channel and `base_version` as on the Caption tab. 201 new version, 200 identical text (nothing created),
 409 stale `base_version` or an unsaved draft of the text, 422 over the channel limit. Where the approval mode requires
-approval, a changed caption sends an approved copy back to review (it must be approved again before it goes out)."""
+approval, a changed caption sends a copy that was approved, waiting for the client, on hold, failed or planned back to
+review (it must be approved again before it goes out); a planned copy is taken out of the plan. `review_notice` then
+says so."""
 
 
 @router.post(

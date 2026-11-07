@@ -409,6 +409,21 @@ class PlatformPost(models.Model):
         "published": set(),  # terminal
     }
 
+    # JR Content: přidáno 2026-11-07 (blok P1-B37), AGPL-3.0.
+    # Editing what goes out after approval (P-025 A) sends a copy back to ``pending_review`` from every
+    # state that carries the approval and has not gone out yet: approved, waiting for the client after
+    # the team approved, planned, on hold at the client's request, and failed (a retry would publish
+    # it). A planned copy leaves the plan on the way. This edge belongs to ``apps.approvals.edits``
+    # alone and is deliberately not in ``VALID_TRANSITIONS``: no other path (submit for review, the
+    # composer chip) may move planned content to review behind the unscheduling rule.
+    REVIEW_RETURN_STATUSES = (
+        Status.APPROVED,
+        Status.PENDING_CLIENT,
+        Status.SCHEDULED,
+        Status.ON_HOLD,
+        Status.FAILED,
+    )
+
     class FirstCommentStatus(models.TextChoices):
         NONE = "none", "Not requested"
         PENDING = "pending", "Pending"

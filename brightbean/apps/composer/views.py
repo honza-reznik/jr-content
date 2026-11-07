@@ -8,7 +8,7 @@ import logging
 import re
 import uuid
 from datetime import UTC, datetime
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
 import httpx
 from dateutil import parser as date_parser
@@ -29,7 +29,7 @@ from django.utils.html import strip_tags
 from django.utils.text import get_text_list
 from django.views.decorators.http import require_GET, require_POST
 
-from apps.approvals.edits import return_edited_to_review, reviewed_content
+from apps.approvals.edits import return_edited_to_review, review_return_notice, reviewed_content
 from apps.common.validators import (
     is_safe_url,
     parse_and_truncate_tag_string,
@@ -42,6 +42,7 @@ from apps.members.models import WorkspaceMembership
 from apps.members.permissions import (
     can_schedule,
     can_unschedule,
+    content_delete_blocker,
     edit_returns_to_review,
     is_planned,
     review_available,
@@ -69,6 +70,7 @@ from .services import (
     ChannelRemovalError,
     channel_removal_blocker,
     children_are_locked,
+    lock_copies,
     media_blocker,
     media_change_blocker,
     post_media_types,
@@ -77,6 +79,7 @@ from .services import (
     remove_platform_posts,
     require_publishable,
     require_release_allowed,
+    sync_post_scheduled_at,
     usable_media_types,
 )
 from .status import READONLY_STATUSES, derive_post_status
@@ -154,15 +157,23 @@ def _deselected_platform_posts(request, post, selected_ids):
 
 
 def _caption_selection_error(request, post):
-    """Reject stale selections before any writes, while holding the Post lock."""
+    """Reject stale selections before any writes, while holding the Post lock.
+
+    Deselecting a channel deletes its copy, so the one deletion rule applies too (P1-B37,
+    ``content_delete_blocker``): a planned copy only by someone who may take it out of the plan.
+    """
     selected_ids = _parse_selected_account_ids(request.POST.get("selected_accounts", ""))
-    deselected = _deselected_platform_posts(request, post, selected_ids).select_for_update(of=("self",))
+    deselected = list(_deselected_platform_posts(request, post, selected_ids).select_for_update(of=("self",)))
     if any(channel_removal_blocker(pp) for pp in deselected):
         return (
             "Not saved: a channel with caption history, video or thumbnails cannot be removed in the composer. "
             "Reload the composer to include all channels, then save again. "
             "Your saved captions, videos, thumbnails and their history are unchanged."
         )
+    if deselected:
+        blocker = content_delete_blocker(getattr(request, "workspace_membership", None), post, deselected)
+        if blocker:
+            return f"Not saved: removing a channel deletes it. {blocker}"
     return None
 
 
@@ -1116,6 +1127,44 @@ def _capture_proposed_publish_at(post, post_id, workspace, form, *, clear_when_b
     post.proposed_publish_at = proposed
 
 
+def _without_returned(post, ids, returned):
+    """``ids`` (or every copy of ``post`` when ``None``) minus the copies an edit sent back to review."""
+    if not returned:
+        return ids
+    returned_ids = {str(pp.id) for pp in returned}
+    candidates = ids if ids is not None else [pp.id for pp in post.platform_posts.all()]
+    return [pid for pid in candidates if str(pid) not in returned_ids]
+
+
+def _review_notice_header(returned, what="content"):
+    """``X-JRC-Review-Notice`` for the composer script (URL-encoded: channel names need not be Latin-1)."""
+    notice = review_return_notice(returned, what)
+    return {"X-JRC-Review-Notice": quote(notice)} if notice else {}
+
+
+def _add_review_notice(response, returned):
+    for name, value in _review_notice_header(returned).items():
+        response[name] = value
+    return response
+
+
+def _post_saved_response(request, post, workspace, returned):
+    """The response of every save action; tells the editor which copies went back to review (P1-B37)."""
+    if request.htmx:
+        return HttpResponse(
+            status=204,
+            headers={
+                "HX-Trigger": json.dumps({"postSaved": {"postId": str(post.id), "status": post.status}}),
+                "X-Platform-Statuses": json.dumps(_platform_status_map(post)),
+                **_review_notice_header(returned),
+            },
+        )
+    notice = review_return_notice(returned)
+    if notice:
+        messages.warning(request, notice)
+    return redirect("composer:compose_edit", workspace_id=workspace.id, post_id=post.id)
+
+
 @login_required
 @require_permission("create_posts")
 @require_POST
@@ -1130,13 +1179,14 @@ def save_post(request, workspace_id, post_id=None):
         # Reject before the form binds, so an already-published post is never
         # mutated in memory. Catches every action, including the ``save_draft``
         # default a POST with no ``action`` falls back to.
+        # The snapshot locks the content's copies in the publisher's order first (P1-B37).
+        _orig_content = reviewed_content(post)
         readonly_error = _readonly_rejection(request, post)
         if readonly_error is not None:
             return readonly_error
         selection_error = _caption_selection_error(request, post)
         if selection_error:
             return JsonResponse({"errors": {"selected_accounts": selection_error}}, status=409)
-        _orig_content = reviewed_content(post)
         _orig_title = post.title
         form = PostForm(request.POST, instance=post)
     else:
@@ -1219,8 +1269,13 @@ def save_post(request, workspace_id, post_id=None):
         post.proposed_publish_at = None
         post.save()
         # Ensure PlatformPost rows exist for every selected account before the
-        # queue service writes per-platform scheduled_at values.
+        # queue service writes per-platform scheduled_at values. Copies this
+        # edit sent back to review are not queued (P1-B37).
         _sync_platform_posts(request, post, workspace, initial_status="draft")
+        returned = return_edited_to_review(post, _orig_content)
+        record_title_change(post, _orig_title, request.user)
+        returned_accounts = {pp.social_account_id for pp in returned}
+        queues = [q for q in queues if q.social_account_id not in returned_accounts]
         # "Next Available" always places the post in the queue's soonest open
         # slot. It deliberately ignores the Schedule-panel date/time: those
         # inputs are prefilled from the post's own scheduled_at/proposed time
@@ -1234,19 +1289,13 @@ def save_post(request, workspace_id, post_id=None):
                 for q in queues:
                     add_to_queue(post, q)
                 # Transition every child whose scheduled_at was filled in.
-                _transition_post_children(post, "scheduled", only=_scoped_platform_post_ids(request, post))
+                _transition_post_children(
+                    post, "scheduled", only=_without_returned(post, _scoped_platform_post_ids(request, post), returned)
+                )
         except QueueFullError:
             return JsonResponse({"errors": {"queue": _QUEUE_FULL_MSG}}, status=400)
         _save_version(post, request.user)
-        if request.htmx:
-            return HttpResponse(
-                status=204,
-                headers={
-                    "HX-Trigger": json.dumps({"postSaved": {"postId": str(post.id), "status": post.status}}),
-                    "X-Platform-Statuses": json.dumps(_platform_status_map(post)),
-                },
-            )
-        return redirect("composer:compose_edit", workspace_id=workspace.id, post_id=post.id)
+        return _post_saved_response(request, post, workspace, returned)
     elif action == "add_to_queue_priority":
         from django.db import transaction
 
@@ -1260,61 +1309,47 @@ def save_post(request, workspace_id, post_id=None):
         post.proposed_publish_at = None
         post.save()
         _sync_platform_posts(request, post, workspace, initial_status="draft")
+        returned = return_edited_to_review(post, _orig_content)
+        record_title_change(post, _orig_title, request.user)
+        returned_accounts = {pp.social_account_id for pp in returned}
+        queues = [q for q in queues if q.social_account_id not in returned_accounts]
         try:
             # One transaction across every queue (see add_to_queue above).
             with transaction.atomic():
                 for q in queues:
                     add_to_queue(post, q, priority=True)
-                _transition_post_children(post, "scheduled", only=_scoped_platform_post_ids(request, post))
+                _transition_post_children(
+                    post, "scheduled", only=_without_returned(post, _scoped_platform_post_ids(request, post), returned)
+                )
         except QueueFullError:
             return JsonResponse({"errors": {"queue": _QUEUE_FULL_MSG}}, status=400)
         _save_version(post, request.user)
-        if request.htmx:
-            return HttpResponse(
-                status=204,
-                headers={
-                    "HX-Trigger": json.dumps({"postSaved": {"postId": str(post.id), "status": post.status}}),
-                    "X-Platform-Statuses": json.dumps(_platform_status_map(post)),
-                },
-            )
-        return redirect("composer:compose_edit", workspace_id=workspace.id, post_id=post.id)
+        return _post_saved_response(request, post, workspace, returned)
     elif action == "submit_for_approval":
         # Save post first so it has a PK, then delegate to approval service
         _capture_proposed_publish_at(post, post_id, workspace, form, clear_when_blank=False)
         post.save()
         # Sync platform posts before submitting
         _sync_platform_posts(request, post, workspace, initial_status="draft")
+        returned = return_edited_to_review(post, _orig_content)
+        record_title_change(post, _orig_title, request.user)
         _save_version(post, request.user)
         from apps.approvals.services import submit_for_review
 
         submit_for_review(post, request.user, workspace)
-        if request.htmx:
-            return HttpResponse(
-                status=204,
-                headers={
-                    "HX-Trigger": json.dumps({"postSaved": {"postId": str(post.id), "status": post.status}}),
-                    "X-Platform-Statuses": json.dumps(_platform_status_map(post)),
-                },
-            )
-        return redirect("composer:compose_edit", workspace_id=workspace.id, post_id=post.id)
+        return _post_saved_response(request, post, workspace, returned)
     elif action == "resubmit_for_approval":
         # Resubmit after changes requested or rejection
         _capture_proposed_publish_at(post, post_id, workspace, form, clear_when_blank=False)
         post.save()
         _sync_platform_posts(request, post, workspace, initial_status="draft")
+        returned = return_edited_to_review(post, _orig_content)
+        record_title_change(post, _orig_title, request.user)
         _save_version(post, request.user)
         from apps.approvals.services import resubmit_post
 
         resubmit_post(post, request.user, workspace)
-        if request.htmx:
-            return HttpResponse(
-                status=204,
-                headers={
-                    "HX-Trigger": json.dumps({"postSaved": {"postId": str(post.id), "status": post.status}}),
-                    "X-Platform-Statuses": json.dumps(_platform_status_map(post)),
-                },
-            )
-        return redirect("composer:compose_edit", workspace_id=workspace.id, post_id=post.id)
+        return _post_saved_response(request, post, workspace, returned)
     elif action == "save_draft":
         # The Schedule Post panel doubles as the proposed-time picker for a
         # draft; capture it (or clear it when blank) before the save below.
@@ -1378,66 +1413,45 @@ def save_post(request, workspace_id, post_id=None):
 
     # Sync platform posts (newly-created rows inherit ``initial_status`` for
     # this action — e.g. "scheduled" for schedule/publish_now, "draft" for
-    # save_draft).
+    # save_draft). Option A: editing reviewed content of a copy carrying an
+    # approval sends it back for re-approval (a planned one out of the plan) so
+    # edits can't publish un-reviewed. That runs BEFORE any publish target and
+    # time below — otherwise a schedule/publish_now in the *same* save would
+    # push the just-edited content straight back into the plan.
     _sync_platform_posts(request, post, workspace, initial_status=initial_status)
+    returned = return_edited_to_review(post, _orig_content)
 
     # Propagate manually-chosen schedule/publish_now datetimes to every
     # PlatformPost now that they exist — except published/publishing rows
-    # (their schedule is history) and, in scoped mode, siblings outside the
-    # ``?account=`` scope.
+    # (their schedule is history), copies just sent back to review and, in
+    # scoped mode, siblings outside the ``?account=`` scope.
     scoped_ids = _scoped_platform_post_ids(request, post)
+    target_only = _without_returned(post, scoped_ids, returned)
     propagate_dt = getattr(post, "_schedule_propagate_dt", None)
     if propagate_dt is not None:
         propagate_qs = post.platform_posts.exclude(status__in=PlatformPost.PROTECTED_STATUSES)
-        if scoped_ids is not None:
-            propagate_qs = propagate_qs.filter(id__in=scoped_ids)
+        if target_only is not None:
+            propagate_qs = propagate_qs.filter(id__in=target_only)
         propagate_qs.update(scheduled_at=propagate_dt)
-
-    # Option A: editing an approved post's reviewable content sends it back for
-    # re-approval so edits can't publish un-reviewed. Run this BEFORE applying any
-    # publish target — otherwise a schedule/publish_now in the *same* save would
-    # push the just-edited (no-longer-approved) content straight to scheduled.
-    # Only ``approved`` children are reverted; anything else is a no-op.
-    reverted_ids = {str(pp.id) for pp in return_edited_to_review(post, _orig_content)}
+        if returned:
+            sync_post_scheduled_at(post)
     record_title_change(post, _orig_title, request.user)
 
     # Move existing children to the requested target state (no-op for save_draft —
-    # children that are already mid-workflow stay put). Children just reverted for
-    # re-review are excluded so a same-save publish action can't drag them back
-    # out of review.
+    # children that are already mid-workflow stay put), never the copies just
+    # sent back to review.
     if pending_target:
-        if reverted_ids:
-            candidates = scoped_ids if scoped_ids is not None else [pp.id for pp in post.platform_posts.all()]
-            target_only = [pid for pid in candidates if str(pid) not in reverted_ids]
-        else:
-            target_only = scoped_ids
         _transition_post_children(post, pending_target, only=target_only)
 
     # Save version
     _save_version(post, request.user)
 
-    # Return appropriate response
-    if request.htmx:
-        return HttpResponse(
-            status=204,
-            headers={
-                "HX-Trigger": json.dumps(
-                    {
-                        "postSaved": {
-                            "postId": str(post.id),
-                            "status": post.status,
-                        }
-                    }
-                ),
-                "X-Platform-Statuses": json.dumps(_platform_status_map(post)),
-            },
-        )
-
-    return redirect("composer:compose_edit", workspace_id=workspace.id, post_id=post.id)
+    return _post_saved_response(request, post, workspace, returned)
 
 
 @login_required
 @require_POST
+@transaction.atomic
 def transition_platform_post(request, workspace_id, post_id, platform_post_id):
     """Transition a single PlatformPost to a target editorial status.
 
@@ -1453,6 +1467,9 @@ def transition_platform_post(request, workspace_id, post_id, platform_post_id):
         post_id=post_id,
         post__workspace=workspace,
     )
+    # P1-B37: decide on the state under the lock (the publisher's order), never on a stale read.
+    lock_copies([pp.post_id], [pp.pk])
+    pp.refresh_from_db()
     target = (request.POST.get("target_status") or "").strip()
     if not target:
         return JsonResponse({"error": "target_status required"}, status=400)
@@ -1597,14 +1614,18 @@ def autosave(request, workspace_id, post_id=None):
             social_account=account,
         )
 
-    # Option A: an autosave that changed an approved post's content reverts it to
-    # pending_review so edited content can't publish without a fresh review.
-    return_edited_to_review(post, orig_content)
+    # Option A: an autosave that changed reviewed content of a copy carrying an
+    # approval sends it back to review (a planned one out of the plan) so edited
+    # content can't publish without a fresh review.
+    returned = return_edited_to_review(post, orig_content)
     record_title_change(post, orig_title, request.user)
 
     return HttpResponse(
         f'<span class="text-xs text-gray-400">Saved {timezone.now().strftime("%H:%M")}</span>',
-        headers={"HX-Trigger": json.dumps({"autosaved": {"postId": str(post.id), "isNew": is_new}})},
+        headers={
+            "HX-Trigger": json.dumps({"autosaved": {"postId": str(post.id), "isNew": is_new}}),
+            **_review_notice_header(returned),
+        },
     )
 
 
@@ -2174,10 +2195,8 @@ def unsplash_import(request, workspace_id, post_id=None):
     from apps.media_library.quotas import StorageQuotaExceededError, enforce_storage_quota
 
     post = None
-    before = None
     if post_id:
         post = get_object_or_404(Post, id=post_id, workspace=workspace)
-        before = reviewed_content(post)
 
     auth_headers = {"Authorization": f"Client-ID {settings.UNSPLASH_ACCESS_KEY}"}
     new_assets = []
@@ -2267,9 +2286,6 @@ def unsplash_import(request, workspace_id, post_id=None):
                 alt_text=_as_str(photo.get("alt")),
             )
             new_assets.append(asset)
-            attachment = _attach_asset_for_composer(request, workspace, asset, post)
-            if attachment is not None:
-                attachments.append(attachment)
 
     if not new_assets:
         if quota_exceeded:
@@ -2279,9 +2295,19 @@ def unsplash_import(request, workspace_id, post_id=None):
             )
         return JsonResponse({"error": "Could not import the selected photos."}, status=502)
 
+    returned = []
+    # Attached only after the downloads, in one transaction from the snapshot (which locks the
+    # copies) to the rule, so no lock is held while photos download (P1-B37).
+    with transaction.atomic():
+        before = reviewed_content(post) if post is not None else None
+        for asset in new_assets:
+            attachment = _attach_asset_for_composer(request, workspace, asset, post)
+            if attachment is not None:
+                attachments.append(attachment)
+        if post is not None:
+            # Option A (P-025): new media on an approved post sends it back for re-approval, as upload_media.
+            returned = return_edited_to_review(post, before)
     if post is not None:
-        # Option A (P-025): new media on an approved post sends it back for re-approval, as upload_media.
-        return_edited_to_review(post, before)
         html = render_to_string(
             "composer/partials/media_list.html",
             {"media_attachments": attachments, "post": post, "workspace": workspace},
@@ -2299,7 +2325,8 @@ def unsplash_import(request, workspace_id, post_id=None):
             "html": html,
             "assets": [{"id": str(a.id), "url": a.file.url} for a in new_assets],
             "failed": failed,
-        }
+        },
+        headers=_review_notice_header(returned),
     )
 
 
@@ -2406,6 +2433,7 @@ def tiktok_creator_info(request, workspace_id, account_id):
 
 @login_required
 @require_POST
+@transaction.atomic
 def attach_media(request, workspace_id, post_id):
     """Attach a media asset to a post."""
     workspace = _get_workspace(request, workspace_id)
@@ -2433,7 +2461,7 @@ def attach_media(request, workspace_id, post_id):
     )
 
     # Option A (P-025): changing media on an approved post sends it back for re-approval.
-    return_edited_to_review(post, before)
+    returned = return_edited_to_review(post, before)
 
     response = render(
         request,
@@ -2444,6 +2472,7 @@ def attach_media(request, workspace_id, post_id):
             "workspace": workspace,
         },
     )
+    _add_review_notice(response, returned)
     response["HX-Trigger"] = "previewUpdate"
     return response
 
@@ -2561,10 +2590,12 @@ def upload_media(request, workspace_id, post_id=None):
 
     if post_id:
         post = get_object_or_404(Post, id=post_id, workspace=workspace)
-        before = reviewed_content(post)
-        attachment = _attach_asset_for_composer(request, workspace, asset, post)
-        # Option A (P-025): changing media on an approved post sends it back for re-approval.
-        return_edited_to_review(post, before)
+        # One transaction from the snapshot (which locks the copies) to the rule (P1-B37).
+        with transaction.atomic():
+            before = reviewed_content(post)
+            attachment = _attach_asset_for_composer(request, workspace, asset, post)
+            # Option A (P-025): changing media on an approved post sends it back for re-approval.
+            returned = return_edited_to_review(post, before)
         response = render(
             request,
             "composer/partials/media_list.html",
@@ -2574,6 +2605,7 @@ def upload_media(request, workspace_id, post_id=None):
                 "workspace": workspace,
             },
         )
+        _add_review_notice(response, returned)
     else:
         _attach_asset_for_composer(request, workspace, asset)
         response = render(
@@ -2592,6 +2624,7 @@ def upload_media(request, workspace_id, post_id=None):
 
 @login_required
 @require_POST
+@transaction.atomic
 def remove_media(request, workspace_id, post_id, media_id):
     """Remove a media attachment from a post."""
     workspace = _get_workspace(request, workspace_id)
@@ -2609,7 +2642,7 @@ def remove_media(request, workspace_id, post_id, media_id):
     PostMedia.objects.filter(id=media_id, post=post).delete()
 
     # Option A (P-025): changing media on an approved post sends it back for re-approval.
-    return_edited_to_review(post, before)
+    returned = return_edited_to_review(post, before)
 
     response = render(
         request,
@@ -2620,6 +2653,7 @@ def remove_media(request, workspace_id, post_id, media_id):
             "workspace": workspace,
         },
     )
+    _add_review_notice(response, returned)
     response["HX-Trigger"] = "previewUpdate"
     return response
 
@@ -2714,6 +2748,7 @@ def deletion_response(request, workspace, message, *, leave_page):
 
 @login_required
 @require_POST
+@transaction.atomic
 def post_delete(request, workspace_id, post_id):
     """Delete a post or a single platform post via HTMX.
 
@@ -2724,10 +2759,22 @@ def post_delete(request, workspace_id, post_id):
     """
     workspace = _get_workspace(request, workspace_id)
     post = get_object_or_404(Post, id=post_id, workspace=workspace)
+    # P1-B37: content first, then its copies (the publisher's lock order); the rule below and the
+    # delete see the state as it is, and a cascade delete cannot lock copies before their content.
+    lock_copies([post.pk])
 
     account_id = request.GET.get("account") or request.POST.get("account")
+    copies = (
+        [get_object_or_404(PlatformPost, post=post, social_account_id=account_id)]
+        if account_id
+        else list(post.platform_posts.all())
+    )
+    # P1-B37: one deletion rule; planned content only by someone who may take it out of the plan.
+    blocker = content_delete_blocker(getattr(request, "workspace_membership", None), post, copies)
+    if blocker:
+        return JsonResponse({"error": blocker}, status=403)
     if account_id:
-        pp = get_object_or_404(PlatformPost, post=post, social_account_id=account_id)
+        pp = copies[0]
         try:
             with transaction.atomic():
                 remove_platform_posts(PlatformPost.objects.filter(pk=pp.pk, post=post))

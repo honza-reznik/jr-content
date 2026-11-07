@@ -15,6 +15,7 @@ from apps.members.permissions import (
     can_publish_directly,
     can_schedule,
     can_unschedule,
+    content_delete_blocker,
     is_planned,
     release_blocker,
     review_available,
@@ -104,6 +105,8 @@ def rename_content(post, title, user):
         membership = content_membership(locked.workspace, user)
         if not can_rename_content(locked, membership):
             raise PermissionDenied("You cannot rename this content.")
+        # The snapshot locks the copies (publisher's order, P1-B37) before their state is read.
+        before = reviewed_content(locked)
         if children_are_locked(locked.platform_posts.only("id", "status")):
             raise ValidationError("This content has already published and can't be renamed.")
         title = (title or "").strip()
@@ -112,7 +115,6 @@ def rename_content(post, title, user):
         Post(workspace=locked.workspace, title=title, author=locked.author).full_clean()
         if title == locked.title:
             return None
-        before = reviewed_content(locked)
         old_title = locked.title
         locked.title = title
         locked.save(update_fields=["title", "updated_at"])
@@ -160,10 +162,14 @@ def add_content_channel(post, account_id, user):
 
 @transaction.atomic
 def remove_content_channel(post, platform_post_id, user):
+    """Remove one channel copy (JR detail and REST); the one deletion rule applies (P1-B37)."""
     post = _lock_channel_content(post, user)
     variants = post.platform_posts.filter(pk=platform_post_id)
     if not variants.exists():
         raise ValidationError("Choose a channel of this content.")
+    blocker = content_delete_blocker(content_membership(post.workspace, user), post, list(variants))
+    if blocker:
+        raise PermissionDenied(blocker)
     remove_platform_posts(variants)
 
 
@@ -269,7 +275,7 @@ def request_content_changes(post, user, comment, *, expected_stage):
     """
     post = Post.objects.select_for_update(of=("self",)).select_related("workspace").get(pk=post.pk)
     membership = content_membership(post.workspace, user)
-    children = list(post.platform_posts.select_for_update(of=("self",)))
+    children = list(post.platform_posts.select_for_update(of=("self",)).order_by("pk"))
     if pipeline_stage(post) != expected_stage:
         raise ValidationError("This content changed. Refresh the page and try again.")
     if not membership.effective_permissions.get("approve_posts", False):
@@ -298,7 +304,10 @@ def move_content(post, stage, user, *, expected_stage, scheduled_at=None):
     """Serialize changes, authorize the actor and delegate editorial decisions to Brightbean."""
     post = Post.objects.select_for_update(of=("self",)).select_related("workspace").get(pk=post.pk)
     membership = content_membership(post.workspace, user)
-    children = list(post.platform_posts.select_for_update(of=("self",)).select_related("social_account__jrc_channel"))
+    # Copies by primary key after their content: the publisher's lock order (P1-B37).
+    children = list(
+        post.platform_posts.select_for_update(of=("self",)).select_related("social_account__jrc_channel").order_by("pk")
+    )
     previous = pipeline_stage(post)
     if previous != expected_stage:
         raise ValidationError("This content changed. Refresh the board and try again.")

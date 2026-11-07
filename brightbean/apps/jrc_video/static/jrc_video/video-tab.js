@@ -142,6 +142,14 @@
     show(box, !!text);
   }
 
+  // P1-B37: a new final version after approval sends the channel back to review (and out of the plan).
+  function finalNotice(panel, text) {
+    var box = panel.querySelector("[data-video-final-notice]");
+    if (!box) return;
+    box.textContent = text || "";
+    show(box, !!text);
+  }
+
   root.addEventListener("change", function (event) {
     var select = event.target.closest && event.target.closest("[data-video-select]");
     if (!select) return;
@@ -155,6 +163,7 @@
     if (!button) return;
     var panel = button.closest("[data-video-channel]");
     finalError(panel, "");
+    finalNotice(panel, "");
     button.disabled = true;
     fetch(finalUrl(button.dataset.version), {
       method: "POST", credentials: "same-origin",
@@ -163,6 +172,7 @@
     }).then(function (response) {
       return response.json().catch(function () { return {}; }).then(function (data) {
         if (!response.ok) throw new Error(data.error || "The request failed.");
+        finalNotice(panel, data.review_notice || "");
       });
     }).then(function () {
       root.dispatchEvent(new CustomEvent("jrc-video:refresh"));

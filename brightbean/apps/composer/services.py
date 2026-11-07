@@ -46,6 +46,27 @@ def channel_removal_blocker(variant):
     return None
 
 
+# JR Content: přidáno 2026-11-07 (blok P1-B37), AGPL-3.0.
+def lock_copies(post_ids, copy_ids=None):
+    """Lock content and its channel copies in the one order every writer of copy state uses (P1-B37).
+
+    The order is the publisher's: the ``Post`` rows first (by primary key), then their
+    ``PlatformPost`` rows (by primary key). Every path that changes a copy's state or deletes it
+    (edits returning it to review, taking it out of the plan, bulk actions, deletion, the
+    publisher claiming it) takes these locks before it reads the state it decides on, so a copy
+    the publisher has just claimed (``publishing``) is never overwritten, and a copy an edit has
+    just sent back to review is never claimed. Must run inside a transaction. Returns the locked
+    copies (all copies of ``post_ids``, or only ``copy_ids``) with their current state.
+    """
+    from .models import PlatformPost, Post
+
+    list(Post.objects.filter(pk__in=list(post_ids)).order_by("pk").select_for_update(of=("self",)).values_list("pk"))
+    copies = PlatformPost.objects.filter(post_id__in=list(post_ids))
+    if copy_ids is not None:
+        copies = copies.filter(pk__in=list(copy_ids))
+    return list(copies.order_by("pk").select_for_update(of=("self",)))
+
+
 @transaction.atomic
 def remove_platform_posts(variants):
     """Remove copies atomically, keeping their parents and all saved work.
@@ -57,7 +78,8 @@ def remove_platform_posts(variants):
     from .models import Post
 
     parents = list(Post.objects.filter(pk__in=variants.values("post_id")).order_by("pk").select_for_update())
-    selected = list(variants.select_for_update(of=("self",)))
+    # Copies after their parents, by primary key: the lock order of every copy-state writer (``lock_copies``).
+    selected = list(variants.order_by("pk").select_for_update(of=("self",)))
     blocked = [variant for variant in selected if channel_removal_blocker(variant)]
     if blocked:
         raise ChannelRemovalError(blocked)
@@ -338,11 +360,14 @@ def transition_platform_post(
     # promotes a draft to scheduled (REST `/schedule` route, any future
     # MCP transition tool, the composer's HTMX `transition_platform_post`
     # view) is covered.
-    if target_status in ("scheduled", "publishing"):
-        require_release_allowed(platform_post.post.workspace, platform_post.status)
-        require_publishable(platform_post)
-
     with transaction.atomic():
+        # P1-B37: decide on the state under the lock, never on a stale copy: the publisher may have
+        # claimed it (``publishing``) or an edit sent it back to review since it was read.
+        (current,) = lock_copies([platform_post.post_id], [platform_post.pk]) or [platform_post]
+        platform_post.status = current.status
+        if target_status in ("scheduled", "publishing"):
+            require_release_allowed(platform_post.post.workspace, platform_post.status)
+            require_publishable(platform_post)
         platform_post.transition_to(target_status)
         # Always include ``updated_at`` — Django docs: when ``update_fields``
         # is explicit, ``auto_now`` fields are NOT touched unless listed.

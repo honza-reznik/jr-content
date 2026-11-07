@@ -174,7 +174,8 @@ def test_detail_tells_before_and_after_saving(make):
     assert "saving a changed caption sends it back for re-approval" in page
     response = _save_in_detail(client, workspace, post, copy, "Changed")
     page = client.get(response["Location"]).content.decode()
-    assert "It goes back to review for approval." in page
+    # P1-B37: the notice names the channel and what changed.
+    assert "goes back to review for approval because the caption changed." in page
     assert "saving a changed caption sends it back for re-approval" not in page
 
 

@@ -1,11 +1,12 @@
-# JR Content: přidáno 2026-11-07 (blok P1-B36), AGPL-3.0.
+# JR Content: přidáno 2026-11-07 (blok P1-B36), upraveno 2026-11-07 (blok P1-B37), AGPL-3.0.
 """Guard: every code path that edits reviewed content goes through ``apps.approvals.edits`` (P-025).
 
 Reviewed content is what goes out: a post's title, caption, first comment, tags and media, and each
-channel copy's own title, caption and first comment. The test reads the whole application code
-(``apps/``, no tests or migrations) and finds every function that writes one of them: an assignment
-``x.caption = …``, ``setattr(x, "caption", …)``, a queryset ``.update(caption=…)``, and every create,
-change or delete of ``PostMedia`` rows. Each such function must either take ``reviewed_content`` and
+channel copy's own title, caption and first comment, its final video version and its thumbnail
+(P1-B37). The test reads the whole application code (``apps/``, no tests or migrations) and finds
+every function that writes one of them: an assignment ``x.caption = …`` / ``video.final_version = …``,
+``setattr(x, "caption", …)``, a queryset ``.update(caption=…)``, every create, change or delete of
+``PostMedia`` rows and every new ``ChannelThumbnail``. Each such function must either take ``reviewed_content`` and
 call ``return_edited_to_review`` itself, or be listed below with the reason it does not have to
 (it creates new content, or it is a helper whose only callers do it). A ``PostForm`` bound to
 submitted data counts as a write too (the composer saves the base texts through it). A new edit
@@ -28,6 +29,7 @@ DISTINCT_FIELDS = {
     "platform_specific_title",
     "platform_specific_caption",
     "platform_specific_first_comment",
+    "final_version",
 }
 POST_ONLY_FIELDS = {"title", "tags"}
 POST_RECEIVERS = {"post", "new_post", "clone", "pp", "variant", "copy", "child", "platform_post"}
@@ -67,6 +69,8 @@ def _writes_field(node):
         func = node.func
         if isinstance(func, ast.Name) and func.id.endswith("PostForm") and node.args:
             return "PostForm bound to submitted data"
+        if isinstance(func, ast.Name) and func.id == "ChannelThumbnail":
+            return "new ChannelThumbnail"
         if isinstance(func, ast.Name) and func.id == "setattr" and len(node.args) >= 2:
             field = node.args[1]
             if isinstance(field, ast.Constant) and field.value in DISTINCT_FIELDS:
@@ -78,6 +82,8 @@ def _writes_field(node):
                 return f"PostMedia {func.attr}"
             if func.attr in MEDIA_WRITES and "media_attachments" in ast.unparse(func.value):
                 return f"media_attachments {func.attr}"
+            if func.attr in MEDIA_WRITES and "ChannelThumbnail" in ast.unparse(func.value):
+                return f"ChannelThumbnail {func.attr}"
     return ""
 
 
@@ -168,6 +174,8 @@ def test_the_guard_sees_the_known_edit_paths():
         "composer/views.py:attach_media",
         "api/routers/posts.py:update",
         "jrc_texts/services.py:_save_caption_version",
+        "jrc_video/player.py:set_final",
+        "jrc_thumbnails/services.py:upload_thumbnail",
     ):
         assert key in writers, key
 

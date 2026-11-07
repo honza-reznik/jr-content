@@ -62,6 +62,42 @@ def can_unschedule(membership, post):
     return True
 
 
+def content_delete_blocker(membership, post, copies):
+    """Why this member may not delete ``copies`` (channel copies of ``post``, or all of them with the content), or "".
+
+    The one rule for every deletion path (P1-B37): the composer's Delete (whole content or one
+    channel), the channels deselected when the composer saves, the calendar's bulk Delete, and
+    removing a channel on the JR detail and through REST. Deleting changes content, so it needs the
+    right to edit it (own content with ``create_posts``, anybody else's with ``edit_others_posts``,
+    ``require_authored_content``); deleting a planned copy (``is_planned``) also takes it out of the
+    plan, so that needs ``can_unschedule`` as well, exactly as moving it back to Draft does.
+    """
+    if not membership:
+        return "You cannot delete this content."
+    user = getattr(membership, "user", None)
+    try:
+        require_authored_content(membership.effective_permissions, getattr(user, "pk", None), post.author_id)
+    except PermissionDenied:
+        return "You cannot delete this content."
+    if any(is_planned(pp) for pp in copies) and not can_unschedule(membership, post):
+        return (
+            "This content is planned. Only someone who can schedule content may delete it, because deleting "
+            "takes it out of the plan."
+        )
+    return ""
+
+
+def can_delete_content(membership, post, copies):
+    return not content_delete_blocker(membership, post, copies)
+
+
+# REST ``/cancel`` and MCP ``cancel_post`` refusal (P1-B37): name both rights ``can_unschedule`` needs.
+UNSCHEDULE_REFUSAL = (
+    "Permission denied: taking content out of the plan needs publish_directly and the right to edit this post "
+    "(create_posts, plus edit_others_posts for another author's post)."
+)
+
+
 def can_publish_directly(membership):
     """Whether this workspace member may mark content as published and download final videos.
 
