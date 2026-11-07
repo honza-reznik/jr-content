@@ -5,12 +5,12 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
-from django.db.models import F, Q
+from django.db.models import Case, DateTimeField, F, Q, Value, When
 from django.template.loader import render_to_string
 from django.utils import timezone
 
 from apps.common.mail import transactional
-from apps.common.outbox import queue_email
+from apps.common.outbox import cancel_pending, queue_email
 from apps.workspaces.models import Workspace
 
 from .models import Invitation, OrgMembership, WorkspaceMembership
@@ -355,6 +355,8 @@ def resend_invitation(invitation):
     invitation.token = secrets.token_urlsafe(32)
     invitation.expires_at = timezone.now() + timedelta(days=INVITE_EXPIRY_DAYS)
     invitation.save(update_fields=["token", "expires_at"])
+    # An older email still waiting in the queue carries the link that has just stopped working.
+    cancel_pending(invitation_id=str(invitation.pk))
 
     if not _send_invite_email(invitation):
         # Either a competing request took the slot between the checks above and
@@ -541,7 +543,7 @@ def _reserve_invite_send(invitation):
 
     invitation.send_count += 1
     invitation.last_sent_at = now
-    return {"previous_last_sent_at": previous_last_sent_at}
+    return {"previous_last_sent_at": previous_last_sent_at, "reserved_at": now}
 
 
 def _release_invite_send(invitation, receipt) -> None:
@@ -553,12 +555,23 @@ def _release_invite_send(invitation, receipt) -> None:
     trying to help wait five minutes to try again. So ``last_sent_at`` is put
     back to what it was, not merely left where the reservation set it.
     """
+    # ``last_sent_at`` goes back only if it is still the value this reservation wrote. If a later
+    # send has stamped a newer time since, that time must stay (P1-B35), or the cooldown of the
+    # newer email would be lost.
+    reserved_at = receipt.get("reserved_at")
+    previous = receipt["previous_last_sent_at"]
+    if reserved_at is None:
+        last_sent = Value(previous, output_field=DateTimeField(null=True))
+    else:
+        last_sent = Case(
+            When(last_sent_at=reserved_at, then=Value(previous, output_field=DateTimeField(null=True))),
+            default=F("last_sent_at"),
+            output_field=DateTimeField(null=True),
+        )
     Invitation.objects.filter(pk=invitation.pk, send_count__gt=0).update(
-        send_count=F("send_count") - 1,
-        last_sent_at=receipt["previous_last_sent_at"],
+        send_count=F("send_count") - 1, last_sent_at=last_sent
     )
-    invitation.send_count = max(0, invitation.send_count - 1)
-    invitation.last_sent_at = receipt["previous_last_sent_at"]
+    invitation.refresh_from_db(fields=["send_count", "last_sent_at"])
 
 
 def _send_invite_email(invitation) -> bool:
@@ -614,6 +627,7 @@ def _send_invite_email(invitation) -> bool:
                 "previous_last_sent_at": receipt["previous_last_sent_at"].isoformat()
                 if receipt["previous_last_sent_at"]
                 else None,
+                "reserved_at": receipt["reserved_at"].isoformat(),
             },
         )
     except Exception:
@@ -624,13 +638,14 @@ def _send_invite_email(invitation) -> bool:
     return True
 
 
-def release_invite_send_after_failure(invitation_id, previous_last_sent_at) -> None:
+def release_invite_send_after_failure(invitation_id, previous_last_sent_at, reserved_at=None) -> None:
     """Outbox callback: the invite email was finally not sent, so give the slot back."""
     from django.utils.dateparse import parse_datetime
 
     previous = parse_datetime(previous_last_sent_at) if previous_last_sent_at else None
+    reserved = parse_datetime(reserved_at) if reserved_at else None
     invitation = Invitation.objects.filter(pk=invitation_id).first()
     if invitation is None:
         return
     logger.warning("Invite email to %s was not sent; slot released", invitation.email)
-    _release_invite_send(invitation, {"previous_last_sent_at": previous})
+    _release_invite_send(invitation, {"previous_last_sent_at": previous, "reserved_at": reserved})

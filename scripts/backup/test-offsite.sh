@@ -159,10 +159,26 @@ esac
 SH
 chmod +x "$test_dir/fake-bin/make" "$test_dir/fake-bin/git"
 cp "$test_root/ops/backup-nightly.sh" "$test_dir/nightly.sh"
+# P1-B35: čekající e-mail s jednorázovým odkazem (tělo) NESMÍ skončit v záloze ani po obnově.
+JRC_PROJECT="$project" docker compose --project-name "$project" --file "$test_root/docker-compose.yml" --env-file "$test_root/.env" \
+    exec -T jrc-bb-web python manage.py shell -c "
+from django.utils import timezone
+from apps.common.models import OutgoingEmail
+OutgoingEmail.objects.create(next_attempt_at=timezone.now() + __import__('datetime').timedelta(days=30), subject='P1B35-OUTBOX-SUBJECT', to=['p1b35@example.invalid'], body_text='https://example.invalid/reset/P1B35-OUTBOX-LINK/')
+" >/dev/null
+outbox_rows() {
+    JRC_PROJECT="$project" docker compose --project-name "$project" --file "$test_root/docker-compose.yml" --env-file "$test_root/.env" \
+        exec -T jrc-postgres sh -c 'psql --no-password --username "$POSTGRES_USER" --dbname brightbean -tAc "select count(*) from common_outgoing_email"' | tr -d '[:space:]'
+}
+[ "$(outbox_rows)" = 1 ] || { echo 'Testovací řádek fronty e-mailů se nevložil.' >&2; exit 1; }
 for index in 1 2 3; do
     JRC_PROJECT="$project" make --no-print-directory -C "$test_root" backup >/dev/null
     stamp=$(find "$local_backups" -mindepth 1 -maxdepth 1 -type d -name '[0-9]*' -printf '%f\n' | sort | tail -n 1)
     [ -n "$stamp" ] || { echo 'Místní záloha nevznikla.' >&2; exit 1; }
+    # Dump ani výpis dat nesmí obsahovat nic z fronty e-mailů, ačkoli řádek v živé DB je.
+    if grep -rlaE 'P1B35-OUTBOX|p1b35@example.invalid' "$local_backups/$stamp/postgres" >/dev/null 2>&1; then
+        echo 'Data fronty e-mailů unikla do zálohy.' >&2; exit 1
+    fi
     # Rozpoznatelný marker je jen v manifestu uvnitř šifrovaného payloadu.
     python3 - "$local_backups/$stamp/manifest.json" "$index" <<'PY'
 from pathlib import Path
@@ -257,12 +273,14 @@ JRC_PROJECT="$project" docker compose --project-name "$project" --file "$test_ro
  (cd "$test_root" && JRC_PROJECT="$project" sh scripts/backup/backup.sh restore-finish >/dev/null)
 JRC_PROJECT="$project" docker compose --project-name "$project" --file "$test_root/docker-compose.yml" --env-file "$test_root/.env" \
     exec -T jrc-dev sh -c 'cd /workspace && python3 scripts/backup/jrc_backup.py inventory' > "$after"
+# Tabulka fronty se po obnově vrací prázdná (struktura ano, data ne): nic se po havárii nerozešle znovu.
+[ "$(outbox_rows)" = 0 ] || { echo 'Po obnově není fronta e-mailů prázdná.' >&2; exit 1; }
 python3 - "$before" "$after" <<'PY'
 import json,sys
 before=json.load(open(sys.argv[1])); after=json.load(open(sys.argv[2]))
-volatile={'public.background_task','public.background_task_completedtask','public.django_session'}
+volatile={'public.background_task','public.background_task_completedtask','public.django_session','public.common_outgoing_email'}
 stable=lambda inventory: {db:{table:count for table,count in tables.items() if table not in volatile} for db,tables in inventory['tables'].items()}
 if stable(before) != stable(after): raise SystemExit('Po obnově se počty řádků trvalých tabulek liší.')
 print('OK: obě databáze po round-trip obnově odpovídají původnímu inventáři.')
 PY
-echo 'OK: rotace, historie, cílový push, neprůhlednost, chybové logy a round-trip prošly.'
+echo 'OK: rotace, historie, cílový push, neprůhlednost, chybové logy, fronta e-mailů mimo zálohu a round-trip prošly.'

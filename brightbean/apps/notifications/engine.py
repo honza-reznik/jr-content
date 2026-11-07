@@ -215,11 +215,15 @@ def notify(
         # queued row IS the delivery, so this replaces the immediate email
         # rather than adding a digest on top of it.
         batched = channel == Channel.EMAIL and (digest_mode or event_type in BATCHED_EMAIL_EVENTS)
+        # ``next_retry_at`` is set by the same INSERT (P1-B35): a row that is not batched must
+        # never exist without the time the sweep should look at it, or a crash right after the
+        # insert would leave it pending for good.
         delivery = NotificationDelivery.objects.create(
             notification=notification,
             channel=channel,
             status=DeliveryStatus.PENDING,
             batch_queued_at=timezone.now() if batched else None,
+            next_retry_at=None if batched else timezone.now() + QUEUE_GRACE,
         )
         if batched:
             # Handed to send_batched_email_digests() instead of dispatched.
@@ -242,14 +246,13 @@ def queue_delivery(delivery: NotificationDelivery) -> None:
     A request must not wait for a mail server or a remote URL, and a delivery must not
     run for a notification whose transaction is rolled back. So the task is written in the
     caller's transaction: the worker sees it only after commit, and it survives a restart
-    (it is a row). ``next_retry_at`` is set a little ahead as the safety net: if the task
-    is lost, the periodic ``retry_failed_deliveries`` sweep picks the row up after
-    ``QUEUE_GRACE``. ``_dispatch`` claims the row atomically, so the task and the sweep can
-    never both send it.
+    (it is a row). ``next_retry_at`` was set a little ahead when the row was created, as the
+    safety net: if the task is lost, the periodic ``retry_failed_deliveries`` sweep picks the
+    row up after ``QUEUE_GRACE``. ``_dispatch`` claims the row atomically, so the task and the
+    sweep can never both send it.
     """
     from .tasks import dispatch_notification_delivery
 
-    NotificationDelivery.objects.filter(pk=delivery.pk).update(next_retry_at=timezone.now() + QUEUE_GRACE)
     dispatch_notification_delivery(str(delivery.pk))
 
 
@@ -367,8 +370,13 @@ def _dispatch(delivery: NotificationDelivery) -> None:
         return
     # Claim the row: only the caller that moves ``attempts`` from the value it read wins.
     # The task and the retry sweep can both reach the same delivery; exactly one sends.
+    # The cap is part of the claim, so a row that has used up its attempts is never sent again,
+    # whoever reaches it (P1-B35).
     claimed = NotificationDelivery.objects.filter(
-        pk=delivery.pk, status=DeliveryStatus.PENDING, attempts=delivery.attempts
+        pk=delivery.pk,
+        status=DeliveryStatus.PENDING,
+        attempts=delivery.attempts,
+        attempts__lt=MAX_RETRY_ATTEMPTS,
     ).update(attempts=F("attempts") + 1, next_retry_at=timezone.now() + DISPATCH_LEASE)
     if not claimed:
         return
@@ -544,7 +552,29 @@ def retry_failed_deliveries() -> int:
         _dispatch(delivery)
         count += 1
 
-    return count
+    return count + _close_exhausted_deliveries(now)
+
+
+def _close_exhausted_deliveries(now) -> int:
+    """Close a delivery whose last attempt never finished (P1-B35).
+
+    The claim of the last attempt moves ``next_retry_at`` to the lease and counts the attempt.
+    A worker killed during that attempt leaves a PENDING row with no attempts left, which
+    nothing selects any more. Once the lease has run out it is closed as failed; it is not
+    sent again, because the attempt may have reached the server.
+    """
+    return NotificationDelivery.objects.filter(
+        channel__in=[Channel.EMAIL, Channel.WEBHOOK],
+        status=DeliveryStatus.PENDING,
+        batch_queued_at__isnull=True,
+        next_retry_at__isnull=False,
+        next_retry_at__lte=now,
+        attempts__gte=MAX_RETRY_ATTEMPTS,
+    ).update(
+        status=DeliveryStatus.FAILED,
+        next_retry_at=None,
+        error_message="The last attempt was interrupted; not sent again.",
+    )
 
 
 def _batchable_deliveries():

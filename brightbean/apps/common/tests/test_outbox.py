@@ -12,7 +12,6 @@ from django.core.mail import EmailMultiAlternatives
 from django.core.mail.backends import locmem
 from django.db import transaction
 from django.test import override_settings
-from django.urls import reverse
 from django.utils import timezone
 
 from apps.common import outbox
@@ -318,25 +317,7 @@ def test_an_invitation_that_finally_fails_gives_its_send_slot_back(org_and_owner
     assert mail.outbox == []
 
 
-@pytest.mark.django_db(transaction=True)
-@budgeted(inner=SLOW)
-def test_password_reset_takes_the_same_short_time_for_a_known_and_an_unknown_address(client):
-    get_user_model().objects.create_user(
-        email="known@example.com", password="pw-that-is-long", name="K", tos_accepted_at=timezone.now()
-    )
-    timings = {}
-    for label, address in (("known", "known@example.com"), ("unknown", "nobody@example.com")):
-        started = time.monotonic()
-        response = client.post(reverse("account_reset_password"), {"email": address})
-        timings[label] = time.monotonic() - started
-        assert response.status_code in (200, 302)
-
-    assert mail.outbox == []
-    assert max(timings.values()) < SLOW_SECONDS / 2, timings
-    assert abs(timings["known"] - timings["unknown"]) < SLOW_SECONDS / 2, timings
-
-    run_email_queue()
-    assert {tuple(m.to) for m in mail.outbox} == {("known@example.com",), ("nobody@example.com",)}
+# The reset-time test (known vs unknown address) lives in test_outbox_hardening.py: median of 20, both orders.
 
 
 @pytest.mark.django_db(transaction=True)
