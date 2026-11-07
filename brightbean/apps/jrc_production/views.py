@@ -31,18 +31,20 @@ from apps.workspaces.models import Workspace
 from . import shotlist as shotlist_services
 from .approval import approval_context, is_waiting_for
 from .forms import PublicationDateForm
-from .models import ManualPublication, PipelineStage, ShotlistChange
+from .models import ContentRename, ManualPublication, PipelineStage, ShotlistChange
 from .services import (
     add_content_channel,
     available_moves,
     can_create_content,
     can_manage_channels,
+    can_rename_content,
     create_content,
     mark_published_manually,
     move_content,
     pipeline_stage,
     publication_blocker,
     remove_content_channel,
+    rename_content,
     request_content_changes,
     set_publication_date,
 )
@@ -301,6 +303,28 @@ def move(request, workspace_id, post_id):
     # Preserve only validated board filter values, never redirect to caller-supplied URLs.
     filters = {key: request.POST.get(key, "") for key in ("client", "channel")}
     return redirect(reverse("jrc_production:board") + "?" + urlencode(filters))
+
+
+@login_required
+@require_POST
+def rename(request, workspace_id, post_id):
+    """Rename content from its detail page. The one rule is ``services.rename_content``."""
+    workspace = get_object_or_404(Workspace, pk=workspace_id)
+    if not WorkspaceMembership.objects.filter(user=request.user, workspace=workspace).exists():
+        raise Http404
+    post = get_object_or_404(Post, pk=post_id, workspace=workspace)
+    try:
+        reverted = rename_content(post, request.POST.get("title", ""), request.user)
+    except ValidationError as exc:
+        messages.error(request, " ".join(exc.messages))
+    else:
+        if reverted is None:
+            messages.info(request, "The title is unchanged.")
+        elif reverted:
+            messages.success(request, "Content renamed. The renamed channels go back to review for approval.")
+        else:
+            messages.success(request, "Content renamed.")
+    return redirect(reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.pk, "post_id": post.pk}))
 
 
 # P1-B08: Concept (the idea worked out in versions) comes before the Script.
@@ -579,6 +603,23 @@ def content_detail(request, workspace_id, post_id):
     )
     history.extend(
         {
+            "kind": "rename",
+            "created_at": change.created_at,
+            "label": (
+                f"Renamed from “{change.old_title}” to “{change.new_title}”"
+                if change.old_title and change.new_title
+                else f"Named “{change.new_title}”"
+                if change.new_title
+                else f"Title “{change.old_title}” removed"
+            ),
+            "actor": change.user,
+            "note": "",
+            "can_view_note": True,
+        }
+        for change in ContentRename.objects.filter(post=post).select_related("user")
+    )
+    history.extend(
+        {
             "kind": "shotlist",
             "created_at": change.created_at,
             "label": _SHOTLIST_HISTORY_LABELS[change.action].format(text=change.item_text),
@@ -766,6 +807,7 @@ def content_detail(request, workspace_id, post_id):
             ),
             "is_client": is_client,
             "can_edit_captions": can_edit_captions,
+            "can_rename": can_rename_content(post, membership),
             "can_manage_channels": can_manage_channels(post, membership),
             "channel_error": channel_error,
             "addable_channels": SocialAccount.objects.filter(

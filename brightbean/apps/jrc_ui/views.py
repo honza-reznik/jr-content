@@ -32,3 +32,8 @@ def source_code(request):
         filename=f"jr-content-{version}.tar.gz",
         content_type="application/gzip",
     )
+
+
+def bad_request(request, exception=None):
+    """``handler400`` (P1-B38): Django's built-in view renders ``400.html`` without the request, so the layout breaks."""
+    return render(request, "400.html", status=400)

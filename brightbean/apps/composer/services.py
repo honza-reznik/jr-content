@@ -121,6 +121,22 @@ def sync_post_scheduled_at(post):
 _INITIAL_STATUSES = {"draft", "scheduled"}
 
 
+def children_are_locked(children):
+    """Whether every copy is published or mid-publish: nothing is left to write (composer save, rename)."""
+    from apps.composer.models import PlatformPost
+
+    children = list(children)
+    return bool(children) and all(pp.status in PlatformPost.PROTECTED_STATUSES for pp in children)
+
+
+def record_title_change(post, old_title, user):
+    """Write a title change made by the composer or REST to the content History (JR Content, P1-B38)."""
+    if apps.is_installed("apps.jrc_production"):
+        from apps.jrc_production.services import record_title_change as record
+
+        record(post, old_title, user)
+
+
 def create_post(
     *,
     workspace,

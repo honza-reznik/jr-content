@@ -444,6 +444,10 @@ function bbFailureToast(res, fallback) {
     });
 }
 
+function bbSuccessToast(title) {
+    document.body.dispatchEvent(new CustomEvent('showToast', { detail: { tone: 'success', title: title } }));
+}
+
 /* Bulk-selection store (survives HTMX grid/tab swaps) + floating-bar controller. */
 document.addEventListener('alpine:init', () => {
     Alpine.store('sel', {
@@ -487,6 +491,7 @@ function bulkBar() {
                     return;
                 }
                 store.clear();
+                res.clone().json().then((data) => { if (data && data.message) bbSuccessToast(data.message); }).catch(() => {});
                 // Refresh whichever view is mounted: the calendar shell reloads
                 // its grid on `calendarRefresh` (from body); publishList reloads
                 // the active tab on the `post-deleted` window event.
