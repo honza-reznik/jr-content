@@ -68,6 +68,7 @@ from .models import (
 from .services import (
     ChannelRemovalError,
     channel_removal_blocker,
+    children_are_locked,
     media_blocker,
     media_change_blocker,
     post_media_types,
@@ -215,7 +216,7 @@ def _children_are_locked(children):
     is nothing left to save. Deliberately narrower than
     ``_children_are_readonly`` — see there.
     """
-    return bool(children) and all(pp.status in PlatformPost.PROTECTED_STATUSES for pp in children)
+    return children_are_locked(children)
 
 
 def _children_are_readonly(children):

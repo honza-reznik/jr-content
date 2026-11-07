@@ -7,7 +7,7 @@ from django.utils import timezone
 from apps.approvals import services as approvals
 from apps.approvals.models import PostComment
 from apps.composer.models import PlatformPost, Post
-from apps.composer.services import remove_platform_posts, sync_post_scheduled_at
+from apps.composer.services import children_are_locked, remove_platform_posts, sync_post_scheduled_at
 from apps.jrc_channels.models import ChannelProfile
 from apps.members.models import WorkspaceMembership
 from apps.members.note_visibility import note_audience
@@ -85,7 +85,7 @@ def can_rename_content(post, membership):
 
 def record_title_change(post, old_title, user):
     """History row for a title written by another path (composer, REST PATCH); no-op when unchanged."""
-    if old_title is not None and old_title != post.title and post.title:
+    if old_title is not None and old_title != post.title:
         ContentRename.objects.create(post=post, old_title=old_title, new_title=post.title, user=user)
 
 
@@ -104,6 +104,8 @@ def rename_content(post, title, user):
         membership = content_membership(locked.workspace, user)
         if not can_rename_content(locked, membership):
             raise PermissionDenied("You cannot rename this content.")
+        if children_are_locked(locked.platform_posts.only("id", "status")):
+            raise ValidationError("This content has already published and can't be renamed.")
         title = (title or "").strip()
         if not title:
             raise ValidationError("Enter a content title.")

@@ -352,3 +352,83 @@ def test_successful_pages_and_non_bare_errors_are_untouched(make):
 def test_permission_is_checked_before_the_title_is_validated(make, role):
     _, post, _, _, client = make(role=role, own=False)
     assert _rename(client, post, "").status_code == 403
+
+
+# ---- review findings (P1-B38) ---------------------------------------------------------------------
+
+
+def test_rejected_page_carries_csp_with_nonce_and_frame_options(make):
+    _, _, _, _, client = make()
+    response = client.get(_foreign_board(client), **HTML)
+    assert response.status_code == 400
+    assert "Content-Security-Policy" in response or "Content-Security-Policy-Report-Only" in response
+    policy = response.get("Content-Security-Policy") or response.get("Content-Security-Policy-Report-Only")
+    assert "nonce-" in policy
+    assert response["X-Frame-Options"]
+
+
+def test_built_in_bad_request_is_a_layout_page_with_the_request(make):
+    from django.core.exceptions import SuspiciousOperation
+    from django.test import RequestFactory
+
+    from apps.jrc_ui.views import bad_request
+
+    _, _, _, actor, client = make()
+    assert client.handler is not None
+    request = RequestFactory().get("/x/", **HTML)
+    request.user = actor
+    from django.contrib.messages.storage.fallback import FallbackStorage
+
+    request.session = {}
+    request._messages = FallbackStorage(request)
+    response = bad_request(request, SuspiciousOperation("bad"))
+    assert response.status_code == 400
+    assert b'data-rejected-page="400"' in response.content
+    assert b"<html" in response.content.lower()
+
+
+def test_suspicious_operation_through_the_real_handler_is_a_layout_page(make, monkeypatch):
+    from django.core.exceptions import SuspiciousOperation
+
+    import apps.jrc_production.views as views
+
+    def boom(request):
+        raise SuspiciousOperation("bad")
+
+    monkeypatch.setattr(views, "_board_context", lambda request, **kw: boom(request))
+    _, _, _, _, client = make()
+    response = client.get(reverse("jrc_production:board"), **HTML)
+    assert response.status_code == 400
+    assert b'data-rejected-page="400"' in response.content
+
+
+@pytest.mark.parametrize("status", ["published", "publishing"])
+def test_published_content_cannot_be_renamed(make, status):
+    _, post, copy, _, client = make(mode="none")
+    copy.status = status
+    copy.save(update_fields=["status"])
+    _rename(client, post, "Late rename")
+    post.refresh_from_db()
+    assert post.title == "Old name"
+    assert not ContentRename.objects.exists()
+
+
+def test_content_with_a_published_and_a_draft_copy_can_still_be_renamed(make):
+    workspace, post, copy, _, client = make(mode="none")
+    copy.status = "published"
+    copy.save(update_fields=["status"])
+    other = create_manual_channel(workspace, "custom", "B38 second")
+    PlatformPost.objects.create(post=post, social_account=other, status="draft")
+    _rename(client, post, "Still allowed")
+    post.refresh_from_db()
+    assert post.title == "Still allowed"
+
+
+def test_a_title_changed_to_empty_by_another_path_is_written_to_history(make):
+    from apps.composer.services import record_title_change
+
+    _, post, _, actor, _ = make()
+    post.title = ""
+    post.save()
+    record_title_change(post, "Old name", actor)
+    assert list(ContentRename.objects.values_list("old_title", "new_title")) == [("Old name", "")]

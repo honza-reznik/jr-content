@@ -607,8 +607,10 @@ def content_detail(request, workspace_id, post_id):
             "created_at": change.created_at,
             "label": (
                 f"Renamed from “{change.old_title}” to “{change.new_title}”"
-                if change.old_title
+                if change.old_title and change.new_title
                 else f"Named “{change.new_title}”"
+                if change.new_title
+                else f"Title “{change.old_title}” removed"
             ),
             "actor": change.user,
             "note": "",
