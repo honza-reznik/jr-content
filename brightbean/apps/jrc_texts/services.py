@@ -9,6 +9,7 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.utils import timezone
 
+from apps.approvals.edits import return_edited_to_review, reviewed_content
 from apps.composer.models import PlatformPost, Post
 from apps.jrc_production.notifications import notify_text_version
 from apps.jrc_production.services import content_membership
@@ -240,6 +241,9 @@ def save_caption(post_id, platform_post_id, user, text, *, base_version_id=None,
     is only ever written by a new version. A channel without history starts it from the
     caption it currently has, so ``base_version_id`` must then be empty.
     Returns ``(version, changed)``; saving an identical text creates no version.
+
+    Every caption write (JR detail, REST, MCP) goes through here, so here an approved copy whose
+    caption changed goes back to review where the approval mode requires it (P-025, P1-B36).
     """
     post = Post.objects.select_for_update().select_related("workspace").get(pk=post_id)
     _authorize(TextDocument(post=post), user, write=True)
@@ -248,6 +252,13 @@ def save_caption(post_id, platform_post_id, user, text, *, base_version_id=None,
         .select_related("social_account")
         .get(pk=platform_post_id, post=post)
     )
+    before = reviewed_content(post)
+    saved, changed = _save_caption_version(post, variant, user, text, base_version_id, source)
+    return_edited_to_review(post, before)
+    return saved, changed
+
+
+def _save_caption_version(post, variant, user, text, base_version_id, source):
     account = variant.social_account
     if account.caption_wire_length(text) > account.char_limit:
         raise ValidationError(f"Caption exceeds the {account.char_limit}-character limit.")

@@ -123,8 +123,21 @@ class BulkPlatformActionPermissionTests(BulkActionBase):
         self.assertEqual(pp.status, "draft")
         self.assertIsNone(pp.scheduled_at)
 
-    def test_editor_can_still_bulk_draft(self):
-        pp = self._pp("scheduled", scheduled_at=timezone.now() + timedelta(days=1))
+    def test_editor_cannot_take_planned_content_out_of_the_plan(self):
+        """P1-B36: Draft of a planned row is planning (``can_unschedule``); edit rights alone are not enough."""
+        when = timezone.now() + timedelta(days=1)
+        pp = self._pp("scheduled", scheduled_at=when)
+        self.client.force_login(self.editor)
+
+        response = self._bulk("draft", pp)
+
+        self.assertEqual(response.status_code, 403)
+        pp.refresh_from_db()
+        self.assertEqual(pp.status, "scheduled")
+        self.assertEqual(pp.scheduled_at, when)
+
+    def test_editor_can_still_bulk_draft_unplanned_content(self):
+        pp = self._pp("approved")
         self.client.force_login(self.editor)
 
         response = self._bulk("draft", pp)
@@ -132,7 +145,6 @@ class BulkPlatformActionPermissionTests(BulkActionBase):
         self.assertEqual(response.status_code, 200)
         pp.refresh_from_db()
         self.assertEqual(pp.status, "draft")
-        self.assertIsNone(pp.scheduled_at)
 
     def test_contributor_cannot_touch_another_authors_post(self):
         pp = self._pp("scheduled", scheduled_at=timezone.now() + timedelta(days=1), author=self.owner)
@@ -145,8 +157,8 @@ class BulkPlatformActionPermissionTests(BulkActionBase):
         pp.refresh_from_db()
         self.assertEqual(pp.status, "scheduled")
 
-    def test_contributor_can_draft_their_own_post(self):
-        pp = self._pp("scheduled", scheduled_at=timezone.now() + timedelta(days=1), author=self.contributor)
+    def test_contributor_can_draft_their_own_unplanned_post(self):
+        pp = self._pp("approved", author=self.contributor)
         self.client.force_login(self.contributor)
 
         response = self._bulk("draft", pp)
@@ -154,6 +166,17 @@ class BulkPlatformActionPermissionTests(BulkActionBase):
         self.assertEqual(response.json()["count"], 1)
         pp.refresh_from_db()
         self.assertEqual(pp.status, "draft")
+
+    def test_contributor_cannot_unschedule_their_own_planned_post(self):
+        """P1-B36: only someone who may plan takes content out of the plan, own content included."""
+        pp = self._pp("scheduled", scheduled_at=timezone.now() + timedelta(days=1), author=self.contributor)
+        self.client.force_login(self.contributor)
+
+        response = self._bulk("draft", pp)
+
+        self.assertEqual(response.status_code, 403)
+        pp.refresh_from_db()
+        self.assertEqual(pp.status, "scheduled")
 
 
 class BulkPlatformActionPublishTests(BulkActionBase):

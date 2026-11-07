@@ -934,6 +934,11 @@ def _cancel_post(args: dict, context: dict[str, Any]) -> dict:
     scheduled = [pp for pp in post.platform_posts.all() if pp.status == "scheduled"]
     if not scheduled:
         raise JsonRpcError(INVALID_PARAMS, "No scheduled platform posts to cancel")
+    from apps.members.permissions import can_unschedule
+
+    # Taking content out of the plan is planning (P1-B36): the same rule as REST /cancel and the calendar.
+    if not can_unschedule(context["membership"], post):
+        raise JsonRpcError(INVALID_PARAMS, "Permission denied: publish_directly")
     # Wrap the per-child loop in a single outer atomic so a mid-loop
     # ValueError (concurrent admin transition, state-machine rejection
     # on a later child) rolls back any earlier ``draft`` commits.

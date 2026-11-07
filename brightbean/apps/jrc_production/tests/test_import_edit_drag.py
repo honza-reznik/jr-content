@@ -231,7 +231,9 @@ def test_unchanged_save_keeps_approval_in_every_mode(setup, mode):
 
 @pytest.mark.parametrize("mode", MODES)
 def test_media_change_and_the_banner_follow_the_same_rule(setup, mode):
-    """Media add/upload/remove revert through the same helper; the composer banner says what saving does."""
+    """Media changes revert through the shared rule (P1-B36: ``apps.approvals.edits``); the banner says what saving does."""
+    from apps.approvals.edits import return_edited_to_review, reviewed_content
+
     workspace, account, actor, client = setup(mode)
     post, copy = _approved(workspace, account, actor)
     page = client.get(f"/workspace/{workspace.pk}/compose/{post.pk}/").content.decode()
@@ -239,19 +241,11 @@ def test_media_change_and_the_banner_follow_the_same_rule(setup, mode):
         assert "Approved - saving changes sends it back for re-approval" in page
     else:
         assert re.search(r">Approved</span>", page) and "sends it back for re-approval" not in page
-    composer_views._revert_approved_to_review(post)
+    before = reviewed_content(post)
+    post.tags = ["changed"]
+    return_edited_to_review(post, before)
     copy.refresh_from_db()
     assert copy.status == ("pending_review" if RETURNS_TO_REVIEW[mode] else "approved")
-
-
-def test_every_option_a_site_uses_the_shared_helper():
-    """Only ``_revert_approved_to_review`` turns an edited approved copy back into review in the composer."""
-    import pathlib
-
-    source = (pathlib.Path(composer_views.__file__)).read_text(encoding="utf-8")
-    body = source.split("def _revert_approved_to_review(post):", 1)[1].split("\ndef ", 1)[0]
-    assert "edit_returns_to_review(post.workspace)" in body
-    assert source.count("_revert_approved_to_review(post)") == 6  # definition + save, autosave, media ×3
 
 
 # ---------------------------------------------------------------------------------- calendar drag (AK3)

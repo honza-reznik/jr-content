@@ -425,7 +425,8 @@ def _caption_write(request, post_id, platform_post_id, payload: CaptionWrite):
 
 _CAPTION_DOC = """A write is always a new version, copied to the channel's caption field; history is never overwritten.
 Limit of the channel and `base_version` as on the Caption tab. 201 new version, 200 identical text (nothing created),
-409 stale `base_version` or an unsaved draft of the text, 422 over the channel limit."""
+409 stale `base_version` or an unsaved draft of the text, 422 over the channel limit. Where the approval mode requires
+approval, a changed caption sends an approved copy back to review (it must be approved again before it goes out)."""
 
 
 @router.post(
