@@ -1442,6 +1442,7 @@ def _sync_queue_entries(touched):
 
 @login_required
 @require_POST
+@transaction.atomic
 def bulk_platform_action(request, workspace_id):
     """Bulk draft / delete / publish on the checkbox-selected PlatformPosts.
 
@@ -1460,6 +1461,7 @@ def bulk_platform_action(request, workspace_id):
 
     from apps.composer.services import (
         ChannelRemovalError,
+        lock_copies,
         media_types_by_post,
         remove_platform_posts,
         require_publishable,
@@ -1484,6 +1486,11 @@ def bulk_platform_action(request, workspace_id):
     if action == "publish" and not can_schedule(membership):
         return JsonResponse({"error": "You do not have permission to publish directly."}, status=403)
 
+    # P1-B37: lock the selected copies (content first, then copies, the publisher's order) before
+    # reading their state, so a copy the publisher claims meanwhile is seen as ``publishing`` and
+    # left alone, and every decision below is made on the state it changes.
+    selected = list(PlatformPost.objects.filter(id__in=pp_ids, post__workspace=workspace).values_list("pk", "post_id"))
+    lock_copies({post_id for _, post_id in selected}, [pk for pk, _ in selected])
     # Ordered by the time each row is currently due, because the publish branch
     # staggers same-channel rows in iteration order — an unordered ``id__in``
     # would hand out those offsets in arbitrary database order and could publish
@@ -1523,10 +1530,17 @@ def bulk_platform_action(request, workspace_id):
     if action == "delete":
         # P1-B37: the one deletion rule (``content_delete_blocker``): a planned row only by someone who
         # may take it out of the plan. Refuse the whole batch, as Draft and Publish do.
+        by_post = {}
+        for pp in pps:
+            if pp.status not in PlatformPost.PROTECTED_STATUSES:
+                by_post.setdefault(pp.post_id, []).append(pp)
+        # One decision per content (its copies together), not one per row.
         refused = [
             pp
-            for pp in pps
-            if pp.status not in PlatformPost.PROTECTED_STATUSES and content_delete_blocker(membership, pp.post, [pp])
+            for copies in by_post.values()
+            if content_delete_blocker(membership, copies[0].post, copies)
+            for pp in copies
+            if is_planned(pp)
         ]
         if refused:
             noun = "post is" if len(refused) == 1 else "posts are"

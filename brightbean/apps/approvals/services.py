@@ -78,7 +78,8 @@ def _decision_targets(target, user, workspace, *, eligible_from_states):
     if not membership.effective_permissions.get("approve_posts", False):
         raise PermissionDenied("Approval permission required.")
     # Re-read under the row lock: the decision is authorized against the state it will change.
-    locked = PlatformPost.objects.select_for_update().filter(pk__in=[pp.pk for pp in targets])
+    # By primary key, the order every copy-state writer and the publisher lock copies in (P1-B37).
+    locked = PlatformPost.objects.select_for_update().filter(pk__in=[pp.pk for pp in targets]).order_by("pk")
     targets = [pp for pp in locked if pp.status in eligible_from_states]
     if (not targets and membership.workspace_role == "client") or any(
         not can_decide_at_step(membership, pp.status) for pp in targets

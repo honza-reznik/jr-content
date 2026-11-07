@@ -258,12 +258,13 @@ def save_caption(post_id, platform_post_id, user, text, *, base_version_id=None,
     """
     post = Post.objects.select_for_update().select_related("workspace").get(pk=post_id)
     _authorize(TextDocument(post=post), user, write=True)
+    # The snapshot locks all copies in the publisher's order before this one is read (P1-B37).
+    before = reviewed_content(post)
     variant = (
         PlatformPost.objects.select_for_update(of=("self",))
         .select_related("social_account")
         .get(pk=platform_post_id, post=post)
     )
-    before = reviewed_content(post)
     saved, changed = _save_caption_version(post, variant, user, text, base_version_id, source)
     return CaptionSave(saved, changed, return_edited_to_review(post, before))
 

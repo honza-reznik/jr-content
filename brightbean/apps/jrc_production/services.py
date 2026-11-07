@@ -229,7 +229,7 @@ def request_content_changes(post, user, comment, *, expected_stage):
     """
     post = Post.objects.select_for_update(of=("self",)).select_related("workspace").get(pk=post.pk)
     membership = content_membership(post.workspace, user)
-    children = list(post.platform_posts.select_for_update(of=("self",)))
+    children = list(post.platform_posts.select_for_update(of=("self",)).order_by("pk"))
     if pipeline_stage(post) != expected_stage:
         raise ValidationError("This content changed. Refresh the page and try again.")
     if not membership.effective_permissions.get("approve_posts", False):
@@ -258,7 +258,10 @@ def move_content(post, stage, user, *, expected_stage, scheduled_at=None):
     """Serialize changes, authorize the actor and delegate editorial decisions to Brightbean."""
     post = Post.objects.select_for_update(of=("self",)).select_related("workspace").get(pk=post.pk)
     membership = content_membership(post.workspace, user)
-    children = list(post.platform_posts.select_for_update(of=("self",)).select_related("social_account__jrc_channel"))
+    # Copies by primary key after their content: the publisher's lock order (P1-B37).
+    children = list(
+        post.platform_posts.select_for_update(of=("self",)).select_related("social_account__jrc_channel").order_by("pk")
+    )
     previous = pipeline_stage(post)
     if previous != expected_stage:
         raise ValidationError("This content changed. Refresh the board and try again.")

@@ -67,9 +67,16 @@ def _current_thumbnails(post):
 
 
 def reviewed_content(post):
-    """Snapshot of the reviewed content of ``post`` (base fields from the instance, the rest from the database)."""
-    from apps.composer.models import PlatformPost, PostMedia
+    """Snapshot of the reviewed content of ``post`` (base fields from the instance, the rest from the database).
 
+    Takes the locks first (``lock_copies``: the content, then all its channel copies, in the
+    publisher's order) and so must run inside the writer's transaction. Until the edit commits the
+    publisher cannot claim a copy, and a copy it claimed before stays out of the return (P1-B37).
+    """
+    from apps.composer.models import PlatformPost, PostMedia
+    from apps.composer.services import lock_copies
+
+    lock_copies([post.pk])
     own_fields = [own for own, _ in COPY_FIELDS]
     videos = _final_videos(post)
     thumbnails = _current_thumbnails(post)
@@ -107,26 +114,33 @@ def return_edited_to_review(post, before):
     after = reviewed_content(post)
     whole = before.shared != after.shared
     returned, planned_times, times_dropped = [], [], False
-    candidates = PlatformPost.objects.filter(
-        post_id=post.pk, status__in=PlatformPost.REVIEW_RETURN_STATUSES
-    ).select_related("social_account")
+    candidates = (
+        PlatformPost.objects.filter(post_id=post.pk, status__in=PlatformPost.REVIEW_RETURN_STATUSES)
+        .select_related("social_account")
+        .order_by("pk")
+    )
     for pp in candidates:
         if pp.pk not in before.copies:
             continue  # a copy this save created carries no approval
         if not (whole or before.copies[pp.pk] != after.copies.get(pp.pk)):
             continue
+        timed = pp.status == PlatformPost.Status.SCHEDULED or pp.scheduled_at is not None
+        # Conditional on the state just read (the copies are locked since the snapshot; this also
+        # holds for a writer that did not lock): a copy the publisher claimed is never overwritten.
+        changes = {"status": PlatformPost.Status.PENDING_REVIEW, "updated_at": timezone.now()}
+        if timed:
+            changes["scheduled_at"] = None
+        if not PlatformPost.objects.filter(pk=pp.pk, status=pp.status).update(**changes):
+            continue
         pp.returned_from = pp.status
         pp.taken_out_of_plan = is_planned(pp)
-        update_fields = ["status", "updated_at"]
-        if pp.status == PlatformPost.Status.SCHEDULED or pp.scheduled_at is not None:
+        if timed:
             if pp.taken_out_of_plan and pp.scheduled_at is not None:
                 planned_times.append(pp.scheduled_at)
             pp.scheduled_at = None
-            update_fields.append("scheduled_at")
             QueueEntry.objects.filter(post_id=post.pk, queue__social_account_id=pp.social_account_id).delete()
             times_dropped = True
         pp.status = PlatformPost.Status.PENDING_REVIEW
-        pp.save(update_fields=update_fields)
         returned.append(pp)
     if times_dropped:
         sync_post_scheduled_at(post)

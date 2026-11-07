@@ -67,6 +67,7 @@ from .models import (
 from .services import (
     ChannelRemovalError,
     channel_removal_blocker,
+    lock_copies,
     media_blocker,
     media_change_blocker,
     post_media_types,
@@ -1174,13 +1175,14 @@ def save_post(request, workspace_id, post_id=None):
         # Reject before the form binds, so an already-published post is never
         # mutated in memory. Catches every action, including the ``save_draft``
         # default a POST with no ``action`` falls back to.
+        # The snapshot locks the content's copies in the publisher's order first (P1-B37).
+        _orig_content = reviewed_content(post)
         readonly_error = _readonly_rejection(request, post)
         if readonly_error is not None:
             return readonly_error
         selection_error = _caption_selection_error(request, post)
         if selection_error:
             return JsonResponse({"errors": {"selected_accounts": selection_error}}, status=409)
-        _orig_content = reviewed_content(post)
         form = PostForm(request.POST, instance=post)
     else:
         _orig_content = None
@@ -1438,6 +1440,7 @@ def save_post(request, workspace_id, post_id=None):
 
 @login_required
 @require_POST
+@transaction.atomic
 def transition_platform_post(request, workspace_id, post_id, platform_post_id):
     """Transition a single PlatformPost to a target editorial status.
 
@@ -1453,6 +1456,9 @@ def transition_platform_post(request, workspace_id, post_id, platform_post_id):
         post_id=post_id,
         post__workspace=workspace,
     )
+    # P1-B37: decide on the state under the lock (the publisher's order), never on a stale read.
+    lock_copies([pp.post_id], [pp.pk])
+    pp.refresh_from_db()
     target = (request.POST.get("target_status") or "").strip()
     if not target:
         return JsonResponse({"error": "target_status required"}, status=400)
@@ -2175,10 +2181,8 @@ def unsplash_import(request, workspace_id, post_id=None):
     from apps.media_library.quotas import StorageQuotaExceededError, enforce_storage_quota
 
     post = None
-    before = None
     if post_id:
         post = get_object_or_404(Post, id=post_id, workspace=workspace)
-        before = reviewed_content(post)
 
     auth_headers = {"Authorization": f"Client-ID {settings.UNSPLASH_ACCESS_KEY}"}
     new_assets = []
@@ -2268,9 +2272,6 @@ def unsplash_import(request, workspace_id, post_id=None):
                 alt_text=_as_str(photo.get("alt")),
             )
             new_assets.append(asset)
-            attachment = _attach_asset_for_composer(request, workspace, asset, post)
-            if attachment is not None:
-                attachments.append(attachment)
 
     if not new_assets:
         if quota_exceeded:
@@ -2281,9 +2282,18 @@ def unsplash_import(request, workspace_id, post_id=None):
         return JsonResponse({"error": "Could not import the selected photos."}, status=502)
 
     returned = []
+    # Attached only after the downloads, in one transaction from the snapshot (which locks the
+    # copies) to the rule, so no lock is held while photos download (P1-B37).
+    with transaction.atomic():
+        before = reviewed_content(post) if post is not None else None
+        for asset in new_assets:
+            attachment = _attach_asset_for_composer(request, workspace, asset, post)
+            if attachment is not None:
+                attachments.append(attachment)
+        if post is not None:
+            # Option A (P-025): new media on an approved post sends it back for re-approval, as upload_media.
+            returned = return_edited_to_review(post, before)
     if post is not None:
-        # Option A (P-025): new media on an approved post sends it back for re-approval, as upload_media.
-        returned = return_edited_to_review(post, before)
         html = render_to_string(
             "composer/partials/media_list.html",
             {"media_attachments": attachments, "post": post, "workspace": workspace},
@@ -2409,6 +2419,7 @@ def tiktok_creator_info(request, workspace_id, account_id):
 
 @login_required
 @require_POST
+@transaction.atomic
 def attach_media(request, workspace_id, post_id):
     """Attach a media asset to a post."""
     workspace = _get_workspace(request, workspace_id)
@@ -2565,10 +2576,12 @@ def upload_media(request, workspace_id, post_id=None):
 
     if post_id:
         post = get_object_or_404(Post, id=post_id, workspace=workspace)
-        before = reviewed_content(post)
-        attachment = _attach_asset_for_composer(request, workspace, asset, post)
-        # Option A (P-025): changing media on an approved post sends it back for re-approval.
-        returned = return_edited_to_review(post, before)
+        # One transaction from the snapshot (which locks the copies) to the rule (P1-B37).
+        with transaction.atomic():
+            before = reviewed_content(post)
+            attachment = _attach_asset_for_composer(request, workspace, asset, post)
+            # Option A (P-025): changing media on an approved post sends it back for re-approval.
+            returned = return_edited_to_review(post, before)
         response = render(
             request,
             "composer/partials/media_list.html",
@@ -2597,6 +2610,7 @@ def upload_media(request, workspace_id, post_id=None):
 
 @login_required
 @require_POST
+@transaction.atomic
 def remove_media(request, workspace_id, post_id, media_id):
     """Remove a media attachment from a post."""
     workspace = _get_workspace(request, workspace_id)
@@ -2705,6 +2719,7 @@ def drafts_list(request, workspace_id):
 
 @login_required
 @require_POST
+@transaction.atomic
 def post_delete(request, workspace_id, post_id):
     """Delete a post or a single platform post via HTMX.
 
@@ -2715,6 +2730,9 @@ def post_delete(request, workspace_id, post_id):
     """
     workspace = _get_workspace(request, workspace_id)
     post = get_object_or_404(Post, id=post_id, workspace=workspace)
+    # P1-B37: content first, then its copies (the publisher's lock order); the rule below and the
+    # delete see the state as it is, and a cascade delete cannot lock copies before their content.
+    lock_copies([post.pk])
 
     account_id = request.GET.get("account") or request.POST.get("account")
     copies = (
