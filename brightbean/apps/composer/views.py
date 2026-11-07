@@ -12,6 +12,7 @@ from urllib.parse import quote, urljoin
 
 import httpx
 from dateutil import parser as date_parser
+from django.apps import apps as django_apps
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -22,6 +23,7 @@ from django.db.models.deletion import RestrictedError
 from django.http import FileResponse, Http404, HttpResponse, JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.html import strip_tags
 from django.utils.text import get_text_list
@@ -67,11 +69,13 @@ from .models import (
 from .services import (
     ChannelRemovalError,
     channel_removal_blocker,
+    children_are_locked,
     lock_copies,
     media_blocker,
     media_change_blocker,
     post_media_types,
     publish_blocker,
+    record_title_change,
     remove_platform_posts,
     require_publishable,
     require_release_allowed,
@@ -223,7 +227,7 @@ def _children_are_locked(children):
     is nothing left to save. Deliberately narrower than
     ``_children_are_readonly`` — see there.
     """
-    return bool(children) and all(pp.status in PlatformPost.PROTECTED_STATUSES for pp in children)
+    return children_are_locked(children)
 
 
 def _children_are_readonly(children):
@@ -1183,9 +1187,11 @@ def save_post(request, workspace_id, post_id=None):
         selection_error = _caption_selection_error(request, post)
         if selection_error:
             return JsonResponse({"errors": {"selected_accounts": selection_error}}, status=409)
+        _orig_title = post.title
         form = PostForm(request.POST, instance=post)
     else:
         _orig_content = None
+        _orig_title = None
         form = PostForm(request.POST)
 
     if not form.is_valid():
@@ -1267,6 +1273,7 @@ def save_post(request, workspace_id, post_id=None):
         # edit sent back to review are not queued (P1-B37).
         _sync_platform_posts(request, post, workspace, initial_status="draft")
         returned = return_edited_to_review(post, _orig_content)
+        record_title_change(post, _orig_title, request.user)
         returned_accounts = {pp.social_account_id for pp in returned}
         queues = [q for q in queues if q.social_account_id not in returned_accounts]
         # "Next Available" always places the post in the queue's soonest open
@@ -1303,6 +1310,7 @@ def save_post(request, workspace_id, post_id=None):
         post.save()
         _sync_platform_posts(request, post, workspace, initial_status="draft")
         returned = return_edited_to_review(post, _orig_content)
+        record_title_change(post, _orig_title, request.user)
         returned_accounts = {pp.social_account_id for pp in returned}
         queues = [q for q in queues if q.social_account_id not in returned_accounts]
         try:
@@ -1324,6 +1332,7 @@ def save_post(request, workspace_id, post_id=None):
         # Sync platform posts before submitting
         _sync_platform_posts(request, post, workspace, initial_status="draft")
         returned = return_edited_to_review(post, _orig_content)
+        record_title_change(post, _orig_title, request.user)
         _save_version(post, request.user)
         from apps.approvals.services import submit_for_review
 
@@ -1335,6 +1344,7 @@ def save_post(request, workspace_id, post_id=None):
         post.save()
         _sync_platform_posts(request, post, workspace, initial_status="draft")
         returned = return_edited_to_review(post, _orig_content)
+        record_title_change(post, _orig_title, request.user)
         _save_version(post, request.user)
         from apps.approvals.services import resubmit_post
 
@@ -1425,6 +1435,7 @@ def save_post(request, workspace_id, post_id=None):
         propagate_qs.update(scheduled_at=propagate_dt)
         if returned:
             sync_post_scheduled_at(post)
+    record_title_change(post, _orig_title, request.user)
 
     # Move existing children to the requested target state (no-op for save_draft —
     # children that are already mid-workflow stay put), never the copies just
@@ -1546,11 +1557,13 @@ def autosave(request, workspace_id, post_id=None):
     target_id = post_id or request.POST.get("_autosave_post_id", "").strip()
     is_new = not target_id
     orig_content = None
+    orig_title = None
     if target_id:
         post = _write_target(request, workspace, target_id)
         if _is_readonly_write(request, post):
             return HttpResponse('<span class="text-xs text-gray-400">Read-only — not saved</span>')
         orig_content = reviewed_content(post)
+        orig_title = post.title
     else:
         post = Post(workspace=workspace, author=request.user)
 
@@ -1605,6 +1618,7 @@ def autosave(request, workspace_id, post_id=None):
     # approval sends it back to review (a planned one out of the plan) so edited
     # content can't publish without a fresh review.
     returned = return_edited_to_review(post, orig_content)
+    record_title_change(post, orig_title, request.user)
 
     return HttpResponse(
         f'<span class="text-xs text-gray-400">Saved {timezone.now().strftime("%H:%M")}</span>',
@@ -2717,6 +2731,21 @@ def drafts_list(request, workspace_id):
     )
 
 
+def deletion_response(request, workspace, message, *, leave_page):
+    """The one answer to every deletion of content or a channel (JR Content, P1-B38).
+
+    The page that sent the request always gets the message (``X-JRC-Message``, shown as a toast where
+    the page stays). A page that shows the deleted content itself (the composer) sends ``landing=board``;
+    it is then led to the content board of that client with the message flashed there, never to a
+    calendar that says nothing (``X-JRC-Redirect``). Only a landing the server builds is ever followed.
+    """
+    headers = {"HX-Trigger": "postChanged", "X-JRC-Message": message}
+    if leave_page and request.POST.get("landing") == "board" and django_apps.is_installed("apps.jrc_production"):
+        messages.success(request, message)
+        headers["X-JRC-Redirect"] = reverse("jrc_production:board") + f"?client={workspace.id}"
+    return HttpResponse(status=204, headers=headers)
+
+
 @login_required
 @require_POST
 @transaction.atomic
@@ -2766,13 +2795,12 @@ def post_delete(request, workspace_id, post_id):
                 },
                 status=409,
             )
+        message = "Channel removed."
     else:
         post.delete()
+        message = "Content deleted."
 
-    return HttpResponse(
-        status=204,
-        headers={"HX-Trigger": "postChanged"},
-    )
+    return deletion_response(request, workspace, message, leave_page=not account_id)
 
 
 @login_required

@@ -1677,7 +1677,10 @@ def bulk_platform_action(request, workspace_id):
 
     # Plain JSON, not an HX-Trigger header: the selection bar posts with fetch(),
     # not htmx, and fires its own calendar/tab refresh events on success.
-    return JsonResponse({"action": action, "count": count})
+    result = {"action": action, "count": count}
+    if action == "delete":
+        result["message"] = "Channel removed." if count == 1 else f"{count} channels removed."
+    return JsonResponse(result)
 
 
 @login_required

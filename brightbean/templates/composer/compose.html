@@ -2073,10 +2073,11 @@
                                 const deleteUrl = '{% url 'composer:post_delete' workspace.id post.id %}' + window.location.search;
                                 fetch(deleteUrl, {
                                     method: 'POST',
-                                    headers: { 'X-CSRFToken': '{{ csrf_token }}' }
+                                    headers: { 'X-CSRFToken': '{{ csrf_token }}', 'Content-Type': 'application/x-www-form-urlencoded' },
+                                    body: 'landing=board'
                                 }).then(resp => {
                                     if (resp.ok) {
-                                        window.location.href = '{% url "calendar:calendar" workspace_id=workspace.id %}';
+                                        window.location.href = resp.headers.get('X-JRC-Redirect') || '{% url "calendar:calendar" workspace_id=workspace.id %}';
                                     } else {
                                         deleting = false;
                                         resp.json().catch(() => ({})).then(data => {

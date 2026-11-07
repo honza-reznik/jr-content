@@ -44,6 +44,7 @@ from apps.composer.services import (
     copies_to_schedule,
     create_post,
     media_change_blocker,
+    record_title_change,
     sync_post_scheduled_at,
     transition_platform_post,
     usable_media_types,
@@ -405,6 +406,7 @@ def update(request, post_id: uuid.UUID, payload: UpdatePostRequest):
 
     with transaction.atomic():
         before = reviewed_content(post)
+        old_title = post.title
         update_fields: list[str] = []
         if payload.caption is not None:
             post.caption = payload.caption
@@ -455,6 +457,7 @@ def update(request, post_id: uuid.UUID, payload: UpdatePostRequest):
         # P-025: a copy carrying an approval whose text or media changed goes back to review where the mode
         # requires it; a planned one leaves the plan (P1-B37).
         returned = return_edited_to_review(post, before)
+        record_title_change(post, old_title, None if request.user.is_anonymous else request.user)
         sync_post_scheduled_at(post)
 
     post.refresh_from_db()

@@ -82,6 +82,9 @@ def configure_ui(namespace):
     ]
     rbac = "apps.members.middleware.RBACMiddleware"
     middleware.insert(middleware.index(rbac) + 1, "apps.jrc_ui.write_access.WriteAccessMiddleware")
+    csp = "csp.middleware.CSPMiddleware"
+    # Inside CSP: the rendered page must get the CSP header with its nonce and X-Frame-Options too.
+    middleware.insert(middleware.index(csp) + 1, "apps.jrc_ui.middleware.RejectedPageMiddleware")
     namespace["MIDDLEWARE"] = ["apps.jrc_ui.middleware.FeatureMiddleware", *middleware]
     processors = namespace["TEMPLATES"][0]["OPTIONS"]["context_processors"]
     replacements = {

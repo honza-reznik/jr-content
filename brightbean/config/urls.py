@@ -82,6 +82,7 @@ urlpatterns = [
 ]
 
 if getattr(settings, "JRC_UI_ENABLED", False):
+    handler400 = "apps.jrc_ui.views.bad_request"
     from apps.jrc_storage.views import private_file
     from apps.jrc_video.views import video_logout, video_sso
 
