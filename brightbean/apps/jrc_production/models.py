@@ -131,3 +131,18 @@ class ManualPublication(models.Model):
     published_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     published_at = models.DateTimeField()
     post_url = models.URLField(max_length=2000, blank=True, default="")
+
+
+class ContentRename(models.Model):
+    """Rename history for the History tab (P1-B38). Keeps both names, so it stays readable later."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    post = models.ForeignKey("composer.Post", on_delete=models.CASCADE, related_name="jrc_renames")
+    old_title = models.CharField(max_length=255, blank=True, default="")
+    new_title = models.CharField(max_length=255)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+        indexes = [models.Index(fields=["post", "created_at"], name="jrc_rename_post_idx")]

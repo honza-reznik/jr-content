@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}This request cannot be shown · JR Content{% endblock %}
+{% block content %}
+<section class="mx-auto max-w-xl px-4 py-12" data-rejected-page="400">
+    <h1 class="text-2xl font-semibold text-stone-900">This request cannot be shown</h1>
+    <p class="mt-4 text-stone-600">The address or the form data was not valid. Go back and try again.</p>
+    <a href="{% url 'jrc_production:board' %}" class="mt-6 inline-block font-medium text-orange-700 underline">Back to content board</a>
+</section>
+{% endblock %}

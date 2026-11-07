@@ -50,6 +50,7 @@ Expects context: workspace, csrf_token.
                                 }).then(resp => {
                                     if (resp.ok) {
                                         showDeleteModal = false;
+                                        bbSuccessToast(resp.headers.get('X-JRC-Message') || 'Deleted.');
                                         window.dispatchEvent(new CustomEvent('post-deleted'));
                                     } else {
                                         bbFailureToast(resp, 'Could not delete this channel.');

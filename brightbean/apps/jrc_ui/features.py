@@ -82,6 +82,8 @@ def configure_ui(namespace):
     ]
     rbac = "apps.members.middleware.RBACMiddleware"
     middleware.insert(middleware.index(rbac) + 1, "apps.jrc_ui.write_access.WriteAccessMiddleware")
+    messages = "django.contrib.messages.middleware.MessageMiddleware"
+    middleware.insert(middleware.index(messages) + 1, "apps.jrc_ui.middleware.RejectedPageMiddleware")
     namespace["MIDDLEWARE"] = ["apps.jrc_ui.middleware.FeatureMiddleware", *middleware]
     processors = namespace["TEMPLATES"][0]["OPTIONS"]["context_processors"]
     replacements = {

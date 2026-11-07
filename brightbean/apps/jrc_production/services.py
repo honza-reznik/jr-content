@@ -20,7 +20,7 @@ from apps.members.permissions import (
     review_available,
 )
 
-from .models import ManualPublication, PipelineStage, PostProduction, ProductionStage, StageChange
+from .models import ContentRename, ManualPublication, PipelineStage, PostProduction, ProductionStage, StageChange
 
 _STATUS_TO_STAGE = {
     "pending_review": PipelineStage.REVIEW,
@@ -73,6 +73,49 @@ def create_content(workspace, title, user, *, social_account_ids=()):
     post = create_post(workspace=workspace, title=title, author=user, caption="", social_accounts=selected)
     PostProduction.objects.create(post=post, stage_changed_by=user)
     return post
+
+
+def can_rename_content(post, membership):
+    """Renaming is editing the content: your own with create rights, someone else's with edit-others rights."""
+    permissions = membership.effective_permissions
+    return permissions.get("create_posts", False) and (
+        post.author_id == membership.user_id or permissions.get("edit_others_posts", False)
+    )
+
+
+def record_title_change(post, old_title, user):
+    """History row for a title written by another path (composer, REST PATCH); no-op when unchanged."""
+    if old_title is not None and old_title != post.title and post.title:
+        ContentRename.objects.create(post=post, old_title=old_title, new_title=post.title, user=user)
+
+
+def rename_content(post, title, user):
+    """Change the content title (P1-B38): checked, written to History and, where the title goes out, re-reviewed.
+
+    The title is what a channel without its own title publishes, so it is reviewed content: the change
+    goes through ``approvals.edits`` like every other edit and sends approved copies back to review in
+    the modes that require approval. Returns the copies sent back to review, or ``None`` (nothing written)
+    when the name is unchanged.
+    """
+    from apps.approvals.edits import return_edited_to_review, reviewed_content
+
+    with transaction.atomic():
+        locked = Post.objects.select_for_update(of=("self",)).select_related("workspace").get(pk=post.pk)
+        membership = content_membership(locked.workspace, user)
+        if not can_rename_content(locked, membership):
+            raise PermissionDenied("You cannot rename this content.")
+        title = (title or "").strip()
+        if not title:
+            raise ValidationError("Enter a content title.")
+        Post(workspace=locked.workspace, title=title, author=locked.author).full_clean()
+        if title == locked.title:
+            return None
+        before = reviewed_content(locked)
+        old_title = locked.title
+        locked.title = title
+        locked.save(update_fields=["title", "updated_at"])
+        ContentRename.objects.create(post=locked, old_title=old_title, new_title=title, user=user)
+        return return_edited_to_review(locked, before)
 
 
 def can_manage_channels(post, membership):
