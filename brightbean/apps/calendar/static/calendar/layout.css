@@ -18,3 +18,20 @@
     .calendar-agenda-day .calendar-stage-label { white-space: normal; max-width: 35%; }
     .calendar-agenda-day .calendar-slot-add { width: 44px; height: 44px; }
 }
+
+/* P1-B31: toolbar (arrows, Today, view, filters) stays visible while the page scrolls. The scrolling
+   element is <main>, so sticky works without nested heights. On phones the toolbar is tall, so it scrolls away. */
+.calendar-toolbar { background: #fff; }
+/* <main> has padding (sm:p-4, lg:p-6) and sticky sticks at the content edge, so the offset cancels the padding;
+   otherwise scrolled content would show in a gap above the bar. */
+@media (min-width: 768px) {
+    .calendar-toolbar { position: sticky; top: -16px; z-index: 30; padding-top: 8px; }
+}
+@media (min-width: 1024px) {
+    .calendar-toolbar { top: -24px; }
+}
+/* P1-B31: filters wrap into rows on phones instead of a hidden horizontal scroll. */
+@media (max-width: 767px) {
+    .calendar-toolbar .cal-filters-scroll,
+    .publish-list-filters { flex-wrap: wrap; overflow: visible; margin-left: 0; width: 100%; flex-shrink: 1; }
+}

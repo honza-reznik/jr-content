@@ -1029,7 +1029,9 @@ def _month_view_data(request, workspace, target_date, context):
     context.update(
         {
             "calendar_weeks": calendar_weeks,
-            "mobile_calendar_days": [day for week in calendar_weeks for day in week],
+            # P1-B31: the phone list shows only days of this month; neighbouring days belong to
+            # their own month and are dimmed (other-month) in the desktop grid.
+            "mobile_calendar_days": [day for week in calendar_weeks for day in week if day["is_current_month"]],
             "period_label": date(year, month, 1).strftime("%B %Y"),
             "prev_date": prev_month.isoformat(),
             "next_date": next_month.isoformat(),

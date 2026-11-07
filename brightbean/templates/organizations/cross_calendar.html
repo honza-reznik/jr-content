@@ -270,7 +270,7 @@
                 {% for day in week %}
                 <div class="cross-cal-day cal-add-cell {% if day.is_today %}today{% elif day.is_past %}past{% endif %} {% if not day.is_current_month %}other-month{% endif %}">
                     {% if default_workspace and not day.is_past and day.is_current_month %}
-                    <a href="{% url 'composer:compose' workspace_id=default_workspace.id %}?scheduled_date={{ day.date|date:'Y-m-d' }}&scheduled_time=09:00" class="cal-add-btn" title="Create post">
+                    <a href="{% url 'composer:compose' workspace_id=default_workspace.id %}?scheduled_date={{ day.date|date:'Y-m-d' }}&scheduled_time=09:00" class="cal-add-btn" title="Create post" aria-label="Create post">
                         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
                     </a>
                     {% endif %}

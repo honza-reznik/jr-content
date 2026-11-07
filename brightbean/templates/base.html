@@ -18,6 +18,9 @@
     </script>
     <style>
         [x-cloak] { display: none !important; }
+        /* P1-B31: a native select keeps the intrinsic width of its longest option in flex rows;
+           the control itself must be able to shrink and never exceed its parent. */
+        select { min-width: 0; max-width: 100%; }
         /* Initial sidebar width - applied before Alpine loads */
         .sidebar-initial { width: 240px; }
         html.sidebar-is-collapsed .sidebar-initial { width: 60px; }

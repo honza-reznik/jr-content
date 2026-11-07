@@ -1,6 +1,8 @@
 """F8 calendar pipeline, enabled-channel and personal waiting queue coverage."""
 
+import re
 from datetime import date, datetime, time, timedelta
+from pathlib import Path
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
@@ -207,14 +209,62 @@ class F8CalendarIntegrationTests(TestCase):
                         response = self.client.get(url, params, **headers)
                         self.assertEqual(response.status_code, 200)
                         days = response.context["mobile_calendar_days"]
-                        self.assertEqual(len(days) % 7, 0)
-                        self.assertEqual({day["date"].weekday() for day in days}, set(range(7)))
+                        if view == "month":
+                            # P1-B31: only the days of the shown month, every one of them.
+                            self.assertEqual([day["date"] for day in days], [date(2026, 11, d) for d in range(1, 31)])
+                        else:
+                            self.assertEqual(len(days) % 7, 0)
+                            self.assertEqual({day["date"].weekday() for day in days}, set(range(7)))
                         rows = [row for day in days for row in day["all_posts"]]
                         self.assertEqual({row.post_id for row in rows}, {post.pk for post in posts})
                         self.assertEqual(len(rows), 5)
-                        self.assertContains(response, 'aria-label="Calendar by day"')
+                        self.assertContains(
+                            response,
+                            '<section class="calendar-mobile-agenda" role="region" aria-label="Calendar by day">',
+                        )
                         hidden = self.client.get(url, {**params, "channel": str(self.disabled_account.pk)}, **headers)
                         self.assertFalse(any(day["all_posts"] for day in hidden.context["mobile_calendar_days"]))
+
+    def test_mobile_month_agenda_leaves_out_days_of_neighbouring_months(self):
+        # P1-B31: 2026-11-01 is a Sunday, so the grid starts on Monday 2026-10-26.
+        self.client.force_login(self.owner)
+        url = reverse("calendar:calendar", args=[self.workspace.pk])
+        response = self.client.get(url, {"mode": "calendar", "view": "month", "date": "2026-11-06"})
+        grid_days = [day for week in response.context["calendar_weeks"] for day in week]
+        self.assertTrue(any(not day["is_current_month"] for day in grid_days))
+        mobile = {day["date"] for day in response.context["mobile_calendar_days"]}
+        self.assertEqual(mobile, {day["date"] for day in grid_days if day["is_current_month"]})
+        self.assertNotContains(response, 'data-agenda-date="2026-10-26"')
+        self.assertContains(response, 'data-agenda-date="2026-11-01"')
+        # The desktop grid still shows the neighbouring days, dimmed.
+        self.assertContains(response, 'data-date="2026-10-26"')
+        self.assertContains(response, "other-month")
+
+    def test_add_links_have_accessible_names_in_every_calendar_view(self):
+        PostingSlot.objects.create(social_account=self.enabled_account, day_of_week=4, time=time(9, 30))
+        self.client.force_login(self.owner)
+        url = reverse("calendar:calendar", args=[self.workspace.pk])
+        for view in ("month", "week", "day"):
+            with self.subTest(view=view):
+                response = self.client.get(url, {"mode": "calendar", "view": view, "date": "2099-01-02"})
+                html = response.content.decode()
+                links = re.findall(r"<a\b[^>]*class=\"[^\"]*(?:cal-add-btn|calendar-slot-add)[^\"]*\"[^>]*>", html)
+                self.assertTrue(links)
+                for link in links:
+                    self.assertRegex(link, r'aria-label="[^"]+"')
+
+    def test_calendar_toolbar_is_sticky_on_desktop_and_filters_wrap_on_phones(self):
+        css = (Path(__file__).parent / "static/calendar/layout.css").read_text()
+        self.assertRegex(css, r"min-width: 768px\)\s*\{\s*\.calendar-toolbar \{[^}]*position: sticky; top: -16px;")
+        self.assertRegex(css, r"min-width: 1024px\)\s*\{\s*\.calendar-toolbar \{ top: -24px; \}")
+        self.assertRegex(
+            css, r"max-width: 767px\)\s*\{[^}]*\.cal-filters-scroll,\s*\.publish-list-filters \{[^}]*flex-wrap: wrap;"
+        )
+        self.client.force_login(self.owner)
+        url = reverse("calendar:calendar", args=[self.workspace.pk])
+        for mode in ("calendar", "list"):
+            response = self.client.get(url, {"mode": mode})
+            self.assertContains(response, "calendar-toolbar" if mode == "calendar" else "publish-list-filters")
 
     def test_mobile_week_agenda_keeps_slot_compose_timezone_and_empty_days(self):
         self.workspace.timezone = "Europe/Prague"
