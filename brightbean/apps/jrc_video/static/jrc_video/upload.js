@@ -136,9 +136,13 @@
       !!active;
   }
 
+  // P1-B31: only the newest request may draw the list. A slower, older answer (for example a poll
+  // sent before a refused version was removed) would otherwise bring the removed row back.
+  var refreshSeq = 0;
   function refresh() {
+    var mine = ++refreshSeq;
     return api("GET", root.dataset.statusUrl).then(function (data) {
-      render(data.channels);
+      if (mine === refreshSeq) render(data.channels);
       return data;
     }).catch(function () { /* keep the last known state */ });
   }
@@ -160,17 +164,22 @@
 
   function clearError(card) { show(errorBox(card), false); }
 
+  // P1-B31: the whole state of the progress panel (visibility, label, bar, Discard) is set here
+  // and nowhere else. Hiding it also clears the label, so no stale step such as "Checking the
+  // video…" stays in the page (or in what a screen reader or a text extraction reads) after a
+  // refusal or an interruption.
   function setProgress(card, label, fraction, discardable) {
     var panel = card.querySelector("[data-video-progress]");
-    show(panel, true);
-    card.querySelector("[data-video-progress-label]").textContent = label;
-    var pct = Math.max(0, Math.min(100, Math.round(fraction * 100)));
+    var visible = label !== null;
+    var pct = visible ? Math.max(0, Math.min(100, Math.round(fraction * 100))) : 0;
+    show(panel, visible);
+    card.querySelector("[data-video-progress-label]").textContent = visible ? label : "";
     card.querySelector("[data-video-bar]").style.width = pct + "%";
     card.querySelector('[role="progressbar"]').setAttribute("aria-valuenow", String(pct));
-    show(card.querySelector("[data-video-discard]"), !!discardable);
+    show(card.querySelector("[data-video-discard]"), visible && !!discardable);
   }
 
-  function hideProgress(card) { show(card.querySelector("[data-video-progress]"), false); }
+  function hideProgress(card) { setProgress(card, null, 0, false); }
 
   function putPart(url, blob, onBytes, state) {
     return new Promise(function (resolve, reject) {

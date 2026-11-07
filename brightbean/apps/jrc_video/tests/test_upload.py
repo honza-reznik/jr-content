@@ -768,3 +768,23 @@ def test_conversion_progress_accepts_only_whole_numbers_and_clamps(client, ff, w
     row = client.get(url("upload_status", workspace, setup)).json()["channels"][0]["versions"][0]
     expected = {-5: 0, 250: 100}.get(junk) if isinstance(junk, int) and not isinstance(junk, bool) else None
     assert row["progress"] == expected
+
+
+def test_progress_panel_state_is_set_in_one_place_and_hiding_clears_the_label():
+    """P1-B31: no stale "Checking the video…" after a refusal; only the newest status answer is drawn."""
+    from pathlib import Path
+
+    import apps.jrc_video as package
+
+    js = (Path(package.__file__).parent / "static/jrc_video/upload.js").read_text()
+    # The panel's pieces are touched only inside setProgress.
+    for needle in (
+        '"[data-video-progress-label]"',
+        '"[data-video-bar]"',
+        "[data-video-progress]",
+        "[data-video-discard]",
+    ):
+        assert js.count(needle) == 1, needle
+    assert "function hideProgress(card) { setProgress(card, null, 0, false); }" in js
+    assert 'textContent = visible ? label : ""' in js
+    assert "if (mine === refreshSeq) render(data.channels);" in js
