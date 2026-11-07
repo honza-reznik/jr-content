@@ -144,7 +144,14 @@ def _service_cancel(http, workspace, post, copy, queue, entry):
     return "moved"
 
 
+def _rename(http, workspace, post, copy, queue, entry):
+    """P1-B38 rename goes through the same snapshot and locks; content being published is not renamed."""
+    http.post(f"/workspace/{workspace.pk}/content/{post.pk}/rename/", {"title": "Renamed during publishing"})
+    return Post.objects.get(pk=post.pk).title
+
+
 WRITERS = {
+    "rename": (_rename, "B37 race"),
     "caption": (_caption, 302),
     "composer": (_composer, 400),  # the composer is read-only for content being published
     "bulk_draft": (_bulk("draft"), (200, 0)),
