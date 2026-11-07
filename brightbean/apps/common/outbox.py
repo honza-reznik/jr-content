@@ -15,8 +15,15 @@ that delivers it **in the caller's transaction**:
   sweep all run without ever sending the same row twice at the same time.
 
 An email that depends on the outcome (an invitation's send slot, a client's new login link)
-passes ``on_success`` / ``on_failure``: dotted ``module:function`` names called exactly once
-with ``callback_args`` as keyword arguments, in the worker.
+passes ``on_success`` / ``on_failure``: dotted ``module:function`` names called with
+``callback_args`` as keyword arguments, in the worker. Closing the row and the callback are
+**one transaction**: both happen or neither does. When the callback raises, the row stays
+pending with ``finishing`` set, and the retry repeats only that step (never the sending), so
+the callback takes effect exactly once.
+
+A pending row is never kept longer than ``MAX_PENDING_AGE`` (the body holds a one-time link):
+after that it fails without being sent and the body is erased. The table is also left out of
+the backups (``scripts/backup/backup.sh``).
 
 The delivery is at-least-once: a worker killed between the server accepting the message and
 the row being marked sent sends it again after the lease. That window is a few milliseconds
@@ -49,6 +56,11 @@ RETRY_BACKOFF = [timedelta(seconds=30), timedelta(minutes=2), timedelta(minutes=
 LEASE = timedelta(minutes=3)
 # A row that is finished keeps its metadata this long.
 KEEP_FINISHED = timedelta(days=14)
+# A pending row older than this is not sent any more: the retries span about 70 minutes, so
+# this only catches a worker that was down; a reset link that old is of no use anyway.
+MAX_PENDING_AGE = timedelta(hours=6)
+# Extra tries for the "record the outcome and run the callback" step once sending is done.
+MAX_FINISH_ATTEMPTS = MAX_ATTEMPTS + 5
 SWEEP_BATCH = 100
 CALLBACK_PREFIX = "apps."
 
@@ -109,18 +121,17 @@ def _build(row: OutgoingEmail) -> EmailMultiAlternatives:
 
 
 def _run_callback(row: OutgoingEmail, name: str) -> None:
+    """Call the callback; an error propagates so the surrounding transaction is undone."""
     if not name:
         return
-    try:
-        import_string(name.replace(":", "."))(**row.callback_args)
-    except Exception:
-        logger.exception("Outbox callback %s for email %s failed", name, row.pk)
+    import_string(name.replace(":", "."))(**row.callback_args)
 
 
 def _finish(row: OutgoingEmail, status: str, error: str = "") -> bool:
     """Close the row once. The conditional update is what makes the callback run once."""
     updated = OutgoingEmail.objects.filter(pk=row.pk, status=OutgoingEmail.Status.PENDING).update(
         status=status,
+        finishing="",
         last_error=error[:200],
         sent_at=timezone.now() if status == OutgoingEmail.Status.SENT else None,
         # One-time links must not outlive the delivery.
@@ -129,6 +140,37 @@ def _finish(row: OutgoingEmail, status: str, error: str = "") -> bool:
         headers={},
     )
     return bool(updated)
+
+
+def _backoff(attempts: int) -> timedelta:
+    return RETRY_BACKOFF[min(max(attempts, 1) - 1, len(RETRY_BACKOFF) - 1)]
+
+
+def _complete(row: OutgoingEmail, status: str, error: str = "") -> bool:
+    """Close the row and run its callback in ONE transaction.
+
+    Returns True when done. If the callback fails, the row is not closed: it keeps the known
+    outcome in ``finishing`` and is picked up again later to repeat only this step. After
+    ``MAX_FINISH_ATTEMPTS`` the row is closed without the callback (logged), so the body is
+    erased and the row cannot loop forever.
+    """
+    name = row.on_success if status == OutgoingEmail.Status.SENT else row.on_failure
+    give_up = row.attempts >= MAX_FINISH_ATTEMPTS
+    try:
+        with transaction.atomic():
+            if _finish(row, status, error) and not give_up:
+                _run_callback(row, name)
+        if give_up and name:
+            logger.error("Outbox callback %s for email %s gave up after %d attempts", name, row.pk, row.attempts)
+        return True
+    except Exception:
+        logger.exception("Outbox callback %s for email %s failed; will repeat only that step", name, row.pk)
+    delay = _backoff(row.attempts)
+    OutgoingEmail.objects.filter(pk=row.pk, status=OutgoingEmail.Status.PENDING).update(
+        finishing=status, last_error=error[:200], next_attempt_at=timezone.now() + delay
+    )
+    _task()(str(row.pk), schedule=delay)
+    return False
 
 
 def deliver(email_id: str) -> str:
@@ -144,32 +186,57 @@ def deliver(email_id: str) -> str:
         return "skipped"
     row = OutgoingEmail.objects.get(pk=email_id)
 
+    if row.finishing:
+        # The mail already went out (or was finally refused); only the bookkeeping is left.
+        outcome = row.finishing
+        return outcome if _complete(row, outcome, row.last_error) else "retry"
+
+    if row.created_at < now - MAX_PENDING_AGE:
+        # Too old to be of use and the body still holds a one-time link: do not send, erase it.
+        logger.warning("Outgoing email %s waited longer than %s; not sent", row.pk, MAX_PENDING_AGE)
+        _complete(row, OutgoingEmail.Status.FAILED, "not sent: waited too long")
+        return "failed"
+
     try:
         send_or_raise(_build(row))
     except EmailNotSentError as exc:
         # Declined on purpose (budget, suppressed address, sending switched off): final.
         logger.info("Outgoing email %s not sent: %s", row.pk, exc)
-        if _finish(row, OutgoingEmail.Status.FAILED, "not sent: declined by the outbound budget"):
-            _run_callback(row, row.on_failure)
+        _complete(row, OutgoingEmail.Status.FAILED, "not sent: declined by the outbound budget")
         return "failed"
     except Exception as exc:
         # The backend already reduced the error to a fixed category; nothing else is stored.
         reason = str(exc) if str(exc).startswith("SMTP delivery failed") else "mail backend error"
         logger.warning("Outgoing email %s attempt %d failed: %s", row.pk, row.attempts, reason)
         if row.attempts >= MAX_ATTEMPTS:
-            if _finish(row, OutgoingEmail.Status.FAILED, reason):
-                _run_callback(row, row.on_failure)
+            _complete(row, OutgoingEmail.Status.FAILED, reason)
             return "failed"
-        delay = RETRY_BACKOFF[min(row.attempts - 1, len(RETRY_BACKOFF) - 1)]
+        delay = _backoff(row.attempts)
         OutgoingEmail.objects.filter(pk=row.pk, status=OutgoingEmail.Status.PENDING).update(
             next_attempt_at=timezone.now() + delay, last_error=reason[:200]
         )
         _task()(str(row.pk), schedule=delay)
         return "retry"
 
-    if _finish(row, OutgoingEmail.Status.SENT):
-        _run_callback(row, row.on_success)
+    _complete(row, OutgoingEmail.Status.SENT)
     return "sent"
+
+
+def cancel_pending(**callback_args) -> int:
+    """Cancel pending emails whose ``callback_args`` match; their body is erased, no callback runs.
+
+    For a message that has become obsolete before it was sent, e.g. an invitation whose token was
+    replaced by a resend: the older email would carry a link that no longer works.
+    """
+    filters = {f"callback_args__{key}": value for key, value in callback_args.items()}
+    return OutgoingEmail.objects.filter(status=OutgoingEmail.Status.PENDING, **filters).update(
+        status=OutgoingEmail.Status.FAILED,
+        finishing="",
+        last_error="cancelled: superseded",
+        body_text="",
+        alternatives=[],
+        headers={},
+    )
 
 
 def sweep() -> int:

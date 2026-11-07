@@ -189,9 +189,11 @@ case "${1:?Chybí operace}" in
         # Uchováme objekty už před dumpy; druhý průchod doplní nové, přepsané klíče odmítne.
         compose exec -T jrc-dev python3 "$tool" copy-objects --project "$project" --stamp "$stamp"
         # pg_dump musí mít stejnou hlavní verzi jako server, proto běží v kontejneru PostgreSQL (jen čtení).
+        # Data fronty e-mailů (common_outgoing_email) se nezálohují: čekající řádek nese jednorázový odkaz
+        # (reset hesla, pozvánka) a po obnově by se rozeslal znovu. Tabulka se obnoví prázdná (P1-B35).
         printf 'Záloha %s/%s: databáze\n' "$project" "$stamp"
         for database in brightbean freeframe; do
-            compose exec -T jrc-postgres sh -c 'pg_dump --format=custom --no-password --username "$POSTGRES_USER" "$1"' sh "$database" \
+            compose exec -T jrc-postgres sh -c 'pg_dump --format=custom --no-password --exclude-table-data=common_outgoing_email --username "$POSTGRES_USER" "$1"' sh "$database" \
                 > "$partial/postgres/$database.dump"
             compose exec -T jrc-postgres pg_restore --list < "$partial/postgres/$database.dump" > "$partial/postgres/$database.list"
             grep -q 'TABLE DATA' "$partial/postgres/$database.list" || die "Výpis databáze $database je prázdný nebo poškozený."

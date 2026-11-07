@@ -586,3 +586,14 @@ if target == 'restore':
             self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.calls(), '')
         self.assertEqual(list(outside.iterdir()), [])
+
+
+class OutboxNotBackedUp(Base):
+    """P1-B35: a waiting email holds a one-time link, so its table data is never dumped."""
+
+    def test_every_pg_dump_leaves_out_the_outbox_data(self):
+        source = (SCRIPTS / 'backup.sh').read_text()
+        dumps = re.findall(r"pg_dump --[^\n]*", source)
+        self.assertTrue(dumps)
+        for line in dumps:
+            self.assertIn('--exclude-table-data=common_outgoing_email', line)

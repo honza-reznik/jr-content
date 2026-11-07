@@ -105,6 +105,10 @@ class OutgoingEmail(models.Model):
     attempts = models.PositiveIntegerField(default=0)
     sent_at = models.DateTimeField(null=True, blank=True)
     last_error = models.CharField(max_length=200, blank=True, default="")
+    # Set when the outcome is known (the mail went out / was finally refused) but the transaction
+    # that records it and runs the callback has not committed yet: the retry then only repeats
+    # that step and never sends the message again (P1-B35).
+    finishing = models.CharField(max_length=10, blank=True, default="")
 
     subject = models.CharField(max_length=998)
     from_email = models.CharField(max_length=320, blank=True, default="")
