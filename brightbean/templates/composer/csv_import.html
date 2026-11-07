@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% comment %}JR Content: upraveno 2026-10-23 (blok F2-B10), AGPL-3.0.{% endcomment %}
+{% comment %}JR Content: upraveno 2026-10-23 (blok F2-B10), 2026-11-07 (blok P1-B36), AGPL-3.0.{% endcomment %}
 
 {% block title %}Import from CSV - {{ workspace.name }} - JR Content{% endblock %}
 
@@ -49,7 +49,7 @@
                  :class="dragging && 'border-orange-300 bg-orange-50/30'">
                 <svg class="w-10 h-10 text-stone-300 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"/></svg>
                 <p class="text-sm text-stone-600 mb-1">Drop your CSV file here, or <label for="csv-file" class="font-semibold cursor-pointer" style="color: var(--primary);">browse</label></p>
-                <p class="text-xs text-stone-400">Supports .csv and .tsv files</p>
+                <p class="text-xs text-stone-400">Supports .csv (comma or semicolon) and .tsv files saved as UTF-8</p>
                 <p class="text-xs text-stone-600 mt-2 font-medium" x-show="filename" x-text="filename" x-cloak></p>
                 <input type="file" name="csv_file" id="csv-file" accept=".csv,.tsv" required class="hidden"
                        x-ref="fileInput"

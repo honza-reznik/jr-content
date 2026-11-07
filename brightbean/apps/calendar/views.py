@@ -20,7 +20,7 @@ from apps.common.validators import is_valid_hex_color
 from apps.composer.models import ContentCategory, PlatformPost, Post
 from apps.members.decorators import require_permission
 from apps.members.models import WorkspaceMembership
-from apps.members.permissions import can_schedule
+from apps.members.permissions import can_schedule, can_unschedule, is_planned
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 
@@ -1475,8 +1475,10 @@ def bulk_platform_action(request, workspace_id):
     perms = membership.effective_permissions if membership else {}
     # Publishing now hands rows straight to the publisher's poll loop, skipping
     # the approval workflow — the privilege the composer's chip transition,
-    # save_post's publish-now branch and REST /schedule all gate on. Draft and
-    # delete stay under plain edit rights.
+    # save_post's publish-now branch and REST /schedule all gate on. Delete and
+    # Draft of unplanned rows stay under plain edit rights; Draft of a planned row
+    # takes it out of the plan, which needs the planning right (``can_unschedule``,
+    # checked below once the rows are known).
     if action == "publish" and not can_schedule(membership):
         return JsonResponse({"error": "You do not have permission to publish directly."}, status=403)
 
@@ -1493,6 +1495,28 @@ def bulk_platform_action(request, workspace_id):
     )
     can_edit_others = perms.get("edit_others_posts", False)
     pps = [pp for pp in pps if pp.post.author_id == request.user.id or can_edit_others]
+
+    if action == "draft":
+        # P1-B36: refuse the whole batch (as Publish does) rather than silently skip
+        # planned rows the member may not take out of the plan.
+        refused = [
+            pp
+            for pp in pps
+            if pp.status not in PlatformPost.PROTECTED_STATUSES
+            and pp.status != "draft"
+            and pp.can_transition_to("draft")
+            and is_planned(pp)
+            and not can_unschedule(membership, pp.post)
+        ]
+        if refused:
+            noun = "post is" if len(refused) == 1 else "posts are"
+            return JsonResponse(
+                {
+                    "error": f"{len(refused)} selected {noun} planned. Only someone who can schedule content "
+                    "may take it out of the plan, so nothing was moved to draft."
+                },
+                status=403,
+            )
 
     if action == "publish":
         # Refuse the whole batch rather than skip the rows that can't publish:
@@ -1948,6 +1972,9 @@ def queue_entry_remove(request, workspace_id, queue_id, entry_id):
     if entry is not None:
         from .services import remove_from_queue
 
+        # Removing an entry takes its post out of the plan (P1-B36): same rule as bulk Draft.
+        if not can_unschedule(getattr(request, "workspace_membership", None), entry.post):
+            return JsonResponse({"error": "You do not have permission to take this post out of the plan."}, status=403)
         remove_from_queue(entry)
 
     if request.htmx:

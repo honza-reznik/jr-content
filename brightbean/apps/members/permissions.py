@@ -30,6 +30,38 @@ def can_schedule(membership):
     return bool(membership.effective_permissions.get("publish_directly", False))
 
 
+def is_planned(platform_post):
+    """Is this channel copy in the plan: scheduled to go out, or carrying a planned time (P1-B36)?
+
+    A failed copy is not: its time is the past attempt and it goes nowhere until somebody retries it
+    (which is planning again). Published and publishing copies never go back to a draft.
+    """
+    if platform_post.status in ("failed", "published", "publishing"):
+        return False
+    return platform_post.status == "scheduled" or platform_post.scheduled_at is not None
+
+
+def can_unschedule(membership, post):
+    """Who may take planned content (``is_planned``) out of the plan: back to a draft, its planned time dropped (P1-B36).
+
+    Taking content out of the plan changes the plan just as planning it does, so it needs the one
+    planning right ``can_schedule``; and it changes that content, so also the right to edit it (own
+    content with ``create_posts``, anybody else's with ``edit_others_posts``,
+    ``require_authored_content``). The one rule for every such path: calendar bulk Draft, the
+    composer chip back to Draft, removing a post from a queue, the JR board moving planned content
+    back to a production stage, REST ``/cancel`` and MCP ``cancel_post``. ``membership`` may be an API
+    key's membership (its ``user`` is the key's issuer).
+    """
+    if not can_schedule(membership):
+        return False
+    user = getattr(membership, "user", None)
+    try:
+        require_authored_content(membership.effective_permissions, getattr(user, "pk", None), post.author_id)
+    except PermissionDenied:
+        return False
+    return True
+
+
 def can_publish_directly(membership):
     """Whether this workspace member may mark content as published and download final videos.
 

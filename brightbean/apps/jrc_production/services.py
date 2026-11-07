@@ -11,7 +11,14 @@ from apps.composer.services import remove_platform_posts, sync_post_scheduled_at
 from apps.jrc_channels.models import ChannelProfile
 from apps.members.models import WorkspaceMembership
 from apps.members.note_visibility import note_audience
-from apps.members.permissions import can_publish_directly, can_schedule, release_blocker, review_available
+from apps.members.permissions import (
+    can_publish_directly,
+    can_schedule,
+    can_unschedule,
+    is_planned,
+    release_blocker,
+    review_available,
+)
 
 from .models import ManualPublication, PipelineStage, PostProduction, ProductionStage, StageChange
 
@@ -185,6 +192,10 @@ def available_moves(post, membership):
     ):
         # P1-B27: Ready (planned) straight from a draft only where the approval mode allows it.
         moves.append(PipelineStage.READY)
+    if any(is_planned(pp) for pp in children) and not can_unschedule(membership, post):
+        # P1-B36: back to a production stage turns planned copies into drafts (their time dropped);
+        # only a planner may take content out of the plan.
+        moves = [stage for stage in moves if stage not in ProductionStage.values]
     return moves
 
 

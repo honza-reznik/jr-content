@@ -26,6 +26,7 @@ from django.utils.html import strip_tags
 from django.utils.text import get_text_list
 from django.views.decorators.http import require_GET, require_POST
 
+from apps.approvals.edits import return_edited_to_review, reviewed_content
 from apps.common.validators import (
     is_safe_url,
     parse_and_truncate_tag_string,
@@ -35,7 +36,13 @@ from apps.common.validators import (
 from apps.media_library.models import MediaAsset
 from apps.members.decorators import require_permission
 from apps.members.models import WorkspaceMembership
-from apps.members.permissions import can_schedule, edit_returns_to_review, review_available
+from apps.members.permissions import (
+    can_schedule,
+    can_unschedule,
+    edit_returns_to_review,
+    is_planned,
+    review_available,
+)
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 from providers import is_video_only, requires_media
@@ -1051,33 +1058,6 @@ def _transition_post_children(post, target, *, allow_via_draft=True, only=None):
     return moved, skipped
 
 
-def _base_content_snapshot(post):
-    """Reviewable base content used to detect edits to an approved post."""
-    return (post.title, post.caption, post.first_comment, tuple(post.tags or []))
-
-
-def _revert_approved_to_review(post):
-    """Option A: editing an approved post's content sends it back for re-approval.
-
-    Silently reverts any ``approved`` children to ``pending_review`` so edited
-    content can't publish without a fresh review. (The explicit "Resubmit for
-    review" button additionally notifies reviewers; this is the safety net for
-    plain saves/autosaves.) Returns the reverted children.
-
-    P1-B34: only where the approval mode requires approval (``edit_returns_to_review``); in
-    "No approvals" and "Optional approvals" the content stays approved.
-    """
-    reverted = []
-    if not edit_returns_to_review(post.workspace):
-        return reverted
-    for pp in post.platform_posts.all():
-        if pp.status == "approved" and pp.can_transition_to("pending_review"):
-            pp.transition_to("pending_review")
-            pp.save(update_fields=[*PlatformPost.TRANSITION_FIELDS, "updated_at"])
-            reverted.append(pp)
-    return reverted
-
-
 def _platform_status_map(post):
     """Return ``{platform_post_id: status}`` for HTMX response headers."""
     return {str(pp.id): pp.status for pp in post.platform_posts.all()}
@@ -1151,7 +1131,7 @@ def save_post(request, workspace_id, post_id=None):
         selection_error = _caption_selection_error(request, post)
         if selection_error:
             return JsonResponse({"errors": {"selected_accounts": selection_error}}, status=409)
-        _orig_content = _base_content_snapshot(post)
+        _orig_content = reviewed_content(post)
         form = PostForm(request.POST, instance=post)
     else:
         _orig_content = None
@@ -1411,8 +1391,7 @@ def save_post(request, workspace_id, post_id=None):
     # publish target — otherwise a schedule/publish_now in the *same* save would
     # push the just-edited (no-longer-approved) content straight to scheduled.
     # Only ``approved`` children are reverted; anything else is a no-op.
-    content_changed = _orig_content is not None and _base_content_snapshot(post) != _orig_content
-    reverted_ids = {str(pp.id) for pp in _revert_approved_to_review(post)} if content_changed else set()
+    reverted_ids = {str(pp.id) for pp in return_edited_to_review(post, _orig_content)}
 
     # Move existing children to the requested target state (no-op for save_draft —
     # children that are already mid-workflow stay put). Children just reverted for
@@ -1475,6 +1454,9 @@ def transition_platform_post(request, workspace_id, post_id, platform_post_id):
     approval_states = {"approved", "pending_review", "pending_client", "changes_requested", "rejected"}
     if target in ("scheduled", "publishing") and not can_schedule(membership):
         raise PermissionDenied("You do not have permission to schedule this post.")
+    if target == "draft" and is_planned(pp) and not can_unschedule(membership, pp.post):
+        # P1-B36: back to Draft drops the planned time; only a planner may take content out of the plan.
+        raise PermissionDenied("You do not have permission to take this post out of the plan.")
     if target in approval_states and not perms.get("approve_posts", False) and target != "pending_review":
         raise PermissionDenied("You do not have permission to make approval decisions.")
 
@@ -1554,7 +1536,7 @@ def autosave(request, workspace_id, post_id=None):
         post = _write_target(request, workspace, target_id)
         if _is_readonly_write(request, post):
             return HttpResponse('<span class="text-xs text-gray-400">Read-only — not saved</span>')
-        orig_content = _base_content_snapshot(post)
+        orig_content = reviewed_content(post)
     else:
         post = Post(workspace=workspace, author=request.user)
 
@@ -1607,8 +1589,7 @@ def autosave(request, workspace_id, post_id=None):
 
     # Option A: an autosave that changed an approved post's content reverts it to
     # pending_review so edited content can't publish without a fresh review.
-    if orig_content is not None and _base_content_snapshot(post) != orig_content:
-        _revert_approved_to_review(post)
+    return_edited_to_review(post, orig_content)
 
     return HttpResponse(
         f'<span class="text-xs text-gray-400">Saved {timezone.now().strftime("%H:%M")}</span>',
@@ -2182,8 +2163,10 @@ def unsplash_import(request, workspace_id, post_id=None):
     from apps.media_library.quotas import StorageQuotaExceededError, enforce_storage_quota
 
     post = None
+    before = None
     if post_id:
         post = get_object_or_404(Post, id=post_id, workspace=workspace)
+        before = reviewed_content(post)
 
     auth_headers = {"Authorization": f"Client-ID {settings.UNSPLASH_ACCESS_KEY}"}
     new_assets = []
@@ -2286,6 +2269,8 @@ def unsplash_import(request, workspace_id, post_id=None):
         return JsonResponse({"error": "Could not import the selected photos."}, status=502)
 
     if post is not None:
+        # Option A (P-025): new media on an approved post sends it back for re-approval, as upload_media.
+        return_edited_to_review(post, before)
         html = render_to_string(
             "composer/partials/media_list.html",
             {"media_attachments": attachments, "post": post, "workspace": workspace},
@@ -2426,6 +2411,7 @@ def attach_media(request, workspace_id, post_id):
         id=media_asset_id,
     )
 
+    before = reviewed_content(post)
     max_pos = post.media_attachments.aggregate(models.Max("position"))["position__max"]
     position = (max_pos or 0) + 1
 
@@ -2435,8 +2421,8 @@ def attach_media(request, workspace_id, post_id):
         defaults={"position": position},
     )
 
-    # Option A: changing media on an approved post sends it back for re-approval.
-    _revert_approved_to_review(post)
+    # Option A (P-025): changing media on an approved post sends it back for re-approval.
+    return_edited_to_review(post, before)
 
     response = render(
         request,
@@ -2564,9 +2550,10 @@ def upload_media(request, workspace_id, post_id=None):
 
     if post_id:
         post = get_object_or_404(Post, id=post_id, workspace=workspace)
+        before = reviewed_content(post)
         attachment = _attach_asset_for_composer(request, workspace, asset, post)
-        # Option A: changing media on an approved post sends it back for re-approval.
-        _revert_approved_to_review(post)
+        # Option A (P-025): changing media on an approved post sends it back for re-approval.
+        return_edited_to_review(post, before)
         response = render(
             request,
             "composer/partials/media_list.html",
@@ -2607,10 +2594,11 @@ def remove_media(request, workspace_id, post_id, media_id):
         reason = media_change_blocker(post, media_types_after=post_media_types(post, excluding=attachment))
         if reason:
             return HttpResponse(reason, status=400, content_type="text/plain")
+    before = reviewed_content(post)
     PostMedia.objects.filter(id=media_id, post=post).delete()
 
-    # Option A: changing media on an approved post sends it back for re-approval.
-    _revert_approved_to_review(post)
+    # Option A (P-025): changing media on an approved post sends it back for re-approval.
+    return_edited_to_review(post, before)
 
     response = render(
         request,
@@ -3651,6 +3639,63 @@ def use_template(request, workspace_id, template_id):
 # ---------------------------------------------------------------------------
 
 
+IMPORT_DELIMITERS = (",", "\t", ";")
+IMPORT_ENCODING_ERROR = (
+    "The file is not saved as UTF-8 text, so its characters can't be read. In Excel use "
+    'Save As > "CSV UTF-8 (Comma delimited)", or in Google Sheets File > Download > CSV, and upload it again.'
+)
+
+
+def _read_import_table(raw, filename=""):
+    """Rows of an uploaded CSV/TSV file; ``ValueError`` with a message the user can act on (P1-B36).
+
+    Text: UTF-8 (with or without the byte-order mark Excel writes) or UTF-16 with its byte-order mark
+    (Excel "Unicode Text"); anything else is refused with instructions instead of guessing a code
+    page and importing garbled captions. Delimiter: tab for ``.tsv`` files, otherwise the one of
+    comma, tab and semicolon (Excel in Czech and other locales) that occurs most often in the header
+    row outside quotes; comma when none does.
+    """
+    import codecs
+    import csv
+    import io
+
+    try:
+        if raw.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+            text = raw.decode("utf-16")
+        else:
+            text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise ValueError(IMPORT_ENCODING_ERROR) from None
+    if "\x00" in text:
+        raise ValueError(IMPORT_ENCODING_ERROR)
+    if filename.lower().endswith(".tsv"):
+        delimiter = "\t"
+    else:
+        unquoted = re.sub(r'"[^"]*"', "", text.split("\n", 1)[0])
+        counts = {candidate: unquoted.count(candidate) for candidate in IMPORT_DELIMITERS}
+        delimiter = max(IMPORT_DELIMITERS, key=lambda candidate: counts[candidate])
+        if not counts[delimiter]:
+            delimiter = ","
+    try:
+        return list(csv.reader(io.StringIO(text, newline=""), delimiter=delimiter))
+    except csv.Error as exc:
+        raise ValueError(f"The file can't be read as CSV: {exc}.") from None
+
+
+def _csv_upload_error(request, workspace, message):
+    """The upload step again with ``message`` (P1-B36).
+
+    The upload form swaps the response into ``#csv-import-container``; a whole page there would nest
+    the sidebar and run the page's inline scripts a second time (refused by the CSP). htmx therefore
+    takes only that container from the page and replaces the old one with it.
+    """
+    response = render(request, "composer/csv_import.html", {"workspace": workspace, "error": message})
+    if request.htmx:
+        response["HX-Reselect"] = "#csv-import-container"
+        response["HX-Reswap"] = "outerHTML"
+    return response
+
+
 @login_required
 @require_permission("create_posts")
 def csv_upload(request, workspace_id):
@@ -3658,26 +3703,16 @@ def csv_upload(request, workspace_id):
     workspace = _get_workspace(request, workspace_id)
 
     if request.method == "POST" and request.FILES.get("csv_file"):
-        import csv
-        import io
-
         csv_file = request.FILES["csv_file"]
         if csv_file.size and csv_file.size > MAX_CSV_UPLOAD_BYTES:
-            return render(
-                request,
-                "composer/csv_import.html",
-                {"workspace": workspace, "error": "CSV file too large (max 5 MB)."},
-            )
-        decoded = csv_file.read().decode("utf-8-sig")
-        reader = csv.reader(io.StringIO(decoded))
-        rows = list(reader)
+            return _csv_upload_error(request, workspace, "CSV file too large (max 5 MB).")
+        try:
+            rows = _read_import_table(csv_file.read(), csv_file.name)
+        except ValueError as exc:
+            return _csv_upload_error(request, workspace, str(exc))
 
         if not rows:
-            return render(
-                request,
-                "composer/csv_import.html",
-                {"workspace": workspace, "error": "CSV file is empty."},
-            )
+            return _csv_upload_error(request, workspace, "CSV file is empty.")
 
         headers = rows[0]
         preview_rows = rows[1:6]  # First 5 data rows

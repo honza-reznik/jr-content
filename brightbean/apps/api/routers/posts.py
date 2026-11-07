@@ -401,7 +401,10 @@ def update(request, post_id: uuid.UUID, payload: UpdatePostRequest):
         if reason:
             raise HttpError(422, reason)
 
+    from apps.approvals.edits import return_edited_to_review, reviewed_content
+
     with transaction.atomic():
+        before = reviewed_content(post)
         update_fields: list[str] = []
         if payload.caption is not None:
             post.caption = payload.caption
@@ -449,6 +452,8 @@ def update(request, post_id: uuid.UUID, payload: UpdatePostRequest):
         if update_fields:
             post.save(update_fields=[*update_fields, "updated_at"])
 
+        # P-025: an approved copy whose text or media changed goes back to review where the mode requires it.
+        return_edited_to_review(post, before)
         sync_post_scheduled_at(post)
 
     post.refresh_from_db()
@@ -512,6 +517,11 @@ def cancel(request, post_id: uuid.UUID):
     scheduled_children = list(post.platform_posts.filter(status="scheduled"))
     if not scheduled_children:
         raise HttpError(409, "No scheduled platform posts to cancel.")
+    from apps.members.permissions import can_unschedule
+
+    # Taking content out of the plan is planning (P1-B36): the same rule as the calendar and composer.
+    if not can_unschedule(request.workspace_membership, post):
+        raise HttpError(403, "Permission denied: publish_directly")
 
     # Same atomic-loop reasoning as ``schedule``: any per-child transition
     # failure rolls back the whole cancellation. Half-cancelled posts
