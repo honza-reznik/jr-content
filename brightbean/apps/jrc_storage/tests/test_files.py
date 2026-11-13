@@ -326,7 +326,8 @@ def test_slow_large_transfer_has_no_total_deadline_and_renews_its_lease(monkeypa
 
     monkeypatch.setattr(views, "IDLE_SECONDS", 0.25)
     data = os.urandom(6 * 1024 * 1024)
-    source, close, release = _SlowRead(data, pause=0.01), Mock(), Mock()
+    # 96 pieces × 20 ms ≈ 1.9 s: the whole transfer clearly outlasts several idle windows.
+    source, close, release = _SlowRead(data, pause=0.02), Mock(), Mock()
     started = time.monotonic()
     response = views._stream(source.read, close, release)
     received = b"".join(response.streaming_content)
