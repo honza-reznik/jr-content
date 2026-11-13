@@ -12,8 +12,9 @@ _UNSET = object()
 def new_content_options(context):
     """Clients the user may create content for; ``fixed`` is the current client when it is clear.
 
-    The current client is the one the board is filtered to (``new_content_client``; "" means all
-    clients, so the window asks), elsewhere the workspace of the page.
+    The current client is the one the page shows. A page that shows a client other than the workspace
+    of its address (the board's filter, the New content page) passes it as ``new_content_client``
+    ("" = no single client, so the window asks); elsewhere it is the workspace of the page.
     """
     request = context.get("request")
     user = getattr(request, "user", None)
