@@ -297,7 +297,8 @@ services:
       jrc-ff-api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000' + process.env.NEXT_PUBLIC_BASE_PATH + '/login').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      # V JRC login vrací 307 do BB; dostupnost FF webu nezávisí na cíli přesměrování.
+      test: ["CMD", "timeout", "15s", "node", "--max-old-space-size=2048", "-e", "fetch('http://127.0.0.1:3000' + process.env.NEXT_PUBLIC_BASE_PATH + '/login', {redirect:'manual'}).then(r=>{if(!r.ok && r.status!==307)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 5s
       timeout: 20s
       retries: 30
