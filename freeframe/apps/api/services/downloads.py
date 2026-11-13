@@ -233,8 +233,9 @@ def download_filename(asset: Asset, media_file: MediaFile, choice: DownloadChoic
 def managed_video_download(asset: Asset, media_file: MediaFile) -> tuple[DownloadChoice, Optional[str]]:
     """JR Content: the uploaded bytes, with an explicit fallback for old data.
 
-    The route already checked asset and version access. This does not grant
-    access to another asset or change who can download a version.
+    Only the internal JR Content service routes call this after checking asset
+    and version access. Brightbean checks the person's download policy before
+    calling them; managed member APIs never hand out download URLs.
     Only a missing object triggers fallback; storage failures must remain errors.
     """
     choices = download_choices(asset.asset_type, media_file, allow_original=True)

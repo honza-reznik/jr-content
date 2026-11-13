@@ -1,5 +1,10 @@
 # Úpravy JR Content
 
+## 2026-11-14 — P2-B18
+
+- Stažení verze i finálního videa po kontrole oprávnění streamuje přes servisní účet FreeFrame. Každý nový požadavek včetně rozsahu bajtů znovu prochází pravidlem JRC; prohlížeč nedostává obecný odkaz na originál. Chybějící originál má dál vysvětlené potvrzení MP4, které vede zpět na stejný autorizovaný endpoint.
+- Kapacita se počítá skutečnému uživateli společně s přehráváním. Přenos musí dosahovat průměru alespoň 64 KiB/s v každém samostatném 300s okně; 30s limit nečinnosti zůstává. Přenos 4 GiB při této rychlosti trvá přibližně 18,2 hodiny a smí pokračovat.
+
 ## 2026-11-13 — P2-B03
 
 - Starý editor (`composer.views.compose`, adresy `compose/` a `compose/<id>/`) se už nezobrazuje: po vlastních kontrolách

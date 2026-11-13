@@ -51,7 +51,10 @@ def test_each_object_checks_membership_on_every_request(client, live_project, st
     ctx.db.flush()
     url = "/files/" + key
     response = client.get(url, headers=ctx.headers)
-    assert response.status_code == 200
+    assert response.status_code == (403 if kind in ("raw", "download", "processed") else 200)
+    if kind in ("raw", "download", "processed"):
+        storage[0].get_object.assert_not_called()
+        return
     assert response.content == b"0123456789"
     assert response.headers["cache-control"] == "private, no-store"
     assert client.get(url).status_code in (401, 403)
@@ -81,6 +84,8 @@ def test_client_cannot_read_internal_attachment(client, live_project, storage, p
 
 
 def test_range_and_download_filename(client, live_project, storage):
+    live_project.user.jrc_managed = False
+    live_project.db.flush()
     response = client.get("/files/" + live_project.media.s3_key_raw,
                           params={"filename": "Ella-final.mp4"}, headers=dict(live_project.headers, Range="bytes=2-5"))
     assert response.status_code == 206
@@ -205,6 +210,8 @@ def test_issued_file_url_rechecks_share_and_membership(client, live_project, sto
 
 
 def test_head_releases_storage_and_capacity(client, live_project, storage):
+    live_project.user.jrc_managed = False
+    live_project.db.flush()
     response = client.head("/files/" + live_project.media.s3_key_raw, headers=live_project.headers)
     assert response.status_code == 200 and response.content == b""
     assert response.headers["content-length"] == "10"
@@ -289,8 +296,8 @@ def test_context_cannot_change_key_operation_or_user(client, live_project, stora
     ctx.db.flush()
     headers = {"Authorization": "Bearer " + create_access_token(str(other.id), token_version=1)}
     assert client.get(url, headers=headers).status_code == 404
-    # Ordinary member rights remain independent of the share context.
-    assert client.get("/files/" + ctx.media.s3_key_raw, headers=headers).status_code == 200
+    # A managed member cannot strip the share context to reach raw bytes.
+    assert client.get("/files/" + ctx.media.s3_key_raw, headers=headers).status_code == 403
 
 
 @pytest.mark.parametrize("failure,expected", [("expired", 404), ("unavailable", 503)])
@@ -334,6 +341,8 @@ def test_long_attachment_name_comes_from_database(client, live_project, storage,
 
 @pytest.mark.parametrize("value", ["bytes=0-1,4-5", "bytes=", "other", "bytes=-"])
 def test_invalid_range_never_opens_storage(client, live_project, storage, value):
+    live_project.user.jrc_managed = False
+    live_project.db.flush()
     response = client.get("/files/" + live_project.media.s3_key_raw,
                           headers=dict(live_project.headers, Range=value))
     assert response.status_code == 416

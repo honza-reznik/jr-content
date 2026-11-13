@@ -275,7 +275,13 @@ class _HlsStreamResponse(StreamingResponse):
         with anyio.fail_after(idle):
             await send({"type": "http.response.start", "status": self.status_code, "headers": self.raw_headers})
         pieces = self.body_iterator.__aiter__()
+        window_started, delivered = monotonic(), 0
         while True:
+            elapsed = monotonic() - window_started
+            if elapsed >= settings.file_stream_rate_window_seconds:
+                if delivered < elapsed * settings.file_stream_min_bytes_per_second:
+                    raise TimeoutError("File transfer too slow")
+                window_started, delivered = monotonic(), 0
             started = monotonic()
             with anyio.fail_after(idle):
                 try:
@@ -287,6 +293,7 @@ class _HlsStreamResponse(StreamingResponse):
                 if monotonic() - started > idle:
                     raise TimeoutError("File transfer stalled")
                 await send({"type": "http.response.body", "body": chunk, "more_body": True})
+            delivered += len(chunk)
             if renew is not None:
                 renew()
         with anyio.fail_after(idle):

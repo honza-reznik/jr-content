@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..database import get_db
 from ..middleware.auth import get_current_user
-from ..models.asset import Asset, AssetVersion, MediaFile, ProcessingStatus
+from ..models.asset import Asset, AssetType, AssetVersion, MediaFile, ProcessingStatus
 from ..models.branding import ProjectBranding
 from ..models.comment import Comment, CommentAttachment
 from ..models.instance_branding import InstanceBranding
@@ -36,7 +36,7 @@ def _member(db, project_id, user):
         raise HTTPException(404, "File not found")
 
 
-def authorize_file(db, user, key):
+def authorize_file(db, user, key, *, share_context=False):
     """Resolve an exact stored key, never a directory grant. Unknown uploads deny."""
     attachment = db.query(CommentAttachment).filter(CommentAttachment.s3_key == key).first()
     if attachment:
@@ -62,6 +62,11 @@ def authorize_file(db, user, key):
     if row:
         media, asset = row
         _member(db, asset.project_id, user)
+        # Exact keys are otherwise another way around /assets/.../stream.
+        # Playback uses HLS; thumbnails remain available to managed accounts.
+        if (not share_context and user.jrc_managed is True and asset.asset_type == AssetType.video
+                and key in (media.s3_key_raw, media.s3_key_processed, media.s3_key_download)):
+            raise HTTPException(403, "Download videos through JR Content")
         return asset, media, None, media.version_id
 
     project = db.query(Project).filter(Project.poster_s3_key == key, Project.deleted_at.is_(None)).first()
@@ -142,10 +147,15 @@ def file_bytes(
     # Old optional-share addresses cannot fall back to ordinary member access.
     if share:
         raise HTTPException(404, "Reopen the share link")
-    asset, media, attachment_name, version_id = authorize_file(db, user, key)
+    asset, media, attachment_name, version_id = authorize_file(db, user, key, share_context=binding is not None)
     if binding:
         authorize_share_file(db, user, binding, asset, version_id)
-    release = hls_limits.acquire(f"user:{user.id}")
+    return stream_file(key, request, attachment_name or filename, f"user:{user.id}")
+
+
+def stream_file(key, request, filename, identity):
+    """Internal byte transport; its caller must authorize the exact object first."""
+    release = hls_limits.acquire(identity)
     try:
         s3 = _stream_s3_client()
         params = {"Bucket": settings.s3_bucket, "Key": key}
@@ -159,7 +169,7 @@ def file_bytes(
         headers = dict(HEADERS, **{"Content-Length": str(obj["ContentLength"])})
         if obj.get("ContentRange"):
             headers["Content-Range"] = obj["ContentRange"]
-        name = attachment_name or filename
+        name = filename
         if name:
             headers["Content-Disposition"] = build_content_disposition(name)
         status = 206 if obj.get("ContentRange") else 200

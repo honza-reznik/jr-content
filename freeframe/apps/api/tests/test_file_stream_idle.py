@@ -62,6 +62,8 @@ def _run(response, send, spec="2.4"):
 
 def test_transfer_longer_than_many_idle_limits_completes(client, live_project, monkeypatch):
     """The old gateway cut every transfer at a fixed total; now only a stall ends it."""
+    live_project.user.jrc_managed = False
+    live_project.db.flush()
     data = os.urandom(6 * 1024 * 1024)
     s3 = Mock()
     s3.get_object.side_effect = lambda **params: {"Body": SlowBody(data, 0.01), "ContentLength": len(data),
@@ -178,3 +180,50 @@ def test_renew_moves_a_live_lease_forward_and_never_recreates_an_expired_one(sha
     lease.renewed -= lease.ttl
     lease.renew()
     assert connection.zcard(key) == 0
+
+
+@pytest.mark.parametrize('seconds_per_piece,allowed', [(1, True), (2, False), (29, False)])
+def test_four_gibibytes_at_minimum_rate_or_below(monkeypatch, seconds_per_piece, allowed):
+    from apps.api.routers import hls_proxy
+    clock = [0.0]
+    monkeypatch.setattr(hls_proxy, 'monotonic', lambda: clock[0])
+    response, body = _response([], idle=30)
+    piece = b'x' * PIECE
+    async def pieces():
+        for _ in range(4 * 1024**3 // PIECE):
+            yield piece
+    response.body_iterator = pieces()
+    received = [0]
+    async def send(message):
+        if message.get('body'):
+            received[0] += len(message['body'])
+            clock[0] += seconds_per_piece
+    if allowed:
+        _run(response, send)
+        assert received[0] == 4 * 1024**3
+        assert clock[0] > 18 * 3600
+    else:
+        with pytest.raises(CUT):
+            _run(response, send)
+        assert clock[0] <= settings.file_stream_rate_window_seconds + 29
+    body.close.assert_called()
+    response.release.assert_called()
+
+
+def test_an_early_burst_cannot_pay_for_later_slow_windows(monkeypatch):
+    from apps.api.routers import hls_proxy
+    clock = [0.0]
+    monkeypatch.setattr(hls_proxy, 'monotonic', lambda: clock[0])
+    response, body = _response([], idle=30)
+    async def pieces():
+        while True:
+            yield b'x' * PIECE
+    response.body_iterator = pieces()
+    async def send(message):
+        if message.get('body'):
+            clock[0] += 0.5 if clock[0] < 300 else 2
+    with pytest.raises(CUT):
+        _run(response, send)
+    assert clock[0] <= 602
+    body.close.assert_called()
+    response.release.assert_called()

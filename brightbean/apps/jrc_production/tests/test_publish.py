@@ -42,6 +42,18 @@ def approved_post(post):
     return variant
 
 
+@pytest.fixture(autouse=True)
+def download_transport(user):
+    from django.http import HttpResponse
+    from django.utils import timezone
+
+    from apps.jrc_video.models import VideoAccount
+
+    VideoAccount.objects.get_or_create(user=user, defaults={"ff_user_id": uuid.uuid4(), "synced_at": timezone.now()})
+    with patch("apps.jrc_storage.views.proxy_video_file", side_effect=lambda *a, **k: HttpResponse(b"video bytes")):
+        yield
+
+
 @pytest.mark.parametrize("role", ["owner", "client"])
 def test_published_video_keeps_final_version_and_download(client, workspace, user, post, role):
     import uuid
@@ -68,8 +80,8 @@ def test_published_video_keeps_final_version_and_download(client, workspace, use
         kwargs={"workspace_id": workspace.pk, "post_id": post.pk, "platform_post_id": variant.pk},
     )
     assert download.encode() in page.content
-    with patch("apps.jrc_video.uploads._call", return_value={"url": "http://testserver/files/video/raw/final.mp4"}):
-        assert client.get(download).status_code == 302
+    with patch("apps.jrc_video.client.FreeFrameClient.request", return_value={"filename": "final.mp4"}):
+        assert client.get(download).status_code == 200
 
 
 def test_publish_without_date_offers_local_form_and_confirmation(client, workspace, user, post):
@@ -200,7 +212,7 @@ def test_mark_published_requires_caption_and_final_video_when_video_exists(user,
     assert mark_published_manually(post, variant.pk, user)
 
 
-def test_final_download_is_scoped_and_redirects_only_to_session_gateway(client, workspace, user, post):
+def test_final_download_uses_service_transport_after_policy_check(client, workspace, user, post):
     variant = approved_post(post)
     video = VideoAsset.objects.create(platform_post=variant, ff_asset_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
     version = VideoVersion.objects.create(
@@ -216,21 +228,20 @@ def test_final_download_is_scoped_and_redirects_only_to_session_gateway(client, 
         "jrc_video:final_download",
         kwargs={"workspace_id": workspace.pk, "post_id": post.pk, "platform_post_id": variant.pk},
     )
-    signed = "http://testserver/files/video/raw/file.mp4?filename=final.mp4"
     with (
         override_settings(JRC_S3_PUBLIC_ORIGIN="http://127.0.0.1:14133"),
-        patch("apps.jrc_video.uploads._call", return_value={"url": signed}) as call,
+        patch("apps.jrc_video.client.FreeFrameClient.request", return_value={"filename": "original.MOV"}) as call,
     ):
         response = client.get(url)
-    assert response.status_code == 302
-    assert response["Location"] == signed
+    assert response.status_code == 200
+    assert response.content == b"video bytes"
     assert "no-store" in response["Cache-Control"]
-    assert "token=" not in response["Location"]
-    assert "signature" not in call.call_args.args[2]
-    query = parse_qs(urlsplit(call.call_args.args[2]).query)
+    assert "Location" not in response
+    assert "signature" not in call.call_args.args[1]
+    query = parse_qs(urlsplit(call.call_args.args[1]).query)
     assert "filename" not in query
     assert query["version_id"] == [str(version.ff_version_id)]
-    assert query["download"] == ["true"]
+    assert "/download-info?" in call.call_args.args[1]
 
 
 def test_final_download_preserves_service_filename(client, workspace, user, post):
@@ -253,14 +264,13 @@ def test_final_download_preserves_service_filename(client, workspace, user, post
         "jrc_video:final_download",
         kwargs={"workspace_id": workspace.pk, "post_id": post.pk, "platform_post_id": variant.pk},
     )
-    signed = "http://testserver/files/video/raw/file.mp4?filename=final.mp4"
     with (
         override_settings(JRC_S3_PUBLIC_ORIGIN="http://127.0.0.1:14133"),
-        patch("apps.jrc_video.uploads._call", return_value={"url": signed}) as call,
+        patch("apps.jrc_video.client.FreeFrameClient.request", return_value={"filename": "original.MOV"}) as call,
     ):
         response = client.get(url)
-    assert response.status_code == 302
-    query = parse_qs(urlsplit(call.call_args.args[2]).query)
+    assert response.status_code == 200
+    query = parse_qs(urlsplit(call.call_args.args[1]).query)
     assert "filename" not in query
 
 
@@ -290,7 +300,7 @@ def test_final_download_requires_publish_permission_and_hides_link(client, works
         "jrc_video:final_download",
         kwargs={"workspace_id": workspace.pk, "post_id": post.pk, "platform_post_id": variant.pk},
     )
-    with patch("apps.jrc_video.uploads._call") as call:
+    with patch("apps.jrc_video.client.FreeFrameClient.request") as call:
         assert client.get(url).status_code == 403
         call.assert_not_called()
 
@@ -327,12 +337,12 @@ def test_client_can_download_even_with_custom_role(client, workspace, user, post
     with (
         override_settings(JRC_S3_PUBLIC_ORIGIN="http://127.0.0.1:13453"),
         patch(
-            "apps.jrc_video.uploads._call",
-            return_value={"url": "http://testserver/files/video/raw/file.mp4?filename=final.mp4"},
+            "apps.jrc_video.client.FreeFrameClient.request",
+            return_value={"filename": "final.mp4"},
         ) as call,
     ):
         response = client.get(url)
-        assert response.status_code == 302
+        assert response.status_code == 200
         call.assert_called_once()
 
     detail = reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.pk, "post_id": post.pk})
@@ -375,7 +385,7 @@ def test_final_download_rejects_foreign_channel_and_freeframe_token_url(
         "jrc_video:final_download",
         kwargs={"workspace_id": workspace.pk, "post_id": post.pk, "platform_post_id": foreign_variant.pk},
     )
-    with patch("apps.jrc_video.uploads._call") as call:
+    with patch("apps.jrc_video.client.FreeFrameClient.request") as call:
         assert client.get(url).status_code == 404
         call.assert_not_called()
 
@@ -390,7 +400,7 @@ def test_final_download_rejects_foreign_channel_and_freeframe_token_url(
     video.save(update_fields=["final_version"])
     with (
         override_settings(JRC_S3_PUBLIC_ORIGIN="http://127.0.0.1:14133"),
-        patch("apps.jrc_video.uploads._call", return_value={"url": unsafe_url}),
+        patch("apps.jrc_video.client.FreeFrameClient.request", return_value={"url": unsafe_url}),
     ):
         response = client.get(
             reverse(
@@ -398,7 +408,7 @@ def test_final_download_rejects_foreign_channel_and_freeframe_token_url(
                 kwargs={"workspace_id": workspace.pk, "post_id": post.pk, "platform_post_id": own_variant.pk},
             )
         )
-    assert response.status_code == 502
+    assert response.status_code == 503
     assert b"secret" not in response.content
 
 
@@ -445,7 +455,7 @@ def test_final_download_requires_approved_caption_and_ready_final(client, worksp
         "jrc_video:final_download",
         kwargs={"workspace_id": workspace.pk, "post_id": post.pk, "platform_post_id": variant.pk},
     )
-    with patch("apps.jrc_video.uploads._call") as call:
+    with patch("apps.jrc_video.client.FreeFrameClient.request") as call:
         assert client.get(download).status_code == 404
         call.assert_not_called()
 
@@ -672,9 +682,9 @@ def test_final_download_missing_original_offers_explained_mp4_fallback(client, w
         },
     )
     with patch(
-        "apps.jrc_video.uploads._call",
+        "apps.jrc_video.client.FreeFrameClient.request",
         return_value={
-            "url": "http://testserver/files/video/processed/download.mp4?filename=clip.mp4",
+            "filename": "clip.mp4",
             "download_note": "Original unavailable",
         },
     ):
@@ -717,12 +727,11 @@ def test_team_with_download_right_gets_any_ready_version_and_its_link(client, wo
     client.force_login(user)
     url = _version_download_url(workspace, post, older)
     assert _card_links(user, post, workspace)[1] == url
-    signed = "http://testserver/files/video/raw/original.mov?filename=original.MOV"
-    with patch("apps.jrc_video.uploads._call", return_value={"url": signed}) as call:
+    with patch("apps.jrc_video.client.FreeFrameClient.request", return_value={"filename": "original.MOV"}) as call:
         response = client.get(url)
-    assert response.status_code == 302
-    assert response["Location"] == signed
-    query = parse_qs(urlsplit(call.call_args.args[2]).query)
+    assert response.status_code == 200
+    assert response.content == b"video bytes"
+    query = parse_qs(urlsplit(call.call_args.args[1]).query)
     assert query["version_id"] == [str(older.ff_version_id)]
     assert "filename" not in query
 
@@ -735,13 +744,13 @@ def test_without_download_right_no_working_version_link_or_download(client, work
     client.force_login(user)
     links = _card_links(user, post, workspace)
     assert links[1] == ""
-    with patch("apps.jrc_video.uploads._call") as call:
+    with patch("apps.jrc_video.client.FreeFrameClient.request") as call:
         assert client.get(_version_download_url(workspace, post, older)).status_code == 403
         call.assert_not_called()
     if role == "client":
         return  # the approved final, see the next test
     assert links[2] == ""
-    with patch("apps.jrc_video.uploads._call") as call:
+    with patch("apps.jrc_video.client.FreeFrameClient.request") as call:
         assert client.get(_version_download_url(workspace, post, final)).status_code == 403
         call.assert_not_called()
 
@@ -752,12 +761,12 @@ def test_client_gets_only_the_final_that_final_download_allows(client, workspace
     client.force_login(user)
     url = _version_download_url(workspace, post, final)
     assert _card_links(user, post, workspace)[2] == url
-    with patch("apps.jrc_video.uploads._call", return_value={"url": "http://testserver/files/video/raw/v2.mov"}):
-        assert client.get(url).status_code == 302
+    with patch("apps.jrc_video.client.FreeFrameClient.request", return_value={"filename": "v2.mov"}):
+        assert client.get(url).status_code == 200
     # Back to waiting for the client's decision: the same final is no longer downloadable anywhere.
     PlatformPost.objects.filter(pk=variant.pk).update(status=PlatformPost.Status.PENDING_CLIENT)
     assert _card_links(user, post, workspace)[2] == ""
-    with patch("apps.jrc_video.uploads._call") as call:
+    with patch("apps.jrc_video.client.FreeFrameClient.request") as call:
         assert client.get(url).status_code == 403
         call.assert_not_called()
 
@@ -766,7 +775,7 @@ def test_archived_workspace_offers_no_version_download(client, workspace, user, 
     _variant, older, _final = _versions_with_final(post)
     Workspace.objects.filter(pk=workspace.pk).update(is_archived=True)
     client.force_login(user)
-    with patch("apps.jrc_video.uploads._call") as call:
+    with patch("apps.jrc_video.client.FreeFrameClient.request") as call:
         assert client.get(_version_download_url(workspace, post, older)).status_code == 403
         call.assert_not_called()
 
@@ -777,7 +786,7 @@ def test_version_download_does_not_serve_another_post_or_an_unready_version(clie
     version = VideoVersion.objects.create(video=video, number=1, ff_version_id=uuid.uuid4(), status="processing")
     other = create_content(workspace, "Another content", user)
     client.force_login(user)
-    with patch("apps.jrc_video.uploads._call") as call:
+    with patch("apps.jrc_video.client.FreeFrameClient.request") as call:
         for content_id in [post.pk, other.pk]:
             response = client.get(
                 reverse(
