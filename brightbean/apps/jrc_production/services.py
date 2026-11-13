@@ -454,3 +454,31 @@ def mark_published_manually(post, platform_post_id, user, *, post_url=""):
             post=post, from_stage=previous, to_stage=current, user=user, **note_audience(post.workspace, user)
         )
     return publication
+
+
+@transaction.atomic
+def change_category(post, category_id, user):
+    from apps.composer.models import ContentCategory
+
+    from .models import ContentCategoryChange
+
+    locked = Post.objects.select_for_update(of=("self",)).select_related("workspace", "category").get(pk=post.pk)
+    membership = content_membership(locked.workspace, user)
+    if not can_rename_content(locked, membership):
+        raise PermissionDenied("You cannot edit this content.")
+    category = None
+    if category_id:
+        try:
+            category = ContentCategory.objects.get(pk=category_id, workspace=locked.workspace)
+        except (ContentCategory.DoesNotExist, ValidationError) as exc:
+            raise ValidationError("Choose a category from this workspace.") from exc
+    if locked.category_id != (category.pk if category else None):
+        ContentCategoryChange.objects.create(
+            post=locked,
+            old_name=locked.category.name if locked.category else "",
+            new_name=category.name if category else "",
+            user=user,
+        )
+        locked.category = category
+        locked.save(update_fields=["category", "updated_at"])
+    return category

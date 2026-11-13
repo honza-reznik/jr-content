@@ -548,24 +548,18 @@ def test_composer_preview_without_saved_version_keeps_posted_text(client, user, 
     assert "Shared caption typed in the composer" in response.content.decode()
 
 
-def test_detail_instagram_preview_matches_latest_version(client, user, content):
+def test_detail_caption_keeps_full_text_and_counter_without_instagram_preview(client, user, content):
     post, variant, instagram = content
     client.force_login(user)
     _save_caption(client, variant, "Old text")
     _save_caption(client, variant, LONG_CAPTION, base_version=_latest(variant).pk)
 
     response = client.get(_detail(post))
-
     html = response.content.decode()
-    assert "data-caption-preview" in html
-    section = html.split("data-caption-preview", 1)[1]
-    assert (
-        "Hi \U0001f331 garden!\n\nSecond line with a dash – and quotes &quot;&lt;b&gt;&quot; &amp; more.\n" in section
-    )
-    assert "word " * 60 + "END" in section
-    assert "Old text" not in section
-    preview = response.context["caption_channels"][0]["previews"][0]
-    assert preview["caption"] == LONG_CAPTION == _latest(variant).text
+    assert "data-caption-preview" not in html
+    assert "data-caption-counter" in html
+    assert "word " * 60 + "END" in html
+    assert response.context["caption_channels"][0]["text"] == LONG_CAPTION == _latest(variant).text
 
 
 def test_caption_card_shows_only_explicitly_attached_enabled_channels(client, workspace, user, content):

@@ -14,7 +14,7 @@ EXTERNAL_ROLES = (
     WorkspaceMembership.WorkspaceRole.VIEWER,
 )
 
-CONTENT_TABS = ("concept", "script", "video", "caption", "approval", "comments", "history")
+CONTENT_TABS = ("concept", "script", "video", "caption", "approval", "comments", "discussion", "history")
 
 
 def is_external(membership):
@@ -52,6 +52,8 @@ def content_path(post, tab="approval"):
     """Relative address of the content detail on the given tab (shown only to people who may open it)."""
     if tab not in CONTENT_TABS:
         raise ValueError(f"Unknown content tab: {tab}")
+    if tab == "comments":
+        tab = "discussion"
     path = reverse("jrc_production:content_detail", kwargs={"workspace_id": post.workspace_id, "post_id": post.id})
     return f"{path}?tab={tab}"
 

@@ -146,3 +146,11 @@ class ContentRename(models.Model):
     class Meta:
         ordering = ["created_at", "id"]
         indexes = [models.Index(fields=["post", "created_at"], name="jrc_rename_post_idx")]
+
+
+class ContentCategoryChange(models.Model):
+    post = models.ForeignKey("composer.Post", on_delete=models.CASCADE, related_name="jrc_category_changes")
+    old_name = models.CharField(max_length=100, blank=True)
+    new_name = models.CharField(max_length=100, blank=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
