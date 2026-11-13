@@ -467,3 +467,93 @@ def test_viewer_sees_no_new_menu_or_window(client, workspace):
     assert (
         'class="sidebar-new-wrap' not in html and 'id="jrc-new-idea"' not in html and "data-open-new-idea" not in html
     )
+
+
+# --- review P2-B03: window client on New content, slot times, no detour through the composer --------------
+
+
+def test_window_on_the_new_content_page_creates_for_the_client_the_page_shows(http, workspace, organization, user):
+    other = Workspace.objects.create(organization=organization, name="Other client")
+    WorkspaceMembership.objects.create(workspace=other, user=user, workspace_role="owner")
+    # The last workspace the user opened is ``workspace``; the page shows ``other``.
+    http.get(detail(create_content(workspace, "Opened last", user)))
+    html = http.get(reverse(NEW), {"client": other.pk}).content.decode()
+    window = html[html.index('id="jrc-new-idea"') :]
+    assert f'name="workspace" value="{other.pk}"' in window
+    assert f'name="workspace" value="{workspace.pk}"' not in window
+    assert f'href="{reverse(NEW)}?client={other.pk}" data-new-content-link' in html
+    # Without a clear client on the page the window asks too.
+    html = http.get(reverse(NEW)).content.decode()
+    assert 'id="new-idea-client"' in html[html.index('id="jrc-new-idea"') :]
+
+
+@pytest.mark.parametrize(
+    ("time", "expected"),
+    [
+        ("8:00", "2030-01-02T08:00"),
+        ("08:00", "2030-01-02T08:00"),
+        ("23:30", "2030-01-02T23:30"),
+        ("", "2030-01-02T09:00"),
+    ],
+)
+def test_new_content_accepts_the_slot_hour_with_or_without_a_leading_zero(http, workspace, time, expected):
+    html = http.get(reverse(NEW), {"client": workspace.pk, "date": "2030-01-02", "time": time}).content.decode()
+    assert f'value="{expected}"' in html
+
+
+@pytest.mark.parametrize(("date", "time"), [("2030-13-02", "08:00"), ("2030-01-02", "25:00"), ("x", "8:00")])
+def test_new_content_ignores_an_invalid_slot(http, workspace, date, time):
+    response = http.get(reverse(NEW), {"client": workspace.pk, "date": date, "time": time})
+    assert response.status_code == 200 and response.context["values"]["publish_at"] == ""
+
+
+@pytest.mark.parametrize("view", ["day", "week"])
+def test_organization_calendar_slots_send_a_two_digit_hour(http, workspace, organization, user, view):
+    from apps.members.models import OrgMembership
+
+    OrgMembership.objects.get_or_create(organization=organization, user=user, defaults={"org_role": "owner"})
+    html = http.get(
+        reverse("organizations:cross_workspace_calendar"), {"view": view, "date": "2030-01-02"}
+    ).content.decode()
+    times = re.findall(r"new/\?client=[^\"]*?&(?:amp;)?time=([0-9:]+)\"", html)
+    assert times and all(re.fullmatch(r"\d{2}:\d{2}", value) for value in times), times[:5]
+    assert "08:00" in times
+
+
+def test_composer_views_never_send_to_the_old_editor(http, workspace, user, channel):
+    """Save, clone, template and idea redirects name the detail / New content directly (no detour)."""
+    from apps.composer.models import PostTemplate
+    from apps.composer.views import content_page_url
+
+    post = create_content(workspace, "Saved", user, social_account_ids=[channel.pk])
+    old_editor = re.compile(r"/compose/(?:[0-9a-f-]{36}/)?(?:\?|$)")
+    save = http.post(
+        reverse("composer:save_post_edit", kwargs={"workspace_id": workspace.pk, "post_id": post.pk}),
+        {"action": "save_draft", "title": "Saved", "caption": "", "selected_accounts": str(channel.pk)},
+    )
+    assert save.status_code == 302 and save.url == detail(post)
+    clone = http.post(reverse("composer:clone_post", kwargs={"workspace_id": workspace.pk, "post_id": post.pk}))
+    assert clone.status_code == 302 and "/content/" in clone.url and not old_editor.search(clone.url)
+    template = PostTemplate.objects.create(workspace=workspace, name="T", template_data={"caption": "x"})
+    use = http.get(reverse("composer:use_template", kwargs={"workspace_id": workspace.pk, "template_id": template.pk}))
+    assert use.status_code == 302 and use.url == reverse(NEW) + f"?client={workspace.pk}"
+    saved_as = http.post(
+        reverse("composer:save_as_template", kwargs={"workspace_id": workspace.pk, "post_id": post.pk}),
+        {"name": "From post"},
+    )
+    assert saved_as.status_code in (302, 204) and not old_editor.search(saved_as.get("Location", ""))
+    assert content_page_url(workspace.pk, post.pk, {"account": str(channel.pk)}) == detail(post, "publish")
+
+
+def test_no_composer_view_names_the_old_editor_as_target():
+    """Every composer redirect goes through ``content_page_url``; only it names the editor's pages."""
+    from inspect import getsource
+
+    import apps.composer.views as views
+    import apps.onboarding.checklist as checklist
+
+    source = getsource(views)
+    helper = getsource(views.content_page_url)
+    assert source.count('"composer:compose_edit"') == helper.count('"composer:compose_edit"') == 1
+    assert source.count('"composer:compose"') == helper.count('"composer:compose"') == 1
+    assert "composer:compose" not in getsource(checklist)

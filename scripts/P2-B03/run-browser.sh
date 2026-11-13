@@ -9,4 +9,4 @@ timeout --signal=TERM --kill-after=10s 600s docker run --rm --name jrc-p2b03-bro
   --network host --memory=3g --memory-swap=3g --cpus=2 --pids-limit=256 --shm-size=256m \
   --user "$(id -u):$(id -g)" --env JRC_PROJECT=jrc-p2b03 \
   --volume "$PWD:/workspace" --workdir /workspace jrc-dev:jrc-p2b03 \
-  timeout --signal=TERM --kill-after=5s 580s node --max-old-space-size=2048 scripts/P2-B03/browser.cjs "$@"
+  timeout --signal=TERM --kill-after=5s 580s node --max-old-space-size=2048 scripts/P2-B03/${JRC_BROWSER_SCRIPT:-browser.cjs} "$@"

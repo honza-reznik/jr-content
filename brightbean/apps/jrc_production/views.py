@@ -252,8 +252,18 @@ def creation_options(user, *, client=""):
     return {"clients": clients, "fixed": fixed}
 
 
-_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-_TIME_RE = re.compile(r"^\d{2}:\d{2}$")
+def _slot_publish_at(date, time):
+    """``datetime-local`` value for a calendar slot's date and time, or "" when either is not valid.
+
+    Calendars send ``YYYY-MM-DD`` and a 24-hour time; the hour may come with or without a leading
+    zero (``8:00`` or ``08:00``, as the composer accepted). The value is always normalized.
+    """
+    try:
+        day = datetime.strptime(date, "%Y-%m-%d").date()
+        moment = datetime.strptime(time, "%H:%M").time()
+    except ValueError:
+        return ""
+    return f"{day:%Y-%m-%d}T{moment:%H:%M}"
 
 
 def _publish_at(workspace, value):
@@ -305,6 +315,8 @@ def _new_content_page(request, *, client="", values=None, error="", status=200):
             "chosen_channels": [str(value) for value in chosen],
             "error": error,
             "board_url": _board_url(request),
+            # The New idea window and + New create for the client this page shows ("" = the page asks).
+            "new_content_client": str(options["fixed"]["workspace"].id) if options["fixed"] else "",
         },
         status=status,
     )
@@ -314,10 +326,8 @@ def _new_content_page(request, *, client="", values=None, error="", status=200):
 @require_GET
 def new_content(request):
     """An empty content detail to fill in (P2-B03, point 1b); the old composer's "new post" lands here."""
-    publish_at = ""
     date, time = request.GET.get("date", ""), request.GET.get("time", "") or "09:00"
-    if _DATE_RE.match(date) and _TIME_RE.match(time):
-        publish_at = f"{date}T{time}"
+    publish_at = _slot_publish_at(date, time) if date else ""
     stage = request.GET.get("stage", "")
     account = request.GET.get("account", "")
     values = {
