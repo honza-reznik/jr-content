@@ -10,6 +10,9 @@ INSTALLED_APPS = [*INSTALLED_APPS, *JRC_APPS]  # noqa: F405
 JRC_SOCIAL_PROVIDERS_ENABLED = False
 # Testy nepřebírají invite režim z prostředí běžící aplikace.
 SIGNUP_MODE = "open"
+# Existing budget tests cover production behavior; test-copy tests override this explicitly.
+JRC_PROJECT = "jrc"
+JRC_TEST_EMAIL_ALLOW = ()
 
 # JR Content: upraveno 2026-10-23 (blok F2-B10), AGPL-3.0.
 from apps.jrc_ui.features import configure_ui  # noqa: E402

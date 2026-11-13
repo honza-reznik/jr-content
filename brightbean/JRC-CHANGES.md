@@ -15,6 +15,13 @@
 - + New v menu: Idea (okno New idea) a Content (prázdný detail). Hláška po vytvoření obsahu má odkaz na nový obsah.
 - Nástěnka: datované karty podle data (nejbližší nahoře), pod nimi nedatované v pořadí vytvoření (nejnovější dole);
   Published beze změny. Detail má odkaz „Content board“ zpět na nástěnku s naposledy použitým filtrem.
+## 2026-11-13 — P2-B01
+
+- Testovací kopie mají v `BudgetedEmailBackend` kontrolu všech příjemců (To/Cc/Bcc) před rozpočty a SMTP.
+  Povoleny jsou domény `.invalid` a přesné adresy z `JRC_TEST_EMAIL_ALLOW`; jiná adresa zastaví celou zprávu,
+  logují se jen počty. Pouze projekt `jrc` zachovává původní chování.
+- Obnova mimo `jrc` před spuštěním aplikací anonymizuje adresy BB i FF, odstraní uloženou poštu a čekající
+  e-mailová doručení. `make sanitize-test` provede stejný krok nad existující kopií; ID a hesla zachovává.
 
 ## 2026-11-07 — P1-B34
 

@@ -1,4 +1,7 @@
-from pydantic import AfterValidator, BaseModel, EmailStr, model_validator, Field
+import os
+import re
+
+from pydantic import AfterValidator, BaseModel, EmailStr, WrapValidator, model_validator, Field
 from typing import Annotated, Literal
 import uuid
 from ..models.user import UserStatus
@@ -52,8 +55,29 @@ DisplayName = Annotated[str, Field(min_length=1, max_length=255), AfterValidator
 # colour input emits nothing else.
 HexColor = Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$"), AfterValidator(str.lower)]
 
+def _test_login_email(value, handler):
+    """Allow reserved .invalid mailboxes only in explicit JR Content test copies.
+
+    EmailStr rejects this reserved domain before a sanitized service account
+    can authenticate. Validate its syntax using an ordinary TLD, then restore
+    the reserved TLD; every other login keeps the original EmailStr validation.
+    """
+    if not isinstance(value, str) or not re.fullmatch(r"jrc-[a-z0-9-]+", os.environ.get("JRC_PROJECT", "")):
+        return handler(value)
+    local, separator, domain = value.strip().rpartition("@")
+    if not separator or not domain.lower().endswith(".invalid"):
+        return handler(value)
+    if len(value.strip()) > 254 or len(local.encode("utf-8")) > 64:
+        raise ValueError("Email address is too long")
+    normalized = handler(local + "@" + domain[:-8] + ".com")
+    return normalized[:-4] + ".invalid"
+
+
+LoginEmail = Annotated[EmailStr, WrapValidator(_test_login_email)]
+
+
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: LoginEmail
     # No length bounds on login. A creation-side floor prevents new weak
     # passwords, but enforcing bounds here would lock out existing accounts
     # (422 instead of 401) — both ones set before the floor existed and ones

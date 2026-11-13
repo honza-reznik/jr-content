@@ -5,6 +5,9 @@ const fs = require('node:fs');
 const { chromium } = require('/opt/jrc-tools/node_modules/playwright');
 
 const seed = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+if (!seed.email.split('@').at(-1).toLowerCase().endsWith('.invalid')) {
+  seed.email = crypto.createHash('sha256').update(seed.email.trim().toLowerCase()).digest('hex') + '@example.invalid';
+}
 const origin = process.env.JRC_PUBLIC_ORIGIN;
 const basePath = process.env.JRC_BASE_PATH ?? "/jrc";
 const app = origin + basePath;
