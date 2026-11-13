@@ -17,7 +17,8 @@ class Command(BaseCommand):
             try:
                 with thumbnail.image.open("rb") as original:
                     preview = generate_small_image(original)
-                thumbnail.small_image.save(f"{thumbnail.id}-small.jpg", preview, save=True)
+                thumbnail.small_image.save(f"{thumbnail.id}-small.jpg", preview, save=False)
+                thumbnail.save(update_fields=["small_image"])
             except Exception as exc:  # Keep processing other versions; report corrupt or missing source files.
                 failed += 1
                 self.stderr.write(f"Could not create preview for {thumbnail.pk}: {exc}")

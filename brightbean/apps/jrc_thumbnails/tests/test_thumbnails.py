@@ -575,3 +575,37 @@ def test_invalid_image_error_is_by_the_field_and_keeps_previous_version(client, 
     assert "data-thumbnail-status>Upload a JPG, PNG or WebP image." in page
     assert "up to 20 MB" in page
     assert list(ChannelThumbnail.objects.values_list("pk", flat=True)) == [first.pk]
+
+
+def test_small_preview_follows_exif_orientation_and_flattens_transparency(post, variant, user):
+    from io import BytesIO
+
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    exif = Image.Exif()
+    exif[0x0112] = 6  # stored landscape, shown rotated 90° (typical phone photo)
+    data = BytesIO()
+    Image.new("RGB", (40, 20), "red").save(data, format="JPEG", exif=exif)
+    rotated = upload(post, variant, user, SimpleUploadedFile("phone.jpg", data.getvalue(), content_type="image/jpeg"))
+    with rotated.small_image.open("rb") as stored, Image.open(stored) as preview:
+        assert preview.size == (20, 40)
+
+    data = BytesIO()
+    Image.new("RGBA", (10, 10), (0, 0, 0, 0)).save(data, format="PNG")
+    clear = upload(post, variant, user, SimpleUploadedFile("clear.png", data.getvalue(), content_type="image/png"))
+    with clear.small_image.open("rb") as stored, Image.open(stored) as preview:
+        assert preview.mode == "RGB"
+        assert preview.getpixel((5, 5)) == (255, 255, 255)
+
+
+def test_failed_preview_keeps_upload_and_falls_back_to_original(client, post, variant, user, monkeypatch):
+    def broken(_file):
+        raise OSError("cannot decode")
+
+    monkeypatch.setattr(services, "generate_small_image", broken)
+    thumbnail = upload(post, variant, user)
+    assert thumbnail.image
+    assert not thumbnail.small_image
+    client.force_login(user)
+    content = client.get(detail(post), {"tab": "publish"}).content
+    assert f'src="{thumbnail.image.url}"'.encode() in content
