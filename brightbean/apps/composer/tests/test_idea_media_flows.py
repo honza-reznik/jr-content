@@ -6,6 +6,7 @@ from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.composer.models import Idea, IdeaGroup, Post
+from apps.composer.views import content_page_url
 from apps.media_library.models import MediaAsset
 from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.organizations.models import Organization
@@ -371,10 +372,8 @@ class IdeaMediaFlowsTests(TestCase):
         platform_ids = set(post.platform_posts.values_list("social_account_id", flat=True))
         self.assertEqual(platform_ids, {connected_a.id, connected_b.id})
 
-        expected_compose_url = reverse(
-            "composer:compose_edit",
-            kwargs={"workspace_id": self.workspace.id, "post_id": post.id},
-        )
+        # JR Content (P2-B03): the page of the new post is the content detail in the JR UI.
+        expected_compose_url = content_page_url(self.workspace.id, post.id)
         self.assertEqual(payload["compose_url"], expected_compose_url)
 
     def test_idea_create_post_repeated_calls_create_new_posts_and_relink_idea(self):
@@ -447,8 +446,6 @@ class IdeaMediaFlowsTests(TestCase):
         self.assertIn("compose_url", payload)
 
         post = Post.objects.get(id=payload["post_id"])
-        expected_compose_url = reverse(
-            "composer:compose_edit",
-            kwargs={"workspace_id": self.workspace.id, "post_id": post.id},
-        )
+        # JR Content (P2-B03): the page of the new post is the content detail in the JR UI.
+        expected_compose_url = content_page_url(self.workspace.id, post.id)
         self.assertEqual(payload["compose_url"], expected_compose_url)

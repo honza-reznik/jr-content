@@ -8,6 +8,7 @@ from queue import Queue
 from socket import getaddrinfo as resolve_database
 from threading import Event
 from time import monotonic
+from unittest.mock import patch
 
 import pytest
 from django.db import connection, connections, transaction
@@ -433,7 +434,11 @@ def test_stale_composer_waits_for_new_caption_channel_then_rejects_it(
 
 
 def _compose_page(client, post):
-    return client.get(reverse("composer:compose_edit", kwargs={"workspace_id": post.workspace_id, "post_id": post.id}))
+    # P2-B03: the JR UI sends the composer page to the detail; render the page itself here.
+    with patch("apps.composer.views._jrc_detail_redirect", new=lambda *args: None):
+        return client.get(
+            reverse("composer:compose_edit", kwargs={"workspace_id": post.workspace_id, "post_id": post.id})
+        )
 
 
 def _preview(client, post, accounts, **extra):

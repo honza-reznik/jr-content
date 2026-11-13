@@ -19,6 +19,7 @@ Expectations are written by hand, not derived from ``apps.approvals.edits`` or `
 import json
 from datetime import timedelta
 from io import BytesIO
+from unittest.mock import patch
 from urllib.parse import unquote
 from uuid import uuid4
 
@@ -248,7 +249,10 @@ def test_rest_patch_of_planned_content(make):
 def test_composer_scheduled_hint_where_edits_keep_the_plan(make):
     workspace, account, second, actor, client = make("optional")
     post, (copy,), when = _held(workspace, [account], actor, "scheduled")
-    page = client.get(f"/workspace/{workspace.pk}/compose/{post.pk}/").content.decode()
+    with patch(
+        "apps.composer.views._jrc_detail_redirect", new=lambda *args: None
+    ):  # P2-B03: render the old composer page itself
+        page = client.get(f"/workspace/{workspace.pk}/compose/{post.pk}/").content.decode()
     assert "Saving changes will affect the scheduled post." in page
     assert "takes it out of the plan" not in page
 
@@ -256,7 +260,10 @@ def test_composer_scheduled_hint_where_edits_keep_the_plan(make):
 def test_composer_save_of_planned_content_says_so(make):
     workspace, account, second, actor, client = make("required_internal")
     post, (copy,), when = _held(workspace, [account], actor, "scheduled")
-    page = client.get(f"/workspace/{workspace.pk}/compose/{post.pk}/").content.decode()
+    with patch(
+        "apps.composer.views._jrc_detail_redirect", new=lambda *args: None
+    ):  # P2-B03: render the old composer page itself
+        page = client.get(f"/workspace/{workspace.pk}/compose/{post.pk}/").content.decode()
     assert "Saving changes takes it out of the plan and sends it back for re-approval." in page
     response = _composer_save(client, workspace, post, [account], caption="Edited in the composer")
     assert response.status_code == 204

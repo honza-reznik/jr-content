@@ -12,6 +12,7 @@ partially-published post stays fully workable.
 """
 
 import re
+from unittest.mock import patch
 
 from django.test import TestCase
 from django.urls import reverse
@@ -88,6 +89,8 @@ class ReadonlyComposerTestsBase(TestCase):
         return reverse("composer:autosave_edit", kwargs={"workspace_id": self.ws.id, "post_id": post.id})
 
 
+# JR Content (P2-B03): the JR UI sends the composer page to the content detail; these tests render the page itself.
+@patch("apps.composer.views._jrc_detail_redirect", new=lambda *args: None)
 class ActionBarGatingTests(ReadonlyComposerTestsBase):
     """What the composer offers, per derived post status."""
 

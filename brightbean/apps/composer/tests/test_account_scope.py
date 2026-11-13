@@ -7,6 +7,7 @@ ones, cascading away their PublishLog history.
 """
 
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.test import TestCase
 from django.urls import reverse
@@ -109,6 +110,8 @@ class AccountScopeTestsBase(TestCase):
         return payload
 
 
+# JR Content (P2-B03): the JR UI sends the composer page to the content detail; these tests render the page itself.
+@patch("apps.composer.views._jrc_detail_redirect", new=lambda *args: None)
 class ScopedSaveTests(AccountScopeTestsBase):
     def test_scoped_save_keeps_published_sibling(self):
         response = self.client.post(self.save_url, data=self._payload())
@@ -723,6 +726,8 @@ class RequiredMediaTests(PinterestBoardSelectionTests):
         self.assertIn("scheduled to Pinterest, which needs an image or a video", response.content.decode())
 
 
+# JR Content (P2-B03): the JR UI sends the composer page to the content detail; these tests render the page itself.
+@patch("apps.composer.views._jrc_detail_redirect", new=lambda *args: None)
 class TikTokComposerDefaultsTests(AccountScopeTestsBase):
     """TikTok's audit requires the composer to ship NO default privacy level and
     NO pre-checked interaction toggles. The defaults live in the Alpine init in

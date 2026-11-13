@@ -1,5 +1,6 @@
-{% load static %}
+{% load static jrc_new_content %}
 {% comment %}JR Content: upraveno 2026-10-23 (blok F2-B10), AGPL-3.0.{% endcomment %}
+{% comment %}JR Content: upraveno 2026-11-13 (blok P2-B03), AGPL-3.0: + New vede na nový obsah a okno New idea.{% endcomment %}
 {% comment %}JR Content: upraveno 2026-10-23 (blok F2-B08), AGPL-3.0.{% endcomment %}
 <!DOCTYPE html>
 <html lang="en" style="{% block html_style %}{% endblock %}">
@@ -278,6 +279,7 @@
         });
     </script>
     {% if user.is_authenticated %}
+    {% new_content_options as new_ctx %}
     <div class="flex h-screen overflow-hidden"
          style="background: var(--surface-page);"
          x-data="{
@@ -397,7 +399,7 @@
             </div>
 
             <!-- + New CTA -->
-            {% if request.workspace %}
+            {% if request.workspace and new_ctx.clients %}
             <div class="sidebar-new-wrap px-3 pt-2 pb-1" :class="sidebarCollapsed && 'px-2'"
                  x-data="sidebarNewMenu()">
                 <div class="relative">
@@ -417,14 +419,24 @@
                          x-transition:leave-start="opacity-100 scale-100"
                          x-transition:leave-end="opacity-0 scale-95"
                          class="absolute left-0 right-0 top-full mt-2 bg-white rounded-xl shadow-lg ring-1 ring-stone-200 z-50 overflow-hidden py-1.5 px-1.5">
-                        <a href="{% url 'composer:compose' workspace_id=request.workspace.id %}"
+                        <button type="button" data-open-new-idea @click="newMenuOpen = false"
+                                class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-stone-50 transition-colors cursor-pointer">
+                            <div class="w-10 h-10 rounded-xl bg-green-50 flex items-center justify-center flex-shrink-0">
+                                <svg class="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                            </div>
+                            <div class="text-left">
+                                <div class="text-sm font-semibold text-stone-800">Idea</div>
+                                <div class="text-xs text-stone-500">Title, description and channels</div>
+                            </div>
+                        </button>
+                        <a href="{% url 'jrc_production:new_content' %}{% if new_ctx.fixed %}?client={{ new_ctx.fixed.workspace.id }}{% endif %}" data-new-content-link
                            class="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-stone-50 transition-colors">
                             <div class="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center flex-shrink-0">
                                 <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
                             </div>
                             <div>
-                                <div class="text-sm font-semibold text-stone-800">Post</div>
-                                <div class="text-xs text-stone-500">Publish content to a channel</div>
+                                <div class="text-sm font-semibold text-stone-800">Content</div>
+                                <div class="text-xs text-stone-500">Open an empty content to fill in</div>
                             </div>
                         </a>
                         {% if jrc_features.ideas %}<button type="button" @click="openCreateModal()"
@@ -972,6 +984,8 @@
             </main>
         </div>
     </div>
+
+    {% if new_ctx.clients %}{% include "jrc_production/_new_idea_dialog.html" %}{% endif %}
 
     <!-- Onboarding checklist popup (fixed bottom-right) -->
     {% if jrc_features.onboarding %}{% include "onboarding/partials/_checklist.html" %}{% endif %}

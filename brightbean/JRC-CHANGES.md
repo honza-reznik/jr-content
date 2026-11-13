@@ -1,5 +1,21 @@
 # Úpravy JR Content
 
+## 2026-11-13 — P2-B03
+
+- Starý editor (`composer.views.compose`, adresy `compose/` a `compose/<id>/`) se už nezobrazuje: po vlastních kontrolách
+  přístupu (stejné odmítnutí jako dřív) přesměruje existující obsah na detail JR (`?tab=publish`, když odkaz nesl kanál
+  nebo `publish_now`) a nový příspěvek na stránku New content (`jrc_production:new_content`) s datem a kanálem z kalendáře.
+  Všechny odkazy šablon (kalendář, fronta, koncepty, schvalování, kalendář organizace, + New v menu) vedou rovnou na
+  detail (z kalendáře a fronty na záložku Publish, ze schvalování na Approval) nebo na New content. Ostatní endpointy
+  composeru (uložení, mazání, klon, šablony) zůstávají; jejich přesměrování na editor skončí na detailu.
+- Delete obsahu se přesunul na detail JR (stejný endpoint `post_delete` a pravidlo `content_delete_blocker`).
+- Jediná cesta vytvoření obsahu `jrc_production.services.create_content`: popis = verze 1 Conceptu
+  (`jrc_texts.services.create_initial_concept`, prostý text bez Markdownu), volitelná výchozí fáze přesunem z Idea přes
+  `move_content` (nabídka `initial_stages`), datum = návrh, u Ready plánované datum.
+- + New v menu: Idea (okno New idea) a Content (prázdný detail). Hláška po vytvoření obsahu má odkaz na nový obsah.
+- Nástěnka: datované karty podle data (nejbližší nahoře), pod nimi nedatované v pořadí vytvoření (nejnovější dole);
+  Published beze změny. Detail má odkaz „Content board“ zpět na nástěnku s naposledy použitým filtrem.
+
 ## 2026-11-07 — P1-B34
 
 - CSV import (`composer.views`): náhled používal neexistující `SocialAccount.Platform` (upstream volby přesunul do

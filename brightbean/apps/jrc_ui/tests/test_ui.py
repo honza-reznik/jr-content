@@ -71,7 +71,8 @@ def test_hidden_urls_never_execute_views(client, path, method):
 def test_main_pages_keep_content_tools_without_hidden_navigation(client, user, workspace, view):
     client.force_login(user)
     with patch("httpx.get", side_effect=AssertionError("Unexpected network call")):
-        response = client.get(reverse(view, kwargs={"workspace_id": workspace.id}))
+        # P2-B03: the old composer opens the New content page instead; that page follows the same rules.
+        response = client.get(reverse(view, kwargs={"workspace_id": workspace.id}), follow=True)
     assert response.status_code == 200
     html = response.content.decode()
     for forbidden in (

@@ -16,22 +16,19 @@
   .board-secondary { background:white; border:1px solid #d6d3d1; }
   .board-reset { color:#57534e; text-decoration:underline; }
   /* Quick idea: one line, Enter saves, the field stays for the next idea. */
-  .quick-idea-toggle { display:none !important; margin-left:auto; }
+  .board-create { margin-left:auto; display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end; }
+  .board-create a { text-decoration:none; min-height:40px; display:inline-flex; align-items:center; justify-content:center; padding:8px 14px; border-radius:7px; font-weight:600; font-size:13px; }
+  .board-create a:focus-visible, .board-create button:focus-visible { outline:2px solid #30584b; outline-offset:2px; }
   .quick-idea { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:10px; background:#f3f7f5; border:1px solid #d5e3dd; border-radius:10px; margin-bottom:10px; }
   .quick-idea select { flex:0 1 200px; }
   .quick-idea input[name=title] { flex:1 1 260px; font-size:14px; }
   .quick-idea-status { flex-basis:100%; margin:0; font-size:12px; color:#30584b; }
   .quick-idea-status:empty { display:none; }
   .quick-idea-status[data-state="error"] { color:#991b1b; }
+  .quick-idea-status .quick-idea-open { font-weight:600; text-decoration:underline; color:#30584b; }
   .board-tools { display:flex; flex-wrap:wrap; align-items:flex-start; gap:10px; margin-bottom:10px; }
   .board-toolbar { display:flex; align-items:end; flex-wrap:wrap; gap:10px; padding:10px 12px; background:#fafaf9; border:1px solid #e7e5e4; border-radius:10px; }
-  .board-new { border:1px solid #e7e5e4; border-radius:10px; padding:10px 14px; flex:1 1 220px; }
-  .board-new summary { cursor:pointer; font-weight:600; color:#30584b; min-height:22px; }
-  .board-new form { display:flex; flex-wrap:wrap; gap:12px; align-items:end; padding-top:14px; }
-  .board-title-field { flex:1; min-width:200px; }
-  .board-title-field input { width:100%; }
   .board-help { color:#78716c; font-size:12px; margin:0 0 10px; line-height:1.5; }
-  .board-error { border:1px solid #fecaca; background:#fef2f2; color:#991b1b; padding:12px; border-radius:8px; margin-bottom:12px; }
   .board-waiting { border:1px solid #f0d9a8; background:#fffaf0; border-radius:10px; padding:12px 14px; margin-bottom:12px; }
   .board-waiting h2 { font-size:15px; font-weight:700; margin:0 0 8px; }
   .board-waiting ul { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:8px; }
@@ -77,12 +74,11 @@
   .mobile-stage { display:none; }
   @media(max-width:767px) {
     .board-heading h1 { font-size:21px; }
-    .quick-idea-toggle { display:inline-flex !important; }
-    .quick-idea { display:none; } .quick-idea.is-open { display:flex; }
-    .quick-idea select, .quick-idea input[name=title] { flex:1 1 100%; font-size:16px; }
-    .quick-idea button { flex:1 1 100%; }
+    /* P2-B03: on a phone the New idea window replaces the one-line field (title, description, channels). */
+    .board-heading { flex-wrap:wrap; }
+    .board-create { margin-left:0; flex:1 1 100%; } .board-create > * { flex:1 1 0; }
+    .quick-idea { display:none; }
     .board-toolbar { gap:8px; padding:10px; flex:1 1 100%; } .board-filter { flex:1; min-width:125px; } .board-filter select { width:100%; }
-    .board-new form > div { width:100%; } .board-new select { width:100%; }
     .board-grid { display:block; flex:none; min-height:0; overflow:visible; }
     .board-column { overflow:visible; max-width:none; margin-bottom:10px; padding:0 10px 8px; }
     .board-column.is-empty { padding-bottom:0; } .board-column.is-empty .board-empty { display:none; }
@@ -98,12 +94,14 @@
     .board-grid[data-mobile-stage="ready"] [data-stage="ready"], .board-grid[data-mobile-stage="published"] [data-stage="published"] { display:block; }
   }
 </style>
-<noscript><style>.quick-idea { display:flex !important; }</style></noscript>
 {% endblock %}
 {% block content %}
 <div class="content-board-page">
   <header class="board-heading"><h1>Content board</h1><span class="board-count" data-board-total="{{ total }}">{{ total }} item{{ total|pluralize }}</span>
-    {% if creatable_clients %}<button type="button" class="board-primary quick-idea-toggle" aria-expanded="false" aria-controls="quick-idea">+ Idea</button>{% endif %}
+    {% if creatable_clients %}<div class="board-create">
+      <button type="button" class="board-secondary" data-open-new-idea>+ New idea</button>
+      <a class="board-primary" href="{% url 'jrc_production:new_content' %}{% if selected_client in creatable_ids %}?client={{ selected_client }}{% endif %}" data-new-content-link>+ New content</a>
+    </div>{% endif %}
   </header>
   {% if creatable_clients %}
   <form id="quick-idea" class="quick-idea" method="post" action="{% url 'jrc_production:quick_idea' %}" aria-label="Quick idea">{% csrf_token %}
@@ -120,20 +118,7 @@
       <div class="board-filter"><label for="filter-channel">Channel</label><select id="filter-channel" name="channel"><option value="">All channels</option><option value="none" {% if selected_channel == "none" %}selected{% endif %}>No channel</option>{% for channel in channels %}<option value="{{ channel.id }}" {% if selected_channel == channel.id|stringformat:"s" %}selected{% endif %}>{{ channel.workspace.name }} · {{ channel.jrc_channel.display_name|default:channel.account_name }}</option>{% endfor %}</select></div>
       <button class="board-secondary" type="submit">Apply filters</button><a class="board-reset" href="{% url 'jrc_production:board' %}?client=">Clear</a>
     </form>
-    {% if creatable_clients %}
-    <details class="board-new" {% if error %}open{% endif %}><summary>+ New content</summary>
-      <form method="post" action="{% url 'jrc_production:create' %}">{% csrf_token %}
-        <div><label for="new-client">Client</label><select id="new-client" name="workspace" required>{% for client in creatable_clients %}<option value="{{ client.id }}" {% if selected_client == client.id|stringformat:"s" %}selected{% endif %}>{{ client.name }}</option>{% endfor %}</select></div>
-        <div class="board-title-field"><label for="new-title">Content title</label><input id="new-title" name="title" placeholder="e.g. A morning in Ella’s studio" value="{{ new_title }}" maxlength="255" required></div>
-        <fieldset style="width:100%"><legend>Channels <span class="board-muted">(optional; leave unchecked for an idea without a channel)</span></legend>
-          {% for channel in creation_channels %}<label data-channel-client="{{ channel.workspace_id }}" style="display:inline-flex;align-items:center;gap:6px;margin-right:16px"><input type="checkbox" name="channels" value="{{ channel.id }}" style="min-height:20px">{{ channel.workspace.name }} · {{ channel.jrc_channel.display_name|default:channel.account_name }}</label>{% endfor %}
-        </fieldset>
-        <button class="board-primary" type="submit">Add to Idea</button>
-      </form>
-    </details>
-    {% endif %}
   </div>
-  {% if error %}<div class="board-error" role="alert">{{ error }}</div>{% endif %}
   {% if waiting_for_you %}
   <section class="board-waiting" aria-label="Waiting for you" data-waiting-for-you>
     <h2>Waiting for you <span class="stage-count">({{ waiting_for_you|length }})</span></h2>
@@ -162,35 +147,20 @@
 {% block extra_js %}
 <script nonce="{{ request.csp_nonce }}">
 (() => {
-  const client = document.getElementById('new-client');
-  if (!client) return;
-  function updateChannels() {
-    document.querySelectorAll('[data-channel-client]').forEach(label => {
-      const enabled = label.dataset.channelClient === client.value;
-      label.style.display = enabled ? 'inline-flex' : 'none';
-      const checkbox = label.querySelector('input');
-      checkbox.disabled = !enabled;
-      if (!enabled) checkbox.checked = false;
-    });
-  }
-  client.addEventListener('change', updateChannels);
-  updateChannels();
-})();
-</script>
-<script nonce="{{ request.csp_nonce }}">
-(() => {
   const form = document.getElementById('quick-idea');
   if (!form) return;
   const input = document.getElementById('idea-title');
   const status = form.querySelector('.quick-idea-status');
-  const toggle = document.querySelector('.quick-idea-toggle');
-  toggle.addEventListener('click', () => {
-    const open = form.classList.toggle('is-open');
-    toggle.setAttribute('aria-expanded', String(open));
-    if (open) input.focus();
-  });
-  function report(message, isError) {
+  function report(message, isError, link) {
     status.textContent = message;
+    if (link) {
+      // P2-B03 (5a): every new content is announced with a link to it.
+      const open = document.createElement('a');
+      open.href = link;
+      open.textContent = 'Open it';
+      open.className = 'quick-idea-open';
+      status.append(' ', open);
+    }
     if (isError) status.dataset.state = 'error'; else delete status.dataset.state;
   }
   function increment(element) {
@@ -210,8 +180,8 @@
     const card = template.content.querySelector('.board-card');
     list.querySelector('.board-empty')?.remove();
     column.classList.remove('is-empty');
-    // Keep the board order: dated cards first, then the most recently changed.
-    list.insertBefore(card, list.querySelector('.board-card[data-dated="0"]'));
+    // Keep the board order (P2-B03): undated cards in creation order, so the new idea is the last one.
+    list.append(card);
     const grid = document.querySelector('.board-grid');
     const shown = new Set([...grid.querySelectorAll('.board-card')].map(c => c.dataset.client));
     grid.classList.toggle('show-clients', shown.size > 1);
@@ -241,12 +211,13 @@
         throw new Error(plain ? await response.text() : 'The idea was not saved. Reload the page and try again.');
       }
       const html = await response.text();
+      const link = response.headers.get('X-Content-Url');
       if (response.headers.get('X-Board-Match') === '1') {
         addCard(html);
-        report(`Saved to Idea: ${title}`, false);
+        report(`Saved to Idea: ${title}.`, false, link);
       } else {
         // Saved, but the active filters hide it (another client or a channel filter).
-        report(`Saved to ${clientName()} (hidden by the current filter): ${title}`, false);
+        report(`Saved to ${clientName()} (hidden by the current filter): ${title}.`, false, link);
       }
     } catch (error) {
       if (!input.value) input.value = title;

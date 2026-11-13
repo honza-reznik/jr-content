@@ -254,10 +254,12 @@ def test_calendar_bulk_delete_names_the_result(make):
     assert response.json()["message"] == "Channel removed."
 
 
-def test_compose_page_delete_button_uses_the_server_landing(make):
+def test_detail_delete_button_uses_the_server_landing(make):
+    # P2-B03: Delete moved from the old composer (which now redirects) to the content detail.
     workspace, post, _, _, client = make()
-    page = client.get(reverse("composer:compose_edit", args=[workspace.pk, post.pk])).content.decode()
-    assert "landing=board" in page
+    assert client.get(reverse("composer:compose_edit", args=[workspace.pk, post.pk])).status_code == 302
+    page = client.get(reverse("jrc_production:content_detail", args=[workspace.pk, post.pk])).content.decode()
+    assert 'name="landing" value="board"' in page
     assert "X-JRC-Redirect" in page
 
 

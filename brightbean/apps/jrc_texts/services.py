@@ -5,6 +5,8 @@ implicitly resumes a draft: mutation requires its UUID and revision. Administrat
 may discard an orphan, including when starting a new edit from a saved version.
 """
 
+import re
+
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.utils import timezone
@@ -131,6 +133,52 @@ def create_document(
     if kind in (TextDocument.Kind.SCRIPT, TextDocument.Kind.CONCEPT) and text.strip():
         notify_text_version(version, user)
     return document
+
+
+def plain_text_to_content(text):
+    """Editor content (Tiptap JSON) for plain text: a paragraph per block, a hard break per line.
+
+    Typed text is kept as written; nothing in it is read as Markdown.
+    """
+    paragraphs = []
+    for block in re.split(r"\n\s*\n", text.strip()):
+        nodes = []
+        for index, line in enumerate(block.split("\n")):
+            if index:
+                nodes.append({"type": "hardBreak"})
+            if line:
+                nodes.append({"type": "text", "text": line})
+        paragraphs.append({"type": "paragraph", "content": nodes} if nodes else {"type": "paragraph"})
+    return {"type": "doc", "content": paragraphs}
+
+
+@transaction.atomic
+def create_initial_concept(post, user, text):
+    """Version 1 of the Concept from the description typed while creating the content (P2-B03).
+
+    Part of creating the content, not an edit of it: ``create_content`` has already checked that
+    ``user`` may create content for this client (a client may, without the text-editing right) and
+    calls this for the content it has just made. Outside that moment it is refused.
+    """
+    if post.author_id != user.pk or TextDocument.objects.filter(post=post, kind=TextDocument.Kind.CONCEPT).exists():
+        raise PermissionDenied("Only the author starts the concept of new content.")
+    content, plain = normalize_content(content=plain_text_to_content(text))
+    document = TextDocument.objects.create(
+        post=post, workspace=post.workspace, kind=TextDocument.Kind.CONCEPT, format=TextDocument.Format.RICH
+    )
+    version = TextVersion.objects.create(
+        document=document,
+        number=1,
+        state=TextVersion.State.FINAL,
+        source=TextVersion.Source.EDITOR,
+        content=content,
+        text=plain,
+        created_by=user,
+        finalized_at=timezone.now(),
+    )
+    if plain.strip():
+        notify_text_version(version, user)
+    return version
 
 
 @transaction.atomic
