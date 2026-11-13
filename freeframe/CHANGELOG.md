@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - JR Content video downloads serve the original upload with its filename, with an explained MP4 fallback for missing originals. Review playback starts at up to 720p; higher resolutions require a manual selection. New CPU 720p conversions use a 1.5 Mbps video ceiling. Comment visibility uses “Team only” and “Team and client”.
+- JR Content: file downloads through the `/files` gateway have no total time limit. A transfer is cut only when one 64 KiB piece is not read from storage and taken by the client within `FILE_STREAM_IDLE_SECONDS` (30 s); its capacity lease is renewed while data flows. JR Content accounts download a version only through JR Content, which decides who may; the fallback note is shown in the page instead of a browser dialog.
 
 ### Added
 - JR Content: přihlášení do videa jednorázovou vstupenkou z Brightbean, ochrana proti podstrčení cizího přihlášení a společné odhlášení.
