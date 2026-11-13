@@ -15,7 +15,8 @@ from django.views.decorators.http import require_http_methods
 
 from apps.members.models import WorkspaceMembership
 
-from .models import VideoAsset, VideoProject
+from .client import FreeFrameError, FreeFrameUserClient
+from .models import VideoAccount, VideoAsset, VideoProject
 from .tickets import TicketError, is_safe_next, issue_ticket
 
 
@@ -107,6 +108,15 @@ def video_sso(request):
 def video_logout(request):
     if request.method == "GET":
         return render(request, "jrc_video/logout.html")
+    if request.user.is_authenticated and VideoAccount.objects.filter(user_id=request.user.pk).exists():
+        video_client = FreeFrameUserClient(request.user)
+        try:
+            video_client.request("POST", "/auth/jrc-logout")
+        except FreeFrameError:
+            # Keep the application session until streaming credentials are revoked.
+            # Deleting JS-readable tokens alone leaves HttpOnly HLS cookies live.
+            return render(request, "jrc_video/logout.html", {"unavailable": True}, status=503)
+        video_client.forget()
     logout(request)
     grant = secrets.token_urlsafe(32)
     response = HttpResponseRedirect(getattr(settings, "JRC_BASE_PATH", "") + "/video/jrc-logout#grant=" + grant)
@@ -119,5 +129,7 @@ def video_logout(request):
         samesite="Strict",
     )
     response.delete_cookie("jrc_sso_binding", path=getattr(settings, "JRC_BASE_PATH", "") + "/video", samesite="Strict")
+    for name in ("ff_access_token", "ff_refresh_token"):
+        response.delete_cookie(name, path=getattr(settings, "JRC_BASE_PATH", "") + "/video", samesite="Lax")
     response["Referrer-Policy"] = "no-referrer"
     return response

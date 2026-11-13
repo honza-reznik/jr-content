@@ -2,6 +2,7 @@
 
 import hashlib
 import uuid
+from unittest.mock import Mock
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -132,7 +133,9 @@ def test_missing_account_shows_generic_error(browser, user):
     assert b"TicketError" not in response.content
 
 
-def test_logout_requires_csrf_and_always_leads_through_freeframe(browser):
+def test_logout_requires_csrf_and_always_leads_through_freeframe(browser, monkeypatch):
+    video_client = Mock()
+    monkeypatch.setattr("apps.jrc_video.views.FreeFrameUserClient", lambda user: video_client)
     response = browser.get("/accounts/logout/?next=https://foreign.invalid")
     assert response.status_code == 200
     assert "jrc_logout_binding" not in response.cookies
@@ -146,6 +149,7 @@ def test_logout_requires_csrf_and_always_leads_through_freeframe(browser):
         ).status_code
         == 403
     )
+    video_client.request.assert_not_called()
     response = browser.post(
         "/accounts/logout/?next=https://foreign.invalid",
         {"csrfmiddlewaretoken": browser.cookies["csrftoken"].value, "next": "//foreign.invalid"},
@@ -161,6 +165,40 @@ def test_logout_requires_csrf_and_always_leads_through_freeframe(browser):
     assert response["Referrer-Policy"] == "no-referrer"
     assert "_auth_user_id" not in browser.session
     assert response.cookies["jrc_sso_binding"]["max-age"] == 0
+    video_client.request.assert_called_once_with("POST", "/auth/jrc-logout")
+    video_client.forget.assert_called_once()
+    for name in ("ff_access_token", "ff_refresh_token"):
+        assert response.cookies[name]["max-age"] == 0
+        assert response.cookies[name]["path"] == "/video"
+
+
+def test_logout_retries_if_video_revocation_is_unavailable(browser, monkeypatch):
+    from apps.jrc_video.client import FreeFrameError
+
+    video_client = Mock()
+    video_client.request.side_effect = FreeFrameError("Unavailable")
+    monkeypatch.setattr("apps.jrc_video.views.FreeFrameUserClient", lambda user: video_client)
+    browser.get("/accounts/logout/")
+    payload = {"csrfmiddlewaretoken": browser.cookies["csrftoken"].value}
+    response = browser.post("/accounts/logout/", payload)
+    assert response.status_code == 503
+    assert b"You are still signed in" in response.content
+    assert "_auth_user_id" in browser.session
+    assert "jrc_logout_binding" not in response.cookies
+    video_client.forget.assert_not_called()
+    video_client.request.side_effect = None
+    assert browser.post("/accounts/logout/", payload).status_code == 302
+    assert "_auth_user_id" not in browser.session
+
+
+def test_logout_without_video_account_needs_no_freeframe(browser, user, monkeypatch):
+    constructor = Mock()
+    monkeypatch.setattr("apps.jrc_video.views.FreeFrameUserClient", constructor)
+    VideoAccount.objects.filter(user=user).delete()
+    browser.get("/accounts/logout/")
+    response = browser.post("/accounts/logout/", {"csrfmiddlewaretoken": browser.cookies["csrftoken"].value})
+    assert response.status_code == 302
+    constructor.assert_not_called()
 
 
 # ---- P1-B30 (E-13b-ex10-04): another client's video gets the same clear refusal as no client at all ----------

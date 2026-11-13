@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+import os
 from sqlalchemy.orm import Session
 import uuid
 import secrets
@@ -28,8 +29,26 @@ from ..models.user import User, UserStatus
 from ..models.instance_branding import InstanceBranding
 from ..middleware.auth import get_current_user
 from ..middleware.rate_limit import account_rate_limit, enforce_user_limit
+from ..config import settings
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+
+def require_jrc_auth_policy(request: Request):
+    """Reject local browser authentication before resolving any account or token.
+
+    Brightbean still needs password login on the private network for jrc-sync.
+    Caddy overwrites X-Real-IP on every public API request.
+    """
+    if not settings.jrc_mode:
+        return
+    action = request.url.path.rstrip("/").rsplit("/", 1)[-1]
+    if request.url.path.rstrip("/").endswith("/auth/login") and "x-real-ip" not in request.headers:
+        return
+    if action in {"login", "send-magic-code", "verify-magic-code", "set-password",
+                  "accept-invite", "change-password"} or "/auth/invite/" in request.url.path:
+        raise HTTPException(status_code=403, detail="Sign in through JR Content.")
+
+
+router = APIRouter(prefix="/auth", tags=["auth"], dependencies=[Depends(require_jrc_auth_policy)])
 
 # One message for every magic-code failure. Reporting "too many attempts"
 # separately would tell a caller which addresses are registered (only a real
@@ -206,6 +225,8 @@ def accept_invite(body: AcceptInviteRequest, db: Session = Depends(get_db)):
 @router.post("/login", response_model=TokenResponse, dependencies=[Depends(account_rate_limit("login", 10, 600, LoginRequest))])
 def login(body: LoginRequest, db: Session = Depends(get_db)):
     """Login with email + password."""
+    if settings.jrc_mode and body.email.lower() != os.environ.get("JRC_FF_SYNC_EMAIL", "").lower():
+        raise HTTPException(status_code=403, detail="Sign in through JR Content.")
     user = get_user_by_email(db, body.email)
     require_local_account(user)
     if (

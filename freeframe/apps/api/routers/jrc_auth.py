@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..database import get_db
+from ..middleware.auth import get_current_user
 from ..models.user import User, UserStatus
 from ..services.auth_service import create_access_token, create_refresh_token
 from ..services.jrc_ticket import (
@@ -35,6 +36,22 @@ INVALID_TICKET = "Invalid or expired ticket"
 MAX_BODY_BYTES = MAX_TICKET_LENGTH + 64
 # Token responses and every rejection must never be cached (RFC 6749, 5.1).
 NO_STORE = {"Cache-Control": "no-store"}
+
+
+@router.post("/jrc-logout", status_code=204)
+def jrc_logout(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Revoke managed video tokens, including HttpOnly streaming credentials.
+
+    Brightbean calls this before ending its session. Increment in SQL so two
+    concurrent sign-outs cannot undo a newer revocation.
+    """
+    if not settings.jrc_mode or current_user.jrc_managed is not True:
+        raise HTTPException(status_code=403, detail="Managed JR Content account required", headers=NO_STORE)
+    db.query(User).filter(User.id == current_user.id).update(
+        {User.token_version: User.token_version + 1}, synchronize_session=False,
+    )
+    db.commit()
+    return Response(status_code=204, headers=NO_STORE)
 
 
 async def raw_body(request: Request) -> bytes:

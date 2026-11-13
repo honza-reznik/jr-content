@@ -15,12 +15,39 @@ function isPublicRoute(pathname: string): boolean {
   return false
 }
 
+function jrcSignIn(request: NextRequest, destination: string) {
+  const appBase = (process.env.NEXT_PUBLIC_BASE_PATH || '').replace(/\/video$/, '')
+  const sso = `${appBase}/video-sso/?${new URLSearchParams({ next: destination })}`
+  const url = new URL(`${appBase}/accounts/login/`, process.env.JRC_PUBLIC_ORIGIN || request.url)
+  url.searchParams.set('next', sso)
+  const response = NextResponse.redirect(url)
+  response.headers.set('Cache-Control', 'no-store')
+  return response
+}
+
 export async function middleware(request: NextRequest) {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH || ''
   const rawPathname = request.nextUrl.pathname
   const pathname = basePath && (rawPathname === basePath || rawPathname.startsWith(`${basePath}/`))
     ? rawPathname.slice(basePath.length) || '/'
     : rawPathname
+
+  if (process.env.JRC_MODE) {
+    // Only share and the two bound SSO handoffs bypass application sign-in.
+    if (pathname === '/jrc-sso' || pathname === '/jrc-logout' || pathname.startsWith('/share/')) {
+      return NextResponse.next()
+    }
+    const destination = safeAppDestination(`${pathname}${request.nextUrl.search}`)
+      ?? safeAppDestination(pathname)
+    // Unknown/auth routes also go through Brightbean, including future auth pages.
+    if (!destination) {
+      return jrcSignIn(request, safeAppDestination(request.nextUrl.searchParams.get('from')) ?? '/projects')
+    }
+    if (!request.cookies.get('ff_access_token')?.value && !request.cookies.get('ff_refresh_token')?.value) {
+      return jrcSignIn(request, destination)
+    }
+    return NextResponse.next()
+  }
 
   // Always allow public routes
   if (isPublicRoute(pathname)) {

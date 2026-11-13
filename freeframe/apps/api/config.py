@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     s3_region: str = "us-east-1"
     s3_public_path: str = ""
     jrc_trusted_proxy_host: str = ""
+    # Empty for standalone FreeFrame; JR Content uses dev/prod.
+    jrc_mode: str = ""
     s3_public_endpoint: str | None = None  # External URL for presigned URLs (e.g. http://localhost:9000 when S3_ENDPOINT is http://minio:9000)
     jwt_secret: str
     jwt_algorithm: str = "HS256"

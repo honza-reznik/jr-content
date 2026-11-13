@@ -853,3 +853,7 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
 - Výběr účtů po OAuth (`social_accounts:select_account`) je svázaný s ID toku (`?flow=` a skryté pole); každý tok má
   vlastní záznam v relaci a před zápisem se znovu ověří přístup k workspace.
 - Zpětné volání OAuth sociálních sítí bere organizaci z workspace v podepsaném stavu, ne z relace.
+## 2026-11-13 — P2-B02
+
+- Odhlášení před ukončením relace serverově volá FreeFrame `/auth/jrc-logout` jménem řízeného uživatele. Zneplatní jeho dosavadní video tokeny včetně HttpOnly přenosu HLS a smaže FF přihlašovací cookies. Při nedostupném FF ponechá přihlášení, vrátí 503 a nabídne opakování; účet bez videa další službu nepotřebuje.
+- Testy pokrývají CSRF, zneplatnění před odhlášením, výpadek s opakováním a účet bez videa. Živé průchody obou aplikací jsou v `scripts/P2-B02/`.
