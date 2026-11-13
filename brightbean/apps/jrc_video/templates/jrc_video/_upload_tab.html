@@ -27,8 +27,9 @@
                 {% endif %}
             </div>
             {% if card.can_upload %}
+            {# Phones cannot drag a file in, so there only the Upload version button is shown (P2-B05). #}
             <div data-video-drop role="group" aria-label="Drop a video file"
-                 class="mt-4 rounded-lg border border-dashed border-stone-300 px-4 py-6 text-center text-sm text-stone-600"
+                 class="mt-4 hidden justify-center rounded-lg border border-dashed border-stone-300 px-4 py-6 text-center text-sm text-stone-600 sm:flex"
                  style="overflow-wrap:anywhere">
                 Drop one video here, or choose Upload version.
             </div>

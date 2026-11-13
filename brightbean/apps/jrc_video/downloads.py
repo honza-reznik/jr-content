@@ -58,3 +58,25 @@ def downloadable_final(membership, variant):
     """Return the ready final only when the channel meets all download conditions."""
     video = VideoAsset.objects.filter(platform_post=variant).select_related("final_version").first()
     return video if can_download_final(membership, variant, caption=channel_caption(variant), video=video) else None
+
+
+def can_download_version(membership, variant, version):
+    """Who may download one converted video version: the Download version link and its endpoint (P2-B05).
+
+    Downloads keep the rule they had before a single version could be fetched (``can_publish_directly``,
+    F5-B07). A team member with that right (owner and manager by default, or a role granted
+    ``publish_directly``) may take any ready version of an active workspace. Everyone else gets only
+    what ``final_download`` already allowed: a client the ready final of a channel that meets every
+    download condition, never a draft or an older version; an editor without the right and a viewer
+    nothing. FreeFrame itself lets every project member download, so this rule is the gate.
+    """
+    from apps.jrc_production.services import is_client
+
+    if membership is None or variant is None or version.status != VideoVersion.Status.READY:
+        return False
+    if can_publish_directly(membership) and not is_client(membership):
+        return not variant.post.workspace.is_archived
+    if version.video.final_version_id != version.pk:
+        return False
+    final = downloadable_final(membership, variant)
+    return bool(final and final.final_version_id == version.pk)

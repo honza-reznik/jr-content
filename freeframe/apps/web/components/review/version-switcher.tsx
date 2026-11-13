@@ -5,6 +5,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { AlertCircle, Loader2, CheckCircle2, ChevronDown } from 'lucide-react'
 import { downloadAsset } from '@/lib/asset-download'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 import { useReviewStore } from '@/stores/review-store'
 import type { AssetVersion, AssetVersionStatus } from '@/types'
 
@@ -43,6 +44,9 @@ interface VersionSwitcherProps {
 export function VersionSwitcher({ versions, assetId, className }: VersionSwitcherProps) {
   const currentVersion = useReviewStore((s) => s.currentVersion)
   const setCurrentVersion = useReviewStore((s) => s.setCurrentVersion)
+  // JR Content decides who may download which version (clients and viewers only an
+  // approved final), so its accounts download through JR Content, never from here.
+  const managed = useAuthStore((s) => s.user?.jrc_managed === true)
 
   const [downloadError, setDownloadError] = React.useState<string | null>(null)
   const [downloading, setDownloading] = React.useState(false)
@@ -64,7 +68,7 @@ export function VersionSwitcher({ versions, assetId, className }: VersionSwitche
 
   return (
     <div className={cn('flex flex-wrap items-center gap-1.5', className)}>
-      {assetId && currentVersion?.processing_status === 'ready' && (
+      {assetId && !managed && currentVersion?.processing_status === 'ready' && (
         <button type="button" disabled={downloading}
           className="rounded-md px-2 py-1 text-xs text-text-secondary hover:bg-bg-tertiary disabled:opacity-50"
           onClick={async () => {

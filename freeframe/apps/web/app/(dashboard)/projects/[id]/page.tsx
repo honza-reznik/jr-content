@@ -36,6 +36,7 @@ import { Avatar } from "@/components/shared/avatar";
 import { AssetGrid } from "@/components/projects/asset-grid";
 import { DownloadMenu } from "@/components/shared/download-menu";
 import { downloadAsset, fetchAssetDownloadOptions } from "@/lib/asset-download";
+import { useToast } from "@/components/shared/toast";
 import { CommentPanel } from "@/components/review/comment-panel";
 import { UploadZone } from "@/components/upload/upload-zone";
 import { useFileDropRegion } from "@/components/projects/use-file-drop-region";
@@ -74,6 +75,11 @@ export default function ProjectDetailPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const projectId = params.id as string;
+  const toast = useToast();
+  // A download that had to serve another file says so in the page, not a browser dialog.
+  const showDownloadNote = (note: string | null) => {
+    if (note) toast.warning(note);
+  };
 
   const [uploadOpen, setUploadOpen] = React.useState(false);
   const [assetName, setAssetName] = React.useState("");
@@ -796,7 +802,7 @@ export default function ProjectDetailPage() {
               }}
               onAssetDownload={async (asset, rendition) => {
                 try {
-                  await downloadAsset(asset.id, rendition);
+                  showDownloadNote(await downloadAsset(asset.id, rendition));
                 } catch {}
               }}
               loadAssetDownloadOptions={(asset) => fetchAssetDownloadOptions(asset.id)}
@@ -818,7 +824,7 @@ export default function ProjectDetailPage() {
                 // All on a share link.
                 async function downloadOne(id: string) {
                   try {
-                    await downloadAsset(id, undefined, true);
+                    showDownloadNote(await downloadAsset(id, undefined, true));
                     await new Promise((r) => setTimeout(r, 300));
                   } catch {}
                 }
@@ -1176,7 +1182,7 @@ export default function ProjectDetailPage() {
                         load={() => fetchAssetDownloadOptions(selectedAsset.id)}
                         onPick={async (rendition) => {
                           try {
-                            await downloadAsset(selectedAsset.id, rendition);
+                            showDownloadNote(await downloadAsset(selectedAsset.id, rendition));
                           } catch {
                             // Silent fail
                           }

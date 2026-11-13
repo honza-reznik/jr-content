@@ -18,7 +18,7 @@ from apps.members.permissions import can_publish_directly
 from apps.workspaces.models import Workspace
 
 from . import player, uploads
-from .downloads import downloadable_final
+from .downloads import can_download_version, downloadable_final
 from .uploads import UploadError
 
 MAX_BODY_BYTES = 8192
@@ -167,14 +167,17 @@ def final_download(request, workspace_id, post_id, platform_post_id):
 def version_download(request, workspace_id, post_id, version_id):
     from .models import VideoVersion
 
-    _workspace, _membership, post = _context(request, workspace_id, post_id)
+    _workspace, membership, post = _context(request, workspace_id, post_id)
     version = get_object_or_404(
-        VideoVersion.objects.select_related("video"),
+        VideoVersion.objects.select_related("video__platform_post__post__workspace"),
         pk=version_id,
         video__platform_post__post=post,
         status=VideoVersion.Status.READY,
     )
-    # The user's FreeFrame session enforces the existing asset download rights.
+    # FreeFrame lets every project member (client and viewer included) download, so the rule is
+    # enforced here, the same one that decides whether the Download version link is shown.
+    if not can_download_version(membership, version.video.platform_post, version):
+        raise PermissionDenied("You cannot download this video version.")
     return _video_download(request, version.video.ff_asset_id, version.ff_version_id)
 
 
