@@ -521,3 +521,59 @@ def mark_published_manually(post, platform_post_id, user, *, post_url=""):
             post=post, from_stage=previous, to_stage=current, user=user, **note_audience(post.workspace, user)
         )
     return publication
+
+
+@transaction.atomic
+def change_category(post, category_id, user):
+    from apps.composer.models import ContentCategory
+
+    from .models import ContentCategoryChange
+
+    locked = Post.objects.select_for_update(of=("self",)).select_related("workspace", "category").get(pk=post.pk)
+    membership = content_membership(locked.workspace, user)
+    if not can_rename_content(locked, membership):
+        raise PermissionDenied("You cannot edit this content.")
+    category = None
+    if category_id:
+        try:
+            category = ContentCategory.objects.get(pk=category_id, workspace=locked.workspace)
+        except (ContentCategory.DoesNotExist, ValidationError) as exc:
+            raise ValidationError("Choose a category from this workspace.") from exc
+    if locked.category_id != (category.pk if category else None):
+        ContentCategoryChange.objects.create(
+            post=locked,
+            old_name=locked.category.name if locked.category else "",
+            new_name=category.name if category else "",
+            user=user,
+        )
+        locked.category = category
+        locked.save(update_fields=["category", "updated_at"])
+    return category
+
+
+def can_change_proposal(post):
+    # A proposal must never be confused with the live publication schedule.
+    return (
+        post.scheduled_at is None
+        and not post.platform_posts.filter(status__in=["scheduled", "publishing", "published"]).exists()
+    )
+
+
+@transaction.atomic
+def change_proposed_date(post, proposed_at, user):
+    from .models import ContentProposalChange
+
+    locked = Post.objects.select_for_update(of=("self",)).select_related("workspace").get(pk=post.pk)
+    membership = content_membership(locked.workspace, user)
+    if not can_rename_content(locked, membership):
+        raise PermissionDenied("You cannot edit this content.")
+    if not can_change_proposal(locked):
+        raise ValidationError("This content already has a publication schedule. Change it in Publish.")
+    if proposed_at is not None and timezone.is_naive(proposed_at):
+        raise ValidationError("Choose a date and time with a timezone.")
+    if locked.proposed_publish_at != proposed_at:
+        ContentProposalChange.objects.create(
+            post=locked, old_at=locked.proposed_publish_at, new_at=proposed_at, user=user
+        )
+        locked.proposed_publish_at = proposed_at
+        locked.save(update_fields=["proposed_publish_at", "updated_at"])

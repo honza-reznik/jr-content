@@ -413,3 +413,21 @@ def latest_saved_captions(platform_post_ids):
     ).select_related("document")
     # Ordered by number, so the last version written per channel is the newest one.
     return {version.document.platform_post_id: version for version in versions.order_by("number")}
+
+
+@transaction.atomic
+def name_version(version_id, user, name):
+    """Name saved text without modifying its content, author or saved time."""
+    from .models import TextVersionLabel, TextVersionNameChange
+
+    version = TextVersion.objects.select_related("document").get(pk=version_id)
+    document = _document(version.document_id, user, write=True)
+    version = document.versions.get(pk=version_id, state=TextVersion.State.FINAL)
+    if not isinstance(name, str) or len(name.strip()) > 100:
+        raise ValidationError("Use a version name of at most 100 characters.")
+    name = name.strip()
+    old_name = version.name
+    if name != old_name:
+        TextVersionLabel.objects.update_or_create(version=version, defaults={"name": name})
+        TextVersionNameChange.objects.create(version=version, old_name=old_name, new_name=name, user=user)
+    return name

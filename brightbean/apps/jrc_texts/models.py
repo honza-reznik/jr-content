@@ -85,6 +85,10 @@ class TextVersion(models.Model):
     # Optimistic lock for autosave/save from two tabs sharing the same draft ID.
     revision = models.PositiveIntegerField(default=0)
 
+    @property
+    def name(self):
+        return getattr(getattr(self, "label", None), "name", "")
+
     class Meta:
         ordering = ["number"]
         constraints = [
@@ -97,3 +101,18 @@ class TextVersion(models.Model):
             ),
             models.CheckConstraint(condition=Q(source__in=["editor", "api", "mcp"]), name="jrc_text_version_source"),
         ]
+
+
+class TextVersionLabel(models.Model):
+    """Mutable metadata, separate from the immutable saved text."""
+
+    version = models.OneToOneField(TextVersion, on_delete=models.CASCADE, related_name="label")
+    name = models.CharField(max_length=100, blank=True, default="")
+
+
+class TextVersionNameChange(models.Model):
+    version = models.ForeignKey(TextVersion, on_delete=models.CASCADE, related_name="name_changes")
+    old_name = models.CharField(max_length=100, blank=True)
+    new_name = models.CharField(max_length=100, blank=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)

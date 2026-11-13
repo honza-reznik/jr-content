@@ -23,7 +23,7 @@ from apps.approvals.edits import review_return_hint, review_return_notice
 from apps.approvals.models import ApprovalAction, PostComment
 from apps.composer.models import PlatformPost, Post
 from apps.jrc_texts import services as text_services
-from apps.jrc_texts.models import TextDocument, TextVersion
+from apps.jrc_texts.models import TextDocument, TextVersion, TextVersionNameChange
 from apps.jrc_texts.services import ConflictError
 from apps.jrc_video.downloads import can_download_final, missing_for_publication
 from apps.members.models import WorkspaceMembership
@@ -39,14 +39,26 @@ from apps.workspaces.models import Workspace
 
 from . import shotlist as shotlist_services
 from .approval import approval_context, is_waiting_for
-from .forms import PublicationDateForm
-from .models import ContentRename, ManualPublication, PipelineStage, ProductionStage, ShotlistChange
+from .forms import ProposedDateForm, PublicationDateForm
+from .models import (
+    ContentCategoryChange,
+    ContentProposalChange,
+    ContentRename,
+    ManualPublication,
+    PipelineStage,
+    ProductionStage,
+    ShotlistChange,
+)
 from .services import (
     add_content_channel,
     available_moves,
+    can_change_proposal,
     can_create_content,
     can_manage_channels,
     can_rename_content,
+    change_category,
+    change_proposed_date,
+    content_membership,
     create_content,
     initial_stages,
     mark_published_manually,
@@ -483,23 +495,60 @@ def rename(request, workspace_id, post_id):
     if not WorkspaceMembership.objects.filter(user=request.user, workspace=workspace).exists():
         raise Http404
     post = get_object_or_404(Post, pk=post_id, workspace=workspace)
+    ajax = request.headers.get("Accept") == "application/json"
     try:
         reverted = rename_content(post, request.POST.get("title", ""), request.user)
     except ValidationError as exc:
-        messages.error(request, " ".join(exc.messages))
+        error = " ".join(exc.messages)
+        if ajax:
+            return JsonResponse({"error": error}, status=400)
+        messages.error(request, error)
     else:
-        if reverted is None:
-            messages.info(request, "The title is unchanged.")
-        elif reverted:
-            # P1-B37: the one notice names the channels and those taken out of the plan.
-            messages.success(request, f"Content renamed. {review_return_notice(reverted, 'title')}")
-        else:
-            messages.success(request, "Content renamed.")
+        notice = "The title is unchanged." if reverted is None else "Content renamed."
+        if reverted:
+            notice += " " + review_return_notice(reverted, "title")
+        if ajax:
+            post.refresh_from_db(fields=["title"])
+            return JsonResponse({"title": post.title, "message": notice})
+        messages.success(request, notice)
     return redirect(reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.pk, "post_id": post.pk}))
 
 
+@login_required
+@require_POST
+def category(request, workspace_id, post_id):
+    post = get_object_or_404(Post, pk=post_id, workspace_id=workspace_id)
+    content_membership(post.workspace, request.user)
+    try:
+        selected = change_category(post, request.POST.get("category", ""), request.user)
+    except ValidationError as exc:
+        return JsonResponse({"error": " ".join(exc.messages)}, status=400)
+    return JsonResponse({"category": str(selected.pk) if selected else ""})
+
+
+@login_required
+@require_POST
+def proposed_date(request, workspace_id, post_id):
+    post = get_object_or_404(Post, pk=post_id, workspace_id=workspace_id)
+    membership = content_membership(post.workspace, request.user)
+    if not can_rename_content(post, membership):
+        raise PermissionDenied("You cannot edit this content.")
+    form = ProposedDateForm(request.POST)
+    with timezone.override(ZoneInfo(post.workspace.effective_timezone)):
+        if not form.is_valid():
+            return JsonResponse({"error": " ".join(form.errors["proposed_publish_at"])}, status=400)
+        value = form.cleaned_data["proposed_publish_at"]
+        try:
+            change_proposed_date(post, value, request.user)
+        except ValidationError as exc:
+            return JsonResponse({"error": " ".join(exc.messages)}, status=400)
+        return JsonResponse(
+            {"proposed_publish_at": timezone.localtime(value).strftime("%Y-%m-%dT%H:%M") if value else ""}
+        )
+
+
 # P1-B08: Concept (the idea worked out in versions) comes before the Script.
-TABS = ("concept", "script", "shotlist", "video", "caption", "approval", "comments", "publish", "history")
+TABS = ("concept", "script", "shotlist", "video", "caption", "approval", "discussion", "publish", "history")
 
 
 def _default_tab(post):
@@ -558,10 +607,16 @@ def _caption_channels(post, submitted=None):
             else None
         )
         latest = (
-            document.versions.filter(state=TextVersion.State.FINAL).order_by("-number").first() if document else None
+            document.versions.filter(state=TextVersion.State.FINAL)
+            .select_related("created_by", "label")
+            .order_by("-number")
+            .first()
+            if document
+            else None
         )
         previous = (
             document.versions.filter(state=TextVersion.State.FINAL, number__lt=latest.number)
+            .select_related("created_by", "label")
             .order_by("-number")
             .first()
             if latest
@@ -571,20 +626,6 @@ def _caption_channels(post, submitted=None):
         submitted_caption = (submitted or {}).get("caption") if (submitted or {}).get("platform_post") == key else None
         current_text = submitted_caption if submitted_caption is not None else saved_text
         old_diff, new_diff = _word_diff(previous.text, current_text) if previous else ([], [])
-        preview = None
-        if account.platform in ("instagram", "instagram_login"):
-            # The preview always shows the last saved version, never an unsaved edit.
-            count = account.caption_wire_length(saved_text)
-            preview = {
-                "account": account,
-                "title": "",
-                "caption": saved_text,
-                "first_comment": "",
-                "char_count": count,
-                "char_limit": account.char_limit,
-                "is_over_limit": count > account.char_limit,
-                "truncated_caption": saved_text[: account.char_limit],
-            }
         channels.append(
             {
                 "key": key,
@@ -600,7 +641,11 @@ def _caption_channels(post, submitted=None):
                 "escaped_chars": account.escaped_chars,
                 "old_diff": old_diff,
                 "new_diff": new_diff,
-                "previews": [preview] if preview else [],
+                "versions": list(
+                    document.versions.filter(state="final").select_related("created_by", "label").order_by("-number")
+                )
+                if document
+                else [],
                 "reopens_review": review_return_hint(variant) if variant else "",
             }
         )
@@ -631,6 +676,8 @@ def content_detail(request, workspace_id, post_id):
         pk=post_id,
     )
     active_tab = request.GET.get("tab", "")
+    if active_tab == "comments":  # Existing links and notifications remain valid.
+        active_tab = "discussion"
     if active_tab not in TABS:
         active_tab = _default_tab(post)
 
@@ -725,14 +772,6 @@ def content_detail(request, workspace_id, post_id):
                 return redirect(f"{request.path}?tab=caption")
 
     caption_channels = _caption_channels(post, request.POST if request.method == "POST" else None)
-    caption_media_items = []
-    if active_tab == "caption" and any(item["previews"] for item in caption_channels):
-        for attachment in post.media_attachments.select_related("media_asset"):
-            asset = attachment.media_asset
-            caption_media_items.append(
-                {"url": asset.file.url if asset.file else "", "is_video": asset.is_video, "filename": asset.filename}
-            )
-
     can_view_internal_notes = membership.workspace_role not in ("client", "viewer")
     comments = comment_services.get_comments_for_post(post, request.user)
     history = [
@@ -848,6 +887,47 @@ def content_detail(request, workspace_id, post_id):
         for version in TextVersion.objects.filter(document__post=post, state=TextVersion.State.FINAL)
         .defer("content")
         .select_related("created_by", "document__platform_post__social_account")
+    )
+    history.extend(
+        {
+            "kind": "text",
+            "created_at": event.created_at,
+            "actor": event.user,
+            "label": f"{event.version.document.get_kind_display()} V{event.version.number} name changed from “{event.old_name or 'None'}” to “{event.new_name or 'None'}”",
+            "note": "",
+            "can_view_note": True,
+        }
+        for event in TextVersionNameChange.objects.filter(version__document__post=post).select_related(
+            "user", "version__document"
+        )
+    )
+    history.extend(
+        {
+            "kind": "category",
+            "created_at": event.created_at,
+            "actor": event.user,
+            "label": f"Category changed from “{event.old_name or 'None'}” to “{event.new_name or 'None'}”",
+            "note": "",
+            "can_view_note": True,
+        }
+        for event in ContentCategoryChange.objects.filter(post=post).select_related("user")
+    )
+
+    def proposal_label(value):
+        if value is None:
+            return "None"
+        return timezone.localtime(value, ZoneInfo(workspace.effective_timezone)).strftime("%b %d, %Y · %H:%M %Z")
+
+    history.extend(
+        {
+            "kind": "proposal",
+            "created_at": event.created_at,
+            "actor": event.user,
+            "label": f"Proposed publication changed from “{proposal_label(event.old_at)}” to “{proposal_label(event.new_at)}”",
+            "note": "",
+            "can_view_note": True,
+        }
+        for event in ContentProposalChange.objects.filter(post=post).select_related("user")
     )
     history.sort(key=lambda item: item["created_at"], reverse=True)
 
@@ -969,6 +1049,7 @@ def content_detail(request, workspace_id, post_id):
             else False,
             "can_view_internal_notes": can_view_internal_notes,
             "can_edit_posts": text_services.can_edit_text(post, membership),
+            "can_edit_proposal": can_rename_content(post, membership) and can_change_proposal(post),
             "comments": comments,
             "can_resolve_comments": can_moderate_comments(membership),
             "can_comment": can_comment(membership),
@@ -977,6 +1058,7 @@ def content_detail(request, workspace_id, post_id):
             ),
             "is_client": is_client,
             "can_edit_captions": can_edit_captions,
+            "content_categories": workspace.content_categories.all(),
             "can_rename": can_rename_content(post, membership),
             "can_manage_channels": can_manage_channels(post, membership),
             "channel_error": channel_error,
@@ -989,7 +1071,6 @@ def content_detail(request, workspace_id, post_id):
             .order_by("account_name"),
             "needs_channel": not post.platform_posts.exists() and active_tab in {"video", "caption", "publish"},
             "caption_channels": caption_channels,
-            "caption_media_items": caption_media_items,
             "caption_error": caption_error,
             "publish_channels": publish_channels,
             "can_publish": can_publish,
@@ -1123,7 +1204,7 @@ def _comment_post_for_member(request, workspace_id, post_id):
 def _comments_redirect(workspace, post):
     return redirect(
         reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.id, "post_id": post.id})
-        + "?tab=comments"
+        + "?tab=discussion"
     )
 
 
