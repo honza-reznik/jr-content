@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - JR Content P2-B01: servisní přihlášení po anonymizaci testovací kopie přijímá syntakticky platné adresy `.invalid`; validace v hlavním projektu zůstává původní.
+- JR Content P2-B02: přihlašovací stránky videa vedou na přihlášení aplikace s bezpečným návratem; místní přihlašovací API neprozrazuje existenci účtů a zachovává interní servisní přihlášení.
+- JR Content P2-B02: odhlášení aplikace zneplatní dosavadní video tokeny včetně přenosu HLS; při nedostupném video serveru lze odhlášení bezpečně zopakovat.
 - JR Content P1-B18: video bez zvukové stopy má po převodu platný hlavní HLS seznam a lze ho přehrát i komentovat v konkrétním čase; datový tok chybějících variant se určí z hotových segmentů.
 - JR Content P1-B17 review2: export komentářů respektuje interní předky i po jejich smazání; živé události vyřešení interních vláken neodhalují jejich existenci klientům. Odesílač požadavku na převod nepřepisuje výsledek hotového ani běžícího převodu.
 - JR Content P1-B17 review: záchrana hotového uploadu přes abort ukládá požadavek na převod atomicky; obnova visících převodů sdílí zámek s workerem a znovu ověřuje stav. Odpovědi po vyřešení, úpravě i vytvoření komentáře filtrují interní potomky podle viditelnosti, včetně příloh a sdílených odkazů.

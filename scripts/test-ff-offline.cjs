@@ -31,7 +31,9 @@ async function main() {
     recursive: true, verbatimSymlinks: true, mode: fs.constants.COPYFILE_FICLONE,
   });
   const audit = path.join(tmp, 'network.jsonl');
-  const env = { ...process.env, NEXT_PUBLIC_BASE_PATH: '/video', NEXT_PUBLIC_API_URL: 'http://jrc-ff-api:8000',
+  // The local login/font check exercises standalone FreeFrame. JRC sign-in is
+  // an intentional redirect to Brightbean (covered by the integrated browser test).
+  const env = { ...process.env, JRC_MODE: '', JRC_PUBLIC_ORIGIN: '', NEXT_PUBLIC_BASE_PATH: '/video', NEXT_PUBLIC_API_URL: 'http://jrc-ff-api:8000',
     JRC_NETWORK_AUDIT: audit,
     NODE_OPTIONS: '--max-old-space-size=2048 --require=/jrc-scripts/web-network-audit.cjs' };
   const next = path.join(app, 'node_modules/next/dist/bin/next');
@@ -66,6 +68,7 @@ async function main() {
       return route.continue();
     });
     const page = await context.newPage();
+    page.setDefaultNavigationTimeout(90000);
     const sockets = [];
     page.on('websocket', ws => sockets.push(new URL(ws.url()).hostname));
     await page.goto('http://127.0.0.1:3100/video/login', { waitUntil: 'networkidle' });
@@ -84,7 +87,9 @@ async function main() {
   }
   // Stejné zdroje sestavíme bez internetu a bez cache vývojového serveru.
   fs.rmSync(path.join(app, '.next'), { recursive: true, force: true });
-  const build = spawn(process.execPath, [next, 'build'], { cwd: app, env, stdio: 'inherit' });
+  // Bound build workers as well as each Node heap; the container caps total RAM.
+  fs.appendFileSync(path.join(app, 'next.config.js'), '\nmodule.exports.experimental = { ...module.exports.experimental, cpus: 1 };\n');
+  const build = spawn(process.execPath, [next, 'build'], { cwd: app, env: { ...env, JRC_MODE: 'prod' }, stdio: 'inherit' });
   assert.equal(await new Promise(resolve => build.on('exit', resolve)), 0, 'Offline next build');
   const records = fs.readFileSync(audit, 'utf8').trim().split('\n').map(line => JSON.parse(line));
   const allowedHosts = new Set(['jrc-ff-api', 'localhost', '127.0.0.1', '::1', '0.0.0.0']);

@@ -889,3 +889,7 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
   preview, počítadlo znaků zůstává. Comments se v detailu jmenuje Discussion; staré odkazy se dál otevřou.
 - Migrace: `jrc_production.0006`, `jrc_production.0007`, `jrc_texts.0005`. Při nasazení znovu sestavit editor z
   `apps/jrc_texts/editor/script.mjs` a shromáždit statické soubory. Ověřovací skripty: `scripts/P2-B04/` v kořeni repozitáře.
+## 2026-11-13 — P2-B02
+
+- Odhlášení před ukončením relace serverově volá FreeFrame `/auth/jrc-logout` jménem řízeného uživatele. Zneplatní jeho dosavadní video tokeny včetně HttpOnly přenosu HLS a smaže FF přihlašovací cookies. Při nedostupném FF ponechá přihlášení, vrátí 503 a nabídne opakování; účet bez videa další službu nepotřebuje.
+- Testy pokrývají CSRF, zneplatnění před odhlášením, výpadek s opakováním a účet bez videa. Živé průchody obou aplikací jsou v `scripts/P2-B02/`.

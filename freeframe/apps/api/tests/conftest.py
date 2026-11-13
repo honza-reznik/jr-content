@@ -77,6 +77,17 @@ def _make_mock_db() -> MagicMock:
     return db
 
 
+@pytest.fixture(autouse=True)
+def standalone_freeframe_mode(monkeypatch):
+    """Upstream tests describe standalone FreeFrame; the compose JRC_MODE must not leak in.
+
+    Tests of the JR Content mode switch it on themselves (test_jrc_local_auth.py).
+    """
+    from apps.api.config import settings
+
+    monkeypatch.setattr(settings, "jrc_mode", "")
+
+
 @pytest.fixture
 def mock_db():
     """Provide a fresh mock DB session for each test."""

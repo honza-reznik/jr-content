@@ -15,7 +15,9 @@ from django.views.decorators.http import require_http_methods
 
 from apps.members.models import WorkspaceMembership
 
-from .models import VideoAsset, VideoProject
+from .client import FreeFrameUserClient
+from .models import VideoAccount, VideoAsset, VideoProject
+from .services import end_video_sessions
 from .tickets import TicketError, is_safe_next, issue_ticket
 
 
@@ -107,6 +109,9 @@ def video_sso(request):
 def video_logout(request):
     if request.method == "GET":
         return render(request, "jrc_video/logout.html")
+    if request.user.is_authenticated and VideoAccount.objects.filter(user_id=request.user.pk).exists():
+        # The sign-out always completes; a failed revocation is queued (P2-B02).
+        end_video_sessions(request.user, FreeFrameUserClient(request.user))
     logout(request)
     grant = secrets.token_urlsafe(32)
     response = HttpResponseRedirect(getattr(settings, "JRC_BASE_PATH", "") + "/video/jrc-logout#grant=" + grant)
@@ -119,5 +124,7 @@ def video_logout(request):
         samesite="Strict",
     )
     response.delete_cookie("jrc_sso_binding", path=getattr(settings, "JRC_BASE_PATH", "") + "/video", samesite="Strict")
+    for name in ("ff_access_token", "ff_refresh_token"):
+        response.delete_cookie(name, path=getattr(settings, "JRC_BASE_PATH", "") + "/video", samesite="Lax")
     response["Referrer-Policy"] = "no-referrer"
     return response

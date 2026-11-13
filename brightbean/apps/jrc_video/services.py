@@ -8,7 +8,14 @@ from apps.members.models import WorkspaceMembership
 from apps.workspaces.models import Workspace
 
 from .client import FreeFrameClient, FreeFrameError
-from .models import VideoAccount, VideoAccountRevocation, VideoAccountSyncRequest, VideoProject, VideoSyncRequest
+from .models import (
+    VideoAccount,
+    VideoAccountRevocation,
+    VideoAccountSyncRequest,
+    VideoProject,
+    VideoSessionRevocation,
+    VideoSyncRequest,
+)
 
 logger = logging.getLogger(__name__)
 ROLE_MAP = {
@@ -36,6 +43,44 @@ def revoke_account(user_id, api):
     # account synchronization can reactivate the identity after deletion commits.
     api.request("POST", f"/jrc-sync/accounts/{user_id}/deactivate")
     VideoAccountRevocation.objects.filter(source_user_id=user_id).delete()
+
+
+def end_video_sessions(user, client):
+    """Revoke the FreeFrame tokens of a person who signs out; never raises, never blocks the sign-out.
+
+    * FreeFrame refuses the person (401/403: no usable FreeFrame account, nothing to revoke):
+      skipped, there are no tokens that could be used.
+    * FreeFrame or Redis is down, or a ticket cannot be issued: the revocation is queued and
+      the worker repeats it through the service account (``revoke_pending_sessions``).
+      Until then the only credential left is the HLS cookie, which expires by itself.
+    """
+    try:
+        client.request("POST", "/auth/jrc-logout")
+    except FreeFrameError as exc:
+        if exc.status_code in (401, 403):
+            logger.info(
+                "Sign-out of %s: FreeFrame has no usable session to revoke (HTTP %s).", user.pk, exc.status_code
+            )
+        else:
+            VideoSessionRevocation.objects.update_or_create(
+                source_user_id=user.pk, defaults={"last_error": error_text(exc)}
+            )
+            logger.warning("Sign-out of %s: FreeFrame revocation queued for retry.", user.pk)
+    except Exception:  # noqa: BLE001 - the application sign-out must complete whatever happens here
+        VideoSessionRevocation.objects.update_or_create(
+            source_user_id=user.pk, defaults={"last_error": "Unexpected error while revoking video sessions."}
+        )
+        logger.exception("Sign-out of %s: FreeFrame revocation failed unexpectedly; queued for retry.", user.pk)
+    finally:
+        client.forget()
+
+
+def revoke_session_request(request, api):
+    """Do one queued revocation; the marker goes away only if no newer sign-out arrived meanwhile."""
+    api.request("POST", f"/jrc-sync/accounts/{request.source_user_id}/revoke-sessions")
+    VideoSessionRevocation.objects.filter(
+        source_user_id=request.source_user_id, requested_at=request.requested_at
+    ).delete()
 
 
 def try_revoke_account(user_id):
