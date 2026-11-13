@@ -193,3 +193,62 @@ def test_sync_block_revokes_session_without_reviving_old_version_on_unblock(clie
         assert response.status_code == 200
         assert managed.token_version == expected_version
         assert managed.password_hash is None and managed.invite_token is None
+
+
+# ---- P2-B02 R2: queued sign-out revocation by the service account --------------------------
+
+def test_revoke_sessions_rejects_regular_user(client, auth_headers, mock_db):
+    response = client.post(f"/jrc-sync/accounts/{uuid.uuid4()}/revoke-sessions", headers=auth_headers)
+    assert response.status_code == 403
+    mock_db.commit.assert_not_called()
+
+
+@pytest.mark.parametrize("account", [
+    None,
+    MagicMock(deleted_at=object(), is_superadmin=False, jrc_managed=True),
+    MagicMock(deleted_at=None, is_superadmin=True, jrc_managed=True),
+    MagicMock(deleted_at=None, is_superadmin=False, jrc_managed=False),
+])
+def test_revoke_sessions_skips_missing_deleted_privileged_or_local(client, sync_auth, mock_db, account):
+    mock_db.first.return_value = account
+    source_id = uuid.uuid4()
+    response = client.post(f"/jrc-sync/accounts/{source_id}/revoke-sessions", headers=sync_auth)
+    assert response.status_code == 200
+    assert response.json() == {"id": str(remote_id("account", source_id)), "found": False}
+    mock_db.update.assert_not_called()
+    mock_db.commit.assert_not_called()
+
+
+def test_revoke_sessions_increments_token_version_in_sql(client, sync_auth, mock_db):
+    mock_db.first.return_value = MagicMock(deleted_at=None, is_superadmin=False, jrc_managed=True)
+    response = client.post(f"/jrc-sync/accounts/{uuid.uuid4()}/revoke-sessions", headers=sync_auth)
+    assert response.status_code == 200 and response.json()["found"] is True
+    mock_db.update.assert_called_once()
+    mock_db.commit.assert_called_once()
+
+
+def test_revoke_sessions_really_invalidates_tokens(client, real_db, monkeypatch):
+    from apps.api.database import get_db
+    from apps.api.main import app
+    from apps.api.models.user import User, UserStatus
+    from apps.api.services.auth_service import create_access_token
+
+    source_id = uuid.uuid4()
+    managed = User(id=remote_id("account", source_id), email=f"m-{uuid.uuid4()}@example.com", name="Managed",
+                   status=UserStatus.active, jrc_managed=True, token_version=1)
+    service = User(id=uuid.uuid4(), email=f"svc-{uuid.uuid4()}@example.com", name="Service",
+                   status=UserStatus.active, is_superadmin=True, token_version=1)
+    real_db.add_all([managed, service])
+    real_db.flush()
+    monkeypatch.setenv("JRC_FF_SYNC_EMAIL", service.email)
+    managed_id = managed.id
+    app.dependency_overrides[get_db] = lambda: real_db
+    old = {"Authorization": f"Bearer {create_access_token(str(managed_id), token_version=1)}"}
+    assert client.get("/auth/me", headers=old).status_code == 200
+    token = create_access_token(str(service.id), token_version=1)
+    response = client.post(f"/jrc-sync/accounts/{source_id}/revoke-sessions",
+                           headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200 and response.json()["found"] is True
+    real_db.expire_all()
+    assert real_db.get(User, managed_id).token_version == 2
+    assert client.get("/auth/me", headers=old).status_code == 401

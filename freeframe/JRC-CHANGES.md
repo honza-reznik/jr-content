@@ -398,3 +398,9 @@ Provozní postup je v `docs-arch/F2-B02/freeframe-provoz.md` (doplněk pro PM do
   Běžné účty FreeFrame a tým (`owner`, `editor`) beze změny.
 - Web: přepínač Public / Internal a filtr „Internal comments“ se klientovi neukazuje (`lib/comment-visibility.ts`, `allowInternal` v detailu a v porovnání verzí, `showInternalFilter` v `comment-panel.tsx`).
 - Testy: `apps/api/tests/test_jrc_comment_privacy.py` (12), `lib/__tests__/comment-visibility.test.ts`.
+## 2026-11-13 — P2-B02
+
+- Režim JRC (`JRC_MODE=dev/prod`) vede přihlašovací a registrační cesty webu na Brightbean s návratem přes `/video-sso/`. Samostatný FreeFrame bez `JRC_MODE` zachovává místní přihlášení.
+- API odmítá místní přihlášení, magic code, pozvánky a změny hesel před vyhledáváním účtů. Výjimka je jen heslové přihlášení nastaveného servisního účtu přes vnitřní síť; veřejný vstup vždy nastavuje `X-Real-IP` a tuto cestu odmítá. Obnova tokenů a jednorázové SSO vstupenky zůstávají funkční.
+- Cesty sdílených odkazů vynechávají přihlašovací bránu; původní pravidla členství a hesla stále ověřuje API. Kontrola zdraví webu přijímá přesměrování bez jeho následování. Produkční nasazení změny middleware potřebuje přestavbu webového obrazu PM.
+- Odhlášení Brightbeanu nejprve volá `/auth/jrc-logout` jménem řízeného uživatele a atomicky zvyšuje verzi jeho tokenů. Zneplatní i dříve vydané HttpOnly HLS cookies a relace v dalších prohlížečích; veřejné anonymní share relace a servisní účet se nemění. Při výpadku videa zůstane přihlášení zachované a stránka nabízí nový pokus.

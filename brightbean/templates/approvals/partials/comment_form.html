@@ -18,12 +18,12 @@
                 <button type="button" @click="visibility = 'external'"
                         :class="visibility === 'external' ? 'bg-stone-900 text-white' : 'bg-stone-100 text-stone-500 hover:bg-stone-200'"
                         class="px-2.5 py-1 text-[0.6875rem] font-semibold rounded-full transition-colors">
-                    Visible to Client
+                    Team and client
                 </button>
                 <button type="button" @click="visibility = 'internal'"
                         :class="visibility === 'internal' ? 'bg-amber-500 text-white' : 'bg-stone-100 text-stone-500 hover:bg-stone-200'"
                         class="px-2.5 py-1 text-[0.6875rem] font-semibold rounded-full transition-colors">
-                    Internal Only
+                    Team only
                 </button>
             </div>
             <input type="hidden" name="visibility" :value="visibility">

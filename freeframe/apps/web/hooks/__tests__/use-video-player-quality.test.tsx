@@ -6,6 +6,8 @@ import { useVideoPlayer, type UseVideoPlayerReturn } from '../use-video-player'
 const hls = vi.hoisted(() => {
   const instances: Array<{
     currentLevel: number
+    startLevel: number
+    autoLevelCapping: number
     emit: (event: string, data: unknown) => void
   }> = []
   const Events = {
@@ -18,6 +20,8 @@ const hls = vi.hoisted(() => {
     static Events = Events
     static isSupported = vi.fn(() => true)
     currentLevel = -1
+    startLevel = -1
+    autoLevelCapping = -1
     private handlers = new Map<string, (event: string, data: unknown) => void>()
 
     constructor() {
@@ -70,6 +74,27 @@ afterEach(() => {
 })
 
 describe('useVideoPlayer quality selection', () => {
+  it('never lets Auto select an old 1080p rung whose advertised bitrate sorts below 720p', () => {
+    const rendered = renderPlayer()
+    act(() => rendered.instance.emit(hls.Events.MANIFEST_PARSED, {
+      levels: [{ height: 1080, bitrate: 96_000 }, { height: 720, bitrate: 1_500_000 }],
+    }))
+    expect(rendered.instance.currentLevel).toBe(1)
+    expect(rendered.player.selectedQuality).toBe(1)
+    act(() => rendered.player.setQuality(0))
+    act(() => rendered.player.setQuality(-1))
+    expect(rendered.instance.currentLevel).toBe(1)
+  })
+
+  it('starts at the largest rung below 720p when 720p is absent', () => {
+    const rendered = renderPlayer()
+    act(() => rendered.instance.emit(hls.Events.MANIFEST_PARSED, {
+      levels: [{ height: 360, bitrate: 500_000 }, { height: 1080, bitrate: 5_000_000 }],
+    }))
+    expect(rendered.instance.startLevel).toBe(0)
+    expect(rendered.instance.autoLevelCapping).toBe(0)
+  })
+
   it('keeps the selected Auto mode separate from HLS level switches', () => {
     const rendered = renderPlayer()
     const instance = rendered.instance
@@ -79,16 +104,20 @@ describe('useVideoPlayer quality selection', () => {
     act(() => {
       instance.emit(hls.Events.MANIFEST_PARSED, {
         levels: [
-          { height: 1080, bitrate: 5_000_000 },
           { height: 720, bitrate: 2_500_000 },
+          { height: 1080, bitrate: 5_000_000 },
         ],
       })
     })
+    expect(instance.startLevel).toBe(0)
+    expect(instance.autoLevelCapping).toBe(0)
     act(() => instance.emit(hls.Events.LEVEL_SWITCHED, { level: 0 }))
 
     expect(rendered.player.currentQuality).toBe(0)
     expect(rendered.player.selectedQuality).toBe(-1)
 
+    act(() => rendered.player.setQuality(1))
+    expect(instance.currentLevel).toBe(1) // 1080p is available by explicit choice
     act(() => rendered.player.setQuality(1))
     expect(instance.currentLevel).toBe(1)
     expect(rendered.player.currentQuality).toBe(0)

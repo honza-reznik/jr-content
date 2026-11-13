@@ -56,7 +56,7 @@ interface CommentPanelProps {
   onSeekToTimecode?: (time: number, pause?: boolean) => void;
   /** Compare mode: route annotation display to a pane-scoped overlay instead of the global store. */
   onShowAnnotation?: (drawingData: Record<string, unknown> | null) => void;
-  /** Offer the "Internal comments" filter. False for JR Content clients: the API never returns internal comments to them. */
+  /** Offer the "Team only" filter. False for JR Content clients: the API never returns internal comments to them. */
   showInternalFilter?: boolean;
   /** Compare mode: export this pane's version instead of the store's currentVersion. */
   exportVersionId?: string;
@@ -940,8 +940,8 @@ export function CommentPanel({
     visibility === "all"
       ? "All comments"
       : visibility === "public"
-        ? "Public comments"
-        : "Internal comments";
+        ? "Team and client"
+        : "Team only";
 
   function toggleFilter(key: keyof FilterState) {
     setFilters((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -1025,12 +1025,12 @@ export function CommentPanel({
               },
               {
                 id: "public" as const,
-                label: "Public comments",
+                label: "Team and client",
                 count: publicCount,
               },
               {
                 id: "internal" as const,
-                label: "Internal comments",
+                label: "Team only",
                 count: internalCount,
               },
             ]

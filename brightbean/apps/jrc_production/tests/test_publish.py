@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, timedelta
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
@@ -227,10 +228,12 @@ def test_final_download_is_scoped_and_redirects_only_to_session_gateway(client, 
     assert "token=" not in response["Location"]
     assert "signature" not in call.call_args.args[2]
     query = parse_qs(urlsplit(call.call_args.args[2]).query)
-    assert query["filename"] == ["publish-test-content-instagram-publish-test-channel-v1.mp4"]
+    assert "filename" not in query
+    assert query["version_id"] == [str(version.ff_version_id)]
+    assert query["download"] == ["true"]
 
 
-def test_final_download_filename_is_ascii_and_safe(client, workspace, user, post):
+def test_final_download_preserves_service_filename(client, workspace, user, post):
     variant = approved_post(post)
     post.title = 'Žluťoučký / teaser "one"'
     post.save(update_fields=["title"])
@@ -258,10 +261,7 @@ def test_final_download_filename_is_ascii_and_safe(client, workspace, user, post
         response = client.get(url)
     assert response.status_code == 302
     query = parse_qs(urlsplit(call.call_args.args[2]).query)
-    filename = query["filename"][0]
-    assert filename == "zlutoucky-teaser-one-instagram-kanal-a-v3.mp4"
-    assert filename.isascii()
-    assert not any(char in filename for char in '/\\"')
+    assert "filename" not in query
 
 
 def test_content_detail_renders_flash_message_once(client, workspace, user, post):
@@ -654,3 +654,140 @@ def test_set_date_respects_custom_scheduling_grant_and_removed_membership(client
     assert variant.status == "scheduled"
     WorkspaceMembership.objects.filter(workspace=workspace, user=user).delete()
     assert client.post(detail, data).status_code == 404
+
+
+def test_final_download_missing_original_offers_explained_mp4_fallback(client, workspace, user, post):
+    variant = approved_post(post)
+    video = VideoAsset.objects.create(platform_post=variant, ff_asset_id=uuid.uuid4())
+    version = VideoVersion.objects.create(video=video, number=1, ff_version_id=uuid.uuid4(), status="ready")
+    video.final_version = version
+    video.save(update_fields=["final_version"])
+    client.force_login(user)
+    url = reverse(
+        "jrc_video:final_download",
+        kwargs={
+            "workspace_id": workspace.pk,
+            "post_id": post.pk,
+            "platform_post_id": variant.pk,
+        },
+    )
+    with patch(
+        "apps.jrc_video.uploads._call",
+        return_value={
+            "url": "http://testserver/files/video/processed/download.mp4?filename=clip.mp4",
+            "download_note": "Original unavailable",
+        },
+    ):
+        response = client.get(url)
+    assert response.status_code == 200
+    assert b"Original video unavailable" in response.content
+    assert b"Download converted MP4" in response.content
+    assert "no-store" in response["Cache-Control"]
+
+
+def _versions_with_final(post, *, approved=True):
+    variant = approved_post(post) if approved else post.platform_posts.get()
+    video = VideoAsset.objects.create(platform_post=variant, ff_asset_id=uuid.uuid4())
+    older = VideoVersion.objects.create(video=video, number=1, ff_version_id=uuid.uuid4(), status="ready")
+    final = VideoVersion.objects.create(video=video, number=2, ff_version_id=uuid.uuid4(), status="ready")
+    video.final_version = final
+    video.save(update_fields=["final_version"])
+    return variant, older, final
+
+
+def _version_download_url(workspace, post, version):
+    return reverse(
+        "jrc_video:version_download",
+        kwargs={"workspace_id": workspace.pk, "post_id": post.pk, "version_id": version.pk},
+    )
+
+
+def _card_links(user, post, workspace):
+    from apps.jrc_video.uploads import channel_cards
+
+    membership = WorkspaceMembership.objects.get(workspace=workspace, user=user)
+    return {v["number"]: v["download_url"] for card in channel_cards(user, post, membership) for v in card["versions"]}
+
+
+@pytest.mark.parametrize("role", ["owner", "manager"])
+def test_team_with_download_right_gets_any_ready_version_and_its_link(client, workspace, user, post, role):
+    """P2-B05 R1: the team that may download finals today may also take a working version."""
+    _variant, older, _final = _versions_with_final(post, approved=False)
+    WorkspaceMembership.objects.filter(workspace=workspace, user=user).update(workspace_role=role)
+    client.force_login(user)
+    url = _version_download_url(workspace, post, older)
+    assert _card_links(user, post, workspace)[1] == url
+    signed = "http://testserver/files/video/raw/original.mov?filename=original.MOV"
+    with patch("apps.jrc_video.uploads._call", return_value={"url": signed}) as call:
+        response = client.get(url)
+    assert response.status_code == 302
+    assert response["Location"] == signed
+    query = parse_qs(urlsplit(call.call_args.args[2]).query)
+    assert query["version_id"] == [str(older.ff_version_id)]
+    assert "filename" not in query
+
+
+@pytest.mark.parametrize("role", ["client", "viewer", "editor", "contributor"])
+def test_without_download_right_no_working_version_link_or_download(client, workspace, user, post, role):
+    """P2-B05 R1: clients, viewers and team members without the right never get a draft or older version."""
+    _variant, older, final = _versions_with_final(post)
+    WorkspaceMembership.objects.filter(workspace=workspace, user=user).update(workspace_role=role)
+    client.force_login(user)
+    links = _card_links(user, post, workspace)
+    assert links[1] == ""
+    with patch("apps.jrc_video.uploads._call") as call:
+        assert client.get(_version_download_url(workspace, post, older)).status_code == 403
+        call.assert_not_called()
+    if role == "client":
+        return  # the approved final, see the next test
+    assert links[2] == ""
+    with patch("apps.jrc_video.uploads._call") as call:
+        assert client.get(_version_download_url(workspace, post, final)).status_code == 403
+        call.assert_not_called()
+
+
+def test_client_gets_only_the_final_that_final_download_allows(client, workspace, user, post):
+    variant, _older, final = _versions_with_final(post)
+    WorkspaceMembership.objects.filter(workspace=workspace, user=user).update(workspace_role="client")
+    client.force_login(user)
+    url = _version_download_url(workspace, post, final)
+    assert _card_links(user, post, workspace)[2] == url
+    with patch("apps.jrc_video.uploads._call", return_value={"url": "http://testserver/files/video/raw/v2.mov"}):
+        assert client.get(url).status_code == 302
+    # Back to waiting for the client's decision: the same final is no longer downloadable anywhere.
+    PlatformPost.objects.filter(pk=variant.pk).update(status=PlatformPost.Status.PENDING_CLIENT)
+    assert _card_links(user, post, workspace)[2] == ""
+    with patch("apps.jrc_video.uploads._call") as call:
+        assert client.get(url).status_code == 403
+        call.assert_not_called()
+
+
+def test_archived_workspace_offers_no_version_download(client, workspace, user, post):
+    _variant, older, _final = _versions_with_final(post)
+    Workspace.objects.filter(pk=workspace.pk).update(is_archived=True)
+    client.force_login(user)
+    with patch("apps.jrc_video.uploads._call") as call:
+        assert client.get(_version_download_url(workspace, post, older)).status_code == 403
+        call.assert_not_called()
+
+
+def test_version_download_does_not_serve_another_post_or_an_unready_version(client, workspace, user, post):
+    variant = approved_post(post)
+    video = VideoAsset.objects.create(platform_post=variant, ff_asset_id=uuid.uuid4())
+    version = VideoVersion.objects.create(video=video, number=1, ff_version_id=uuid.uuid4(), status="processing")
+    other = create_content(workspace, "Another content", user)
+    client.force_login(user)
+    with patch("apps.jrc_video.uploads._call") as call:
+        for content_id in [post.pk, other.pk]:
+            response = client.get(
+                reverse(
+                    "jrc_video:version_download",
+                    kwargs={
+                        "workspace_id": workspace.pk,
+                        "post_id": content_id,
+                        "version_id": version.pk,
+                    },
+                )
+            )
+            assert response.status_code == 404
+        call.assert_not_called()

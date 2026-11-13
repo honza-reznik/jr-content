@@ -95,9 +95,20 @@ function useFramePreview(streamUrl: string | null | undefined) {
     if (isHls && Hls.isSupported()) {
       const hls = new Hls({
         enableWorker: false,
+        autoStartLoad: false,
         maxBufferLength: 1,
         maxMaxBufferLength: 2,
         maxBufferSize: 0.5 * 1024 * 1024, // 500KB — minimal buffering
+      })
+      hls.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
+        // hls.js sorts by bitrate, which older masters could report as only
+        // the audio rate. Pick by dimensions rather than assuming index 0.
+        const smallest = data.levels.reduce((best, level, index) =>
+          !best || (level.height > 0 && level.height < best.height)
+            ? { index, height: level.height } : best,
+        undefined as { index: number; height: number } | undefined)
+        hls.currentLevel = smallest?.index ?? 0
+        hls.startLoad()
       })
       previewHlsRef.current = hls
       hls.loadSource(streamUrl)

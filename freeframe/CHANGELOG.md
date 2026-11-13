@@ -7,12 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- JR Content video downloads serve the original upload with its filename, with an explained MP4 fallback for missing originals. Review playback starts at up to 720p; higher resolutions require a manual selection. New CPU 720p conversions use a 1.5 Mbps video ceiling. Comment visibility uses “Team only” and “Team and client”.
+- JR Content: file downloads through the `/files` gateway have no total time limit. A transfer is cut only when one 64 KiB piece is not read from storage and taken by the client within `FILE_STREAM_IDLE_SECONDS` (30 s); its capacity lease is renewed while data flows. JR Content accounts download a version only through JR Content, which decides who may; the fallback note is shown in the page instead of a browser dialog.
+
 ### Added
 - JR Content: přihlášení do videa jednorázovou vstupenkou z Brightbean, ochrana proti podstrčení cizího přihlášení a společné odhlášení.
 - JR Content: časový štítek nad obrazem videa, synchronizovaný s vykresleným snímkem; FPS ze souboru a celá obrazovka se štítkem i na telefonu.
 
 ### Fixed
 - JR Content P2-B01: servisní přihlášení po anonymizaci testovací kopie přijímá syntakticky platné adresy `.invalid`; validace v hlavním projektu zůstává původní.
+- JR Content P2-B02: přihlašovací stránky videa vedou na přihlášení aplikace s bezpečným návratem; místní přihlašovací API neprozrazuje existenci účtů a zachovává interní servisní přihlášení.
+- JR Content P2-B02: odhlášení aplikace zneplatní dosavadní video tokeny včetně přenosu HLS; při nedostupném video serveru lze odhlášení bezpečně zopakovat.
 - JR Content P1-B18: video bez zvukové stopy má po převodu platný hlavní HLS seznam a lze ho přehrát i komentovat v konkrétním čase; datový tok chybějících variant se určí z hotových segmentů.
 - JR Content P1-B17 review2: export komentářů respektuje interní předky i po jejich smazání; živé události vyřešení interních vláken neodhalují jejich existenci klientům. Odesílač požadavku na převod nepřepisuje výsledek hotového ani běžícího převodu.
 - JR Content P1-B17 review: záchrana hotového uploadu přes abort ukládá požadavek na převod atomicky; obnova visících převodů sdílí zámek s workerem a znovu ověřuje stav. Odpovědi po vyřešení, úpravě i vytvoření komentáře filtrují interní potomky podle viditelnosti, včetně příloh a sdílených odkazů.

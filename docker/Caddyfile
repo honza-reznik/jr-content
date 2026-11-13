@@ -108,8 +108,6 @@
 	}
 	@video path {$JRC_BASE_PATH}/video {$JRC_BASE_PATH}/video/*
 	handle @video {
-		@setup path {$JRC_BASE_PATH}/video/setup {$JRC_BASE_PATH}/video/setup/*
-		respond @setup 404
 		header {
 			defer
 			X-Frame-Options SAMEORIGIN

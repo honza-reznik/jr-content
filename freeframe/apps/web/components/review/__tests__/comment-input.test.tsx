@@ -230,8 +230,8 @@ describe('CommentInput visibility toggle', () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined)
     render(<CommentInput assetId="a1" projectId="p1" assetType="video" onSubmit={onSubmit} />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Public' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Internal' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Team and client' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Team only' }))
     await typeAndSubmit('team only')
 
     expect(onSubmit.mock.calls[0][5]).toBe('internal')
@@ -243,8 +243,8 @@ describe('CommentInput visibility toggle', () => {
       <CommentInput assetId="a1" projectId="p1" assetType="video" allowInternal={false} onSubmit={onSubmit} />,
     )
 
-    expect(screen.queryByRole('button', { name: 'Public' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Internal' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Team and client' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Team only' })).toBeNull()
     await typeAndSubmit('from a share link')
 
     expect(onSubmit.mock.calls[0][5]).toBe('public')

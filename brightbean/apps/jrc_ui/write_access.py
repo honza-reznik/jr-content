@@ -225,6 +225,7 @@ READ_VIEWS = {
     "jrc_production:board",
     "jrc_production:new_content",
     "jrc_video:final_download",
+    "jrc_video:version_download",
     "jrc_thumbnails:download",
     "apps.media_library.file_views.private_media",
     "jrc_private_file",

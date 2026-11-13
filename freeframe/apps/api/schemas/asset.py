@@ -69,6 +69,7 @@ class AssetUpdate(BaseModel):
     keywords: Optional[list] = None
 
 class StreamUrlResponse(BaseModel):
+    download_note: Optional[str] = None
     url: str
     asset_type: AssetType
     expires_in: int = 3600

@@ -228,3 +228,20 @@ def download_filename(asset: Asset, media_file: MediaFile, choice: DownloadChoic
         stem, ext = os.path.splitext(name)
         name = f"{stem} ({_transcode_label(asset.asset_type, media_file)}){ext}"
     return name
+
+
+def managed_video_download(asset: Asset, media_file: MediaFile) -> tuple[DownloadChoice, Optional[str]]:
+    """JR Content: the uploaded bytes, with an explicit fallback for old data.
+
+    The route already checked asset and version access. This does not grant
+    access to another asset or change who can download a version.
+    Only a missing object triggers fallback; storage failures must remain errors.
+    """
+    choices = download_choices(asset.asset_type, media_file, allow_original=True)
+    original = choices[0]
+    if original.s3_key and head_object_size(original.s3_key) is not None:
+        return original, None
+    transcode = next((choice for choice in choices if choice.id == TRANSCODE), None)
+    if transcode and head_object_size(transcode.s3_key) is not None:
+        return transcode, "The original upload is unavailable. Downloading the converted MP4 instead."
+    raise HTTPException(status_code=404, detail="Neither the original video nor a converted MP4 is available")

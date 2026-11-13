@@ -2,6 +2,7 @@
 
 import hashlib
 import uuid
+from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -132,7 +133,9 @@ def test_missing_account_shows_generic_error(browser, user):
     assert b"TicketError" not in response.content
 
 
-def test_logout_requires_csrf_and_always_leads_through_freeframe(browser):
+def test_logout_requires_csrf_and_always_leads_through_freeframe(browser, monkeypatch):
+    video_client = Mock()
+    monkeypatch.setattr("apps.jrc_video.views.FreeFrameUserClient", lambda user: video_client)
     response = browser.get("/accounts/logout/?next=https://foreign.invalid")
     assert response.status_code == 200
     assert "jrc_logout_binding" not in response.cookies
@@ -146,6 +149,7 @@ def test_logout_requires_csrf_and_always_leads_through_freeframe(browser):
         ).status_code
         == 403
     )
+    video_client.request.assert_not_called()
     response = browser.post(
         "/accounts/logout/?next=https://foreign.invalid",
         {"csrfmiddlewaretoken": browser.cookies["csrftoken"].value, "next": "//foreign.invalid"},
@@ -161,6 +165,155 @@ def test_logout_requires_csrf_and_always_leads_through_freeframe(browser):
     assert response["Referrer-Policy"] == "no-referrer"
     assert "_auth_user_id" not in browser.session
     assert response.cookies["jrc_sso_binding"]["max-age"] == 0
+    video_client.request.assert_called_once_with("POST", "/auth/jrc-logout")
+    video_client.forget.assert_called_once()
+    for name in ("ff_access_token", "ff_refresh_token"):
+        assert response.cookies[name]["max-age"] == 0
+        assert response.cookies[name]["path"] == "/video"
+
+
+def _sign_out(browser, monkeypatch, side_effect):
+    from apps.jrc_video.client import FreeFrameError  # noqa: F401 - used by callers' side effects
+
+    video_client = Mock()
+    video_client.request.side_effect = side_effect
+    monkeypatch.setattr("apps.jrc_video.views.FreeFrameUserClient", lambda user: video_client)
+    browser.get("/accounts/logout/")
+    response = browser.post("/accounts/logout/", {"csrfmiddlewaretoken": browser.cookies["csrftoken"].value})
+    return response, video_client
+
+
+@pytest.mark.parametrize("status_code", [401, 403])
+def test_logout_completes_without_queue_when_freeframe_refuses_the_account(browser, user, monkeypatch, status_code):
+    """Deactivated, deleted, reset or unmanaged FreeFrame account: no tokens to revoke, nothing to retry."""
+    from apps.jrc_video.client import FreeFrameError
+    from apps.jrc_video.models import VideoSessionRevocation
+
+    response, video_client = _sign_out(browser, monkeypatch, FreeFrameError("Refused", status_code=status_code))
+    assert response.status_code == 302 and urlsplit(response.url).path == "/video/jrc-logout"
+    assert "_auth_user_id" not in browser.session
+    assert not VideoSessionRevocation.objects.exists()
+    video_client.forget.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        pytest.param("outage", id="network"),
+        pytest.param(503, id="redis-or-api-503"),
+        pytest.param(500, id="api-500"),
+        pytest.param("ticket", id="missing-sso-key"),
+        pytest.param("boom", id="unexpected"),
+    ],
+)
+def test_logout_completes_and_queues_revocation_when_freeframe_is_down(browser, user, monkeypatch, failure):
+    from apps.jrc_video.client import FreeFrameError
+    from apps.jrc_video.models import VideoSessionRevocation
+
+    error = {
+        "outage": FreeFrameError("FreeFrame API is unavailable"),
+        503: FreeFrameError("HTTP 503", status_code=503),
+        500: FreeFrameError("HTTP 500", status_code=500),
+        "ticket": FreeFrameError("SSO key is not configured"),
+        "boom": RuntimeError("unexpected"),
+    }[failure]
+    response, video_client = _sign_out(browser, monkeypatch, error)
+    assert response.status_code == 302 and urlsplit(response.url).path == "/video/jrc-logout"
+    assert "_auth_user_id" not in browser.session
+    for name in ("ff_access_token", "ff_refresh_token"):
+        assert response.cookies[name]["max-age"] == 0
+    pending = VideoSessionRevocation.objects.get()
+    assert pending.source_user_id == user.pk
+    assert "password" not in pending.last_error.lower()
+    video_client.forget.assert_called_once()
+
+
+def test_logout_without_failure_queues_nothing(browser, monkeypatch):
+    from apps.jrc_video.models import VideoSessionRevocation
+
+    response, _ = _sign_out(browser, monkeypatch, None)
+    assert response.status_code == 302
+    assert not VideoSessionRevocation.objects.exists()
+
+
+def test_logout_with_real_client_and_dead_freeframe_still_signs_out(browser, user, settings):
+    """No mock of the client: connection refused at the real API address."""
+    from apps.jrc_video.models import VideoSessionRevocation
+
+    settings.JRC_FF_API_URL = "http://127.0.0.1:9"
+    browser.get("/accounts/logout/")
+    response = browser.post("/accounts/logout/", {"csrfmiddlewaretoken": browser.cookies["csrftoken"].value})
+    assert response.status_code == 302
+    assert "_auth_user_id" not in browser.session
+    assert VideoSessionRevocation.objects.filter(source_user_id=user.pk).exists()
+
+
+class TestQueuedSessionRevocation:
+    """The worker finishes what the sign-out could not (jrc_sync_freeframe --pending)."""
+
+    @pytest.fixture(autouse=True)
+    def sync_settings(self, settings):
+        settings.JRC_FF_SYNC_EMAIL = "sync@example.test"
+        settings.JRC_FF_SYNC_PASSWORD = "unused-password"
+        from apps.jrc_video.client import _TOKENS
+
+        _TOKENS.clear()
+
+    def test_retry_calls_service_endpoint_and_clears_marker(self, user):
+        from django.core.management import call_command
+
+        from apps.jrc_video.models import VideoSessionRevocation
+
+        VideoSessionRevocation.objects.create(source_user_id=user.pk)
+        calls = []
+
+        def fake(self, method, path, payload=None):
+            calls.append((method, path))
+            return {"id": str(uuid.uuid4()), "found": True}
+
+        with patch("apps.jrc_video.client.FreeFrameClient.request", fake):
+            call_command("jrc_sync_freeframe", pending=True)
+        assert ("POST", f"/jrc-sync/accounts/{user.pk}/revoke-sessions") in calls
+        assert not VideoSessionRevocation.objects.exists()
+
+    def test_failed_retry_keeps_marker_and_reports(self, user):
+        from django.core.management import call_command
+        from django.core.management.base import CommandError
+
+        from apps.jrc_video.client import FreeFrameError
+        from apps.jrc_video.models import VideoSessionRevocation
+
+        VideoSessionRevocation.objects.create(source_user_id=user.pk)
+        with (
+            patch("apps.jrc_video.client.FreeFrameClient.request", side_effect=FreeFrameError("still down")),
+            pytest.raises(CommandError),
+        ):
+            call_command("jrc_sync_freeframe", pending=True)
+        assert VideoSessionRevocation.objects.get().last_error == "still down"
+
+    def test_newer_sign_out_during_retry_is_not_lost(self, user):
+        from apps.jrc_video.models import VideoSessionRevocation
+        from apps.jrc_video.services import revoke_session_request
+
+        pending = VideoSessionRevocation.objects.create(source_user_id=user.pk)
+
+        class Api:
+            def request(self, method, path, payload=None):
+                # A second sign-out lands while the first call is in flight.
+                VideoSessionRevocation.objects.filter(pk=pending.pk).update(requested_at=timezone.now())
+
+        revoke_session_request(pending, Api())
+        assert VideoSessionRevocation.objects.filter(pk=pending.pk).exists()
+
+
+def test_logout_without_video_account_needs_no_freeframe(browser, user, monkeypatch):
+    constructor = Mock()
+    monkeypatch.setattr("apps.jrc_video.views.FreeFrameUserClient", constructor)
+    VideoAccount.objects.filter(user=user).delete()
+    browser.get("/accounts/logout/")
+    response = browser.post("/accounts/logout/", {"csrfmiddlewaretoken": browser.cookies["csrftoken"].value})
+    assert response.status_code == 302
+    constructor.assert_not_called()
 
 
 # ---- P1-B30 (E-13b-ex10-04): another client's video gets the same clear refusal as no client at all ----------
