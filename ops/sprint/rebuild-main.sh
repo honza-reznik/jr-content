@@ -19,5 +19,6 @@ echo "$(date '+%H:%M') make up"; make up; rc=$?; echo "make up kód $rc, stažen
 for c in $(docker ps --filter "label=com.docker.compose.project=jrc" --format '{{.Names}}'); do
   docker inspect -f '{{range .Mounts}}{{.Source}} {{end}}' "$c" | grep -qE '/home/honza/jr-content/(brightbean|freeframe)' && docker restart "$c" >/dev/null && echo "restart $c"
 done; sleep 20
-echo "$(date '+%H:%M') make test"; make test; echo "make test kód $?, staženo celkem $(mb) MB"; kill $w 2>/dev/null
-git push -q origin main; echo "$(date '+%H:%M') HOTOVO"
+echo "$(date '+%H:%M') make test"; make test; t=$?; echo "make test kód $t, staženo celkem $(mb) MB"; kill $w 2>/dev/null
+# Push jen při zelené sadě (stejně jako deploy-bb.sh).
+[ $t = 0 ] && git push -q origin main && echo "$(date '+%H:%M') PUSH OK" || echo "PUSH NEPROVEDEN – testy selhaly"; echo "$(date '+%H:%M') HOTOVO"
