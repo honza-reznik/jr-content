@@ -43,6 +43,8 @@ def can_edit_text(post, membership):
 
 
 def _authorize(document, user, *, write=False):
+    if document.post.trashed_at is not None:
+        raise PermissionDenied("This content is in Trash. Restore it before opening its texts.")
     membership = content_membership(document.post.workspace, user)
     if write and not can_edit_text(document.post, membership):
         raise PermissionDenied("You cannot edit texts for this post.")

@@ -8,10 +8,9 @@ from datetime import date, datetime, time, timedelta
 from types import SimpleNamespace
 
 from django.contrib.auth.decorators import login_required
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.db.models import Prefetch, Q, QuerySet
-from django.db.models.deletion import RestrictedError
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
@@ -20,7 +19,7 @@ from apps.common.validators import is_valid_hex_color
 from apps.composer.models import ContentCategory, PlatformPost, Post
 from apps.members.decorators import require_permission
 from apps.members.models import WorkspaceMembership
-from apps.members.permissions import can_schedule, can_unschedule, content_delete_blocker, is_planned
+from apps.members.permissions import can_schedule, can_unschedule, is_planned
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 
@@ -1460,10 +1459,8 @@ def bulk_platform_action(request, workspace_id):
     from django.utils import timezone as _tz
 
     from apps.composer.services import (
-        ChannelRemovalError,
         lock_copies,
         media_types_by_post,
-        remove_platform_posts,
         require_publishable,
         require_release_allowed,
         sync_post_scheduled_at,
@@ -1528,29 +1525,19 @@ def bulk_platform_action(request, workspace_id):
             )
 
     if action == "delete":
-        # P1-B37: the one deletion rule (``content_delete_blocker``): a planned row only by someone who
-        # may take it out of the plan. Refuse the whole batch, as Draft and Publish do.
-        by_post = {}
-        for pp in pps:
-            if pp.status not in PlatformPost.PROTECTED_STATUSES:
-                by_post.setdefault(pp.post_id, []).append(pp)
-        # One decision per content (its copies together), not one per row.
-        refused = [
-            pp
-            for copies in by_post.values()
-            if content_delete_blocker(membership, copies[0].post, copies)
-            for pp in copies
-            if is_planned(pp)
-        ]
-        if refused:
-            noun = "post is" if len(refused) == 1 else "posts are"
-            return JsonResponse(
-                {
-                    "error": f"{len(refused)} selected {noun} planned. Only someone who can schedule content "
-                    "may delete it, because deleting takes it out of the plan, so nothing was deleted."
-                },
-                status=403,
-            )
+        from apps.jrc_production.trash import trash_content
+
+        eligible = [pp for pp in pps if pp.status not in PlatformPost.PROTECTED_STATUSES]
+        contents = {pp.post_id: pp.post for pp in eligible}
+        try:
+            with transaction.atomic():
+                for post_id in sorted(contents):
+                    trash_content(contents[post_id], request.user)
+        except (PermissionDenied, ValidationError) as exc:
+            return JsonResponse({"error": str(exc)}, status=403)
+        return JsonResponse(
+            {"action": action, "count": len(eligible), "message": f"{len(contents)} content items moved to Trash."}
+        )
 
     if action == "publish":
         # Refuse the whole batch rather than skip the rows that can't publish:
@@ -1577,109 +1564,67 @@ def bulk_platform_action(request, workspace_id):
 
     affected = set()
     touched = []  # rows whose queue mirror must follow, as (pp, new_slot_dt|None)
-    try:
-        with transaction.atomic():
-            if action == "delete":
-                deletable = remove_platform_posts(
-                    PlatformPost.objects.filter(pk__in=[pp.pk for pp in pps])
-                    .exclude(status__in=PlatformPost.PROTECTED_STATUSES)
-                    .select_related("post", "social_account")
-                )
-                for pp in deletable:
-                    affected.add(pp.post_id)
-                    touched.append((pp, None))
-                count = len(deletable)
-            elif action == "draft":
-                # Unschedule: back to draft and drop the time.
-                changed = []
-                for pp in pps:
-                    if pp.status in PlatformPost.PROTECTED_STATUSES or pp.status == "draft":
-                        continue
-                    if not pp.can_transition_to("draft"):
-                        continue
-                    pp.scheduled_at = None
-                    pp.transition_to("draft")
-                    changed.append(pp)
-                    affected.add(pp.post_id)
-                    touched.append((pp, None))
-                _bulk_save_platform_posts(changed)
-                count = len(changed)
-            else:
-                # Publish now. Rows on the same channel are staggered a minute apart
-                # rather than all stamped with the same instant: posting slots exist
-                # to space a channel's output, and firing eight posts at one account
-                # in the same publisher tick invites rate limiting.
-                now = _tz.now()
-                per_channel: dict = {}
-                changed = []
-                for pp in pps:
-                    # scheduled → scheduled is not a valid transition (the whole Queue
-                    # tab is `scheduled`), so those rows only move in time — the
-                    # publisher takes any scheduled row whose effective time passed.
-                    if pp.status != "scheduled" and not _promotes_to_scheduled(pp):
-                        continue
-                    slot = now + timedelta(minutes=per_channel.get(pp.social_account_id, 0))
-                    per_channel[pp.social_account_id] = per_channel.get(pp.social_account_id, 0) + 1
-                    pp.scheduled_at = slot
-                    if pp.status == "failed":
-                        # Retrying: the previous attempt's failure state must not
-                        # ride along into the fresh one — including its publish
-                        # handle, which the confirmation sweep would otherwise read
-                        # as this attempt's outcome.
-                        pp.publish_error = ""
-                        pp.retry_count = 0
-                        pp.next_retry_at = None
-                        pp.platform_post_id = ""
-                    if pp.status != "scheduled":
-                        pp.transition_to("scheduled")
-                    changed.append(pp)
-                    affected.add(pp.post_id)
-                    touched.append((pp, slot))
-                _bulk_save_platform_posts(changed)
-                count = len(changed)
+    with transaction.atomic():
+        if action == "draft":
+            # Unschedule: back to draft and drop the time.
+            changed = []
+            for pp in pps:
+                if pp.status in PlatformPost.PROTECTED_STATUSES or pp.status == "draft":
+                    continue
+                if not pp.can_transition_to("draft"):
+                    continue
+                pp.scheduled_at = None
+                pp.transition_to("draft")
+                changed.append(pp)
+                affected.add(pp.post_id)
+                touched.append((pp, None))
+            _bulk_save_platform_posts(changed)
+            count = len(changed)
+        else:
+            # Publish now. Rows on the same channel are staggered a minute apart
+            # rather than all stamped with the same instant: posting slots exist
+            # to space a channel's output, and firing eight posts at one account
+            # in the same publisher tick invites rate limiting.
+            now = _tz.now()
+            per_channel: dict = {}
+            changed = []
+            for pp in pps:
+                # scheduled → scheduled is not a valid transition (the whole Queue
+                # tab is `scheduled`), so those rows only move in time — the
+                # publisher takes any scheduled row whose effective time passed.
+                if pp.status != "scheduled" and not _promotes_to_scheduled(pp):
+                    continue
+                slot = now + timedelta(minutes=per_channel.get(pp.social_account_id, 0))
+                per_channel[pp.social_account_id] = per_channel.get(pp.social_account_id, 0) + 1
+                pp.scheduled_at = slot
+                if pp.status == "failed":
+                    # Retrying: the previous attempt's failure state must not
+                    # ride along into the fresh one — including its publish
+                    # handle, which the confirmation sweep would otherwise read
+                    # as this attempt's outcome.
+                    pp.publish_error = ""
+                    pp.retry_count = 0
+                    pp.next_retry_at = None
+                    pp.platform_post_id = ""
+                if pp.status != "scheduled":
+                    pp.transition_to("scheduled")
+                changed.append(pp)
+                affected.add(pp.post_id)
+                touched.append((pp, slot))
+            _bulk_save_platform_posts(changed)
+            count = len(changed)
 
-            _sync_queue_entries(touched)
+        _sync_queue_entries(touched)
 
-            # Reconcile each touched parent's schedule, preserving content without
-            # channels. Fetched in one query with
-            # the children prefetched, so the loop below adds none.
-            posts = Post.objects.filter(id__in=affected, workspace=workspace).prefetch_related("platform_posts")
-            for post in posts:
-                sync_post_scheduled_at(post)
-    except (ChannelRemovalError, RestrictedError) as exc:
-        # A Caption document can appear after the preflight; the transaction
-        # rolls back every deletion so a race never leaves a partial batch.
-        from django.urls import reverse
-
-        links = []
-        labels = []
-        from apps.composer.services import channel_removal_blocker
-
-        for pp in exc.variants if isinstance(exc, ChannelRemovalError) else pps:
-            if channel_removal_blocker(pp):
-                labels.append(f"{pp.post.title or 'Untitled post'} — {pp.social_account.account_name}")
-                url = (
-                    reverse(
-                        "jrc_production:content_detail",
-                        kwargs={"workspace_id": workspace.id, "post_id": pp.post_id},
-                    )
-                    + "?tab=caption"
-                )
-                links.append({"label": pp.social_account.account_name, "url": url})
-        items = "; ".join(labels) or "a selected channel"
-        return JsonResponse(
-            {
-                "error": f"Nothing was deleted. {items} has caption history, video or thumbnails. Review its saved work on the content detail.",
-                "links": links,
-            },
-            status=409,
-        )
-
+        # Reconcile each touched parent's schedule, preserving content without
+        # channels. Fetched in one query with
+        # the children prefetched, so the loop below adds none.
+        posts = Post.objects.filter(id__in=affected, workspace=workspace).prefetch_related("platform_posts")
+        for post in posts:
+            sync_post_scheduled_at(post)
     # Plain JSON, not an HX-Trigger header: the selection bar posts with fetch(),
     # not htmx, and fires its own calendar/tab refresh events on success.
     result = {"action": action, "count": count}
-    if action == "delete":
-        result["message"] = "Channel removed." if count == 1 else f"{count} channels removed."
     return JsonResponse(result)
 
 

@@ -1,6 +1,8 @@
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 
+from apps.jrc_production.models import VideoDeletionRequest
+from apps.jrc_production.trash import delete_remote_video
 from apps.jrc_video.client import FreeFrameClient, FreeFrameError
 from apps.jrc_video.models import (
     VideoAccount,
@@ -34,6 +36,9 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         api = FreeFrameClient()
         failures = 0
+        for asset_id in list(VideoDeletionRequest.objects.values_list("ff_asset_id", flat=True)):
+            if not delete_remote_video(asset_id, api=api):
+                failures += 1
         # Deletions have priority and no user FK; even a full run must retry them.
         for user_id in list(VideoAccountRevocation.objects.values_list("source_user_id", flat=True)):
             try:

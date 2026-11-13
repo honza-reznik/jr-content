@@ -21,6 +21,8 @@ from django.utils import timezone
 from apps.common.managers import WorkspaceScopedManager
 from apps.common.validators import validate_hex_color
 
+from .managers import ActivePlatformPostManager, ActivePostManager
+
 
 class ContentCategory(models.Model):
     """Content category for posts (e.g., Educational, Promotional, Behind the scenes).
@@ -263,14 +265,17 @@ class Post(models.Model):
     # out Tue 9am" without queuing it for the publisher. Cleared once the post
     # is actually scheduled.
     proposed_publish_at = models.DateTimeField(blank=True, null=True)
+    trashed_at = models.DateTimeField(blank=True, null=True, db_index=True)
 
     # Metadata
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    objects = WorkspaceScopedManager()
+    objects = ActivePostManager()
+    all_objects = WorkspaceScopedManager()
 
     class Meta:
+        base_manager_name = "all_objects"
         db_table = "composer_post"
         ordering = ["-created_at"]
 
@@ -536,7 +541,11 @@ class PlatformPost(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    objects = ActivePlatformPostManager()
+    all_objects = models.Manager()
+
     class Meta:
+        base_manager_name = "all_objects"
         db_table = "composer_platform_post"
         unique_together = [("post", "social_account")]
         indexes = [

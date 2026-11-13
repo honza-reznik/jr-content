@@ -2845,8 +2845,13 @@ def post_delete(request, workspace_id, post_id):
             )
         message = "Channel removed."
     else:
-        post.delete()
-        message = "Content deleted."
+        from apps.jrc_production.trash import trash_content
+
+        try:
+            trash_content(post, request.user)
+        except (ValidationError, PermissionDenied) as exc:
+            return JsonResponse({"error": str(exc)}, status=409)
+        message = "Content moved to Trash. You can restore it from the content board."
 
     return deletion_response(request, workspace, message, leave_page=not account_id)
 
