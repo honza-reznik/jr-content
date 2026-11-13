@@ -28,7 +28,7 @@
         {% if can_manage_billing %}
         <div class="h-7 w-px bg-stone-200"></div>
         <a href="{% url 'intelligence:billing-settings' org_id=organization.id %}"
-           class="text-xs font-medium hover:underline" style="color: var(--primary);">
+           class="text-xs font-medium hover:underline" style="color: var(--primary-text);">
             Billing →
         </a>
         {% endif %}
@@ -147,7 +147,7 @@
         color: var(--text-primary, #1c1917);
     }
     .intel-tab.intel-tab-active {
-        color: var(--primary);
+        color: var(--primary-text);
         border-color: var(--primary);
     }
     /* Panel display: hidden by default; active via .intel-panel-active. */
@@ -206,7 +206,7 @@
         padding: 0.625rem 1.25rem;
         font-size: 0.875rem;
         font-weight: 600;
-        color: white;
+        color: var(--accent-text);
         background: var(--primary);
         border: none;
         border-radius: 0.5rem;
@@ -244,7 +244,7 @@
         line-height: 1.5;
     }
     .intel-activate-note a {
-        color: var(--primary);
+        color: var(--primary-text);
         font-weight: 600;
         text-decoration: none;
         border-bottom: 1px solid var(--primary-muted, #fed7aa);

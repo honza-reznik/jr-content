@@ -18,7 +18,7 @@
                    hx-get="?range={{ days }}&chart_metric={{ chip.key }}&partial=chart"
                    hx-target="#analytics-hero-chart"
                    hx-swap="outerHTML"
-                   style="padding: 6px 12px; font-size: 0.75rem; font-weight: 600; border-radius: var(--radius-full); border: 1px solid; text-decoration: none; cursor: pointer; border-color: {% if chip.key == chart.metric %}transparent{% else %}var(--border){% endif %}; background: {% if chip.key == chart.metric %}{{ primary_color }}{% else %}#fff{% endif %}; color: {% if chip.key == chart.metric %}#fff{% else %}var(--text-secondary){% endif %};">{{ chip.label }}</a>
+                   style="padding: 6px 12px; font-size: 0.75rem; font-weight: 600; border-radius: var(--radius-full); border: 1px solid; text-decoration: none; cursor: pointer; border-color: {% if chip.key == chart.metric %}transparent{% else %}var(--border){% endif %}; background: {% if chip.key == chart.metric %}{{ primary_color }}{% else %}#fff{% endif %}; color: {% if chip.key == chart.metric %}var(--accent-text){% else %}var(--text-secondary){% endif %};">{{ chip.label }}</a>
             {% endfor %}
         </div>
     </div>

@@ -73,13 +73,13 @@
             {% if gap.suggested_angles %}
             <div class="mt-3 pt-3 border-t border-stone-200/70">
                 <div class="flex items-center gap-1.5 mb-2">
-                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary);"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-                    <div class="text-[10px] uppercase tracking-wide font-semibold" style="color: var(--primary);">Try these angles</div>
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary-text);"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                    <div class="text-[10px] uppercase tracking-wide font-semibold" style="color: var(--primary-text);">Try these angles</div>
                 </div>
                 <ul class="space-y-1.5 text-xs text-stone-800">
                     {% for angle in gap.suggested_angles %}
                     <li class="flex gap-2 leading-relaxed">
-                        <span class="flex-shrink-0 select-none" style="color: var(--primary);">→</span>
+                        <span class="flex-shrink-0 select-none" style="color: var(--primary-text);">→</span>
                         <span>{{ angle }}</span>
                     </li>
                     {% endfor %}
@@ -112,21 +112,21 @@
                     <div class="grid grid-cols-[80px_1fr_50px] items-center gap-2">
                         <div class="text-[11px] text-stone-600">Demand</div>
                         <div class="h-1 rounded-full bg-stone-200 overflow-hidden">
-                            <div class="h-full rounded-full" style="width: {% widthratio c.demand 1 100 %}%; background: var(--primary);"></div>
+                            <div class="h-full rounded-full" style="width: {% widthratio c.demand 1 100 %}%; background: var(--primary);color:var(--accent-text);"></div>
                         </div>
                         <div class="text-[11px] font-mono tabular-nums text-stone-700 text-right">{{ c.demand|pretty_percent:0 }}</div>
                     </div>
                     <div class="grid grid-cols-[80px_1fr_50px] items-center gap-2">
                         <div class="text-[11px] text-stone-600">Supply</div>
                         <div class="h-1 rounded-full bg-stone-200 overflow-hidden">
-                            <div class="h-full rounded-full" style="width: {% widthratio c.supply 1 100 %}%; background: var(--primary);"></div>
+                            <div class="h-full rounded-full" style="width: {% widthratio c.supply 1 100 %}%; background: var(--primary);color:var(--accent-text);"></div>
                         </div>
                         <div class="text-[11px] font-mono tabular-nums text-stone-700 text-right">{{ c.supply|pretty_percent:0 }}</div>
                     </div>
                     <div class="grid grid-cols-[80px_1fr_50px] items-center gap-2">
                         <div class="text-[11px] text-stone-600">Recency</div>
                         <div class="h-1 rounded-full bg-stone-200 overflow-hidden">
-                            <div class="h-full rounded-full" style="width: {% widthratio c.recency 1 100 %}%; background: var(--primary);"></div>
+                            <div class="h-full rounded-full" style="width: {% widthratio c.recency 1 100 %}%; background: var(--primary);color:var(--accent-text);"></div>
                         </div>
                         <div class="text-[11px] font-mono tabular-nums text-stone-700 text-right">{{ c.recency|pretty_percent:0 }}</div>
                     </div>

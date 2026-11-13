@@ -4,7 +4,7 @@
          id="comment-{{ comment.id }}">
         <!-- Author avatar -->
         <div class="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0 mt-0.5"
-             style="background: var(--primary);">
+             style="background: var(--primary);color:var(--accent-text);">
             {{ comment.author.display_name|make_list|first|upper }}
         </div>
         <div class="flex-1 min-w-0">

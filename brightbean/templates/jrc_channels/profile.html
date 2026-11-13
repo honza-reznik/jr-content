@@ -20,7 +20,7 @@
     .channel-link { display: inline-block; margin-top: 10px; font-size: 14px; color: #9a3412; text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
     .channel-actions { margin-top: 18px; display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
     .profile-button { display: inline-flex; justify-content: center; align-items: center; min-height: 44px; padding: 9px 18px; border: 1px solid var(--border); background: var(--surface-0); border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; color: var(--text-primary); }
-    .profile-button.primary { background: var(--primary, #c2410c); color: var(--accent-text, white); border-color: var(--primary, #c2410c); }
+    .profile-button.primary { background: var(--primary, #c2410c); color: var(--accent-text, white); border-color: color-mix(in srgb, var(--accent-text, white) 22%, var(--primary, #c2410c)); }
     .client-profile :is(button, a, summary, input, select):focus-visible { outline: 3px solid var(--primary, #c2410c); outline-offset: 3px; }
     .channel-editor { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 16px; }
     .client-profile summary { cursor: pointer; font-size: 14px; font-weight: 600; min-height: 44px; padding: 11px 0; }

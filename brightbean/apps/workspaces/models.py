@@ -60,3 +60,9 @@ class Workspace(models.Model):
         from .colors import accent_text_color
 
         return accent_text_color(self.accent_color)
+
+    @property
+    def accent_link_color(self):
+        from .colors import accent_link_color
+
+        return accent_link_color(self.accent_color)

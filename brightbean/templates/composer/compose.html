@@ -1389,7 +1389,7 @@
                                     <button type="button"
                                             @click="if(newTagName.trim()) { _persistTag(newTagName.trim()); showCreateTagModal = false; newTagName = ''; }"
                                             class="px-4 py-2 text-sm font-semibold text-white rounded-lg transition-colors"
-                                            style="background: var(--primary);"
+                                            style="background: var(--primary);color:var(--accent-text);"
                                             :class="newTagName.trim() ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'">
                                         Create
                                     </button>
@@ -1648,7 +1648,7 @@
             <!-- Reviewer feedback to address (latest changes-requested / rejected comment) -->
             {% if show_resubmit_button and latest_feedback %}
             <div class="flex gap-3 p-4 rounded-xl mb-3" style="background:#FFF7ED;border:1px solid #FED7AA;">
-                <span class="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold text-white flex-shrink-0" style="background: var(--primary);">{{ latest_feedback.user.display_name|default:"?"|make_list|first|upper }}</span>
+                <span class="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold text-white flex-shrink-0" style="background: var(--primary);color:var(--accent-text);">{{ latest_feedback.user.display_name|default:"?"|make_list|first|upper }}</span>
                 <div class="min-w-0">
                     <div class="flex items-center gap-2 flex-wrap">
                         <span class="text-[0.8125rem] font-semibold text-stone-800">{{ latest_feedback.user.display_name|default:"Reviewer" }}</span>

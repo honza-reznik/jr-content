@@ -21,10 +21,10 @@
            style="background: var(--surface-0); border-color: var(--border);">
             <div class="flex items-center justify-between mb-3">
                 <div class="w-10 h-10 rounded-lg flex items-center justify-center" style="background: var(--primary-soft);">
-                    <svg class="w-5 h-5" style="color: var(--primary);" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    <svg class="w-5 h-5" style="color: var(--primary-text);" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                 </div>
                 {% if pending_count > 0 %}
-                <span class="w-2.5 h-2.5 rounded-full animate-pulse" style="background: var(--primary);"></span>
+                <span class="w-2.5 h-2.5 rounded-full animate-pulse" style="background: var(--primary);color:var(--accent-text);"></span>
                 {% endif %}
             </div>
             <p class="text-2xl font-bold tracking-tight" style="color: var(--text-primary);">{{ pending_count }}</p>
@@ -59,12 +59,12 @@
     <div class="rounded-xl border p-5" style="background: var(--primary-soft); border-color: var(--primary-muted);">
         <div class="flex items-center justify-between">
             <div>
-                <p class="font-semibold text-[0.9375rem]" style="color: var(--brand-800);">You have {{ pending_count }} post{{ pending_count|pluralize }} waiting for review</p>
-                <p class="text-[0.8125rem] mt-0.5" style="color: var(--brand-700);">Review and approve content before it's published</p>
+                <p class="font-semibold text-[0.9375rem]" style="color: var(--primary-text);">You have {{ pending_count }} post{{ pending_count|pluralize }} waiting for review</p>
+                <p class="text-[0.8125rem] mt-0.5" style="color: var(--primary-text);">Review and approve content before it's published</p>
             </div>
             <a href="{% url 'client_portal:approval_queue' %}"
                class="px-4 py-2 text-[0.8125rem] font-semibold rounded-full text-white transition-all hover:-translate-y-0.5"
-               style="background: var(--primary); box-shadow: var(--shadow-primary);">
+               style="background: var(--primary);color:var(--accent-text); box-shadow: var(--shadow-primary);">
                 Review Now
             </a>
         </div>

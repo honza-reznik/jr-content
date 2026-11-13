@@ -43,7 +43,10 @@ class TestNotifyEngine:
         assert email_events == {
             EventType.POST_SUBMITTED,
             EventType.POST_CHANGES_REQUESTED,
+            EventType.POST_REJECTED,
             EventType.POST_FAILED,
+            EventType.APPROVAL_HOLD_REQUESTED,
+            EventType.SOCIAL_ACCOUNT_DISCONNECTED,
             EventType.CLIENT_APPROVAL_REQUESTED,
             EventType.TEAM_MEMBER_INVITED,
             EventType.COMMENT_MENTION,
