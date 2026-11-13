@@ -16,9 +16,10 @@ import json
 import pathlib
 import re
 from datetime import time, timedelta
+from unittest.mock import patch
 
 import pytest
-from django.test import Client, override_settings
+from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
 
@@ -329,7 +330,9 @@ def test_composer_offers_planning_only_with_publishing_rights(client, setup, rol
         return  # no composer at all (covered by the write gate)
     client.force_login(actor)
     post, _variant = _content(workspace, account, actor, "draft", "page")
-    with override_settings(JRC_UI_ENABLED=False):  # P2-B03: the composer page renders only without the JR UI
+    with patch(
+        "apps.composer.views._jrc_detail_redirect", new=lambda *args: None
+    ):  # P2-B03: render the old composer page itself
         html = client.get(f"/workspace/{workspace.pk}/compose/{post.pk}/").content.decode()
     offers = 'id="publish-action-btn"' in html and 'data-mode="publish_now"' in html
     assert offers is (role in PLANNERS)
@@ -420,11 +423,15 @@ def test_review_is_offered_and_accepted_only_where_the_mode_has_one(client, setu
 
     # Composer buttons.
     post, _variant = _content(workspace, account, owner, "draft", "composer draft")
-    with override_settings(JRC_UI_ENABLED=False):  # P2-B03: the composer page renders only without the JR UI
+    with patch(
+        "apps.composer.views._jrc_detail_redirect", new=lambda *args: None
+    ):  # P2-B03: render the old composer page itself
         html = client.get(f"/workspace/{workspace.pk}/compose/{post.pk}/").content.decode()
     assert ('value="submit_for_approval"' in html) is has_review
     post, _variant = _content(workspace, account, owner, "changes_requested", "composer back")
-    with override_settings(JRC_UI_ENABLED=False):  # P2-B03: the composer page renders only without the JR UI
+    with patch(
+        "apps.composer.views._jrc_detail_redirect", new=lambda *args: None
+    ):  # P2-B03: render the old composer page itself
         html = client.get(f"/workspace/{workspace.pk}/compose/{post.pk}/").content.decode()
     assert ('value="resubmit_for_approval"' in html) is has_review
 

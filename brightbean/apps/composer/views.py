@@ -697,8 +697,10 @@ def _jrc_detail_redirect(request, workspace, post):
     after the composer's own access checks, so whoever was refused before is refused the same way.
     An existing post opens on its detail (on Publish when the link named a channel, as the calendar's
     did); a new post opens the empty New content page for this client with the calendar's date and
-    channel. The editor itself is no longer shown anywhere.
+    channel. The editor itself is no longer shown anywhere. Without the JR UI (upstream) it returns None.
     """
+    if not getattr(settings, "JRC_UI_ENABLED", False):
+        return None
     from urllib.parse import urlencode
 
     from django.urls import reverse
@@ -743,8 +745,9 @@ def compose(request, workspace_id, post_id=None):
         perms = membership.effective_permissions if membership else {}
         if post.author != request.user and not perms.get("edit_others_posts", False):
             raise PermissionDenied("You do not have permission to edit this post.")
-        if getattr(settings, "JRC_UI_ENABLED", False):
-            return _jrc_detail_redirect(request, workspace, post)
+        replacement = _jrc_detail_redirect(request, workspace, post)
+        if replacement is not None:
+            return replacement
         form = PostForm(instance=post)
         # Prefer a committed schedule; fall back to a draft-stage proposal so
         # the Schedule Post panel shows whichever time the post carries.
@@ -768,8 +771,9 @@ def compose(request, workspace_id, post_id=None):
         platform_extras = {str(pp.social_account_id): (pp.platform_extra or {}) for pp in platform_post_list}
         template_data = None
     else:
-        if getattr(settings, "JRC_UI_ENABLED", False):
-            return _jrc_detail_redirect(request, workspace, None)
+        replacement = _jrc_detail_redirect(request, workspace, None)
+        if replacement is not None:
+            return replacement
         post = None
         # Pre-fill scheduled date/time from query params (e.g. when coming from calendar "+" CTA)
         initial = {}

@@ -12,8 +12,9 @@ partially-published post stays fully workable.
 """
 
 import re
+from unittest.mock import patch
 
-from django.test import TestCase, override_settings
+from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
@@ -53,8 +54,6 @@ def _make_workspace():
     return org, ws, primary, secondary
 
 
-# JR Content (P2-B03): the composer page renders only without the JR UI, which sends it to the content detail.
-@override_settings(JRC_UI_ENABLED=False)
 class ReadonlyComposerTestsBase(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(
@@ -90,6 +89,8 @@ class ReadonlyComposerTestsBase(TestCase):
         return reverse("composer:autosave_edit", kwargs={"workspace_id": self.ws.id, "post_id": post.id})
 
 
+# JR Content (P2-B03): the JR UI sends the composer page to the content detail; these tests render the page itself.
+@patch("apps.composer.views._jrc_detail_redirect", new=lambda *args: None)
 class ActionBarGatingTests(ReadonlyComposerTestsBase):
     """What the composer offers, per derived post status."""
 

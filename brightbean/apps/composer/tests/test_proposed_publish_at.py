@@ -7,9 +7,10 @@ proposal.
 """
 
 from datetime import datetime, time, timedelta
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
-from django.test import TestCase, override_settings
+from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
@@ -79,8 +80,8 @@ class ProposedPublishAtServiceTests(TestCase):
         self.assertIsNone(post.proposed_publish_at)
 
 
-# JR Content (P2-B03): the composer page renders only without the JR UI, which sends it to the content detail.
-@override_settings(JRC_UI_ENABLED=False)
+# JR Content (P2-B03): the JR UI sends the composer page to the content detail; these tests render the page itself.
+@patch("apps.composer.views._jrc_detail_redirect", new=lambda *args: None)
 class ProposedPublishAtSaveTests(TestCase):
     """POST /workspace/<id>/composer/compose/save/ proposed-time handling."""
 

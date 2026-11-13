@@ -15,9 +15,10 @@ Expectations are written by hand, not derived from ``apps.members.permissions``:
 import re
 import zoneinfo
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
 import pytest
-from django.test import Client, override_settings
+from django.test import Client
 from django.utils import timezone
 
 from apps.accounts.models import User
@@ -236,7 +237,9 @@ def test_media_change_and_the_banner_follow_the_same_rule(setup, mode):
 
     workspace, account, actor, client = setup(mode)
     post, copy = _approved(workspace, account, actor)
-    with override_settings(JRC_UI_ENABLED=False):  # P2-B03: the composer page renders only without the JR UI
+    with patch(
+        "apps.composer.views._jrc_detail_redirect", new=lambda *args: None
+    ):  # P2-B03: render the old composer page itself
         page = client.get(f"/workspace/{workspace.pk}/compose/{post.pk}/").content.decode()
     if RETURNS_TO_REVIEW[mode]:
         assert "Approved - saving changes sends it back for re-approval" in page
