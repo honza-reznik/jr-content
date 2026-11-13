@@ -12,7 +12,7 @@ from time import monotonic
 import pytest
 from django.db import connection, connections, transaction
 from django.db.models.deletion import RestrictedError
-from django.test import Client
+from django.test import Client, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -433,7 +433,11 @@ def test_stale_composer_waits_for_new_caption_channel_then_rejects_it(
 
 
 def _compose_page(client, post):
-    return client.get(reverse("composer:compose_edit", kwargs={"workspace_id": post.workspace_id, "post_id": post.id}))
+    # P2-B03: the composer page renders only without the JR UI (which sends it to the content detail).
+    with override_settings(JRC_UI_ENABLED=False):
+        return client.get(
+            reverse("composer:compose_edit", kwargs={"workspace_id": post.workspace_id, "post_id": post.id})
+        )
 
 
 def _preview(client, post, accounts, **extra):

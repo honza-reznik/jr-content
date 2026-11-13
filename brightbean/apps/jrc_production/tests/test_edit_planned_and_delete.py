@@ -24,7 +24,7 @@ from uuid import uuid4
 
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import Client
+from django.test import Client, override_settings
 from django.utils import timezone
 from PIL import Image
 
@@ -248,7 +248,8 @@ def test_rest_patch_of_planned_content(make):
 def test_composer_scheduled_hint_where_edits_keep_the_plan(make):
     workspace, account, second, actor, client = make("optional")
     post, (copy,), when = _held(workspace, [account], actor, "scheduled")
-    page = client.get(f"/workspace/{workspace.pk}/compose/{post.pk}/").content.decode()
+    with override_settings(JRC_UI_ENABLED=False):  # P2-B03: the composer page renders only without the JR UI
+        page = client.get(f"/workspace/{workspace.pk}/compose/{post.pk}/").content.decode()
     assert "Saving changes will affect the scheduled post." in page
     assert "takes it out of the plan" not in page
 
@@ -256,7 +257,8 @@ def test_composer_scheduled_hint_where_edits_keep_the_plan(make):
 def test_composer_save_of_planned_content_says_so(make):
     workspace, account, second, actor, client = make("required_internal")
     post, (copy,), when = _held(workspace, [account], actor, "scheduled")
-    page = client.get(f"/workspace/{workspace.pk}/compose/{post.pk}/").content.decode()
+    with override_settings(JRC_UI_ENABLED=False):  # P2-B03: the composer page renders only without the JR UI
+        page = client.get(f"/workspace/{workspace.pk}/compose/{post.pk}/").content.decode()
     assert "Saving changes takes it out of the plan and sends it back for re-approval." in page
     response = _composer_save(client, workspace, post, [account], caption="Edited in the composer")
     assert response.status_code == 204

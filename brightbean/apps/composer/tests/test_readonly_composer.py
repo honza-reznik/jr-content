@@ -13,7 +13,7 @@ partially-published post stays fully workable.
 
 import re
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -53,6 +53,8 @@ def _make_workspace():
     return org, ws, primary, secondary
 
 
+# JR Content (P2-B03): the composer page renders only without the JR UI, which sends it to the content detail.
+@override_settings(JRC_UI_ENABLED=False)
 class ReadonlyComposerTestsBase(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(

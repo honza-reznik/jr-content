@@ -92,7 +92,9 @@ def test_explicit_channel_selection_and_http_creation(client, workspace, user):
         first.pk
     ]
     assert (
-        client.post(url, {"workspace": workspace.pk, "title": "Bad", "channels": [second.pk, disabled.pk]}).status_code
+        client.post(
+            url, {"workspace": workspace.pk, "title": "Bad", "channels": [second.pk, disabled.pk], "origin": "page"}
+        ).status_code
         == 400
     )
     assert not Post.objects.filter(title="Bad").exists()
@@ -272,9 +274,11 @@ def test_filtered_board_can_create_for_another_client(client, workspace, user, o
     page = client.get(reverse("jrc_production:board"), {"client": workspace.pk})
     assert page.status_code == 200
     assert {c.pk for c in page.context["channels"]} == {first.pk}
-    assert {c.pk for c in page.context["creation_channels"]} == {first.pk, second.pk}
-    form = page.content.decode().split('<details class="board-new"', 1)[1].split("</details>", 1)[0]
-    assert str(second.pk) in form and str(hidden.pk) not in form and str(disabled.pk) not in form
+    # P2-B03: the New idea window of the board for all clients offers each creatable client's enabled channels.
+    page = client.get(reverse("jrc_production:board"), {"client": ""})
+    form = page.content.decode().split('<dialog id="jrc-new-idea"', 1)[1].split("</dialog>", 1)[0]
+    assert str(first.pk) in form and str(second.pk) in form
+    assert str(hidden.pk) not in form and str(disabled.pk) not in form and str(readonly.pk) not in form
     response = client.post(
         reverse("jrc_production:create"),
         {"workspace": other.pk, "title": "Created for another client", "channels": [second.pk]},

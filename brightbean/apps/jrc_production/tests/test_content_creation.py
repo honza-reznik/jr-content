@@ -359,9 +359,7 @@ def test_old_new_post_address_opens_the_new_content_page(http, workspace, channe
         compose(workspace=workspace) + f"?scheduled_date=2030-01-02&scheduled_time=08:15&account={channel.pk}"
     )
     assert response.status_code == 302
-    assert response.url == (
-        reverse(NEW) + f"?client={workspace.pk}&date=2030-01-02&time=08%3A15&account={channel.pk}"
-    )
+    assert response.url == (reverse(NEW) + f"?client={workspace.pk}&date=2030-01-02&time=08%3A15&account={channel.pk}")
 
 
 @pytest.mark.parametrize("role", ["client", "viewer"])
@@ -466,4 +464,6 @@ def test_menu_new_creates_for_the_current_client(http, workspace, user, organiza
 def test_viewer_sees_no_new_menu_or_window(client, workspace):
     client.force_login(member(workspace, "viewer"))
     html = client.get(reverse(BOARD)).content.decode()
-    assert "sidebar-new-wrap" not in html and 'id="jrc-new-idea"' not in html and "data-open-new-idea" not in html
+    assert (
+        'class="sidebar-new-wrap' not in html and 'id="jrc-new-idea"' not in html and "data-open-new-idea" not in html
+    )

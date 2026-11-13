@@ -17,7 +17,7 @@ import zoneinfo
 from datetime import datetime, timedelta
 
 import pytest
-from django.test import Client
+from django.test import Client, override_settings
 from django.utils import timezone
 
 from apps.accounts.models import User
@@ -236,7 +236,8 @@ def test_media_change_and_the_banner_follow_the_same_rule(setup, mode):
 
     workspace, account, actor, client = setup(mode)
     post, copy = _approved(workspace, account, actor)
-    page = client.get(f"/workspace/{workspace.pk}/compose/{post.pk}/").content.decode()
+    with override_settings(JRC_UI_ENABLED=False):  # P2-B03: the composer page renders only without the JR UI
+        page = client.get(f"/workspace/{workspace.pk}/compose/{post.pk}/").content.decode()
     if RETURNS_TO_REVIEW[mode]:
         assert "Approved - saving changes sends it back for re-approval" in page
     else:

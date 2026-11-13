@@ -1,6 +1,7 @@
 """Visibility regressions across every comment display and deletion boundary."""
 
 import pytest
+from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -98,6 +99,8 @@ class CommentDisplayPrivacyTests(ApprovalWorkflowBase):
                         self.assertContains(response, body)
                     self._assert_external_tree(roots)
 
+    # JR Content (P2-B03): the composer page renders only without the JR UI, which sends it to the content detail.
+    @override_settings(JRC_UI_ENABLED=False)
     def test_composer_denies_client_and_viewer_and_shows_team_tree_to_manager(self):
         ApprovalAction.objects.create(post=self.post, user=self.reviewer, action="submitted")
         url = reverse("composer:compose_edit", args=[self.ws.pk, self.post.pk])
@@ -136,6 +139,8 @@ class CommentDisplayPrivacyTests(ApprovalWorkflowBase):
         WorkspaceMembership.objects.filter(user=self.author, workspace=self.ws).delete()
         self.assertEqual(comments.get_comments_for_post(self.post, self.author), [])
 
+    # JR Content (P2-B03): the composer page renders only without the JR UI, which sends it to the content detail.
+    @override_settings(JRC_UI_ENABLED=False)
     def test_custom_permissions_do_not_expose_internal_comments_in_composer(self):
         ApprovalAction.objects.create(post=self.post, user=self.reviewer, action="submitted")
         custom_role = CustomRole.objects.create(

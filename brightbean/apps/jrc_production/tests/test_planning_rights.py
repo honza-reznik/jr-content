@@ -18,7 +18,7 @@ import re
 from datetime import time, timedelta
 
 import pytest
-from django.test import Client
+from django.test import Client, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -329,7 +329,8 @@ def test_composer_offers_planning_only_with_publishing_rights(client, setup, rol
         return  # no composer at all (covered by the write gate)
     client.force_login(actor)
     post, _variant = _content(workspace, account, actor, "draft", "page")
-    html = client.get(f"/workspace/{workspace.pk}/compose/{post.pk}/").content.decode()
+    with override_settings(JRC_UI_ENABLED=False):  # P2-B03: the composer page renders only without the JR UI
+        html = client.get(f"/workspace/{workspace.pk}/compose/{post.pk}/").content.decode()
     offers = 'id="publish-action-btn"' in html and 'data-mode="publish_now"' in html
     assert offers is (role in PLANNERS)
     # Everyone who edits keeps the proposed-time panel that Save Draft stores.
@@ -356,7 +357,9 @@ def test_calendar_offers_publish_only_with_publishing_rights(client, setup, role
     _content(workspace, account, actor, "scheduled", "queued")
     html = client.get(f"/workspace/{workspace.pk}/calendar/", {"mode": "list", "tab": "queue"}).content.decode()
     assert ("ask('publish')" in html) is (role in PLANNERS)
-    assert ("action=publish_now" in html) is (role in PLANNERS)
+    # P2-B03: the queue's Publish opens the detail's Publish tab (no longer the old composer's publish_now).
+    assert ("data-publish-link" in html) is (role in PLANNERS)
+    assert "action=publish_now" not in html
 
 
 def test_csv_import_says_why_dates_stayed_drafts(client, setup):
@@ -417,10 +420,12 @@ def test_review_is_offered_and_accepted_only_where_the_mode_has_one(client, setu
 
     # Composer buttons.
     post, _variant = _content(workspace, account, owner, "draft", "composer draft")
-    html = client.get(f"/workspace/{workspace.pk}/compose/{post.pk}/").content.decode()
+    with override_settings(JRC_UI_ENABLED=False):  # P2-B03: the composer page renders only without the JR UI
+        html = client.get(f"/workspace/{workspace.pk}/compose/{post.pk}/").content.decode()
     assert ('value="submit_for_approval"' in html) is has_review
     post, _variant = _content(workspace, account, owner, "changes_requested", "composer back")
-    html = client.get(f"/workspace/{workspace.pk}/compose/{post.pk}/").content.decode()
+    with override_settings(JRC_UI_ENABLED=False):  # P2-B03: the composer page renders only without the JR UI
+        html = client.get(f"/workspace/{workspace.pk}/compose/{post.pk}/").content.decode()
     assert ('value="resubmit_for_approval"' in html) is has_review
 
     # Accepted: board move, REST stage, composer actions, chip, the approval service itself.

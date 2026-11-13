@@ -8,7 +8,7 @@ ones, cascading away their PublishLog history.
 
 from datetime import timedelta
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -22,6 +22,8 @@ from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 
 
+# JR Content (P2-B03): the composer page renders only without the JR UI, which sends it to the content detail.
+@override_settings(JRC_UI_ENABLED=False)
 class AccountScopeTestsBase(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(

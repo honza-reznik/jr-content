@@ -200,18 +200,19 @@ def test_board_does_not_duplicate_multichannel_content(http, post, workspace):
 
 
 def test_creation_error_preserves_selected_client_and_title(http, workspace, organization, user):
+    # P2-B03: the New content page shows the error with the filled values and the chosen client fixed.
     other = Workspace.objects.create(organization=organization, name="Another client")
     WorkspaceMembership.objects.create(workspace=other, user=user, workspace_role="owner")
     response = http.post(
-        reverse("jrc_production:create"), {"workspace": workspace.pk, "title": "Keep my title", "channels": ["invalid"]}
+        reverse("jrc_production:create"),
+        {"workspace": workspace.pk, "title": "Keep my title", "channels": ["invalid"], "origin": "page"},
     )
     assert response.status_code == 400
     assert b"Choose enabled channels" in response.content
-    assert b"Keep my title" in response.content
-    assert response.context["selected_client"] == str(workspace.pk)
-    assert response.context["new_title"] == "Keep my title"
-    assert f'<option value="{workspace.pk}" selected>'.encode() in response.content
-    assert f'<option value="{other.pk}" selected>'.encode() not in response.content
+    assert b'value="Keep my title"' in response.content
+    assert response.context["fixed"]["workspace"] == workspace
+    assert f'name="workspace" value="{workspace.pk}"'.encode() in response.content
+    assert f'name="workspace" value="{other.pk}"'.encode() not in response.content
     assert not Post.objects.exists()
 
 
@@ -225,7 +226,8 @@ def test_empty_title_rejected(http, workspace, channel, user):
                 "pk", flat=True
             ),
         )
-    assert http.post(reverse("jrc_production:create"), {"workspace": workspace.pk, "title": " "}).status_code == 400
+    response = http.post(reverse("jrc_production:create"), {"workspace": workspace.pk, "title": " ", "origin": "page"})
+    assert response.status_code == 400
     assert not Post.objects.exists()
 
 
