@@ -32,6 +32,10 @@ DATABASES = {
 }
 ENCRYPTION_KEY_SALT = env("ENCRYPTION_KEY_SALT").encode("utf-8")  # noqa: F405
 EMAIL_BACKEND_TYPE = "console"
+JRC_PROJECT = os.environ.get("JRC_PROJECT", "")
+JRC_TEST_EMAIL_ALLOW = tuple(
+    filter(None, (value.strip() for value in os.environ.get("JRC_TEST_EMAIL_ALLOW", "").split(",")))
+)
 EMAIL_INNER_BACKEND = "django.core.mail.backends.console.EmailBackend"
 JRC_SOURCE_VERSION = os.environ.get("JRC_SOURCE_VERSION", "unknown")
 JRC_SOURCE_ARCHIVE_DIR = Path("/opt/jrc-source")

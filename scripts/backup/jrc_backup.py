@@ -30,6 +30,7 @@ DATABASES = ("brightbean", "freeframe")
 # aby přidání nového tajemství nikdy tiše neoslabilo kontrolu.
 ENV_OPERATIONAL = {
     "JRC_MODE", "JRC_UID", "JRC_GID", "JRC_PUBLIC_ORIGIN", "JRC_BASE_PATH",
+    "JRC_TEST_EMAIL_ALLOW",
     "JRC_FF_MAX_CONCURRENT_UPLOADS_PER_USER", "JRC_FF_MAX_PENDING_UPLOAD_BYTES_PER_PROJECT",
 }
 ENV_IGNORED = re.compile(r"^(JRC_[A-Z0-9_]*PORT|JRC_S3_[A-Z]+_QUOTA)$")
@@ -830,6 +831,10 @@ def cmd_precheck(args):
         return
     if target.is_file():
         differing = compare_env(load_env_file(target), load_env_file(saved))
+        if args.project != MAIN_PROJECT:
+            # A previous sanitization changed the service mailbox, not its ID
+            # or password. Keep the original main-project identity check.
+            differing = [key for key in differing if key != "JRC_FF_SYNC_EMAIL"]
         if differing:
             raise BackupError(
                 "Stávající .env se liší od zálohy v nastavení: " + ", ".join(differing) + ". "

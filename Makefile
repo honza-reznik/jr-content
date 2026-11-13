@@ -376,6 +376,10 @@ restore-offsite:
 
 # Obnova jen do PRÁZDNÉHO projektu. jrc jen s JRC_RESTORE_MAIN=yes-empty (nic z jrc neexistuje či je prázdné);
 # neprázdné svazky odmítne vždy.
+.PHONY: sanitize-test
+sanitize-test:
+	@sh scripts/backup/sanitize-test.sh
+
 restore:
 	@sh scripts/backup/backup.sh restore-run "$(BACKUP)"
 

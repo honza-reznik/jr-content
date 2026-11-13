@@ -11,7 +11,11 @@ rather than subclassing the SMTP one. Wrapping is what lets development
 the drops are testable; a subclass of the SMTP backend would be dead code
 everywhere except production.
 
-Four things can stop a message, checked in this order:
+In JR Content test copies, a recipient allowlist is checked before all the
+following budget/suppression rules. Only the project named exactly ``jrc``
+retains unrestricted recipient selection.
+
+Four further things can stop a message, checked in this order:
 
 1. ``EMAIL_SENDING_ENABLED = False`` — the incident lever, no deploy needed.
 2. The recipient is in ``EmailSuppression`` (hard bounce or spam complaint).
@@ -31,10 +35,13 @@ import logging
 import smtplib
 import ssl
 from datetime import datetime, timedelta
+from email.utils import getaddresses
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.core.mail import get_connection
 from django.core.mail.backends.base import BaseEmailBackend
+from django.core.validators import validate_email
 from django.db import DatabaseError, transaction
 from django.utils import timezone
 
@@ -96,6 +103,22 @@ def _recipient_key(address: str) -> str:
     the counters only ever need equality, never the address itself.
     """
     return hashlib.sha256(address.strip().lower().encode()).hexdigest()[:32]
+
+
+def _test_recipient_allowed(value: str) -> bool:
+    """Validate a single mailbox; suffix checks on raw display names are unsafe."""
+    if not isinstance(value, str) or any(c in value for c in "\r\n"):
+        return False
+    parsed = getaddresses([value])
+    if len(parsed) != 1:
+        return False
+    address = parsed[0][1].strip().lower()
+    try:
+        validate_email(address)
+    except ValidationError:
+        return False
+    allowed = {a.strip().lower() for a in getattr(settings, "JRC_TEST_EMAIL_ALLOW", ())}
+    return address.rsplit("@", 1)[-1].endswith(".invalid") or address in allowed
 
 
 def _limit(name: str, default: int) -> int:
@@ -249,6 +272,14 @@ class BudgetedEmailBackend(BaseEmailBackend):
         # per-recipient cap is about the person the message is addressed to, so
         # a bcc'd audit mailbox must not eat their budget.
         recipients = list(getattr(message, "recipients", lambda: [])())
+        # Run before budgets, suppression lookup, or logs containing addresses.
+        # Drop the entire message if any To/Cc/Bcc is unsafe, keeping headers and
+        # the SMTP envelope consistent. Transactional mail cannot bypass this.
+        if getattr(settings, "JRC_PROJECT", "") != "jrc":
+            blocked = sum(not _test_recipient_allowed(address) for address in recipients)
+            if blocked:
+                logger.warning("Test-project email dropped: messages=1 blocked_recipients=%d", blocked)
+                return False
         addressed = list(getattr(message, "to", None) or [])
         subject = (getattr(message, "subject", "") or "")[:120]
         klass = (message.extra_headers or {}).get(EMAIL_CLASS_HEADER, CLASS_NOTIFICATION)
