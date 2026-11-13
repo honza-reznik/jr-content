@@ -20,15 +20,20 @@ const url = (name, fallback) => `http://127.0.0.1:${port(name, fallback)}`;
     assert.equal((await fetch(`${api}${route}`)).status, 404, route);
   }
   // Bezpečnostní hlavičky: Brightbean se nevkládá nikam, /video jen do stejné adresy.
-  for (const [route, frame] of [[`${bb}/health/`, 'DENY'], [`${web}/video/login`, 'SAMEORIGIN'],
+  for (const [route, frame] of [[`${bb}/health/`, 'DENY'], [`${web}/video/jrc-sso`, 'SAMEORIGIN'],
     [`${api}/health`, null]]) {
     const headers = (await fetch(route)).headers;
     assert.equal(headers.get('x-content-type-options'), 'nosniff', route);
     assert.equal(headers.get('referrer-policy'), 'same-origin', route);
     if (frame) assert.equal(headers.get('x-frame-options'), frame, route);
   }
+  // P2-B02: přihlašovací stránka FreeFrame neexistuje, vede na přihlášení Brightbeanu.
+  // /video/jrc-sso je veřejná stránka FreeFrame, která se vykreslí i bez relace.
+  const login = await fetch(`${web}/video/login`, { redirect: 'manual' });
+  assert.equal(login.status, 307);
+  assert(new URL(login.headers.get('location'), web).pathname.endsWith('/accounts/login/'), 'login FreeFrame nevede na Brightbean');
   // F2-B05: vynucená CSP /video; úložiště jen přesný původ místní brány S3.
-  const csp = (await fetch(`${web}/video/login`)).headers;
+  const csp = (await fetch(`${web}/video/jrc-sso`)).headers;
   assert.equal(csp.get('content-security-policy-report-only'), null);
   const directives = Object.fromEntries(csp.get('content-security-policy').split(';')
     .map(item => item.trim().split(/\s+/)).map(([name, ...values]) => [name, values]));
@@ -68,8 +73,8 @@ const url = (name, fallback) => `http://127.0.0.1:${port(name, fallback)}`;
     page.on('websocket', socket => sockets.push(socket.url()));
     // Login nemusí API sám volat. Požadavek z kontextu stránky výslovně ověří
     // skutečnou veřejnou cestu přes proxy, včetně pravidel prohlížeče.
-    await page.goto(`${web}/video/login`, { waitUntil: 'networkidle', timeout: 60000 });
-    await page.locator('input[type="email"]').waitFor({ state: 'visible' });
+    await page.goto(`${web}/video/jrc-sso`, { waitUntil: 'networkidle', timeout: 60000 });
+    await page.locator('body').waitFor({ state: 'visible' });
     const health = await page.evaluate(async address => {
       const response = await fetch(address);
       return { status: response.status, body: await response.json() };

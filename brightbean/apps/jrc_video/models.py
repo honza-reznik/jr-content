@@ -40,6 +40,19 @@ class VideoAccountRevocation(models.Model):
     last_error = models.CharField(max_length=255, blank=True)
 
 
+class VideoSessionRevocation(models.Model):
+    """Sign-out whose FreeFrame token revocation still has to be done (P2-B02).
+
+    The application sign-out always completes; when FreeFrame cannot be reached the
+    revocation waits here and the worker repeats it through the service account.
+    No user FK, so it also survives deleting the user; no credentials are stored.
+    """
+
+    source_user_id = models.UUIDField(primary_key=True)
+    requested_at = models.DateTimeField(auto_now=True)
+    last_error = models.CharField(max_length=255, blank=True)
+
+
 class VideoAsset(models.Model):
     """The FreeFrame video of one channel copy (ADR-002): one asset per PlatformPost."""
 

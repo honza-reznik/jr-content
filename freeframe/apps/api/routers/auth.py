@@ -32,6 +32,13 @@ from ..middleware.rate_limit import account_rate_limit, enforce_user_limit
 from ..config import settings
 
 
+# Allow list for JR Content mode: every other /auth route (also one a later FreeFrame
+# release adds, e.g. a password reset) is refused. SSO exchange and jrc-logout live in
+# routers/jrc_auth.py, outside this router, and need no entry.
+JRC_ALLOWED_AUTH_ROUTES = frozenset({"/auth/refresh", "/auth/me", "/auth/me/preferences"})
+JRC_SERVICE_LOGIN_ROUTE = "/auth/login"
+
+
 def require_jrc_auth_policy(request: Request):
     """Reject local browser authentication before resolving any account or token.
 
@@ -40,12 +47,13 @@ def require_jrc_auth_policy(request: Request):
     """
     if not settings.jrc_mode:
         return
-    action = request.url.path.rstrip("/").rsplit("/", 1)[-1]
-    if request.url.path.rstrip("/").endswith("/auth/login") and "x-real-ip" not in request.headers:
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", None) or request.url.path.rstrip("/")
+    if route_path in JRC_ALLOWED_AUTH_ROUTES:
         return
-    if action in {"login", "send-magic-code", "verify-magic-code", "set-password",
-                  "accept-invite", "change-password"} or "/auth/invite/" in request.url.path:
-        raise HTTPException(status_code=403, detail="Sign in through JR Content.")
+    if route_path == JRC_SERVICE_LOGIN_ROUTE and "x-real-ip" not in request.headers:
+        return
+    raise HTTPException(status_code=403, detail="Sign in through JR Content.")
 
 
 router = APIRouter(prefix="/auth", tags=["auth"], dependencies=[Depends(require_jrc_auth_policy)])
