@@ -2,9 +2,11 @@
 import hashlib
 import json
 import urllib.request
+from unittest.mock import patch
 
 from allauth.account.models import EmailAddress
 from django.conf import settings
+from django.core.mail import EmailMessage
 
 from apps.accounts.models import User
 from apps.common.models import OutgoingEmail
@@ -13,6 +15,13 @@ from apps.notifications.models import NotificationDelivery
 from apps.jrc_video.tickets import issue_ticket
 
 fixture = json.load(open('/fixture.json'))
+assert settings.JRC_PROJECT == 'jrc-p2b01'
+assert settings.EMAIL_BACKEND == 'apps.common.mail.BudgetedEmailBackend'
+assert settings.EMAIL_INNER_BACKEND == 'django.core.mail.backends.console.EmailBackend'
+with patch('apps.common.mail.BudgetedEmailBackend._inner') as transport:
+    assert EmailMessage('Test', 'Test', to=['blocked-person@example.org']).send() == 0
+transport.assert_not_called()
+print('OK Compose: identita projektu, SMTP vypnuté a skutečný backend blokuje nepovoleného příjemce')
 for model in (User, EmailAddress, Invitation):
     assert not model.objects.exclude(email__iendswith='.invalid').exists(), model.__name__
 assert not OutgoingEmail.objects.exists()
