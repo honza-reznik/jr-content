@@ -12,12 +12,14 @@ export function fetchAssetDownloadOptions(assetId: string): Promise<DownloadOpti
  * (bulk downloads) asks for the original when the instance allows originals.
  */
 export async function downloadAsset(
-  assetId: string, rendition?: string, preferOriginal = false,
+  assetId: string, rendition?: string, preferOriginal = false, versionId?: string,
 ): Promise<void> {
   let query = rendition ? `&rendition=${encodeURIComponent(rendition)}` : ''
   if (preferOriginal) query += '&prefer_original=true'
-  const data = await api.get<{ url: string }>(`/assets/${assetId}/stream?download=true${query}`)
+  if (versionId) query += `&version_id=${encodeURIComponent(versionId)}`
+  const data = await api.get<{ url: string; download_note?: string | null }>(`/assets/${assetId}/stream?download=true${query}`)
   if (!data?.url) return
+  if (data.download_note) window.alert(data.download_note)
   // An iframe rather than navigation, so several downloads in a row (bulk)
   // do not cancel each other, and the page is never left.
   const iframe = document.createElement('iframe')

@@ -138,6 +138,10 @@ def test_transcode_with_audio_includes_audio_map():
         assert len(ffmpeg_calls) > 0
         ffmpeg_cmd = ffmpeg_calls[0][0][0]
 
+        assert ffmpeg_cmd[ffmpeg_cmd.index("-maxrate:v:0") + 1] == "1500k"
+        assert ffmpeg_cmd[ffmpeg_cmd.index("-bufsize:v:0") + 1] == "3000k"
+        assert ffmpeg_cmd[ffmpeg_cmd.index("-crf:v:0") + 1] == "28"
+
         # Assert audio map is present
         assert "-map" in ffmpeg_cmd
         # Find all -map args

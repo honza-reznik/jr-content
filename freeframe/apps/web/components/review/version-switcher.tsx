@@ -3,6 +3,7 @@
 import * as React from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { AlertCircle, Loader2, CheckCircle2, ChevronDown } from 'lucide-react'
+import { downloadAsset } from '@/lib/asset-download'
 import { cn } from '@/lib/utils'
 import { useReviewStore } from '@/stores/review-store'
 import type { AssetVersion, AssetVersionStatus } from '@/types'
@@ -35,13 +36,16 @@ export const versionStatusConfig: Record<
 
 interface VersionSwitcherProps {
   versions: AssetVersion[]
+  assetId?: string
   className?: string
 }
 
-export function VersionSwitcher({ versions, className }: VersionSwitcherProps) {
+export function VersionSwitcher({ versions, assetId, className }: VersionSwitcherProps) {
   const currentVersion = useReviewStore((s) => s.currentVersion)
   const setCurrentVersion = useReviewStore((s) => s.setCurrentVersion)
 
+  const [downloadError, setDownloadError] = React.useState<string | null>(null)
+  const [downloading, setDownloading] = React.useState(false)
   const sorted = React.useMemo(
     () => [...versions].sort((a, b) => a.version_number - b.version_number),
     [versions],
@@ -59,7 +63,19 @@ export function VersionSwitcher({ versions, className }: VersionSwitcherProps) {
       : null
 
   return (
-    <div className={cn('flex items-center gap-1.5', className)}>
+    <div className={cn('flex flex-wrap items-center gap-1.5', className)}>
+      {assetId && currentVersion?.processing_status === 'ready' && (
+        <button type="button" disabled={downloading}
+          className="rounded-md px-2 py-1 text-xs text-text-secondary hover:bg-bg-tertiary disabled:opacity-50"
+          onClick={async () => {
+            setDownloadError(null)
+            setDownloading(true)
+            try { await downloadAsset(assetId, undefined, false, currentVersion.id) }
+            catch { setDownloadError('Video download is unavailable. Please try again.') }
+            finally { setDownloading(false) }
+          }}>Download version</button>
+      )}
+      {downloadError && <span role="alert" className="text-xs text-status-error">{downloadError}</span>}
       <span className="text-xs text-text-tertiary shrink-0">Version:</span>
       <DropdownMenu.Root>
         <DropdownMenu.Trigger asChild>

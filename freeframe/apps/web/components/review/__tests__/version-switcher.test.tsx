@@ -1,7 +1,9 @@
-import { describe, it, expect, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { VersionSwitcher } from '../version-switcher'
 import { useReviewStore } from '@/stores/review-store'
+import { downloadAsset } from '@/lib/asset-download'
+vi.mock('@/lib/asset-download', () => ({ downloadAsset: vi.fn(async () => {}) }))
 import type { AssetVersion } from '@/types'
 
 function makeVersion(partial: Partial<AssetVersion> & { version_number: number }): AssetVersion {
@@ -56,4 +58,14 @@ describe('VersionSwitcher trigger status indicator (#118)', () => {
 
     expect(screen.queryByTestId('version-status-indicator')).toBeNull()
   })
+})
+
+
+it('downloads the selected ready version, even when a newer version exists', async () => {
+  const older = makeVersion({ version_number: 1 })
+  const newer = makeVersion({ version_number: 2 })
+  useReviewStore.getState().setCurrentVersion(older)
+  render(<VersionSwitcher assetId="asset-1" versions={[older, newer]} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Download version' }))
+  await waitFor(() => expect(downloadAsset).toHaveBeenCalledWith('asset-1', undefined, false, older.id))
 })

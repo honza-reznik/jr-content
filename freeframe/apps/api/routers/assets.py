@@ -21,7 +21,7 @@ from ..services.permissions import require_project_role, require_project_visible
 from ..services.s3_service import generate_presigned_get_url, build_download_filename, PREVIEW_URL_SECONDS
 from ..services.downloads import (
     describe_choices, download_choices, download_filename, may_download_original,
-    original_allowed_for_download, pick_or_refuse,
+    original_allowed_for_download, pick_or_refuse, managed_video_download,
 )
 from .hls_proxy import issue_hls_url, managed_hls_identity, HLS_TOKEN_SECONDS, MANAGED_MEDIA_SECONDS
 from ..schemas.upload import (
@@ -426,7 +426,17 @@ def get_stream_url(
     asset, media_file = _ready_media_file(db, asset_id, version_id, current_user)
     media_expiry = {"expires_in": MANAGED_MEDIA_SECONDS} if current_user.jrc_managed is True else {}
 
-    if download:
+    download_note = None
+    if (download and current_user.jrc_managed is True and asset.asset_type == AssetType.video
+            and rendition in (None, "original")):
+        choice, download_note = managed_video_download(asset, media_file)
+        url = generate_presigned_get_url(
+            choice.s3_key, download_filename=(
+                media_file.original_filename if choice.id == "original"
+                else download_filename(asset, media_file, choice)
+            ), **media_expiry,
+        )
+    elif download:
         # A download needs one file, and the ladder is segments. With no choice
         # made this is the MP4 remuxed from the top rung: it is what the reviewer
         # watched, where the raw file is the camera master and can be an order of
@@ -452,7 +462,7 @@ def get_stream_url(
         url = generate_presigned_get_url(media_file.s3_key_processed or media_file.s3_key_raw, **media_expiry)
 
     return StreamUrlResponse(
-        url=url, asset_type=asset.asset_type,
+        url=url, asset_type=asset.asset_type, download_note=download_note,
         expires_in=HLS_TOKEN_SECONDS if asset.asset_type == AssetType.video else (
             MANAGED_MEDIA_SECONDS if current_user.jrc_managed is True else 3600
         ),

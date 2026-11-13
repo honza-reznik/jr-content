@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlsplit
 from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
+from django.urls import reverse
 from django.utils import timezone
 
 from apps.composer.models import PlatformPost
@@ -629,6 +630,19 @@ def channel_cards(user, post, membership):
         rows = list(video.versions.all()) if video else []
         percents = _progress(rows)
         versions = [_version_row(v, user, percents.get(v.pk)) for v in rows]
+        for version in versions:
+            version["download_url"] = (
+                reverse(
+                    "jrc_video:version_download",
+                    kwargs={
+                        "workspace_id": post.workspace_id,
+                        "post_id": post.pk,
+                        "version_id": version["id"],
+                    },
+                )
+                if version["status"] == VideoVersion.Status.READY
+                else ""
+            )
         final = video.final_version if video and video.final_version_id else None
         cards.append(
             {

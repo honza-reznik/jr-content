@@ -2,6 +2,7 @@ import asyncio
 import json
 import math
 import os
+import re
 import select
 import shutil
 import subprocess
@@ -604,7 +605,7 @@ _NVENC_CQ = {
 QUALITY_MAP = {
     "2160p": ("3840:2160", 20),
     "1080p": ("1920:1080", 20),
-    "720p": ("1280:720", 22),
+    "720p": ("1280:720", 24),
     "360p": ("640:360", 26),
 }
 
@@ -1255,19 +1256,30 @@ class TranscodeTruncated(RuntimeError):
 _TRUNCATION_SLACK_SECONDS = 3.0
 
 def complete_hls_master(hls_dir: Path) -> None:
-    """Fill a master FFmpeg left empty when CRF video has no audio bitrate.
+    """Complete the ladder and advertise measured segment bandwidth.
 
-    FFmpeg can exit successfully with playable variants but no STREAM-INF:
-    a quality-based encoder does not advertise a bitrate, and without audio
-    the HLS muxer has no bitrate to put in the master. Measure the completed
-    segments instead of changing encoding quality or adding synthetic audio.
-    CODECS and RESOLUTION are optional; players discover them from the media.
+    CRF video has no nominal bitrate. FFmpeg can publish only the audio rate,
+    omit silent rungs entirely, or emit only the capped rung. Advertising the
+    real completed files keeps ABR ordering and the 720p ceiling meaningful.
+    Keep the encoder's CODECS/RESOLUTION metadata where available.
     """
     master = hls_dir / "master.m3u8"
-    if not master.is_file() or "#EXT-X-STREAM-INF:" in master.read_text():
+    if not master.is_file():
         return
+    original = master.read_text()
+    playlists = sorted(hls_dir.glob("*/playlist.m3u8"))
+    if not playlists and "#EXT-X-STREAM-INF:" in original:
+        return
+    metadata = {}
+    pending = None
+    for line in original.splitlines():
+        if line.startswith("#EXT-X-STREAM-INF:"):
+            pending = line
+        elif line and not line.startswith("#") and pending:
+            metadata[line.strip()] = pending
+            pending = None
     entries = ["#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-INDEPENDENT-SEGMENTS"]
-    for playlist in sorted(hls_dir.glob("*/playlist.m3u8")):
+    for playlist in playlists:
         rates = []
         duration = None
         for line in playlist.read_text().splitlines():
@@ -1283,10 +1295,14 @@ def complete_hls_master(hls_dir: Path) -> None:
                 duration = None
         if not rates:
             raise RuntimeError("HLS variant has no media segments")
-        entries += [
-            f"#EXT-X-STREAM-INF:BANDWIDTH={math.ceil(max(rates))}",
-            playlist.relative_to(hls_dir).as_posix(),
-        ]
+        uri = playlist.relative_to(hls_dir).as_posix()
+        peak = math.ceil(max(rates))
+        info = metadata.get(uri, f"#EXT-X-STREAM-INF:BANDWIDTH={peak}")
+        # AVERAGE-BANDWIDTH is optional; don't retain a nominal audio-only
+        # value that would override the real peak in a player's ABR estimate.
+        info = re.sub(r"AVERAGE-BANDWIDTH=\d+,?", "", info)
+        info = re.sub(r"(?<![\w-])BANDWIDTH=\d+", f"BANDWIDTH={peak}", info)
+        entries += [info, uri]
     if len(entries) == 3:
         raise RuntimeError("HLS master has no variants")
     master.write_text("\n".join(entries) + "\n")
@@ -2282,6 +2298,10 @@ class FFmpegTranscoder(BaseTranscoder):
                         else:
                             ffmpeg_cmd += [f"-pix_fmt:v:{i}", "yuv420p",
                                            f"-crf:v:{i}", str(crf + 4)]
+                        if quality == "720p":
+                            # Bound the default review stream, including complex
+                            # scenes: ~375 KB of video per two-second segment.
+                            ffmpeg_cmd += [f"-maxrate:v:{i}", "1500k", f"-bufsize:v:{i}", "3000k"]
                         if cpu_plan is not None:
                             # Software encoders only. The hardware ones do their
                             # work on the device and take their thread counts

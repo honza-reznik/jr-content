@@ -6,9 +6,8 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.http import Http404, HttpResponse, HttpResponseRedirect, JsonResponse
-from django.shortcuts import get_object_or_404
+from django.shortcuts import get_object_or_404, render
 from django.urls import reverse
-from django.utils.text import slugify
 from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_GET, require_POST
@@ -160,30 +159,37 @@ def final_download(request, workspace_id, post_id, platform_post_id):
     video = downloadable_final(membership, variant)
     if video is None:
         raise Http404
-    account = variant.social_account
-    filename = (
-        "-".join(
-            (
-                slugify(post.title, allow_unicode=False)[:80] or "content",
-                slugify(f"{account.get_platform_display()}-{account.account_name}", allow_unicode=False)[:80]
-                or "channel",
-                f"v{video.final_version.number}",
-            )
-        )
-        + ".mp4"
+    return _video_download(request, video.ff_asset_id, video.final_version.ff_version_id)
+
+
+@_secure
+@require_GET
+def version_download(request, workspace_id, post_id, version_id):
+    from .models import VideoVersion
+
+    _workspace, _membership, post = _context(request, workspace_id, post_id)
+    version = get_object_or_404(
+        VideoVersion.objects.select_related("video"),
+        pk=version_id,
+        video__platform_post__post=post,
+        status=VideoVersion.Status.READY,
     )
+    # The user's FreeFrame session enforces the existing asset download rights.
+    return _video_download(request, version.video.ff_asset_id, version.ff_version_id)
+
+
+def _video_download(request, asset_id, version_id):
     try:
         stream_query = urlencode(
             {
-                "version_id": video.final_version.ff_version_id,
+                "version_id": version_id,
                 "download": "true",
-                "filename": filename,
             }
         )
         result = uploads._call(
             request.user,
             "GET",
-            f"/assets/{video.ff_asset_id}/stream?{stream_query}",
+            f"/assets/{asset_id}/stream?{stream_query}",
         )
         signed_url = result.get("url") if isinstance(result, dict) else None
         expected = request.build_absolute_uri(reverse("jrc_private_file", kwargs={"path": "video/"}))
@@ -193,7 +199,10 @@ def final_download(request, workspace_id, post_id, platform_post_id):
             raise UploadError("The video service returned an unexpected address.", 502)
     except UploadError as exc:
         return HttpResponse("Video download is unavailable.", status=exc.status, content_type="text/plain")
-    response = HttpResponseRedirect(signed_url)
+    if result.get("download_note"):
+        response = render(request, "jrc_video/download_fallback.html", {"download_url": signed_url})
+    else:
+        response = HttpResponseRedirect(signed_url)
     response["Cache-Control"] = "no-store"
     response["Referrer-Policy"] = "no-referrer"
     return response

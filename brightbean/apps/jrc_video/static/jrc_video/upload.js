@@ -14,6 +14,7 @@
   var notice = root.querySelector("[data-video-notice]");
   var active = null; // upload in progress in this tab: { channel, version, aborted }
   var pollTimer = null;
+  var preparing = false;
 
   function show(el, on) { el.classList.toggle("hidden", !on); }
   function sleep(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
@@ -62,6 +63,7 @@
     var title = document.createElement("p"); title.className = "text-sm font-medium text-stone-800";
     title.textContent = "v" + v.number + " ";
     var name = document.createElement("span"); name.className = "font-normal text-stone-500";
+    name.style.overflowWrap = "anywhere";
     name.textContent = "· " + v.filename; title.appendChild(name);
     if (v.is_final) {
       var mark = document.createElement("span"); mark.setAttribute("data-video-final-mark", "");
@@ -316,7 +318,9 @@
 
   async function startNew(card, file) {
     clearError(card); setNotice("");
+    if (active || preparing) { fail(card, "Another upload is running in this tab."); return; }
     if (!validate(card, file)) return;
+    preparing = true;
     try {
       setProgress(card, "Preparing…", 0, false);
       var info = await api("POST", root.dataset.startUrl,
@@ -325,6 +329,8 @@
     } catch (error) {
       hideProgress(card); fail(card, error.message);
       await refresh();
+    } finally {
+      preparing = false;
     }
   }
 
@@ -389,6 +395,39 @@
         .then(refresh);
     }
   });
+
+  // Nested elements must not flicker the drop target. Every upload enters
+  // startNew, which shares validation and the server permission checks.
+  root.querySelectorAll('[data-can-upload="1"]').forEach(function (card) {
+    var zone = card.querySelector("[data-video-drop]");
+    var depth = 0;
+    function highlight(on) {
+      zone.style.backgroundColor = on ? "#fff7ed" : "";
+      zone.style.borderColor = on ? "#ea580c" : "";
+      zone.dataset.dragging = on ? "1" : "0";
+    }
+    card.addEventListener("dragenter", function (event) {
+      if (!event.dataTransfer || Array.from(event.dataTransfer.types).indexOf("Files") === -1) return;
+      event.preventDefault(); depth++; highlight(true);
+    });
+    card.addEventListener("dragover", function (event) {
+      if (!event.dataTransfer || Array.from(event.dataTransfer.types).indexOf("Files") === -1) return;
+      event.preventDefault(); event.dataTransfer.dropEffect = active ? "none" : "copy";
+    });
+    card.addEventListener("dragleave", function () {
+      depth = Math.max(0, depth - 1); if (!depth) highlight(false);
+    });
+    card.addEventListener("drop", function (event) {
+      event.preventDefault(); depth = 0; highlight(false); resumeTarget = null;
+      var files = event.dataTransfer && event.dataTransfer.files;
+      if (!files || !files.length) return;
+      if (files.length !== 1) { fail(card, "Drop one video at a time."); return; }
+      startNew(card, files[0]);
+    });
+  });
+  // A file dropped outside a permitted channel must not navigate away.
+  root.addEventListener("dragover", function (event) { event.preventDefault(); });
+  root.addEventListener("drop", function (event) { event.preventDefault(); });
 
   root.addEventListener("change", function (event) {
     var input = event.target;
