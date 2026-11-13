@@ -10,6 +10,22 @@
     <link rel="icon" type="image/svg+xml" href="{% static 'img/jrc-logo.svg' %}">
     <link rel="stylesheet" href="{% static 'css/dist/styles.css' %}">
     <link rel="stylesheet" href="{% static 'vendor/flatpickr/flatpickr.min.css' %}">
+    {% if request.workspace %}<style nonce="{{ request.csp_nonce }}">
+        :root {
+            --primary: {{ request.workspace.accent_color }};
+            --primary-hover: color-mix(in srgb, {{ request.workspace.accent_color }}, black 14%);
+            --primary-soft: color-mix(in srgb, {{ request.workspace.accent_color }}, white 94%);
+            --primary-muted: color-mix(in srgb, {{ request.workspace.accent_color }}, white 76%);
+            --primary-ring: color-mix(in srgb, {{ request.workspace.accent_color }}, white 66%);
+            --brand-500: {{ request.workspace.accent_color }};
+            --brand-600: color-mix(in srgb, {{ request.workspace.accent_color }}, black 14%);
+            --brand-700: color-mix(in srgb, {{ request.workspace.accent_color }}, black 55%);
+            --accent-text: {{ request.workspace.accent_text_color }};
+        }
+        :focus-visible { outline-color: var(--primary); }
+        .btn-brand { color: var(--accent-text, white); }
+        [style*="background: var(--primary)"] { color: var(--accent-text, white) !important; }
+    </style>{% endif %}
     <script nonce="{{ request.csp_nonce }}">
         // Set sidebar state class on <html> before first paint to prevent flash
         if (localStorage.getItem('sidebarCollapsed') === 'true') {
@@ -324,14 +340,14 @@
                     {% if current_ws.icon %}
                     <img src="{{ current_ws.icon.url }}" alt="" class="sidebar-logo-mark flex-shrink-0 object-cover">
                     {% else %}
-                    <div class="sidebar-logo-mark flex-shrink-0" style="background:{{ current_ws.accent_color }};color:white">{{ current_ws.name|make_list|first|upper }}</div>
+                    <div class="sidebar-logo-mark flex-shrink-0" style="background:{{ current_ws.accent_color }};color:{{ current_ws.accent_text_color }}">{{ current_ws.name|make_list|first|upper }}</div>
                     {% endif %}
                     <span class="flex-1 font-bold text-[0.9375rem] tracking-tight text-stone-900 truncate" x-show="!sidebarCollapsed" x-cloak>{{ current_ws.name }}</span>
                     {% elif sidebar_workspaces %}
                     {% if sidebar_workspaces.0.icon %}
                     <img src="{{ sidebar_workspaces.0.icon.url }}" alt="" class="sidebar-logo-mark flex-shrink-0 object-cover">
                     {% else %}
-                    <div class="sidebar-logo-mark flex-shrink-0" style="background:{{ sidebar_workspaces.0.accent_color }};color:white">{{ sidebar_workspaces.0.name|make_list|first|upper }}</div>
+                    <div class="sidebar-logo-mark flex-shrink-0" style="background:{{ sidebar_workspaces.0.accent_color }};color:{{ sidebar_workspaces.0.accent_text_color }}">{{ sidebar_workspaces.0.name|make_list|first|upper }}</div>
                     {% endif %}
                     <span class="flex-1 font-bold text-[0.9375rem] tracking-tight text-stone-900 truncate" x-show="!sidebarCollapsed" x-cloak>{{ sidebar_workspaces.0.name }}</span>
                     {% else %}
@@ -358,7 +374,7 @@
                         <img src="{{ ws.icon.url }}" alt="" class="w-7 h-7 rounded-md object-cover flex-shrink-0">
                         {% else %}
                         <div class="w-7 h-7 rounded-md flex items-center justify-center text-white text-[11px] font-bold flex-shrink-0"
-                             style="background: {{ ws.accent_color }};">
+                             style="background: {{ ws.accent_color }};color:{{ ws.accent_text_color }}">
                             {{ ws.name|make_list|first|upper }}
                         </div>
                         {% endif %}
@@ -731,7 +747,8 @@
                     </a>{% endif %}
                 </div>
                 {% for channel in sidebar_channels %}
-                <a href="{% if jrc_app_name and can_manage_workspace %}{% url 'jrc_channels:profile' workspace_id=request.workspace.id %}{% elif jrc_app_name %}{% url 'calendar:calendar' workspace_id=request.workspace.id %}{% else %}{% url 'social_accounts:list' workspace_id=request.workspace.id %}{% endif %}" class="sidebar-nav-item" title="{% if channel.platform == 'youtube' %}YouTube · {% endif %}{{ channel.account_name|default:channel.account_handle }} · {{ channel.queued_post_count|default:0 }} upcoming post{{ channel.queued_post_count|default:0|pluralize }}">
+                <div class="sidebar-nav-item group" style="padding-right:4px" title="{% if channel.platform == 'youtube' %}YouTube · {% endif %}{{ channel.account_name|default:channel.account_handle }} · {{ channel.queued_post_count|default:0 }} upcoming post{{ channel.queued_post_count|default:0|pluralize }}">
+                <a href="{% if jrc_app_name %}{% url 'jrc_production:board' %}?client={{ request.workspace.id }}&amp;channel={{ channel.id }}{% else %}{% url 'social_accounts:list' workspace_id=request.workspace.id %}{% endif %}" class="flex items-center gap-[9px] min-w-0 flex-1" aria-label="View {{ channel.account_name|default:channel.account_handle }} content">
                     <div class="relative flex-shrink-0">
                         {% if channel.avatar_url %}
                         <img src="{{ channel.avatar_url }}" alt="" class="w-7 h-7 rounded-full object-cover">
@@ -750,6 +767,10 @@
                     {% else %}<span class="sidebar-nav-label truncate">{{ channel.account_name|default:channel.account_handle }}</span>{% endif %}
                     <span class="sidebar-badge">{{ channel.queued_post_count|default:0 }}</span>
                 </a>
+                {% if jrc_app_name and can_manage_workspace %}<a href="{% url 'jrc_channels:profile' workspace_id=request.workspace.id %}#title-{{ channel.id }}" class="flex-shrink-0 w-8 h-8 inline-flex items-center justify-center rounded-md text-stone-400 hover:text-stone-700 hover:bg-stone-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1" title="Manage {{ channel.account_name|default:channel.account_handle }}" aria-label="Manage {{ channel.account_name|default:channel.account_handle }} channel">
+                    <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.32 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                </a>{% endif %}
+                </div>
                 {% endfor %}
                 {% endif %}
 
@@ -883,12 +904,12 @@
                     <form method="post" action="{% url 'organizations:switch' %}" class="px-4 pb-3">
                         {% csrf_token %}
                         <label for="organization-switch" class="block text-sm font-semibold mb-1">Organization</label>
-                        <select id="organization-switch" name="organization_id" class="w-full border rounded-lg p-2">
+                        <select id="organization-switch" name="organization_id" class="w-full min-h-11 border border-stone-300 rounded-lg px-3 py-2 text-sm text-stone-800 bg-white focus:outline-none focus:ring-2 focus:ring-[var(--primary-ring)] focus:border-[var(--primary)]">
                             {% for membership in organization_memberships %}
                             <option value="{{ membership.organization_id }}" {% if membership.organization_id == request.org.id %}selected{% endif %}>{{ membership.organization.name }}</option>
                             {% endfor %}
                         </select>
-                        <button type="submit" class="mt-2 px-3 py-1 border rounded-lg text-sm">Switch organization</button>
+                        <button type="submit" class="mt-2 w-full min-h-11 px-4 py-2 rounded-lg text-sm font-semibold text-white transition-colors" style="background:var(--primary);color:var(--accent-text)">Switch organization</button>
                     </form>
                     {% endif %}
                     {% if can_manage_organization %}
@@ -902,6 +923,14 @@
                     </div>
 
                     {% endif %}
+                    <div class="border-t border-stone-100">
+                        <a href="{% url 'notifications:preferences' %}"
+                           class="flex items-center gap-3 px-4 py-2.5 text-sm text-stone-700 hover:bg-black/[0.04] transition-colors">
+                            <svg class="w-4 h-4 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg>
+                            Notification preferences
+                        </a>
+                    </div>
+
                     <div class="border-t border-stone-100">
                         <!-- Settings -->
                         <a href="{% url 'accounts:settings' %}"
@@ -946,7 +975,7 @@
                     {% endif %}
                     <span class="text-sm font-semibold text-stone-800 truncate max-w-[160px]">{{ current_ws.name }}</span>
                     {% else %}
-                    <div class="w-7 h-7 rounded-md flex items-center justify-center text-white text-[11px] font-bold" style="background: var(--primary);">P</div>
+                    <div class="w-7 h-7 rounded-md flex items-center justify-center text-white text-[11px] font-bold" style="background: var(--primary);color:var(--accent-text)">P</div>
                     <span class="text-sm font-semibold text-stone-800">JR Content</span>
                     {% endif %}
                     {% endwith %}

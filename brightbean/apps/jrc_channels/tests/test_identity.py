@@ -47,7 +47,7 @@ def local_storage(settings, tmp_path):
     settings.MEDIA_ROOT = tmp_path
 
 
-@pytest.mark.parametrize("value", ["#ffffff", "#AAAAAA", "#00FF00", "#fff", "red", "#000000;", "#12345g"])
+@pytest.mark.parametrize("value", ["#fff", "red", "#000000;", "#12345g"])
 def test_invalid_or_low_contrast_colour(value):
     with pytest.raises(ValidationError):
         validate_accent(value)
@@ -62,9 +62,18 @@ def test_palette_and_stable_default(workspace):
     assert workspace.accent_color == first
     assert Workspace(id=UUID(int=1)).accent_color != Workspace(id=UUID(int=2)).accent_color
     workspace.primary_color = "#FFFFFF"
-    assert workspace.accent_color == first
+    assert workspace.accent_color == "#FFFFFF"
     workspace.primary_color = '" onload="bad'
     assert workspace.accent_color == first
+
+
+@pytest.mark.parametrize(("colour", "text"), [("#FFFFFF", "#000000"), ("#000000", "#FFFFFF"), ("#00FF00", "#000000")])
+def test_custom_colour_chooses_accessible_text(colour, text):
+    from apps.workspaces.colors import accent_text_color, contrast_ratio
+
+    assert validate_accent(colour) == colour
+    assert accent_text_color(colour) == text
+    assert contrast_ratio(colour, text) >= 4.5
 
 
 @pytest.mark.parametrize("role", ["owner", "manager", "editor", "contributor", "viewer", "client"])
@@ -87,11 +96,11 @@ def test_colour_roles(client, user, workspace, role):
 def test_invalid_colour_keeps_previous_and_shows_error(owner, workspace):
     workspace.primary_color = "#1D4ED8"
     workspace.save()
-    response = owner.post(url(workspace), {"color": "#FFFFFF"})
-    assert b"contrast with white" in response.content
+    response = owner.post(url(workspace), {"color": "#GGGGGG"})
+    assert b"Color must be a 6-digit hex value" in response.content
     workspace.refresh_from_db()
     assert workspace.primary_color == "#1D4ED8"
-    assert b'value="#FFFFFF"' in response.content
+    assert b'value="#GGGGGG"' in response.content
 
 
 @pytest.mark.parametrize(
@@ -228,6 +237,12 @@ def test_identity_on_board_detail_caption_publish_and_switcher(owner, user, work
         html = owner.get(path).content.decode()
         assert "#6D28D9" in html
         assert f'data-channel-icon="{account.pk}"' in html
+    board_html = owner.get(reverse("jrc_production:board")).content.decode()
+    assert f"?client={workspace.pk}&amp;channel={account.pk}" in board_html
+    assert f"#title-{account.pk}" in board_html
+    profile_html = owner.get(url(workspace, "profile")).content.decode()
+    assert 'type="color"' in profile_html
+    assert "data-colour-picker" in profile_html
     # Known platforms retain the existing Brightbean SVG, with or without a local profile.
     from django.template.loader import render_to_string
 

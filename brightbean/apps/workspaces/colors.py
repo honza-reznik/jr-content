@@ -1,4 +1,4 @@
-"""Stable workspace accents with readable white labels (WCAG contrast >= 4.5)."""
+"""Stable workspace accents with an automatically readable label colour."""
 
 from django.core.exceptions import ValidationError
 
@@ -20,12 +20,23 @@ PALETTE = (
 
 def validate_accent(value):
     validate_hex_color(value)
-    channels = [int(value[i : i + 2], 16) / 255 for i in (1, 3, 5)]
-    linear = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
-    luminance = sum(c * weight for c, weight in zip(linear, (0.2126, 0.7152, 0.0722), strict=True))
-    if 1.05 / (luminance + 0.05) < 4.5:
-        raise ValidationError("Choose a darker colour: contrast with white must be at least 4.5:1.")
     return value.upper()
+
+
+def contrast_ratio(value, foreground):
+    """Return WCAG relative contrast for two six-digit hex colours."""
+    def luminance(color):
+        channels = [int(color[i : i + 2], 16) / 255 for i in (1, 3, 5)]
+        linear = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+        return sum(c * weight for c, weight in zip(linear, (0.2126, 0.7152, 0.0722), strict=True))
+
+    first, second = sorted((luminance(value), luminance(foreground)), reverse=True)
+    return (first + 0.05) / (second + 0.05)
+
+
+def accent_text_color(value):
+    """Pick black or white, whichever gives the stronger WCAG contrast."""
+    return "#FFFFFF" if contrast_ratio(value, "#FFFFFF") >= contrast_ratio(value, "#000000") else "#000000"
 
 
 def workspace_accent(workspace):

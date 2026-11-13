@@ -21,6 +21,7 @@ from django.utils import timezone
 from apps.accounts.models import User
 from apps.common.testing import run_email_queue
 from apps.notifications.engine import (
+    APPROVAL_DAILY_EVENTS,
     BATCH_SIZE_TRIGGER,
     BATCH_WINDOW_MINUTES,
     DAILY_DIGEST_HOUR,
@@ -36,9 +37,11 @@ from apps.notifications.models import (
     QuietHours,
 )
 
-# Email on by default and NOT in BATCHED_EMAIL_EVENTS, so a normal user gets it
-# immediately — which is what makes it prove digest_mode captured it.
+# Email for an actionable request, not in BATCHED_EMAIL_EVENTS, so a normal user
+# gets it immediately — which proves digest_mode captured it.
 IMMEDIATE_EMAIL_EVENT = EventType.POST_CHANGES_REQUESTED
+# The default is in-app only after P2-B07; this test opts in explicitly to prove
+# digest_mode captures a user's own choice too.
 OTHER_IMMEDIATE_EMAIL_EVENT = EventType.SOCIAL_ACCOUNT_DISCONNECTED
 # In BATCHED_EMAIL_EVENTS, so it queues on the short window for everyone.
 ROLLING_BATCH_EVENT = EventType.POST_FAILED
@@ -79,6 +82,9 @@ def make_user(suffix, *, digest_mode=False, tz="UTC"):
 class TestDigestModeUser:
     def test_gets_one_daily_email_and_no_immediate_ones(self, user, mailoutbox):
         QuietHours.objects.create(user=user, digest_mode=True)
+        NotificationPreference.objects.create(
+            user=user, event_type=OTHER_IMMEDIATE_EMAIL_EVENT, channel=Channel.EMAIL, is_enabled=True
+        )
 
         notify(user, IMMEDIATE_EMAIL_EVENT, "Changes requested")
         notify(user, OTHER_IMMEDIATE_EMAIL_EVENT, "Account disconnected")
@@ -157,6 +163,9 @@ class TestDigestModeUser:
         NotificationPreference.objects.create(
             user=user, event_type=IMMEDIATE_EMAIL_EVENT, channel=Channel.EMAIL, is_enabled=False
         )
+        NotificationPreference.objects.create(
+            user=user, event_type=EventType.POST_REJECTED, channel=Channel.EMAIL, is_enabled=True
+        )
 
         notify(user, IMMEDIATE_EMAIL_EVENT, "Changes requested")
         notify(user, EventType.POST_REJECTED, "Post rejected")
@@ -175,6 +184,9 @@ class TestDigestModeUser:
     def test_opting_out_after_queueing_drops_only_that_event(self, user, mailoutbox):
         """A digest spans types, so one being switched off must not cancel the rest."""
         QuietHours.objects.create(user=user, digest_mode=True)
+        NotificationPreference.objects.create(
+            user=user, event_type=EventType.POST_REJECTED, channel=Channel.EMAIL, is_enabled=True
+        )
         notify(user, IMMEDIATE_EMAIL_EVENT, "Changes requested")
         notify(user, EventType.POST_REJECTED, "Post rejected")
         queued_at(user, at(6))
@@ -206,6 +218,9 @@ class TestDigestModeUser:
             timezone="UTC",
             digest_mode=True,
         )
+        NotificationPreference.objects.create(
+            user=user, event_type=QUIET_HOURS_DROPPABLE_EVENT, channel=Channel.EMAIL, is_enabled=True
+        )
 
         notify(user, QUIET_HOURS_DROPPABLE_EVENT, "Report ready")
 
@@ -229,6 +244,9 @@ class TestDigestModeUser:
         )
         NotificationPreference.objects.create(
             user=user, event_type=QUIET_HOURS_DROPPABLE_EVENT, channel=Channel.WEBHOOK, is_enabled=True
+        )
+        NotificationPreference.objects.create(
+            user=user, event_type=QUIET_HOURS_DROPPABLE_EVENT, channel=Channel.EMAIL, is_enabled=True
         )
 
         with patch("apps.notifications.engine._dispatch_webhook") as dispatch_webhook:
@@ -417,3 +435,20 @@ def test_there_is_only_one_digest_implementation():
 
     assert not hasattr(tasks, "send_daily_digests")
     assert hasattr(tasks, "send_batched_email_digests")
+
+
+@pytest.mark.django_db
+def test_approval_reminders_are_sent_once_in_a_daily_summary(user, mailoutbox):
+    for event in APPROVAL_DAILY_EVENTS:
+        notify(user, event, "Approval waiting")
+    assert mailoutbox == []
+    assert email_deliveries(user).count() == 2
+    assert all(row.batch_queued_at for row in email_deliveries(user))
+
+    queued_at(user, at(6))
+    with frozen_now(at(DAILY_DIGEST_HOUR - 1)):
+        assert send_batched_email_digests() == 0
+    with frozen_now(at(DAILY_DIGEST_HOUR + 1)):
+        assert send_batched_email_digests() == 1
+    assert mailoutbox[0].subject == "Approval summary"
+    assert email_deliveries(user).filter(status=DeliveryStatus.DELIVERED).count() == 2

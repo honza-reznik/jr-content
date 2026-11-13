@@ -54,3 +54,9 @@ class Workspace(models.Model):
         from .colors import workspace_accent
 
         return workspace_accent(self)
+
+    @property
+    def accent_text_color(self):
+        from .colors import accent_text_color
+
+        return accent_text_color(self.accent_color)
