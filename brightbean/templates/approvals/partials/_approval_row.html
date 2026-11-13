@@ -107,9 +107,9 @@ can_approve, display_timezone, and the parent Alpine scope (selectedPosts, diffO
         </div>
         {% elif post.status == 'changes_requested' or post.status == 'rejected' or post.status == 'approved' %}
         <div class="flex items-center gap-1.5 flex-shrink-0">
-            <a href="{% url 'composer:compose_edit' workspace_id=workspace.id post_id=post.id %}"
+            <a href="{% url 'jrc_production:content_detail' workspace_id=workspace.id post_id=post.id %}?tab=approval"
                class="px-3.5 py-1.5 text-[0.8125rem] font-semibold rounded-full text-white inline-flex items-center gap-1.5 transition-colors" style="background: var(--primary);">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.12 2.12 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg> Edit
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.12 2.12 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg> Open
             </a>
         </div>
         {% elif post.status == 'on_hold' and can_approve %}

@@ -690,6 +690,31 @@ def _resolve_template_data(template_id, workspace):
     return tpl.template_data
 
 
+def _jrc_detail_redirect(request, workspace, post):
+    """JR Content (P2-B03): the content detail and the New content page replace this editor.
+
+    Every old address of the composer (bookmarks, notifications, links of upstream pages) arrives here
+    after the composer's own access checks, so whoever was refused before is refused the same way.
+    An existing post opens on its detail (on Publish when the link named a channel, as the calendar's
+    did); a new post opens the empty New content page for this client with the calendar's date and
+    channel. The editor itself is no longer shown anywhere.
+    """
+    from urllib.parse import urlencode
+
+    from django.urls import reverse
+
+    if post is not None:
+        url = reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.id, "post_id": post.id})
+        if request.GET.get("account") or request.GET.get("action") == "publish_now":
+            url += "?tab=publish"
+        return redirect(url)
+    query = {"client": str(workspace.id)}
+    for source, target in (("scheduled_date", "date"), ("scheduled_time", "time"), ("account", "account")):
+        if request.GET.get(source):
+            query[target] = request.GET[source]
+    return redirect(reverse("jrc_production:new_content") + "?" + urlencode(query))
+
+
 @login_required
 @require_permission("create_posts")
 def compose(request, workspace_id, post_id=None):
@@ -718,6 +743,8 @@ def compose(request, workspace_id, post_id=None):
         perms = membership.effective_permissions if membership else {}
         if post.author != request.user and not perms.get("edit_others_posts", False):
             raise PermissionDenied("You do not have permission to edit this post.")
+        if getattr(settings, "JRC_UI_ENABLED", False):
+            return _jrc_detail_redirect(request, workspace, post)
         form = PostForm(instance=post)
         # Prefer a committed schedule; fall back to a draft-stage proposal so
         # the Schedule Post panel shows whichever time the post carries.
@@ -741,6 +768,8 @@ def compose(request, workspace_id, post_id=None):
         platform_extras = {str(pp.social_account_id): (pp.platform_extra or {}) for pp in platform_post_list}
         template_data = None
     else:
+        if getattr(settings, "JRC_UI_ENABLED", False):
+            return _jrc_detail_redirect(request, workspace, None)
         post = None
         # Pre-fill scheduled date/time from query params (e.g. when coming from calendar "+" CTA)
         initial = {}

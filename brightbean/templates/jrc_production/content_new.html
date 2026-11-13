@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% comment %}JR Content: přidáno 2026-11-13 (blok P2-B03), AGPL-3.0. Prázdný detail nového obsahu.{% endcomment %}
+{% load static %}
+{% block title %}New content · JR Content{% endblock %}
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'jrc_production/content-tabs.css' %}">
+<style>
+  .new-content .field-label { display:block; font-size:12px; font-weight:600; color:#57534e; margin-bottom:6px; }
+  .new-content .field { width:100%; max-width:100%; border:1px solid #d6d3d1; border-radius:8px; padding:9px 11px; font-size:14px; color:#292524; background:white; min-height:42px; }
+  .new-content .field:focus { outline:2px solid #fdba74; outline-offset:0; border-color:#f97316; }
+  .new-content .field-title { font-size:22px; font-weight:600; letter-spacing:-.3px; }
+  .new-content textarea.field { min-height:120px; resize:vertical; line-height:1.5; }
+  .new-content .grid-fields { display:grid; grid-template-columns:1fr; gap:16px; margin-top:18px; padding-top:16px; border-top:1px solid #f5f5f4; }
+  @media (min-width:640px) { .new-content .grid-fields { grid-template-columns:1fr 1fr; } .new-content .span-2 { grid-column:span 2; } }
+  .new-content .help { margin-top:6px; font-size:12px; line-height:1.5; color:#78716c; }
+  .new-content .channel-list { display:flex; flex-wrap:wrap; gap:8px; }
+  .new-content .channel-option { display:inline-flex; align-items:center; gap:8px; max-width:100%; min-height:40px; padding:6px 12px; border:1px solid #e7e5e4; border-radius:8px; font-size:13px; color:#44403c; cursor:pointer; overflow-wrap:anywhere; }
+  .new-content .channel-option:has(input:checked) { border-color:#f97316; background:#fff7ed; }
+  .new-content .channel-option input { width:18px; height:18px; flex:none; }
+  .new-content .actions { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:20px; }
+  .new-content .btn-primary { display:inline-flex; align-items:center; justify-content:center; min-height:42px; padding:8px 18px; border-radius:8px; background:#ea580c; color:white; font-weight:600; font-size:14px; }
+  .new-content .btn-primary:hover { background:#c2410c; }
+  .new-content .btn-link { display:inline-flex; align-items:center; min-height:42px; padding:8px 6px; color:#57534e; font-size:14px; text-decoration:underline; }
+  .new-content .error { border:1px solid #fecaca; background:#fef2f2; color:#991b1b; padding:12px; border-radius:8px; margin-bottom:14px; font-size:14px; }
+  .new-content .tabs-preview { display:flex; min-width:max-content; border-bottom:1px solid #e7e5e4; }
+  .new-content .tabs-preview span { padding:12px 14px; font-size:14px; font-weight:500; color:#a8a29e; text-transform:capitalize; }
+  @media (max-width:639px) { .new-content .actions > * { flex:1 1 100%; } .new-content .field-title { font-size:19px; } .new-content .field { font-size:16px; } }
+</style>
+{% endblock %}
+{% block page_header %}{% endblock %}
+{% block content %}
+<div class="new-content mx-auto w-full max-w-5xl pb-8">
+    <a href="{{ board_url }}" class="inline-flex items-center gap-2 text-sm font-medium text-stone-500 hover:text-stone-800 mb-5"><span aria-hidden="true">←</span> Content board</a>
+    {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+    <form method="post" action="{% url 'jrc_production:create' %}" class="rounded-2xl border border-stone-200 bg-white p-4 sm:p-6 shadow-sm" style="border-top:5px solid {% if fixed %}{{ fixed.workspace.accent_color }}{% else %}#d6d3d1{% endif %}" data-new-content>{% csrf_token %}
+        <input type="hidden" name="origin" value="page">
+        <p class="text-xs font-semibold uppercase tracking-wide text-stone-400">{% if fixed %}{{ fixed.workspace.name }} · {% endif %}New content</p>
+        <label for="new-content-title" class="sr-only">Content title</label>
+        <input id="new-content-title" name="title" class="field field-title mt-2" required maxlength="255" autocomplete="off" placeholder="Content title" value="{{ values.title }}" autofocus>
+        <div class="grid-fields">
+            {% if fixed %}
+            <input type="hidden" name="workspace" value="{{ fixed.workspace.id }}">
+            {% else %}
+            <div class="span-2"><label class="field-label" for="new-content-client">Client</label>
+                <select id="new-content-client" name="workspace" class="field" required data-client-select>
+                    <option value="">Choose a client…</option>
+                    {% for entry in clients %}<option value="{{ entry.workspace.id }}" data-timezone="{{ entry.workspace.effective_timezone }}">{{ entry.workspace.name }}</option>{% endfor %}
+                </select></div>
+            {% endif %}
+            <div><label class="field-label" for="new-content-stage">Stage</label>
+                <select id="new-content-stage" name="stage" class="field" data-stage-select>
+                    {% for entry in clients %}{% if not fixed or entry == fixed %}{% for value, label in entry.stages %}<option value="{{ value }}" data-client="{{ entry.workspace.id }}" {% if values.stage == value %}selected{% endif %}>{{ label }}</option>{% endfor %}{% endif %}{% endfor %}
+                </select>
+                <p class="help">Optional; new content starts in Idea. Review and Ready to publish need a channel, Ready to publish also a publication date. Approved and Published follow approval and publishing.</p></div>
+            <div><label class="field-label" for="new-content-date">Publication date</label>
+                <input id="new-content-date" name="publish_at" type="datetime-local" class="field" value="{{ values.publish_at }}">
+                <p class="help">Optional; a proposal until the content is planned.{% if fixed %} Time zone {{ fixed.workspace.effective_timezone }}.{% else %} In the client’s time zone.{% endif %}</p></div>
+            <fieldset class="span-2"><legend class="field-label">Channels <span class="font-normal text-stone-500">(optional)</span></legend>
+                <div class="channel-list">
+                    {% for entry in clients %}{% if not fixed or entry == fixed %}{% for account in entry.channels %}<label class="channel-option" data-client="{{ entry.workspace.id }}"><input type="checkbox" name="channels" value="{{ account.id }}" {% if account.id|stringformat:"s" in chosen_channels %}checked{% endif %}>{% include "jrc_channels/icon.html" with account=account %} <span>{{ account.jrc_channel.display_name|default:account.account_name }}</span></label>{% endfor %}{% endif %}{% endfor %}
+                </div>
+                <p class="help" data-no-channels>{% if fixed and not fixed.channels %}This client has no enabled channels yet. You can add them later on the content.{% else %}Leave empty for content without a channel; you can add channels later.{% endif %}</p>
+            </fieldset>
+            <div class="span-2"><label class="field-label" for="new-content-description">Description</label>
+                <textarea id="new-content-description" name="description" class="field" maxlength="5000" placeholder="What is the content about?">{{ values.description }}</textarea>
+                <p class="help">Optional; saved as the first version of the Concept.</p></div>
+        </div>
+        <div class="actions">
+            <button type="submit" class="btn-primary">Create content</button>
+            <a class="btn-link" href="{{ board_url }}">Cancel</a>
+        </div>
+    </form>
+    <div class="mt-5 overflow-x-auto" aria-hidden="true"><div class="tabs-preview"><span>Concept</span><span>Script</span><span>Shotlist</span><span>Video</span><span>Caption</span><span>Approval</span><span>Comments</span><span>Publish</span><span>History</span></div></div>
+    <p class="mt-3 text-sm text-stone-500">The script, shotlist, video, caption and the other sections open once the content is created.</p>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script nonce="{{ request.csp_nonce }}">
+(() => {
+  const form = document.querySelector('[data-new-content]');
+  const client = form.querySelector('[data-client-select]');
+  if (!client) return;
+  const stage = form.querySelector('[data-stage-select]');
+  const empty = form.querySelector('[data-no-channels]');
+  const emptyText = empty.textContent;
+  function update() {
+    let channels = 0;
+    form.querySelectorAll('.channel-option[data-client]').forEach(label => {
+      const shown = label.dataset.client === client.value;
+      label.hidden = !shown;
+      const box = label.querySelector('input');
+      box.disabled = !shown;
+      if (!shown) box.checked = false;
+      if (shown) channels += 1;
+    });
+    const wanted = stage.value;
+    const options = [...stage.options];
+    // Without a client only Idea is offered; each client lists the stages its rules allow.
+    const visible = client.value
+      ? options.filter(option => option.dataset.client === client.value)
+      : options.filter(option => option.value === 'idea').slice(0, 1);
+    options.forEach(option => { const shown = visible.includes(option); option.hidden = !shown; option.disabled = !shown; });
+    const keep = visible.find(option => option.value === wanted) || visible[0];
+    if (keep) keep.selected = true;
+    empty.textContent = client.value && !channels ? 'This client has no enabled channels yet. You can add them later on the content.' : emptyText;
+  }
+  client.addEventListener('change', update);
+  update();
+})();
+</script>
+{% endblock %}

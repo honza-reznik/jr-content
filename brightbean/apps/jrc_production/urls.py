@@ -5,6 +5,7 @@ from . import views
 app_name = "jrc_production"
 urlpatterns = [
     path("board/", views.board, name="board"),
+    path("board/new/", views.new_content, name="new_content"),
     path("board/create/", views.create, name="create"),
     path("board/idea/", views.quick_idea, name="quick_idea"),
     path("workspace/<uuid:workspace_id>/board/<uuid:post_id>/move/", views.move, name="move"),

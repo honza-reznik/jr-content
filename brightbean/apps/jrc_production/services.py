@@ -50,9 +50,46 @@ def pipeline_stage(post):
     return _STATUS_TO_STAGE[status]
 
 
+MAX_DESCRIPTION = 5000
+
+
+def initial_stages(membership):
+    """Stages new content may start in for this member (P2-B03): the moves ``available_moves`` offers
+    a draft its author just created, i.e. any production stage, Review where the workspace has a review
+    step and Ready to publish for a planner where drafts may go out. Approved and Published are never
+    a starting point: they need an approval or a publication. ``create_content`` still makes the move
+    through ``move_content``, so channels and the date are checked by the same rule as on the board.
+    """
+    if not can_create_content(membership):
+        return []
+    workspace = membership.workspace
+    stages = list(ProductionStage.values)
+    if review_available(workspace):
+        stages.append(PipelineStage.REVIEW)
+    if can_schedule(membership) and not release_blocker(workspace, PlatformPost.Status.DRAFT):
+        stages.append(PipelineStage.READY)
+    return stages
+
+
 @transaction.atomic
-def create_content(workspace, title, user, *, social_account_ids=()):
-    """Create an idea with only explicitly selected enabled channels (none by default)."""
+def create_content(
+    workspace,
+    title,
+    user,
+    *,
+    social_account_ids=(),
+    description="",
+    stage=ProductionStage.IDEA,
+    publish_at=None,
+):
+    """Create content with only explicitly selected enabled channels (none by default).
+
+    P2-B03: the one creation path of the quick idea, the New idea window and the New content page.
+    ``description`` becomes version 1 of the Concept. ``stage`` (default Idea) is reached by a move
+    from Idea under the board's rules (``initial_stages`` / ``move_content``), so Review needs a
+    channel and Ready a planner, a channel and a future ``publish_at``. For the other stages
+    ``publish_at`` is stored as the proposed publication date. Nothing is saved when any step fails.
+    """
     from apps.composer.services import create_post
 
     membership = content_membership(workspace, user)
@@ -62,6 +99,14 @@ def create_content(workspace, title, user, *, social_account_ids=()):
     if not title:
         raise ValidationError("Enter a content title.")
     Post(workspace=workspace, title=title, author=user).full_clean()
+    description = (description or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if len(description) > MAX_DESCRIPTION:
+        raise ValidationError(f"Keep the description under {MAX_DESCRIPTION:,} characters.")
+    stage = stage or ProductionStage.IDEA
+    if stage not in initial_stages(membership):
+        raise ValidationError("Choose a stage this content can start in.")
+    if publish_at is not None and timezone.is_naive(publish_at):
+        raise ValidationError("Choose a valid publication date and time.")
     ids = {str(value) for value in social_account_ids}
     channels = list(
         ChannelProfile.objects.filter(social_account__workspace=workspace, is_enabled=True)
@@ -71,8 +116,30 @@ def create_content(workspace, title, user, *, social_account_ids=()):
     selected = [channel.social_account for channel in channels if str(channel.social_account_id) in ids]
     if {str(account.pk) for account in selected} != ids:
         raise ValidationError("Choose enabled channels of this client.")
-    post = create_post(workspace=workspace, title=title, author=user, caption="", social_accounts=selected)
+    post = create_post(
+        workspace=workspace,
+        title=title,
+        author=user,
+        caption="",
+        social_accounts=selected,
+        proposed_publish_at=None if stage == PipelineStage.READY else publish_at,
+    )
     PostProduction.objects.create(post=post, stage_changed_by=user)
+    if description:
+        from apps.jrc_texts.services import create_initial_concept
+
+        create_initial_concept(post, user, description)
+    if stage != ProductionStage.IDEA:
+        try:
+            post = move_content(
+                post,
+                stage,
+                user,
+                expected_stage=ProductionStage.IDEA,
+                scheduled_at=publish_at if stage == PipelineStage.READY else None,
+            )
+        except PermissionDenied as exc:
+            raise ValidationError(str(exc) or "You cannot start content in this stage.") from exc
     return post
 
 
