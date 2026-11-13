@@ -1,6 +1,7 @@
 """P2-B04: detail edits, mutable version metadata and the Discussion link contract."""
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from django.db import IntegrityError, connection, transaction
@@ -8,7 +9,7 @@ from django.urls import reverse
 
 from apps.composer.models import ContentCategory, PlatformPost, Post
 from apps.jrc_channels.services import create_manual_channel
-from apps.jrc_production.models import ContentCategoryChange, ContentRename
+from apps.jrc_production.models import ContentCategoryChange, ContentProposalChange, ContentRename
 from apps.jrc_texts import services
 from apps.jrc_texts.models import TextVersion, TextVersionNameChange
 from apps.members.models import WorkspaceMembership
@@ -97,6 +98,12 @@ def test_metadata_writes_follow_content_permissions(data, user, client, role, ow
     version = doc.versions.get()
     response = client.post(name_url(post, version), {"name": "Name"})
     assert response.status_code == (200 if allowed else 403)
+    response = client.post(
+        reverse("jrc_production:proposed_date", args=[post.workspace_id, post.pk]),
+        {"proposed_publish_at": "2026-12-01T14:30"},
+    )
+    assert response.status_code == (200 if allowed else 403)
+    assert ContentProposalChange.objects.count() == (1 if allowed else 0)
     category = ContentCategory.objects.create(workspace=post.workspace, name="News")
     response = client.post(
         reverse("jrc_production:category", args=[post.workspace_id, post.pk]), {"category": category.pk}
@@ -178,3 +185,63 @@ def test_copy_controls_and_discussion_alias(data, client):
         assert response.context["active_tab"] == "discussion"
         assert ">Discussion</h2>" in response.content.decode()
     assert content_path(post, "comments").endswith("?tab=discussion")
+
+
+def test_proposal_can_be_set_changed_and_cleared_in_workspace_timezone(data, client, user):
+    post, variant = data
+    post.workspace.timezone = "Europe/Prague"
+    post.workspace.save()
+    url = reverse("jrc_production:proposed_date", args=[post.workspace_id, post.pk])
+    value = "2026-12-01T14:30"
+    response = client.post(url, {"proposed_publish_at": value})
+    assert response.status_code == 200
+    assert response.json()["proposed_publish_at"] == value
+    post.refresh_from_db()
+    assert post.proposed_publish_at == datetime(2026, 12, 1, 13, 30, tzinfo=UTC)
+    assert post.scheduled_at is None
+    variant.refresh_from_db()
+    assert variant.status == "draft" and variant.scheduled_at is None
+    assert client.post(url, {"proposed_publish_at": value}).status_code == 200
+    assert ContentProposalChange.objects.count() == 1
+    assert f'value="{value}"' in client.get(detail(post, "concept")).content.decode()
+    assert client.post(url, {"proposed_publish_at": "2026-12-02T15:00"}).status_code == 200
+    assert client.post(url, {"proposed_publish_at": ""}).status_code == 200
+    post.refresh_from_db()
+    assert post.proposed_publish_at is None
+    changes = list(ContentProposalChange.objects.order_by("pk"))
+    assert len(changes) == 3 and all(change.user == user for change in changes)
+    assert changes[0].old_at is None and changes[-1].new_at is None
+    assert "Proposed publication changed" in client.get(detail(post, "history")).content.decode()
+
+
+@pytest.mark.parametrize("invalid", ["invalid", "2026-02-30T10:00", "2027-03-28T02:30", "2027-10-31T02:30"])
+def test_proposal_rejects_invalid_and_dst_ambiguous_times(data, client, invalid):
+    post, _ = data
+    post.workspace.timezone = "Europe/Prague"
+    post.workspace.save()
+    url = reverse("jrc_production:proposed_date", args=[post.workspace_id, post.pk])
+    response = client.post(url, {"proposed_publish_at": invalid})
+    assert response.status_code == 400 and response.json()["error"]
+    assert not ContentProposalChange.objects.exists()
+
+
+@pytest.mark.parametrize("status", ["scheduled", "publishing", "published"])
+def test_proposal_preserves_live_publication_schedule(data, client, status):
+    post, variant = data
+    variant.status = status
+    variant.save()
+    url = reverse("jrc_production:proposed_date", args=[post.workspace_id, post.pk])
+    assert client.post(url, {"proposed_publish_at": "2026-12-01T14:30"}).status_code == 400
+    assert not ContentProposalChange.objects.exists()
+    assert 'id="content-proposed-date"' not in client.get(detail(post, "concept")).content.decode()
+
+
+def test_proposal_affects_board_order_without_channel(data, user, client):
+    post, _ = data
+    other = Post.objects.create(workspace=post.workspace, author=user, title="Channel-less idea")
+    url = reverse("jrc_production:proposed_date", args=[post.workspace_id, other.pk])
+    assert client.post(url, {"proposed_publish_at": "2026-12-01T14:30"}).status_code == 200
+    response = client.get(reverse("jrc_production:board"), {"client": post.workspace_id})
+    cards = next(column["cards"] for column in response.context["columns"] if column["value"] == "idea")
+    assert [card["post"].pk for card in cards] == [other.pk, post.pk]
+    assert cards[0]["date_label"] == "Proposed"

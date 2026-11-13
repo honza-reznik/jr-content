@@ -13,3 +13,4 @@
 [data-version-name] [role=status] { flex-basis:100%; }
 .script-versions li { min-width:0; overflow-wrap:anywhere; }
 .script-versions [data-version-name] button { width:auto; }
+.proposal-actions { display:flex; flex-wrap:wrap; gap:.5rem; margin-top:.5rem; }

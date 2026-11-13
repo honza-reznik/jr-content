@@ -482,3 +482,31 @@ def change_category(post, category_id, user):
         locked.category = category
         locked.save(update_fields=["category", "updated_at"])
     return category
+
+
+def can_change_proposal(post):
+    # A proposal must never be confused with the live publication schedule.
+    return (
+        post.scheduled_at is None
+        and not post.platform_posts.filter(status__in=["scheduled", "publishing", "published"]).exists()
+    )
+
+
+@transaction.atomic
+def change_proposed_date(post, proposed_at, user):
+    from .models import ContentProposalChange
+
+    locked = Post.objects.select_for_update(of=("self",)).select_related("workspace").get(pk=post.pk)
+    membership = content_membership(locked.workspace, user)
+    if not can_rename_content(locked, membership):
+        raise PermissionDenied("You cannot edit this content.")
+    if not can_change_proposal(locked):
+        raise ValidationError("This content already has a publication schedule. Change it in Publish.")
+    if proposed_at is not None and timezone.is_naive(proposed_at):
+        raise ValidationError("Choose a date and time with a timezone.")
+    if locked.proposed_publish_at != proposed_at:
+        ContentProposalChange.objects.create(
+            post=locked, old_at=locked.proposed_publish_at, new_at=proposed_at, user=user
+        )
+        locked.proposed_publish_at = proposed_at
+        locked.save(update_fields=["proposed_publish_at", "updated_at"])

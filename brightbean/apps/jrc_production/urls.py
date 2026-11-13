@@ -4,6 +4,9 @@ from . import views
 
 app_name = "jrc_production"
 urlpatterns = [
+    path(
+        "workspace/<uuid:workspace_id>/content/<uuid:post_id>/proposed-date/", views.proposed_date, name="proposed_date"
+    ),
     path("workspace/<uuid:workspace_id>/content/<uuid:post_id>/category/", views.category, name="category"),
     path("board/", views.board, name="board"),
     path("board/create/", views.create, name="create"),

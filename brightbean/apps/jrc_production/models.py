@@ -154,3 +154,11 @@ class ContentCategoryChange(models.Model):
     new_name = models.CharField(max_length=100, blank=True)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class ContentProposalChange(models.Model):
+    post = models.ForeignKey("composer.Post", on_delete=models.CASCADE, related_name="jrc_proposal_changes")
+    old_at = models.DateTimeField(null=True, blank=True)
+    new_at = models.DateTimeField(null=True, blank=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)

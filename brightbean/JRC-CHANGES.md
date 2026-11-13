@@ -853,3 +853,16 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
 - Výběr účtů po OAuth (`social_accounts:select_account`) je svázaný s ID toku (`?flow=` a skryté pole); každý tok má
   vlastní záznam v relaci a před zápisem se znovu ověří přístup k workspace.
 - Zpětné volání OAuth sociálních sítí bere organizaci z workspace v podepsaném stavu, ne z relace.
+
+### P2-B04 — úpravy detailu obsahu
+
+- Název se upravuje přímo kliknutím v hlavičce (Enter nebo opuštění pole uloží, Escape zruší); používá stávající
+  službu přejmenování včetně návratu ke schválení. Kategorie workspace a navržené datum se ukládají bez načtení stránky.
+- Navržené datum respektuje časové pásmo workspace, lze ho vymazat a nejde jím přepsat skutečný publikační plán.
+  Změny kategorií a navržených dat mají vlastní záznam v History.
+- Uložené verze konceptu, scriptu a popisků mají volitelný upravitelný název s historií. Metadata žijí v samostatné
+  tabulce; databázová ochrana uloženého textu, autora a času uložení zůstává. Popisky zobrazují autora a čas všech verzí.
+- Copy kopíruje právě zobrazený text (i rozepsaný), popisek nebo řádky shotlistu. Záložka Caption už nemá Instagram
+  preview, počítadlo znaků zůstává. Comments se v detailu jmenuje Discussion; staré odkazy se dál otevřou.
+- Migrace: `jrc_production.0006`, `jrc_production.0007`, `jrc_texts.0005`. Při nasazení znovu sestavit editor z
+  `apps/jrc_texts/editor/script.mjs` a shromáždit statické soubory. Ověřovací skripty: `scripts/P2-B04/` v kořeni repozitáře.

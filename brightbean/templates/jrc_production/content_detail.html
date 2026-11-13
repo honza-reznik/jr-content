@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load static jrc_thumbnails %}
+{% load static jrc_thumbnails tz %}
 {% block title %}{{ post.title|default:"Content" }} · {{ workspace.name }}{% endblock %}
 {% block extra_head %}
 <link rel="stylesheet" href="{% static 'jrc_production/detail-edit.css' %}">
@@ -18,7 +18,7 @@
                 <p class="text-xs font-semibold uppercase tracking-wide text-stone-400">{{ workspace.name }} · Content</p>
                 <h1 class="mt-2 break-words text-2xl sm:text-3xl font-semibold tracking-tight text-stone-900" data-content-heading>{% if can_rename %}<button type="button" data-rename-start title="Rename content" class="content-title-button">{{ post.title|default:"Untitled content" }}</button>{% else %}{{ post.title|default:"Untitled content" }}{% endif %}</h1>
                 {% if can_rename %}
-                <form id="content-rename" data-inline-rename hidden action="{% url 'jrc_production:rename' workspace_id=workspace.id post_id=post.id %}">{% csrf_token %}
+                <form id="content-rename" data-inline-rename data-workspace-name="{{ workspace.name }}" hidden action="{% url 'jrc_production:rename' workspace_id=workspace.id post_id=post.id %}">{% csrf_token %}
                     <label for="content-title" class="sr-only">Content title</label>
                     <input id="content-title" name="title" required maxlength="255" value="{{ post.title }}" class="content-title-input" autocomplete="off">
                 </form>
@@ -35,7 +35,16 @@
             <div><p class="text-xs text-stone-400">Channels</p><div class="mt-1 flex flex-wrap gap-1.5">
                 {% for platform_post in post.platform_posts.all %}<span class="rounded-md bg-stone-100 px-2 py-1 text-xs text-stone-700">{% include "jrc_channels/icon.html" with account=platform_post.social_account %} {{ platform_post.social_account.jrc_channel.display_name|default:platform_post.social_account.account_name }} · {{ platform_post.get_status_display }}</span>{% empty %}<span class="text-sm text-stone-500">No channels</span>{% endfor %}
             </div></div>
-            <div><p class="text-xs text-stone-400">Publish date</p><p class="mt-1 text-sm font-medium text-stone-700">{% if post.scheduled_at %}{{ post.scheduled_at|date:"M j, Y · g:i A" }}{% elif post.proposed_publish_at %}Proposed · {{ post.proposed_publish_at|date:"M j, Y · g:i A" }}{% else %}Not set{% endif %}</p></div>
+            <div>{% timezone workspace.effective_timezone %}
+                {% if can_edit_proposal %}
+                <form data-proposal-form action="{% url 'jrc_production:proposed_date' workspace_id=workspace.id post_id=post.id %}">{% csrf_token %}
+                    <label for="content-proposed-date" class="text-xs text-stone-500">Proposed publish date</label>
+                    <input id="content-proposed-date" name="proposed_publish_at" type="datetime-local" value="{{ post.proposed_publish_at|date:'Y-m-d\TH:i' }}" class="content-category">
+                    <p class="mt-1 text-xs text-stone-500">{{ workspace.effective_timezone }} · Proposal only</p>
+                    <div class="proposal-actions"><button class="detail-button" type="submit">Save date</button><button class="detail-button" type="button" data-clear-proposal>Clear</button></div>
+                </form>
+                {% else %}<p class="text-xs text-stone-400">Publish date</p><p class="mt-1 text-sm font-medium text-stone-700">{% if post.scheduled_at %}{{ post.scheduled_at|date:"M j, Y · g:i A" }}{% elif post.proposed_publish_at %}Proposed · {{ post.proposed_publish_at|date:"M j, Y · g:i A" }}{% else %}Not set{% endif %}</p>{% endif %}
+            {% endtimezone %}</div>
             <div><label for="content-category" class="text-xs text-stone-400">Category</label>{% if can_edit_posts %}
                 <form data-category-form action="{% url 'jrc_production:category' workspace_id=workspace.id post_id=post.id %}">{% csrf_token %}<select id="content-category" name="category" class="content-category" data-saved="{{ post.category_id|default:'' }}"><option value="">None</option>{% for category in content_categories %}<option value="{{ category.pk }}" {% if post.category_id == category.pk %}selected{% endif %}>{{ category.name }}</option>{% endfor %}</select></form>
                 {% else %}<p class="mt-1 text-sm font-medium text-stone-700">{{ post.category.name|default:"None" }}</p>{% endif %}</div>
@@ -100,7 +109,7 @@
                 <li class="relative border-l border-stone-200 pb-6 pl-5 last:border-transparent last:pb-0">
                     <span class="absolute -left-[5px] top-1 h-2.5 w-2.5 rounded-full {% if item.kind == 'approval' %}bg-blue-500{% elif item.kind == 'shotlist' %}bg-emerald-500{% else %}bg-orange-500{% endif %}"></span>
                     <div class="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between"><p class="text-sm font-medium text-stone-800">{{ item.label }}</p><time class="text-xs text-stone-400">{{ item.created_at|date:"M j, Y · g:i A" }}</time></div>
-                    <p class="mt-1 text-xs text-stone-500">{% if item.actor %}{{ item.actor.display_name|default:item.actor.email }}{% else %}System{% endif %} · {% if item.kind == "approval" %}Approval{% elif item.kind == "shotlist" %}Shotlist{% elif item.kind == "text" %}Text version{% elif item.kind == "publication" %}Publication{% elif item.kind == "video" %}Video{% elif item.kind == "category" %}Category{% elif item.kind == "rename" %}Title{% else %}Production stage{% endif %}</p>
+                    <p class="mt-1 text-xs text-stone-500">{% if item.actor %}{{ item.actor.display_name|default:item.actor.email }}{% else %}System{% endif %} · {% if item.kind == "approval" %}Approval{% elif item.kind == "shotlist" %}Shotlist{% elif item.kind == "text" %}Text version{% elif item.kind == "publication" %}Publication{% elif item.kind == "video" %}Video{% elif item.kind == "category" %}Category{% elif item.kind == "proposal" %}Proposed publication{% elif item.kind == "rename" %}Title{% else %}Production stage{% endif %}</p>
                     {% if item.note and item.can_view_note %}{% if item.kind == "publication" and item.note|slice:":8" == "https://" %}<a href="{{ item.note }}" target="_blank" rel="noopener noreferrer" class="mt-2 inline-block break-all text-sm text-orange-700 underline">View published post</a>{% else %}<p class="mt-2 whitespace-pre-wrap rounded-lg bg-stone-50 p-3 text-sm text-stone-600">{{ item.note }}</p>{% endif %}{% endif %}
                 </li>
                 {% empty %}<li class="rounded-xl border border-dashed border-stone-300 px-4 py-8 text-center text-sm text-stone-500">No history yet.</li>{% endfor %}

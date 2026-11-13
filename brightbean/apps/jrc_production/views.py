@@ -30,15 +30,24 @@ from apps.workspaces.models import Workspace
 
 from . import shotlist as shotlist_services
 from .approval import approval_context, is_waiting_for
-from .forms import PublicationDateForm
-from .models import ContentCategoryChange, ContentRename, ManualPublication, PipelineStage, ShotlistChange
+from .forms import ProposedDateForm, PublicationDateForm
+from .models import (
+    ContentCategoryChange,
+    ContentProposalChange,
+    ContentRename,
+    ManualPublication,
+    PipelineStage,
+    ShotlistChange,
+)
 from .services import (
     add_content_channel,
     available_moves,
+    can_change_proposal,
     can_create_content,
     can_manage_channels,
     can_rename_content,
     change_category,
+    change_proposed_date,
     content_membership,
     create_content,
     mark_published_manually,
@@ -344,6 +353,27 @@ def category(request, workspace_id, post_id):
     except ValidationError as exc:
         return JsonResponse({"error": " ".join(exc.messages)}, status=400)
     return JsonResponse({"category": str(selected.pk) if selected else ""})
+
+
+@login_required
+@require_POST
+def proposed_date(request, workspace_id, post_id):
+    post = get_object_or_404(Post, pk=post_id, workspace_id=workspace_id)
+    membership = content_membership(post.workspace, request.user)
+    if not can_rename_content(post, membership):
+        raise PermissionDenied("You cannot edit this content.")
+    form = ProposedDateForm(request.POST)
+    with timezone.override(ZoneInfo(post.workspace.effective_timezone)):
+        if not form.is_valid():
+            return JsonResponse({"error": " ".join(form.errors["proposed_publish_at"])}, status=400)
+        value = form.cleaned_data["proposed_publish_at"]
+        try:
+            change_proposed_date(post, value, request.user)
+        except ValidationError as exc:
+            return JsonResponse({"error": " ".join(exc.messages)}, status=400)
+        return JsonResponse(
+            {"proposed_publish_at": timezone.localtime(value).strftime("%Y-%m-%dT%H:%M") if value else ""}
+        )
 
 
 # P1-B08: Concept (the idea worked out in versions) comes before the Script.
@@ -711,6 +741,23 @@ def content_detail(request, workspace_id, post_id):
         }
         for event in ContentCategoryChange.objects.filter(post=post).select_related("user")
     )
+
+    def proposal_label(value):
+        if value is None:
+            return "None"
+        return timezone.localtime(value, ZoneInfo(workspace.effective_timezone)).strftime("%b %d, %Y · %H:%M %Z")
+
+    history.extend(
+        {
+            "kind": "proposal",
+            "created_at": event.created_at,
+            "actor": event.user,
+            "label": f"Proposed publication changed from “{proposal_label(event.old_at)}” to “{proposal_label(event.new_at)}”",
+            "note": "",
+            "can_view_note": True,
+        }
+        for event in ContentProposalChange.objects.filter(post=post).select_related("user")
+    )
     history.sort(key=lambda item: item["created_at"], reverse=True)
 
     video_context = {}
@@ -831,6 +878,7 @@ def content_detail(request, workspace_id, post_id):
             else False,
             "can_view_internal_notes": can_view_internal_notes,
             "can_edit_posts": text_services.can_edit_text(post, membership),
+            "can_edit_proposal": can_rename_content(post, membership) and can_change_proposal(post),
             "comments": comments,
             "can_resolve_comments": can_moderate_comments(membership),
             "can_comment": can_comment(membership),

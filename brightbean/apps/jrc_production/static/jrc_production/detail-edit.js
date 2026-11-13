@@ -49,7 +49,7 @@ if (rename) {
         try {
             const data = await submit(rename);
             saved = data.title; start.textContent = saved; close(); status.textContent = data.message;
-            document.title = saved + document.title.slice(document.title.indexOf(" · "));
+            document.title = `${saved} · ${rename.dataset.workspaceName}`;
         } catch (error) { status.textContent = error.message; }
         finally { pending = false; input.readOnly = false; }
     }
@@ -68,6 +68,30 @@ if (category) category.addEventListener("change", async () => {
     catch (error) { select.value = select.dataset.saved; status.textContent = error.message; }
     finally { select.disabled = false; }
 });
+const proposal = document.querySelector("[data-proposal-form]");
+if (proposal) {
+    proposal.addEventListener("submit", async event => {
+        event.preventDefault();
+        if (proposal.dataset.saving) return;
+        proposal.dataset.saving = "true";
+        const request = submit(proposal);
+        const controls = proposal.querySelectorAll("input, button");
+        controls.forEach(control => { control.disabled = true; });
+        try {
+            const data = await request;
+            proposal.elements.proposed_publish_at.value = data.proposed_publish_at;
+            status.textContent = data.proposed_publish_at ? "Proposed date saved." : "Proposed date cleared.";
+        } catch (error) { status.textContent = error.message; }
+        finally {
+            delete proposal.dataset.saving;
+            controls.forEach(control => { control.disabled = false; });
+        }
+    });
+    proposal.querySelector("[data-clear-proposal]").addEventListener("click", () => {
+        proposal.elements.proposed_publish_at.value = "";
+        proposal.requestSubmit();
+    });
+}
 document.addEventListener("click", event => {
     const button = event.target.closest("[data-copy-target], [data-copy-shotlist]");
     if (!button) return;
