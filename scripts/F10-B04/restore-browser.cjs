@@ -2,6 +2,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { chromium } = require('playwright');
 
 const appPort = process.env.JRC_APP_PORT;
@@ -33,7 +34,10 @@ async function login(browser, who) {
   page.on('pageerror', error => browserErrors.push(error.message));
   page.on('console', message => { if (message.type() === 'error') browserErrors.push(message.text()); });
   await page.goto(`${app}/accounts/login/`);
-  await page.locator('input[name="login"]').fill(fixture[who].email);
+  const originalEmail = fixture[who].email;
+  const email = originalEmail.split('@').at(-1).toLowerCase().endsWith('.invalid') ? originalEmail
+    : crypto.createHash('sha256').update(originalEmail.trim().toLowerCase()).digest('hex') + '@example.invalid';
+  await page.locator('input[name="login"]').fill(email);
   await page.locator('input[name="password"]').fill(fixture[who].password);
   await page.locator('button[type="submit"]').click();
   await page.waitForURL(url => !url.pathname.startsWith(basePath + '/accounts/login'));

@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+import os
 from sqlalchemy.orm import Session
 import uuid
 import secrets
@@ -28,8 +29,34 @@ from ..models.user import User, UserStatus
 from ..models.instance_branding import InstanceBranding
 from ..middleware.auth import get_current_user
 from ..middleware.rate_limit import account_rate_limit, enforce_user_limit
+from ..config import settings
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+
+# Allow list for JR Content mode: every other /auth route (also one a later FreeFrame
+# release adds, e.g. a password reset) is refused. SSO exchange and jrc-logout live in
+# routers/jrc_auth.py, outside this router, and need no entry.
+JRC_ALLOWED_AUTH_ROUTES = frozenset({"/auth/refresh", "/auth/me", "/auth/me/preferences"})
+JRC_SERVICE_LOGIN_ROUTE = "/auth/login"
+
+
+def require_jrc_auth_policy(request: Request):
+    """Reject local browser authentication before resolving any account or token.
+
+    Brightbean still needs password login on the private network for jrc-sync.
+    Caddy overwrites X-Real-IP on every public API request.
+    """
+    if not settings.jrc_mode:
+        return
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", None) or request.url.path.rstrip("/")
+    if route_path in JRC_ALLOWED_AUTH_ROUTES:
+        return
+    if route_path == JRC_SERVICE_LOGIN_ROUTE and "x-real-ip" not in request.headers:
+        return
+    raise HTTPException(status_code=403, detail="Sign in through JR Content.")
+
+
+router = APIRouter(prefix="/auth", tags=["auth"], dependencies=[Depends(require_jrc_auth_policy)])
 
 # One message for every magic-code failure. Reporting "too many attempts"
 # separately would tell a caller which addresses are registered (only a real
@@ -206,6 +233,8 @@ def accept_invite(body: AcceptInviteRequest, db: Session = Depends(get_db)):
 @router.post("/login", response_model=TokenResponse, dependencies=[Depends(account_rate_limit("login", 10, 600, LoginRequest))])
 def login(body: LoginRequest, db: Session = Depends(get_db)):
     """Login with email + password."""
+    if settings.jrc_mode and body.email.lower() != os.environ.get("JRC_FF_SYNC_EMAIL", "").lower():
+        raise HTTPException(status_code=403, detail="Sign in through JR Content.")
     user = get_user_by_email(db, body.email)
     require_local_account(user)
     if (

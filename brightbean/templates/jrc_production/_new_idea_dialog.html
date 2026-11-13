@@ -1,0 +1,132 @@
+{% comment %}JR Content: přidáno 2026-11-13 (blok P2-B03), AGPL-3.0. Okno „New idea“ (tlačítko na nástěnce a + New v menu).
+Expects ``new_ctx`` from ``new_content_options``.{% endcomment %}
+<style>
+  .jrc-idea-dialog { width:min(560px, calc(100vw - 24px)); max-height:calc(100dvh - 24px); margin:auto; padding:0; border:0; border-radius:14px; box-shadow:0 20px 50px #0003; color:#292524; overflow:auto; }
+  .jrc-idea-dialog::backdrop { background:#1c191766; }
+  .jrc-idea-dialog form { padding:18px 20px 20px; }
+  .jrc-idea-dialog header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:14px; }
+  .jrc-idea-dialog h2 { margin:0; font-size:18px; font-weight:700; letter-spacing:-.2px; }
+  .jrc-idea-dialog .idea-client { margin:2px 0 0; font-size:12px; color:#78716c; overflow-wrap:anywhere; }
+  .jrc-idea-dialog .idea-close { flex:none; width:40px; height:40px; border-radius:8px; color:#57534e; font-size:22px; line-height:1; }
+  .jrc-idea-dialog .idea-close:hover { background:#f5f5f4; }
+  .jrc-idea-dialog .idea-field { margin-bottom:14px; }
+  .jrc-idea-dialog label.idea-label, .jrc-idea-dialog legend { display:block; font-size:12px; font-weight:600; color:#57534e; margin-bottom:6px; }
+  .jrc-idea-dialog input[type=text], .jrc-idea-dialog select, .jrc-idea-dialog textarea { width:100%; border:1px solid #d6d3d1; border-radius:8px; padding:9px 11px; font-size:14px; background:white; color:#292524; min-height:42px; }
+  .jrc-idea-dialog textarea { min-height:96px; resize:vertical; line-height:1.5; }
+  .jrc-idea-dialog input:focus, .jrc-idea-dialog select:focus, .jrc-idea-dialog textarea:focus { outline:2px solid #fdba74; border-color:#f97316; }
+  .jrc-idea-dialog .idea-help { margin:5px 0 0; font-size:12px; color:#78716c; line-height:1.45; }
+  .jrc-idea-dialog .idea-channels { display:flex; flex-wrap:wrap; gap:8px; }
+  .jrc-idea-dialog .idea-channel { display:inline-flex; align-items:center; gap:8px; max-width:100%; min-height:40px; padding:6px 12px; border:1px solid #e7e5e4; border-radius:8px; font-size:13px; cursor:pointer; overflow-wrap:anywhere; }
+  .jrc-idea-dialog .idea-channel:has(input:checked) { border-color:#f97316; background:#fff7ed; }
+  .jrc-idea-dialog .idea-channel input { width:18px; height:18px; flex:none; }
+  .jrc-idea-dialog .idea-error { margin:0 0 12px; padding:10px 12px; border:1px solid #fecaca; background:#fef2f2; color:#991b1b; border-radius:8px; font-size:13px; }
+  .jrc-idea-dialog .idea-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:10px; margin-top:6px; }
+  .jrc-idea-dialog .idea-actions button { min-height:42px; padding:8px 18px; border-radius:8px; font-size:14px; font-weight:600; }
+  .jrc-idea-dialog .idea-submit { background:#ea580c; color:white; }
+  .jrc-idea-dialog .idea-submit:hover { background:#c2410c; }
+  .jrc-idea-dialog .idea-submit:disabled { opacity:.6; cursor:wait; }
+  .jrc-idea-dialog .idea-cancel { border:1px solid #d6d3d1; color:#44403c; background:white; }
+  @media (max-width:639px) {
+    .jrc-idea-dialog { width:100vw; max-width:100vw; max-height:100dvh; margin:auto 0 0; border-radius:14px 14px 0 0; }
+    .jrc-idea-dialog input[type=text], .jrc-idea-dialog select, .jrc-idea-dialog textarea { font-size:16px; }
+    .jrc-idea-dialog .idea-actions button { flex:1 1 0; }
+  }
+</style>
+<dialog id="jrc-new-idea" class="jrc-idea-dialog" aria-labelledby="jrc-new-idea-heading">
+  <form method="post" action="{% url 'jrc_production:create' %}" data-new-idea-form>{% csrf_token %}
+    <input type="hidden" name="origin" value="idea">
+    <input type="hidden" name="stage" value="idea">
+    <input type="hidden" name="next" value="">
+    <header>
+      <div><h2 id="jrc-new-idea-heading">New idea</h2>{% if new_ctx.fixed %}<p class="idea-client">{{ new_ctx.fixed.workspace.name }}</p>{% endif %}</div>
+      <button type="button" class="idea-close" data-close-new-idea aria-label="Close">×</button>
+    </header>
+    <p class="idea-error" role="alert" data-idea-error hidden></p>
+    {% if new_ctx.fixed %}
+    <input type="hidden" name="workspace" value="{{ new_ctx.fixed.workspace.id }}">
+    {% else %}
+    <div class="idea-field"><label class="idea-label" for="new-idea-client">Client</label>
+      <select id="new-idea-client" name="workspace" required data-idea-client>
+        <option value="">Choose a client…</option>
+        {% for entry in new_ctx.clients %}<option value="{{ entry.workspace.id }}">{{ entry.workspace.name }}</option>{% endfor %}
+      </select></div>
+    {% endif %}
+    <div class="idea-field"><label class="idea-label" for="new-idea-title">Title</label>
+      <input type="text" id="new-idea-title" name="title" required maxlength="255" autocomplete="off" placeholder="e.g. A morning in the studio"></div>
+    <div class="idea-field"><label class="idea-label" for="new-idea-description">Description <span style="font-weight:400;color:#78716c">(optional)</span></label>
+      <textarea id="new-idea-description" name="description" maxlength="5000" placeholder="What is the idea about?"></textarea>
+      <p class="idea-help">Saved as the first version of the Concept.</p></div>
+    <fieldset class="idea-field"><legend>Channels <span style="font-weight:400;color:#78716c">(optional)</span></legend>
+      <div class="idea-channels">
+        {% for entry in new_ctx.clients %}{% if not new_ctx.fixed or entry == new_ctx.fixed %}{% for account in entry.channels %}<label class="idea-channel" data-client="{{ entry.workspace.id }}"><input type="checkbox" name="channels" value="{{ account.id }}">{% include "jrc_channels/icon.html" with account=account %} <span>{{ account.jrc_channel.display_name|default:account.account_name }}</span></label>{% endfor %}{% endif %}{% endfor %}
+      </div>
+      <p class="idea-help" data-idea-no-channels>Leave empty for an idea without a channel.</p>
+    </fieldset>
+    <div class="idea-actions">
+      <button type="button" class="idea-cancel" data-close-new-idea>Cancel</button>
+      <button type="submit" class="idea-submit">Add idea</button>
+    </div>
+  </form>
+</dialog>
+<script nonce="{{ request.csp_nonce }}">
+(() => {
+  const dialog = document.getElementById('jrc-new-idea');
+  if (!dialog) return;
+  const form = dialog.querySelector('[data-new-idea-form]');
+  const error = form.querySelector('[data-idea-error]');
+  const client = form.querySelector('[data-idea-client]');
+  const submit = form.querySelector('.idea-submit');
+  const hint = form.querySelector('[data-idea-no-channels]');
+  const hintText = hint.textContent;
+  function showChannels() {
+    if (!client) return;
+    let count = 0;
+    form.querySelectorAll('.idea-channel').forEach(label => {
+      const shown = label.dataset.client === client.value;
+      label.hidden = !shown;
+      const box = label.querySelector('input');
+      box.disabled = !shown;
+      if (!shown) box.checked = false;
+      if (shown) count += 1;
+    });
+    hint.textContent = !client.value ? 'Choose a client to see its channels.' : count ? hintText : 'This client has no enabled channels yet.';
+  }
+  function open(event) {
+    if (event) event.preventDefault();
+    error.hidden = true;
+    showChannels();
+    if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', '');
+    (client && !client.value ? client : form.elements.title).focus();
+  }
+  document.addEventListener('click', event => {
+    const opener = event.target.closest('[data-open-new-idea]');
+    if (opener) open(event);
+    if (event.target.closest('[data-close-new-idea]')) dialog.close();
+  });
+  // A click on the backdrop (outside the form) closes the window too.
+  dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
+  if (client) client.addEventListener('change', showChannels);
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!form.elements.title.value.trim()) { error.textContent = 'Enter a title for the idea.'; error.hidden = false; form.elements.title.focus(); return; }
+    form.elements.next.value = window.location.pathname + window.location.search;
+    submit.disabled = true;
+    error.hidden = true;
+    try {
+      const response = await fetch(form.action, { method: 'POST', body: new FormData(form), credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+      if (response.ok) {
+        const data = await response.json();
+        // The page reloads with the notice and its link to the new idea (and the new card on the board).
+        window.location.assign(data.redirect);
+        return;
+      }
+      const plain = (response.headers.get('Content-Type') || '').startsWith('text/plain');
+      error.textContent = plain ? await response.text() : 'The idea was not saved. Reload the page and try again.';
+    } catch (failure) {
+      error.textContent = 'The idea was not saved. Check the connection and try again.';
+    }
+    error.hidden = false;
+    submit.disabled = false;
+  });
+})();
+</script>

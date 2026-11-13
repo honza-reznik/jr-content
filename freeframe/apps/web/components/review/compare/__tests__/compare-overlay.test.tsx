@@ -191,7 +191,7 @@ describe('CompareOverlay', () => {
       <CompareOverlay asset={videoAsset} versions={[makeVersion(1), makeVersion(3)]} rightVersion={makeVersion(3)} onClose={vi.fn()} />,
     )
     // Only share pages hide it; compare is a signed-in project view.
-    expect(screen.getByRole('button', { name: 'Public' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Team and client' })).toBeInTheDocument()
   })
 })
 

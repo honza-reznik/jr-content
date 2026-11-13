@@ -9,6 +9,7 @@ urlpatterns = [
     path("video/comment-events/", comment_event, name="comment_event"),
     path(_base + "start/", views.start, name="upload_start"),
     path(_base + "status/", views.status, name="upload_status"),
+    path(_base + "versions/<uuid:version_id>/download/", views.version_download, name="version_download"),
     path(_base + "versions/<uuid:version_id>/resume/", views.resume, name="upload_resume"),
     path(_base + "versions/<uuid:version_id>/part/", views.part, name="upload_part"),
     path(_base + "versions/<uuid:version_id>/complete/", views.complete, name="upload_complete"),

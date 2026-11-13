@@ -115,7 +115,8 @@ def test_caption_versions_compare_words(client, user, instagram_content):
 
     assert response.status_code == 302
     page = client.get(f"{_url(variant.post.workspace, post)}?tab=caption")
-    assert b"Compare with version 1" in page.content
+    assert b"Compare with <span" in page.content
+    assert b">V1</span>" in page.content
     assert b"<del" in page.content and b"old" in page.content
     assert b"<ins" in page.content and b"new" in page.content
 

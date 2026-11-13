@@ -33,6 +33,22 @@ def test_empty_master_uses_measured_segment_bandwidth(tmp_path):
     assert master.read_text() == text
 
 
+def test_partial_master_keeps_existing_metadata_and_adds_missing_rung(tmp_path):
+    master = tmp_path / "master.m3u8"
+    original = '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1500000,RESOLUTION=1280x720\n0/playlist.m3u8\n'
+    master.write_text(original)
+    for n in range(2):
+        variant = tmp_path / str(n)
+        variant.mkdir()
+        (variant / "playlist.m3u8").write_text("#EXTM3U\n#EXTINF:2,\nseg.ts\n#EXT-X-ENDLIST\n")
+        (variant / "seg.ts").write_bytes(b"a" * 1000)
+    complete_hls_master(tmp_path)
+    assert "BANDWIDTH=4000,RESOLUTION=1280x720\n0/playlist.m3u8" in master.read_text()
+    assert "#EXT-X-STREAM-INF:BANDWIDTH=4000\n1/playlist.m3u8\n" in master.read_text()
+    complete_hls_master(tmp_path)
+    assert master.read_text().count("#EXT-X-STREAM-INF:") == 2
+
+
 def test_valid_master_is_preserved(tmp_path):
     master = tmp_path / "master.m3u8"
     original = '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=6000,CODECS="avc1.640028"\n0/playlist.m3u8\n'

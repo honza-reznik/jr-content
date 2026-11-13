@@ -7,6 +7,7 @@ from django.utils import timezone
 from apps.accounts.models import User
 from apps.composer.models import PlatformPost, Post
 from apps.composer.services import clone_post
+from apps.composer.views import content_page_url
 from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.organizations.models import Organization
 from apps.social_accounts.models import SocialAccount
@@ -99,9 +100,9 @@ class ClonePostEndpointTest(TestCase):
 
         self.assertEqual(resp.status_code, 204)
         redirect_url = resp.headers.get("HX-Redirect", "")
-        self.assertIn("/compose/", redirect_url)
-
         clone = Post.objects.exclude(id=self.post.id).get(workspace=self.workspace)
+        # JR Content (P2-B03): the copy opens on its page (the content detail in the JR UI).
+        self.assertEqual(redirect_url, content_page_url(self.workspace.id, clone.id))
         self.assertEqual(clone.caption, "published thing")
         self.assertEqual(clone.platform_posts.get().status, PlatformPost.Status.DRAFT)
         self.assertIn(str(clone.id), redirect_url)

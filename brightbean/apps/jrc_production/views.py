@@ -1,5 +1,6 @@
 import difflib
 import re
+from datetime import datetime
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
@@ -8,11 +9,13 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.db.models import Count, Prefetch, Q
-from django.http import Http404, HttpResponseBadRequest
+from django.http import Http404, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
+from django.utils.html import format_html
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from apps.approvals import comments as comment_services
@@ -20,25 +23,44 @@ from apps.approvals.edits import review_return_hint, review_return_notice
 from apps.approvals.models import ApprovalAction, PostComment
 from apps.composer.models import PlatformPost, Post
 from apps.jrc_texts import services as text_services
-from apps.jrc_texts.models import TextDocument, TextVersion
+from apps.jrc_texts.models import TextDocument, TextVersion, TextVersionNameChange
 from apps.jrc_texts.services import ConflictError
 from apps.jrc_video.downloads import can_download_final, missing_for_publication
 from apps.members.models import WorkspaceMembership
-from apps.members.permissions import can_comment, can_moderate_comments, can_publish_directly, can_schedule
+from apps.members.permissions import (
+    can_comment,
+    can_delete_content,
+    can_moderate_comments,
+    can_publish_directly,
+    can_schedule,
+)
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 
 from . import shotlist as shotlist_services
 from .approval import approval_context, is_waiting_for
-from .forms import PublicationDateForm
-from .models import ContentRename, ManualPublication, PipelineStage, ShotlistChange
+from .forms import ProposedDateForm, PublicationDateForm
+from .models import (
+    ContentCategoryChange,
+    ContentProposalChange,
+    ContentRename,
+    ManualPublication,
+    PipelineStage,
+    ProductionStage,
+    ShotlistChange,
+)
 from .services import (
     add_content_channel,
     available_moves,
+    can_change_proposal,
     can_create_content,
     can_manage_channels,
     can_rename_content,
+    change_category,
+    change_proposed_date,
+    content_membership,
     create_content,
+    initial_stages,
     mark_published_manually,
     move_content,
     pipeline_stage,
@@ -51,6 +73,7 @@ from .services import (
 
 BOARD_CLIENT_KEY = "jrc_board_client"
 IDEA_CLIENT_KEY = "jrc_board_idea_client"
+BOARD_QUERY_KEY = "jrc_board_query"
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 
@@ -60,6 +83,12 @@ def _memberships(user):
         .select_related("workspace", "custom_role")
         .order_by("workspace__name")
     )
+
+
+def _board_url(request):
+    """The content board with the filters it was last shown with (P2-B03)."""
+    query = request.session.get(BOARD_QUERY_KEY, "")
+    return reverse("jrc_production:board") + (f"?{query}" if query else "")
 
 
 def _visible_comment_counts(posts, user):
@@ -96,14 +125,24 @@ def _board_card(post, membership, comment_count=0):
 
 
 def _sort_cards(cards, *, newest_first=False):
-    """Publication date first (dated cards before undated), then the latest change."""
-    cards.sort(key=lambda card: card["post"].updated_at, reverse=True)
+    """Order of a board column (P2-B03).
+
+    Dated cards come first, the nearest date at the top; below them the undated ones in the order they
+    were created, so the newest content is at the very bottom. Published (``newest_first``) keeps its
+    order: the latest publication at the top, undated cards after them by their latest change.
+    """
+    if newest_first:
+        cards.sort(key=lambda card: card["post"].updated_at, reverse=True)
+        dated = [card for card in cards if card["date"]]
+        dated.sort(key=lambda card: card["date"], reverse=True)
+        return dated + [card for card in cards if not card["date"]]
+    cards.sort(key=lambda card: (card["post"].created_at, str(card["post"].pk)))
     dated = [card for card in cards if card["date"]]
-    dated.sort(key=lambda card: card["date"], reverse=newest_first)
+    dated.sort(key=lambda card: card["date"])
     return dated + [card for card in cards if not card["date"]]
 
 
-def _board_context(request, *, error="", title="", selected_client=None):
+def _board_context(request, *, selected_client=None):
     memberships = _memberships(request.user)
     by_workspace = {str(m.workspace_id): m for m in memberships}
     if selected_client is not None:
@@ -130,6 +169,10 @@ def _board_context(request, *, error="", title="", selected_client=None):
         raise ValidationError("Choose a channel for the selected client.")
     if request.session.get(BOARD_CLIENT_KEY, "") != selected:
         request.session[BOARD_CLIENT_KEY] = selected
+    # P2-B03: "Content board" on the detail returns to the board as it was last shown.
+    board_query = urlencode({"client": selected, "channel": channel})
+    if request.session.get(BOARD_QUERY_KEY) != board_query:
+        request.session[BOARD_QUERY_KEY] = board_query
     posts = Post.objects.filter(workspace_id__in=workspace_ids)
     if channel == "none":
         posts = posts.filter(platform_posts__isnull=True)
@@ -163,26 +206,21 @@ def _board_context(request, *, error="", title="", selected_client=None):
     idea_client = selected if selected in creatable_ids else request.session.get(IDEA_CLIENT_KEY, "")
     if idea_client not in creatable_ids:
         idea_client = str(creatable[0].id) if creatable else ""
-    creation_channels = (
-        SocialAccount.objects.filter(workspace__in=creatable, jrc_channel__is_enabled=True)
-        .select_related("workspace", "jrc_channel")
-        .order_by("workspace__name", "account_name")
-    )
     return {
         "columns": list(columns.values()),
         "waiting_for_you": waiting,
         "clients": [m.workspace for m in memberships],
         "creatable_clients": creatable,
-        "creation_channels": creation_channels,
+        "creatable_ids": creatable_ids,
         "selected_client": selected,
         "selected_channel": channel,
         # Client names only help when the cards on screen belong to more than one client.
         "show_client": len({post.workspace_id for post in posts}) > 1,
         "idea_client": idea_client,
+        # P2-B03: the New idea window creates for the client the board shows; "" = all clients (choose).
+        "new_content_client": selected,
         "channels": channels,
         "total": len(posts),
-        "error": error,
-        "new_title": title,
     }
 
 
@@ -196,31 +234,169 @@ def board(request):
     return render(request, "jrc_production/board.html", context)
 
 
+def creation_options(user, *, client=""):
+    """What ``user`` may create content for (P2-B03): the New idea window and the New content page.
+
+    One entry per client the user may create content for, with its enabled channels and the stages
+    new content may start in (``initial_stages``). ``fixed`` is the client the content goes to when
+    ``client`` names one of them, or when there is only one; otherwise the form offers the choice.
+    """
+    memberships = [m for m in _memberships(user) if can_create_content(m)]
+    accounts = {}
+    for account in (
+        SocialAccount.objects.filter(
+            workspace_id__in=[m.workspace_id for m in memberships], jrc_channel__is_enabled=True
+        )
+        .select_related("jrc_channel")
+        .order_by("account_name", "id")
+    ):
+        accounts.setdefault(account.workspace_id, []).append(account)
+    clients = [
+        {
+            "workspace": m.workspace,
+            "channels": accounts.get(m.workspace_id, []),
+            "stages": [(value, PipelineStage(value).label) for value in initial_stages(m)],
+        }
+        for m in memberships
+    ]
+    by_id = {str(entry["workspace"].id): entry for entry in clients}
+    fixed = by_id.get(str(client)) or (clients[0] if len(clients) == 1 else None)
+    return {"clients": clients, "fixed": fixed}
+
+
+def _slot_publish_at(date, time):
+    """``datetime-local`` value for a calendar slot's date and time, or "" when either is not valid.
+
+    Calendars send ``YYYY-MM-DD`` and a 24-hour time; the hour may come with or without a leading
+    zero (``8:00`` or ``08:00``, as the composer accepted). The value is always normalized.
+    """
+    try:
+        day = datetime.strptime(date, "%Y-%m-%d").date()
+        moment = datetime.strptime(time, "%H:%M").time()
+    except ValueError:
+        return ""
+    return f"{day:%Y-%m-%d}T{moment:%H:%M}"
+
+
+def _publish_at(workspace, value):
+    """The submitted ``datetime-local`` value in the client's time zone, or None when empty."""
+    value = (value or "").strip()
+    if not value:
+        return None
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M")
+    except ValueError:
+        raise ValidationError("Choose a valid publication date and time.") from None
+    return timezone.make_aware(parsed, ZoneInfo(workspace.effective_timezone or "UTC"))
+
+
+def _safe_next(request):
+    target = request.POST.get("next", "")
+    if (
+        target.startswith("/")
+        and not target.startswith("//")
+        and url_has_allowed_host_and_scheme(target, allowed_hosts={request.get_host()}, require_https=False)
+    ):
+        return target
+    return ""
+
+
+def created_message(post, detail_url):
+    """The notice after any content is created, with a link to it (P2-B03, point 5a)."""
+    stage = PipelineStage(pipeline_stage(post)).label
+    return format_html(
+        '“{}” was added to {}. <a href="{}" class="font-semibold underline">Open it</a>',
+        post.title,
+        stage,
+        detail_url,
+    )
+
+
+def _new_content_page(request, *, client="", values=None, error="", status=200):
+    options = creation_options(request.user, client=client)
+    if not options["clients"]:
+        raise PermissionDenied("You cannot create content.")
+    values = values or {}
+    chosen = values.get("channels") or []
+    return render(
+        request,
+        "jrc_production/content_new.html",
+        {
+            **options,
+            "values": values,
+            "chosen_channels": [str(value) for value in chosen],
+            "error": error,
+            "board_url": _board_url(request),
+            # The New idea window and + New create for the client this page shows ("" = the page asks).
+            "new_content_client": str(options["fixed"]["workspace"].id) if options["fixed"] else "",
+        },
+        status=status,
+    )
+
+
+@login_required
+@require_GET
+def new_content(request):
+    """An empty content detail to fill in (P2-B03, point 1b); the old composer's "new post" lands here."""
+    date, time = request.GET.get("date", ""), request.GET.get("time", "") or "09:00"
+    publish_at = _slot_publish_at(date, time) if date else ""
+    stage = request.GET.get("stage", "")
+    account = request.GET.get("account", "")
+    values = {
+        "publish_at": publish_at,
+        "stage": stage if stage in PipelineStage.values else "",
+        "channels": [account] if _UUID_RE.match(account) else [],
+    }
+    return _new_content_page(request, client=request.GET.get("client", ""), values=values)
+
+
 @login_required
 @require_POST
 def create(request):
+    """Create content from the New idea window or the New content page (P2-B03)."""
     # Resolve against the current user's memberships before parsing a submitted UUID.
     memberships = {str(m.workspace_id): m for m in _memberships(request.user)}
     membership = memberships.get(request.POST.get("workspace", ""))
     if membership is None:
         raise Http404
-    title = request.POST.get("title", "").strip()
+    workspace = membership.workspace
+    from_page = request.POST.get("origin") == "page"
+    in_place = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+    values = {
+        "title": request.POST.get("title", ""),
+        "description": request.POST.get("description", ""),
+        "stage": request.POST.get("stage", "") or ProductionStage.IDEA,
+        "publish_at": request.POST.get("publish_at", ""),
+        "channels": request.POST.getlist("channels"),
+    }
     try:
-        create_content(membership.workspace, title, request.user, social_account_ids=request.POST.getlist("channels"))
-    except ValidationError as exc:
-        return render(
-            request,
-            "jrc_production/board.html",
-            _board_context(
-                request,
-                error=" ".join(exc.messages),
-                title=title,
-                selected_client=membership.workspace_id,
-            ),
-            status=400,
+        post = create_content(
+            workspace,
+            values["title"],
+            request.user,
+            social_account_ids=values["channels"],
+            description=values["description"],
+            stage=values["stage"],
+            publish_at=_publish_at(workspace, values["publish_at"]),
         )
-    messages.success(request, "Content added to Idea.")
-    return redirect(reverse("jrc_production:board") + f"?client={membership.workspace_id}")
+    except ValidationError as exc:
+        error = " ".join(exc.messages)
+        if from_page:
+            return _new_content_page(request, client=workspace.id, values=values, error=error, status=400)
+        if in_place:
+            return HttpResponseBadRequest(error, content_type="text/plain; charset=utf-8")
+        messages.error(request, error)
+        return redirect(_safe_next(request) or reverse("jrc_production:board") + f"?client={workspace.id}")
+    detail_url = reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.id, "post_id": post.id})
+    if from_page:
+        # The page opens the new content itself; the notice says where it went.
+        messages.success(request, f"Content created in {PipelineStage(pipeline_stage(post)).label}.")
+        return redirect(detail_url)
+    messages.success(request, created_message(post, detail_url))
+    target = _safe_next(request) or reverse("jrc_production:board") + f"?client={workspace.id}"
+    if in_place:
+        return JsonResponse({"redirect": target, "url": detail_url}, status=201)
+    return redirect(target)
 
 
 @login_required
@@ -246,7 +422,10 @@ def quick_idea(request):
         return redirect(reverse("jrc_production:board") + "?" + urlencode({"client": board_client}))
     request.session[IDEA_CLIENT_KEY] = str(membership.workspace_id)
     if not in_place:
-        messages.success(request, "Idea saved.")
+        detail_url = reverse(
+            "jrc_production:content_detail", kwargs={"workspace_id": membership.workspace_id, "post_id": post.id}
+        )
+        messages.success(request, created_message(post, detail_url))
         return redirect(
             reverse("jrc_production:board") + "?" + urlencode({"client": board_client, "channel": board_channel})
         )
@@ -270,6 +449,9 @@ def quick_idea(request):
     # A new idea has no channel; it belongs on the open board only if the active filters include it.
     matches = board_client in ("", str(membership.workspace_id)) and board_channel in ("", "none")
     response["X-Board-Match"] = "1" if matches else "0"
+    response["X-Content-Url"] = reverse(
+        "jrc_production:content_detail", kwargs={"workspace_id": membership.workspace_id, "post_id": post.id}
+    )
     return response
 
 
@@ -313,23 +495,60 @@ def rename(request, workspace_id, post_id):
     if not WorkspaceMembership.objects.filter(user=request.user, workspace=workspace).exists():
         raise Http404
     post = get_object_or_404(Post, pk=post_id, workspace=workspace)
+    ajax = request.headers.get("Accept") == "application/json"
     try:
         reverted = rename_content(post, request.POST.get("title", ""), request.user)
     except ValidationError as exc:
-        messages.error(request, " ".join(exc.messages))
+        error = " ".join(exc.messages)
+        if ajax:
+            return JsonResponse({"error": error}, status=400)
+        messages.error(request, error)
     else:
-        if reverted is None:
-            messages.info(request, "The title is unchanged.")
-        elif reverted:
-            # P1-B37: the one notice names the channels and those taken out of the plan.
-            messages.success(request, f"Content renamed. {review_return_notice(reverted, 'title')}")
-        else:
-            messages.success(request, "Content renamed.")
+        notice = "The title is unchanged." if reverted is None else "Content renamed."
+        if reverted:
+            notice += " " + review_return_notice(reverted, "title")
+        if ajax:
+            post.refresh_from_db(fields=["title"])
+            return JsonResponse({"title": post.title, "message": notice})
+        messages.success(request, notice)
     return redirect(reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.pk, "post_id": post.pk}))
 
 
+@login_required
+@require_POST
+def category(request, workspace_id, post_id):
+    post = get_object_or_404(Post, pk=post_id, workspace_id=workspace_id)
+    content_membership(post.workspace, request.user)
+    try:
+        selected = change_category(post, request.POST.get("category", ""), request.user)
+    except ValidationError as exc:
+        return JsonResponse({"error": " ".join(exc.messages)}, status=400)
+    return JsonResponse({"category": str(selected.pk) if selected else ""})
+
+
+@login_required
+@require_POST
+def proposed_date(request, workspace_id, post_id):
+    post = get_object_or_404(Post, pk=post_id, workspace_id=workspace_id)
+    membership = content_membership(post.workspace, request.user)
+    if not can_rename_content(post, membership):
+        raise PermissionDenied("You cannot edit this content.")
+    form = ProposedDateForm(request.POST)
+    with timezone.override(ZoneInfo(post.workspace.effective_timezone)):
+        if not form.is_valid():
+            return JsonResponse({"error": " ".join(form.errors["proposed_publish_at"])}, status=400)
+        value = form.cleaned_data["proposed_publish_at"]
+        try:
+            change_proposed_date(post, value, request.user)
+        except ValidationError as exc:
+            return JsonResponse({"error": " ".join(exc.messages)}, status=400)
+        return JsonResponse(
+            {"proposed_publish_at": timezone.localtime(value).strftime("%Y-%m-%dT%H:%M") if value else ""}
+        )
+
+
 # P1-B08: Concept (the idea worked out in versions) comes before the Script.
-TABS = ("concept", "script", "shotlist", "video", "caption", "approval", "comments", "publish", "history")
+TABS = ("concept", "script", "shotlist", "video", "caption", "approval", "discussion", "publish", "history")
 
 
 def _default_tab(post):
@@ -388,10 +607,16 @@ def _caption_channels(post, submitted=None):
             else None
         )
         latest = (
-            document.versions.filter(state=TextVersion.State.FINAL).order_by("-number").first() if document else None
+            document.versions.filter(state=TextVersion.State.FINAL)
+            .select_related("created_by", "label")
+            .order_by("-number")
+            .first()
+            if document
+            else None
         )
         previous = (
             document.versions.filter(state=TextVersion.State.FINAL, number__lt=latest.number)
+            .select_related("created_by", "label")
             .order_by("-number")
             .first()
             if latest
@@ -401,20 +626,6 @@ def _caption_channels(post, submitted=None):
         submitted_caption = (submitted or {}).get("caption") if (submitted or {}).get("platform_post") == key else None
         current_text = submitted_caption if submitted_caption is not None else saved_text
         old_diff, new_diff = _word_diff(previous.text, current_text) if previous else ([], [])
-        preview = None
-        if account.platform in ("instagram", "instagram_login"):
-            # The preview always shows the last saved version, never an unsaved edit.
-            count = account.caption_wire_length(saved_text)
-            preview = {
-                "account": account,
-                "title": "",
-                "caption": saved_text,
-                "first_comment": "",
-                "char_count": count,
-                "char_limit": account.char_limit,
-                "is_over_limit": count > account.char_limit,
-                "truncated_caption": saved_text[: account.char_limit],
-            }
         channels.append(
             {
                 "key": key,
@@ -430,7 +641,11 @@ def _caption_channels(post, submitted=None):
                 "escaped_chars": account.escaped_chars,
                 "old_diff": old_diff,
                 "new_diff": new_diff,
-                "previews": [preview] if preview else [],
+                "versions": list(
+                    document.versions.filter(state="final").select_related("created_by", "label").order_by("-number")
+                )
+                if document
+                else [],
                 "reopens_review": review_return_hint(variant) if variant else "",
             }
         )
@@ -461,6 +676,8 @@ def content_detail(request, workspace_id, post_id):
         pk=post_id,
     )
     active_tab = request.GET.get("tab", "")
+    if active_tab == "comments":  # Existing links and notifications remain valid.
+        active_tab = "discussion"
     if active_tab not in TABS:
         active_tab = _default_tab(post)
 
@@ -555,14 +772,6 @@ def content_detail(request, workspace_id, post_id):
                 return redirect(f"{request.path}?tab=caption")
 
     caption_channels = _caption_channels(post, request.POST if request.method == "POST" else None)
-    caption_media_items = []
-    if active_tab == "caption" and any(item["previews"] for item in caption_channels):
-        for attachment in post.media_attachments.select_related("media_asset"):
-            asset = attachment.media_asset
-            caption_media_items.append(
-                {"url": asset.file.url if asset.file else "", "is_video": asset.is_video, "filename": asset.filename}
-            )
-
     can_view_internal_notes = membership.workspace_role not in ("client", "viewer")
     comments = comment_services.get_comments_for_post(post, request.user)
     history = [
@@ -678,6 +887,47 @@ def content_detail(request, workspace_id, post_id):
         for version in TextVersion.objects.filter(document__post=post, state=TextVersion.State.FINAL)
         .defer("content")
         .select_related("created_by", "document__platform_post__social_account")
+    )
+    history.extend(
+        {
+            "kind": "text",
+            "created_at": event.created_at,
+            "actor": event.user,
+            "label": f"{event.version.document.get_kind_display()} V{event.version.number} name changed from “{event.old_name or 'None'}” to “{event.new_name or 'None'}”",
+            "note": "",
+            "can_view_note": True,
+        }
+        for event in TextVersionNameChange.objects.filter(version__document__post=post).select_related(
+            "user", "version__document"
+        )
+    )
+    history.extend(
+        {
+            "kind": "category",
+            "created_at": event.created_at,
+            "actor": event.user,
+            "label": f"Category changed from “{event.old_name or 'None'}” to “{event.new_name or 'None'}”",
+            "note": "",
+            "can_view_note": True,
+        }
+        for event in ContentCategoryChange.objects.filter(post=post).select_related("user")
+    )
+
+    def proposal_label(value):
+        if value is None:
+            return "None"
+        return timezone.localtime(value, ZoneInfo(workspace.effective_timezone)).strftime("%b %d, %Y · %H:%M %Z")
+
+    history.extend(
+        {
+            "kind": "proposal",
+            "created_at": event.created_at,
+            "actor": event.user,
+            "label": f"Proposed publication changed from “{proposal_label(event.old_at)}” to “{proposal_label(event.new_at)}”",
+            "note": "",
+            "can_view_note": True,
+        }
+        for event in ContentProposalChange.objects.filter(post=post).select_related("user")
     )
     history.sort(key=lambda item: item["created_at"], reverse=True)
 
@@ -799,6 +1049,7 @@ def content_detail(request, workspace_id, post_id):
             else False,
             "can_view_internal_notes": can_view_internal_notes,
             "can_edit_posts": text_services.can_edit_text(post, membership),
+            "can_edit_proposal": can_rename_content(post, membership) and can_change_proposal(post),
             "comments": comments,
             "can_resolve_comments": can_moderate_comments(membership),
             "can_comment": can_comment(membership),
@@ -807,6 +1058,7 @@ def content_detail(request, workspace_id, post_id):
             ),
             "is_client": is_client,
             "can_edit_captions": can_edit_captions,
+            "content_categories": workspace.content_categories.all(),
             "can_rename": can_rename_content(post, membership),
             "can_manage_channels": can_manage_channels(post, membership),
             "channel_error": channel_error,
@@ -819,10 +1071,12 @@ def content_detail(request, workspace_id, post_id):
             .order_by("account_name"),
             "needs_channel": not post.platform_posts.exists() and active_tab in {"video", "caption", "publish"},
             "caption_channels": caption_channels,
-            "caption_media_items": caption_media_items,
             "caption_error": caption_error,
             "publish_channels": publish_channels,
             "can_publish": can_publish,
+            "board_url": _board_url(request),
+            # P2-B03: Delete moved here from the old composer; the one deletion rule decides (P1-B37).
+            "can_delete": can_delete_content(membership, post, list(post.platform_posts.all())),
         },
     )
 
@@ -950,7 +1204,7 @@ def _comment_post_for_member(request, workspace_id, post_id):
 def _comments_redirect(workspace, post):
     return redirect(
         reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.id, "post_id": post.id})
-        + "?tab=comments"
+        + "?tab=discussion"
     )
 
 

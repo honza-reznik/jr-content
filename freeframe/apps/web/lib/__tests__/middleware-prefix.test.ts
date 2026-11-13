@@ -4,6 +4,8 @@ import { NextRequest } from 'next/server'
 
 beforeEach(() => {
   vi.resetModules()
+  // These tests describe standalone FreeFrame; the container's JRC_MODE must not leak in.
+  vi.stubEnv('JRC_MODE', '')
   vi.stubEnv('NEXT_PUBLIC_BASE_PATH', '/video')
   vi.stubEnv('NEXT_PUBLIC_API_URL', 'http://127.0.0.1:13000/video-api')
   vi.stubEnv('API_INTERNAL_URL', 'http://jrc-ff-api:8000')

@@ -2,6 +2,10 @@ from django import forms
 from django.utils import timezone
 
 
+class ProposedDateForm(forms.Form):
+    proposed_publish_at = forms.DateTimeField(required=False, input_formats=["%Y-%m-%dT%H:%M"])
+
+
 class PublicationDateForm(forms.Form):
     scheduled_at = forms.DateTimeField(
         label="Publication date and time",

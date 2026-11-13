@@ -20,6 +20,7 @@ const values = {
   JRC_PUBLIC_ORIGIN: process.env.JRC_PUBLIC_ORIGIN || `http://127.0.0.1:${process.env.JRC_APP_PORT || '13000'}`,
   JRC_BASE_PATH: process.env.JRC_BASE_PATH ?? '/jrc',
   JRC_SMTP_HOST: '',
+  JRC_TEST_EMAIL_ALLOW: '',
   JRC_SMTP_PORT: '',
   JRC_SMTP_USER: '',
   JRC_SMTP_PASSWORD: '',

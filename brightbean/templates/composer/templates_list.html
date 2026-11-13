@@ -9,7 +9,7 @@
         <h1 class="text-base font-semibold text-stone-900" style="letter-spacing: -0.01em;">Post Templates</h1>
         <p class="text-sm text-stone-500 mt-1">Reusable templates to speed up content creation.</p>
     </div>
-    <a href="{% url 'composer:compose' workspace_id=workspace.id %}" class="text-sm text-stone-500 hover:text-stone-700 flex items-center gap-1">
+    <a href="{% url 'jrc_production:new_content' %}?client={{ workspace.id }}" class="text-sm text-stone-500 hover:text-stone-700 flex items-center gap-1">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
         Back to Composer
     </a>

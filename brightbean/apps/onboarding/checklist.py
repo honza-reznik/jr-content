@@ -17,6 +17,7 @@ def get_checklist_items(workspace):
     input, model fields, or any other untrusted source.
     """
     from apps.composer.models import Idea, Post
+    from apps.composer.views import content_page_url
     from apps.members.models import WorkspaceMembership
     from apps.social_accounts.models import SocialAccount
 
@@ -40,10 +41,8 @@ def get_checklist_items(workspace):
             "title": "Create your first post",
             "description": "Draft and schedule content for your audience",
             "completed": Post.objects.for_workspace(workspace_id).exists(),
-            "url": reverse(
-                "composer:compose",
-                kwargs={"workspace_id": workspace_id},
-            ),
+            # JR Content (P2-B03): the page of new content (New content in the JR UI, else the composer).
+            "url": content_page_url(workspace_id),
             "icon_color": "sky",
             "icon_svg": '<path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>',
         },

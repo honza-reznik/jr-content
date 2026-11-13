@@ -135,6 +135,30 @@ def deactivate_account(
     return {"id": str(identity), "found": True}
 
 
+@router.post("/accounts/{source_id}/revoke-sessions")
+def revoke_account_sessions(
+    source_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    service_user: User = Depends(require_sync_user),
+):
+    """End every video session of a managed account (retry path of a sign-out).
+
+    Same effect as /auth/jrc-logout, but called by the service account, so it works
+    when the person's own ticket exchange cannot (FreeFrame was down at sign-out).
+    The increment is done in SQL; repeating the call only signs the person out again.
+    """
+    identity = remote_id("account", source_id)
+    lock_identity(db, identity)
+    user = db.query(User).filter(User.id == identity).first()
+    if user is None or user.deleted_at is not None or user.is_superadmin or user.jrc_managed is not True:
+        return {"id": str(identity), "found": False}
+    db.query(User).filter(User.id == identity).update(
+        {User.token_version: User.token_version + 1}, synchronize_session=False,
+    )
+    db.commit()
+    return {"id": str(identity), "found": True}
+
+
 @router.put("/projects/{source_id}")
 def sync_project(
     source_id: uuid.UUID,

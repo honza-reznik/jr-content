@@ -76,6 +76,8 @@ class ComposerTestCase(TestCase):
         self.client.force_login(self.user)
 
 
+# JR Content (P2-B03): the JR UI sends the composer page to the content detail; these tests render the page itself.
+@patch("apps.composer.views._jrc_detail_redirect", new=lambda *args: None)
 class UnsplashButtonVisibilityTests(ComposerTestCase):
     """The composer only renders the Unsplash tile when an API key is set."""
 

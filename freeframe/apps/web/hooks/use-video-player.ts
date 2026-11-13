@@ -65,6 +65,9 @@ export function useVideoPlayer(
   const [windowFullscreen, setWindowFullscreen] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
   const hlsRef = useRef<Hls | null>(null)
+  const autoFallbackLevel = useRef(-1)
+  const nativeChange = useRef<AbortController | null>(null)
+  const nativeQualities = useRef<Array<QualityLevel & { url: string }>>([])
   const syncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   // The armed `canplay` retry of a rejected play() (see togglePlay), together
   // with the element it was armed on. The <video> is reused across source and
@@ -250,10 +253,13 @@ export function useVideoPlayer(
     video.addEventListener('progress', onProgress)
 
     const isHlsSource = src.includes('.m3u8')
+    const nativeAbort = new AbortController()
+    nativeQualities.current = []
 
     if (isHlsSource && Hls.isSupported()) {
       const hls = new Hls({
         enableWorker: true,
+        autoStartLoad: false,
         lowLatencyMode: false,
         ...hlsStartConfig(),
       })
@@ -268,9 +274,26 @@ export function useVideoPlayer(
           bitrate: level.bitrate,
           label: level.height ? `${level.height}p` : `${Math.round(level.bitrate / 1000)}kbps`,
         }))
+        // Default to 720p (or the nearest smaller available rung). Auto may
+        // adapt down on a slow link; higher rungs require an explicit choice.
+        const economical = levels.filter(level => level.height > 0 && level.height <= 720)
+        const preferred = economical.reduce<QualityLevel | undefined>(
+          (best, level) => !best || level.height > best.height ? level : best, undefined,
+        ) ?? levels.reduce<QualityLevel | undefined>(
+          (best, level) => !best || level.height < best.height ? level : best, undefined,
+        )
+        if (preferred) {
+          const firstHigher = levels.findIndex(level => !level.height || level.height > 720)
+          const cap = firstHigher < 0 ? levels.length - 1 : firstHigher - 1
+          autoFallbackLevel.current = cap < 0 ? preferred.index : -1
+          if (cap >= 0) hls.autoLevelCapping = cap
+          else hls.currentLevel = preferred.index
+          hls.startLevel = preferred.index
+        }
+        hls.startLoad()
         setQualityLevels(levels)
         setCurrentQuality(-1) // wait for the first active rung
-        setSelectedQuality(-1) // each new manifest starts in auto mode
+        setSelectedQuality(autoFallbackLevel.current)
         setIsLoading(false)
       })
 
@@ -295,15 +318,49 @@ export function useVideoPlayer(
         if (frag.type !== 'main' || frag.sn === 'initSegment' || frag.stats.aborted) return
         saveBandwidth(hls.bandwidthEstimate)
       })
-    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      // Safari native HLS
-      video.src = src
+    } else if (isHlsSource && video.canPlayType('application/vnd.apple.mpegurl')) {
+      // Native HLS has no hls.js cap. Give it the chosen variant playlist so
+      // Safari cannot silently climb to 1080p, and offer the same manual menu.
+      fetch(src, { credentials: 'same-origin', signal: nativeAbort.signal })
+        .then(response => {
+          if (!response.ok) throw new Error('Could not load video qualities.')
+          return response.text()
+        })
+        .then(master => {
+          if (nativeAbort.signal.aborted) return
+          const levels: Array<QualityLevel & { url: string }> = []
+          let height = 0
+          let bitrate = 0
+          for (const line of master.split(/\r?\n/).map(line => line.trim())) {
+            if (line.startsWith('#EXT-X-STREAM-INF:')) {
+              height = Number(line.match(/RESOLUTION=\d+x(\d+)/)?.[1] ?? 0)
+              bitrate = Number(line.match(/(?:[:,])BANDWIDTH=(\d+)/)?.[1] ?? 0)
+            } else if (line && !line.startsWith('#') && /\.m3u8(?:\?|$)/.test(line)) {
+              levels.push({ index: levels.length, height, bitrate,
+                label: height ? `${height}p` : `${Math.round(bitrate / 1000)}kbps`,
+                url: new URL(line, new URL(src, window.location.href)).href })
+            }
+          }
+          nativeQualities.current = levels
+          const preferred = levels.filter(level => level.height > 0 && level.height <= 720)
+            .sort((a, b) => b.height - a.height)[0]
+            ?? [...levels].sort((a, b) => a.height - b.height)[0]
+          setQualityLevels(levels)
+          setSelectedQuality(-1)
+          setCurrentQuality(preferred?.index ?? -1)
+          video.src = preferred?.url ?? src
+        }).catch(() => {
+          if (!nativeAbort.signal.aborted) setError('Could not load video qualities. Please try again.')
+        })
     } else {
       // Direct URL (mp4, mp3, etc.)
       video.src = src
     }
 
     return () => {
+      nativeAbort.abort()
+      nativeChange.current?.abort()
+      nativeQualities.current = []
       // The element outlives this source, so a retry armed for it must not.
       cancelPlayRetry()
       video.removeEventListener('loadedmetadata', onLoadedMetadata)
@@ -383,9 +440,30 @@ export function useVideoPlayer(
 
   const setQuality = useCallback((levelIndex: number) => {
     const hls = hlsRef.current
-    if (!hls) return
-    hls.currentLevel = levelIndex // -1 = auto
-    setSelectedQuality(levelIndex)
+    if (!hls) {
+      const video = videoRef.current
+      const levels = nativeQualities.current
+      const choice = levelIndex === -1
+        ? levels.filter(level => level.height > 0 && level.height <= 720)
+          .sort((a, b) => b.height - a.height)[0] ?? [...levels].sort((a, b) => a.height - b.height)[0]
+        : levels.find(level => level.index === levelIndex)
+      if (!video || !choice) return
+      const position = video.currentTime
+      const wasPlaying = !video.paused
+      nativeChange.current?.abort()
+      nativeChange.current = new AbortController()
+      video.src = choice.url
+      video.addEventListener('loadedmetadata', () => {
+        video.currentTime = position
+        if (wasPlaying) void video.play().catch(() => {})
+      }, { once: true, signal: nativeChange.current.signal })
+      setCurrentQuality(choice.index)
+      setSelectedQuality(levelIndex)
+      return
+    }
+    const effective = levelIndex === -1 ? autoFallbackLevel.current : levelIndex
+    hls.currentLevel = effective // -1 = capped Auto; otherwise a fixed safe fallback
+    setSelectedQuality(effective)
   }, [])
 
   const setVolume = useCallback((vol: number) => {

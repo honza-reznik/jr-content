@@ -72,7 +72,7 @@
 
             <!-- Post info -->
             <div class="flex-1 min-w-0">
-                <a href="{% url 'composer:compose_edit' workspace_id=workspace.id post_id=entry.post.id %}"
+                <a href="{% url 'jrc_production:content_detail' workspace_id=workspace.id post_id=entry.post.id %}?tab=publish"
                    class="text-sm font-medium text-stone-800 hover:text-stone-900 line-clamp-1">
                     {{ entry.post.caption_snippet|default:"(no caption)" }}
                 </a>

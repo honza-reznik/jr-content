@@ -226,3 +226,37 @@ def test_editor_cannot_resolve_comments(client, workspace, user, content_with_hi
     assert response.status_code == 403
     comment.refresh_from_db()
     assert comment.is_resolved is False
+
+
+def test_comment_visibility_uses_the_same_names_everywhere(client, workspace, user, content_with_history):
+    """P2-B05 (2l): Team only / Team and client on the form, on every comment and in the hint."""
+    post = content_with_history
+    PostComment.objects.create(
+        post=post, author=user, body="For the client too.", visibility=PostComment.Visibility.EXTERNAL
+    )
+    WorkspaceMembership.objects.filter(user=user, workspace=workspace).update(workspace_role="manager")
+    client.force_login(user)
+
+    page = client.get(_detail_url(workspace, post, "comments")).content.decode()
+
+    assert page.count(">Team only</span>") == 1
+    assert page.count(">Team and client</span>") == 1
+    assert '<option value="internal" selected>Team only</option>' in page
+    assert '<option value="external">Team and client</option>' in page
+    assert "Team only comments are not visible to the client." in page
+    assert ">Shared</span>" not in page
+    assert "Internal comments" not in page
+
+
+def test_upstream_comment_partials_use_the_same_visibility_names():
+    from pathlib import Path
+
+    from django.conf import settings
+
+    templates = Path(settings.BASE_DIR) / "templates" / "approvals" / "partials"
+    form = (templates / "comment_form.html").read_text()
+    assert "Team and client" in form and "Team only" in form
+    assert "Visible to Client" not in form and "Internal Only" not in form
+    assert ">Team only</span>" in (templates / "comment_list.html").read_text()
+    row = (templates / "_approval_row.html").read_text()
+    assert ">Team and client</span>" in row and "shared with client" not in row

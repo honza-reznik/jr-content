@@ -4,6 +4,8 @@ Verifies that excess tags are silently truncated and that XSS payloads survive
 to storage and render escaped.
 """
 
+from unittest.mock import patch
+
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -80,6 +82,8 @@ class SavePostTagsTests(TestCase):
         post = Post.objects.filter(workspace=self.workspace).order_by("-created_at").first()
         self.assertEqual(post.tags, [payload])
 
+    # JR Content (P2-B03): the JR UI sends the composer page to the content detail; these tests render the page itself.
+    @patch("apps.composer.views._jrc_detail_redirect", new=lambda *args: None)
     def test_xss_payload_renders_escaped_in_compose_edit(self):
         """Post a tag with HTML, then GET the compose edit page; assert escaped."""
         payload = "<script>alert(1)</script>"
@@ -106,6 +110,8 @@ class SavePostTagsTests(TestCase):
         post = Post.objects.filter(workspace=self.workspace).order_by("-created_at").first()
         self.assertEqual(post.tags, [])
 
+    # JR Content (P2-B03): the JR UI sends the composer page to the content detail; these tests render the page itself.
+    @patch("apps.composer.views._jrc_detail_redirect", new=lambda *args: None)
     def test_compose_edit_renders_json_script_containers(self):
         """Follow-up 1: the four |json_script containers must be present in extra_js."""
         save_response = self.client.post(self.save_url, data=self._save_payload(""))

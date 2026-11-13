@@ -134,7 +134,8 @@ def test_client_names_follow_cards_on_screen_not_memberships(http, workspace, or
     assert http.get(reverse(BOARD), {"client": "", "channel": channel.pk}).context["show_client"] is False
 
 
-def test_columns_sort_by_publication_date_then_latest_change(http, workspace, user):
+def test_columns_sort_by_publication_date_then_creation_newest_last(http, workspace, user):
+    # P2-B03 (1a): undated cards keep their creation order, the newest at the bottom; a change does not lift them.
     now = timezone.now()
     old = create_content(workspace, "Old undated", user)
     new = create_content(workspace, "New undated", user)
@@ -147,9 +148,11 @@ def test_columns_sort_by_publication_date_then_latest_change(http, workspace, us
         proposed_publish_at=now + timedelta(days=2), updated_at=now - timedelta(days=9)
     )
     response = http.get(reverse(BOARD), {"client": workspace.pk})
-    assert column_order(response, "idea") == ["Dated soon", "Dated later", "New undated", "Old undated"]
+    assert column_order(response, "idea") == ["Dated soon", "Dated later", "Old undated", "New undated"]
     html = response.content.decode()
-    assert html.index(f'data-post="{soon.pk}"') < html.index(f'data-post="{new.pk}"')
+    assert (
+        html.index(f'data-post="{soon.pk}"') < html.index(f'data-post="{old.pk}"') < html.index(f'data-post="{new.pk}"')
+    )
     assert 'data-dated="1"' in card_html(html, soon) and 'data-dated="0"' in card_html(html, new)
 
 

@@ -657,7 +657,7 @@ export function CommentInput({
                     ) : (
                       <Globe className="h-3 w-3" />
                     )}
-                    {commentVisibility === "internal" ? "Internal" : "Public"}
+                    {commentVisibility === "internal" ? "Team only" : "Team and client"}
                     <ChevronDown className="h-3 w-3" />
                   </button>
                   {visDropdownOpen && (
@@ -675,7 +675,7 @@ export function CommentInput({
                         }}
                       >
                         <Globe className="h-3.5 w-3.5" />
-                        Public
+                        Team and client
                       </button>
                       <button
                         className={cn(
@@ -690,7 +690,7 @@ export function CommentInput({
                         }}
                       >
                         <Lock className="h-3.5 w-3.5" />
-                        Internal
+                        Team only
                       </button>
                     </div>
                   )}

@@ -2,8 +2,21 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 
 from apps.jrc_video.client import FreeFrameClient, FreeFrameError
-from apps.jrc_video.models import VideoAccount, VideoAccountRevocation, VideoAccountSyncRequest, VideoSyncRequest
-from apps.jrc_video.services import error_text, mark_account_failed, revoke_account, sync_account, sync_workspace
+from apps.jrc_video.models import (
+    VideoAccount,
+    VideoAccountRevocation,
+    VideoAccountSyncRequest,
+    VideoSessionRevocation,
+    VideoSyncRequest,
+)
+from apps.jrc_video.services import (
+    error_text,
+    mark_account_failed,
+    revoke_account,
+    revoke_session_request,
+    sync_account,
+    sync_workspace,
+)
 from apps.workspaces.models import Workspace
 
 
@@ -28,6 +41,14 @@ class Command(BaseCommand):
             except FreeFrameError as exc:
                 failures += 1
                 VideoAccountRevocation.objects.filter(source_user_id=user_id).update(last_error=error_text(exc))
+                self.stderr.write(str(exc))
+        # Queued sign-outs next: a person who left must not keep working video sessions.
+        for pending in list(VideoSessionRevocation.objects.order_by("requested_at")):
+            try:
+                revoke_session_request(pending, api)
+            except FreeFrameError as exc:
+                failures += 1
+                VideoSessionRevocation.objects.filter(pk=pending.pk).update(last_error=error_text(exc))
                 self.stderr.write(str(exc))
         user_ids = VideoAccount.objects.values_list("user_id", flat=True)
         if options["pending"]:

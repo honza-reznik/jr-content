@@ -241,11 +241,16 @@ case "${1:?Chybí operace}" in
         backup_arg=${2:-}
         sh scripts/backup/backup.sh restore-guard "$backup_arg"
         make --no-print-directory check-project-ports
-        make --no-print-directory build
+        if [ "${JRC_BACKUP_NO_BUILD:-}" != yes ]; then make --no-print-directory build; fi
         sh scripts/backup/backup.sh restore-precheck "$backup_arg"
-        make --no-print-directory env build-bb build-ff
+        if [ "${JRC_BACKUP_NO_BUILD:-}" != yes ]; then make --no-print-directory env build-bb build-ff; fi
         sh scripts/backup/backup.sh restore-data "$backup_arg"
-        make --no-print-directory up
+        if [ "$project" != jrc ]; then unset JRC_FF_SYNC_EMAIL; fi
+        if [ "${JRC_BACKUP_NO_BUILD:-}" = yes ]; then
+            compose up --detach --no-build --pull never --wait --wait-timeout 180
+        else
+            make --no-print-directory up
+        fi
         sh scripts/backup/backup.sh restore-finish
         ;;
     restore-guard)
@@ -306,19 +311,23 @@ case "${1:?Chybí operace}" in
             compose up --detach --build --wait --wait-timeout 120 jrc-postgres jrc-s3 jrc-dev
         fi
         sh scripts/workspace.sh check
-        compose run --rm --no-deps -T --volume "$abs:/backup:ro" jrc-dev \
+        compose run --rm --no-deps --pull never -T --volume "$abs:/backup:ro" jrc-dev \
             python3 "$tool" restore-check --project "$project" --backup /backup $allow_main_flag
         # pg_restore stejné hlavní verze jako server (v kontejneru PostgreSQL); jedna transakce, při chybě se nic nevloží.
         for database in brightbean freeframe; do
             # Těsně před zápisem znovu: databáze musí být pořád prázdná (jinak se nezapíše nic).
-            compose run --rm --no-deps -T --volume "$abs:/backup:ro" jrc-dev \
+            compose run --rm --no-deps --pull never -T --volume "$abs:/backup:ro" jrc-dev \
                 python3 "$tool" restore-check --project "$project" --backup /backup --only "$database" $allow_main_flag
             printf 'Obnova databáze %s\n' "$database"
             compose exec -T jrc-postgres sh -c \
                 'pg_restore --single-transaction --exit-on-error --no-owner --no-privileges --no-password --username "$POSTGRES_USER" --dbname "$1"' \
                 sh "$database" < "$abs/postgres/$database.dump"
         done
-        compose run --rm --no-deps -T --volume "$abs:/backup:ro" jrc-dev \
+        # Sanitize BEFORE migrations, sync and any worker can see restored data.
+        if [ "$project" != jrc ]; then
+            sh scripts/backup/sanitize-test.sh
+        fi
+        compose run --rm --no-deps --pull never -T --volume "$abs:/backup:ro" jrc-dev \
             python3 "$tool" restore-objects --project "$project" --backup /backup $allow_main_flag
         ;;
     restore-finish)

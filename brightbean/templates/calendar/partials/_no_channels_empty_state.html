@@ -17,6 +17,6 @@ Expects: workspace (with workspace.id).
     </a>
     {% else %}
     <p class="text-sm text-stone-500 mb-5 max-w-xs mx-auto">Your publishing calendar is ready. Create a draft to plan your content.</p>
-    <a href="{% url 'composer:compose' workspace_id=workspace.id %}" class="btn-brand inline-flex px-4 py-2">Create a post</a>
+    <a href="{% url 'jrc_production:new_content' %}?client={{ workspace.id }}" class="btn-brand inline-flex px-4 py-2">Create a post</a>
     {% endif %}
 </div>
