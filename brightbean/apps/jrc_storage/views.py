@@ -55,7 +55,7 @@ def _authorized(user, key, workspace=None):
         from apps.jrc_thumbnails.models import ChannelThumbnail
 
         if ChannelThumbnail.objects.filter(
-            image=key, post__workspace_id__in=workspaces.values("workspace_id")
+            Q(image=key) | Q(small_image=key), post__workspace_id__in=workspaces.values("workspace_id")
         ).exists():
             return
         raise Http404
