@@ -690,6 +690,48 @@ def _resolve_template_data(template_id, workspace):
     return tpl.template_data
 
 
+def content_page_url(workspace_id, post_id=None, query=None):
+    """The page of post ``post_id`` (or of a new post with ``query``): the one place that names it (JR Content, P2-B03).
+
+    In the JR UI the content detail and the New content page replace the composer, so every link and
+    redirect of the composer's views (save, clone, template, idea) goes there directly; upstream keeps
+    the composer. ``query`` uses the composer's names (``scheduled_date``, ``scheduled_time``,
+    ``account``, ``template``); the New content page keeps date, time and channel.
+    """
+    from urllib.parse import urlencode
+
+    from django.urls import reverse
+
+    query = {key: value for key, value in (query or {}).items() if value}
+    if not getattr(settings, "JRC_UI_ENABLED", False):
+        if post_id is not None:
+            url = reverse("composer:compose_edit", kwargs={"workspace_id": workspace_id, "post_id": post_id})
+        else:
+            url = reverse("composer:compose", kwargs={"workspace_id": workspace_id})
+        return url + ("?" + urlencode(query) if query else "")
+    if post_id is not None:
+        url = reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace_id, "post_id": post_id})
+        # The calendar's links named a channel (or "publish now"): they mean the Publish tab.
+        return url + ("?tab=publish" if query.get("account") or query.get("action") == "publish_now" else "")
+    target = {"client": str(workspace_id)}
+    for source, name in (("scheduled_date", "date"), ("scheduled_time", "time"), ("account", "account")):
+        if query.get(source):
+            target[name] = query[source]
+    return reverse("jrc_production:new_content") + "?" + urlencode(target)
+
+
+def _jrc_detail_redirect(request, workspace, post):
+    """JR Content (P2-B03): the content detail and the New content page replace this editor.
+
+    Every old address of the composer (bookmarks, notifications, links of upstream pages) arrives here
+    after the composer's own access checks, so whoever was refused before is refused the same way.
+    The editor itself is no longer shown anywhere. Without the JR UI (upstream) it returns None.
+    """
+    if not getattr(settings, "JRC_UI_ENABLED", False):
+        return None
+    return redirect(content_page_url(workspace.id, post.id if post else None, request.GET.dict()))
+
+
 @login_required
 @require_permission("create_posts")
 def compose(request, workspace_id, post_id=None):
@@ -718,6 +760,9 @@ def compose(request, workspace_id, post_id=None):
         perms = membership.effective_permissions if membership else {}
         if post.author != request.user and not perms.get("edit_others_posts", False):
             raise PermissionDenied("You do not have permission to edit this post.")
+        replacement = _jrc_detail_redirect(request, workspace, post)
+        if replacement is not None:
+            return replacement
         form = PostForm(instance=post)
         # Prefer a committed schedule; fall back to a draft-stage proposal so
         # the Schedule Post panel shows whichever time the post carries.
@@ -741,6 +786,9 @@ def compose(request, workspace_id, post_id=None):
         platform_extras = {str(pp.social_account_id): (pp.platform_extra or {}) for pp in platform_post_list}
         template_data = None
     else:
+        replacement = _jrc_detail_redirect(request, workspace, None)
+        if replacement is not None:
+            return replacement
         post = None
         # Pre-fill scheduled date/time from query params (e.g. when coming from calendar "+" CTA)
         initial = {}
@@ -1162,7 +1210,7 @@ def _post_saved_response(request, post, workspace, returned):
     notice = review_return_notice(returned)
     if notice:
         messages.warning(request, notice)
-    return redirect("composer:compose_edit", workspace_id=workspace.id, post_id=post.id)
+    return redirect(content_page_url(workspace.id, post.id))
 
 
 @login_required
@@ -2812,7 +2860,6 @@ def clone_post_view(request, workspace_id, post_id):
     hatch to repost — the duplicate starts as a draft with the same content but
     no schedule, so it can be edited and re-queued without touching the original.
     """
-    from django.urls import reverse
 
     from apps.composer.services import clone_post
 
@@ -2825,7 +2872,7 @@ def clone_post_view(request, workspace_id, post_id):
         raise PermissionDenied("You do not have permission to create posts.")
 
     new_post = clone_post(post, author=request.user)
-    target = reverse("composer:compose_edit", kwargs={"workspace_id": workspace.id, "post_id": new_post.id})
+    target = content_page_url(workspace.id, new_post.id)
     if request.htmx:
         return HttpResponse(status=204, headers={"HX-Redirect": target})
     return redirect(target)
@@ -3362,9 +3409,7 @@ def idea_create_post(request, workspace_id, idea_id):
         idea.post = post
         idea.save(update_fields=["post", "updated_at"])
 
-    from django.urls import reverse
-
-    compose_url = reverse("composer:compose_edit", kwargs={"workspace_id": workspace.id, "post_id": post.id})
+    compose_url = content_page_url(workspace.id, post.id)
     return JsonResponse(
         {
             "ok": True,
@@ -3659,7 +3704,7 @@ def save_as_template(request, workspace_id, post_id):
             status=204,
             headers={"HX-Trigger": "templateSaved"},
         )
-    return redirect("composer:compose_edit", workspace_id=workspace.id, post_id=post.id)
+    return redirect(content_page_url(workspace.id, post.id))
 
 
 @login_required
@@ -3700,10 +3745,7 @@ def use_template(request, workspace_id, template_id):
     workspace = _get_workspace(request, workspace_id)
     get_object_or_404(PostTemplate, id=template_id, workspace=workspace)
 
-    from django.urls import reverse
-
-    compose_url = reverse("composer:compose", kwargs={"workspace_id": workspace.id})
-    return redirect(f"{compose_url}?template={template_id}")
+    return redirect(content_page_url(workspace.id, query={"template": str(template_id)}))
 
 
 # ---------------------------------------------------------------------------

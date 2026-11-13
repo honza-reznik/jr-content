@@ -93,7 +93,7 @@ def notify_video_version(version):
         logger.exception("Could not send the new-video notification for version %s", version.pk)
 
 
-def notify_client_comment(post, actor, *, tab="comments", isolate=True):
+def notify_client_comment(post, actor, *, tab="discussion", isolate=True):
     """The content team sees client feedback without exposing the comment in alerts."""
 
     def send():
@@ -101,7 +101,7 @@ def notify_client_comment(post, actor, *, tab="comments", isolate=True):
             post,
             team_members(post.workspace, actor),
             event_type=EventType.CONTENT_CLIENT_COMMENT,
-            title="New client comment",
+            title="New client comment in Discussion" if tab == "discussion" else "New client comment",
             body=f'{actor.display_name} commented on "{content_label(post)}".',
             tab=tab,
         )

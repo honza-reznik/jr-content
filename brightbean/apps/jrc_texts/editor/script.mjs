@@ -11,6 +11,7 @@ let state, editing = false, finishing = false, fatal = false
 let generation = 0, storedGeneration = 0, timer, pending = null, selected = null
 let comparisonChoice = null
 const empty = { type: 'doc', content: [{ type: 'paragraph' }] }
+const versionLabel = version => `V${version.number}${version.name ? ` – ${version.name}` : ''}`
 const date = value => new Date(value).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })
 const editor = new Editor({
   element: $('editor'), extensions: editorExtensions(), content: empty, editable: false,
@@ -77,7 +78,7 @@ function renderComparison(result) {
     for (const version of versions) {
       const option = document.createElement('option')
       option.value = version.id
-      option.textContent = `Version ${version.number}`
+      option.textContent = versionLabel(version)
       select.append(option)
     }
   }
@@ -137,7 +138,7 @@ function controls() {
   $('edit').disabled = $('resume').disabled = finishing
   $('reload').disabled = finishing
   $('compare-old').disabled = $('compare-new').disabled = editing || finishing
-  for (const button of $('versions').querySelectorAll('button')) button.disabled = editing || finishing
+  for (const control of $('versions').querySelectorAll('button, input')) control.disabled = editing || finishing
   // Changing control availability is not a document edit (including after an error).
   editor.setEditable(editing && !finishing, false)
   panel.classList.toggle('is-editing', editing)
@@ -152,7 +153,7 @@ function showState(next) {
   $('editor').setAttribute('aria-busy', 'false')
   editor.commands.setContent(state.shown?.content || empty, { emitUpdate: false })
   $('version').textContent = state.shown
-    ? `Version ${state.shown.number} · ${state.shown.id === state.latest ? 'Latest saved' : 'Older version'} · ${date(state.shown.saved_at)} · ${state.shown.author}`
+    ? `${versionLabel(state.shown)} · ${state.shown.id === state.latest ? 'Latest saved' : 'Older version'} · ${date(state.shown.saved_at)} · ${state.shown.author}`
     : (panel.dataset.empty || `No ${noun} yet.`)
   renderComparison(state.comparison)
   $('lock').hidden = !state.draft
@@ -161,7 +162,7 @@ function showState(next) {
   for (const version of state.versions) {
     const button = document.createElement('button')
     button.type = 'button'
-    button.textContent = `Version ${version.number}${version.id === state.latest ? ' · Latest' : ''}`
+    button.textContent = `${versionLabel(version)}${version.id === state.latest ? ' · Latest' : ''}`
     const meta = document.createElement('span')
     meta.textContent = `${date(version.saved_at)} · ${version.author}`
     button.append(meta)
@@ -181,6 +182,39 @@ function showState(next) {
     })
     const item = document.createElement('li')
     item.append(button)
+    if (state.can_edit) {
+      const form = document.createElement('form')
+      form.dataset.versionName = ''
+      form.dataset.richName = ''
+      const label = document.createElement('label')
+      label.textContent = 'Version name (optional)'
+      const input = document.createElement('input')
+      input.name = 'name'; input.maxLength = 100; input.value = version.name
+      input.setAttribute('aria-label', `Name of V${version.number}`)
+      label.append(input)
+      const save = document.createElement('button')
+      save.type = 'submit'; save.textContent = 'Save name'
+      form.append(label, save)
+      form.addEventListener('submit', async event => {
+        event.preventDefault()
+        if (editing || finishing) return
+        const name = input.value
+        finishing = true; controls()
+        try {
+          const data = new FormData()
+          data.set('name', name)
+          data.set('csrfmiddlewaretoken', panel.querySelector('[name=csrfmiddlewaretoken]').value)
+          const base = panel.querySelector('[data-version-name-base]').dataset.versionNameBase
+          const response = await fetch(`${base}versions/${version.id}/name/`, { method: 'POST', body: data, headers: { Accept: 'application/json' } })
+          const result = await response.json().catch(() => ({}))
+          if (!response.ok || response.redirected) throw new Error(result.error || 'Could not save the name. Check your access and retry.')
+          showState(await api(null, selected))
+          message('Name saved.')
+        } catch (error) { message(error.message, true) }
+        finally { finishing = false; controls() }
+      })
+      item.append(form)
+    }
     $('versions').append(item)
   }
   controls()
@@ -251,6 +285,8 @@ async function finish(action) {
   } catch (error) { failed(error) }
   finally { finishing = false; controls() }
 }
+
+$('copy').addEventListener('click', () => window.jrcCopyText(editor.getText({ blockSeparator: '\n' }), $('copy')))
 
 $('edit').addEventListener('click', async () => {
   if (finishing) return

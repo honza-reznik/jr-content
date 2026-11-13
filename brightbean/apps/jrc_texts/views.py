@@ -30,6 +30,7 @@ def _version(version, *, content=False):
     data = {
         "id": str(version.pk),
         "number": version.number,
+        "name": version.name,
         "revision": version.revision,
         "created_at": version.created_at.isoformat(),
         "saved_at": version.finalized_at.isoformat() if version.finalized_at else None,
@@ -56,7 +57,7 @@ def _snapshot(post, user, membership, selected=None, compare_old=None, compare_n
                 state="final",
             )
         return result
-    versions = list(document.versions.filter(state="final").select_related("created_by").order_by("-number"))
+    versions = list(document.versions.filter(state="final").select_related("created_by", "label").order_by("-number"))
     if not versions and (selected or compare_old or compare_new):
         get_object_or_404(document.versions.filter(state="final"), pk=selected or compare_old or compare_new)
     result["versions"] = [_version(version) for version in versions]
@@ -66,10 +67,10 @@ def _snapshot(post, user, membership, selected=None, compare_old=None, compare_n
         result["shown"] = _version(shown, content=True)
         if compare_old or compare_new:
             old = get_object_or_404(
-                document.versions.filter(state="final").select_related("created_by"), pk=compare_old
+                document.versions.filter(state="final").select_related("created_by", "label"), pk=compare_old
             )
             new = get_object_or_404(
-                document.versions.filter(state="final").select_related("created_by"), pk=compare_new
+                document.versions.filter(state="final").select_related("created_by", "label"), pk=compare_new
             )
         elif len(versions) >= 2:
             old, new = versions[1], versions[0]
@@ -209,3 +210,16 @@ def concept_to_script(request, workspace_id, post_id):
     else:
         messages.info(request, "The script already matches the latest concept.")
     return redirect(f"{detail}?tab=script")
+
+
+@login_required
+@require_POST
+def version_name(request, workspace_id, post_id, version_id):
+    post = get_object_or_404(Post, pk=post_id, workspace_id=workspace_id)
+    content_membership(post.workspace, request.user)
+    version = get_object_or_404(TextVersion, pk=version_id, document__post=post, state="final")
+    try:
+        name = services.name_version(version.pk, request.user, request.POST.get("name", ""))
+    except ValidationError as exc:
+        return JsonResponse({"error": " ".join(exc.messages)}, status=400)
+    return JsonResponse({"name": name, "number": version.number})

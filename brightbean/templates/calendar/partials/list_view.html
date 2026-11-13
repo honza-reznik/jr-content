@@ -18,7 +18,7 @@ Context: posts, workspace.
         <tbody>
             {% for post in posts %}
             <tr class="border-b border-stone-100 hover:bg-stone-50 transition-colors duration-100 cursor-pointer"
-                @click="window.location='{% url 'jrc_production:content_detail' workspace_id=workspace.id post_id=post.id %}'">
+                @click="window.location='{% url 'jrc_production:content_detail' workspace_id=workspace.id post_id=post.id %}?tab=publish'">
                 <td class="px-4 py-3">
                     <span class="post-chip pipeline-stage-{{ post.pipeline_stage }} inline-flex">
                         <span class="chip-dot"></span>
@@ -34,7 +34,7 @@ Context: posts, workspace.
                     {% endif %}
                 </td>
                 <td class="px-4 py-3 text-sm text-stone-600 max-w-xs truncate">
-                    <a href="{% url 'jrc_production:content_detail' workspace_id=workspace.id post_id=post.id %}"
+                    <a href="{% url 'jrc_production:content_detail' workspace_id=workspace.id post_id=post.id %}?tab=publish"
                        class="text-inherit hover:text-orange-700 underline decoration-transparent hover:decoration-current">
                         {{ post.title|default:post.caption_snippet|default:"(no caption)" }}
                     </a>
@@ -66,7 +66,7 @@ Context: posts, workspace.
         </div>
         <p class="text-sm font-medium text-stone-500 mb-1">No content scheduled yet</p>
         <p class="text-xs text-stone-400 mb-5 max-w-[240px] mx-auto">Create your first post to see it on the calendar</p>
-        <a href="{% url 'composer:compose' workspace_id=workspace.id %}"
+        <a href="{% url 'jrc_production:new_content' %}?client={{ workspace.id }}"
            class="inline-flex items-center gap-1.5 px-5 py-1.5 text-sm font-semibold text-orange-600 bg-orange-50 border border-orange-200 rounded-full hover:bg-orange-100 hover:border-orange-300 active:bg-orange-100 transition-all duration-150">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
             Create Post

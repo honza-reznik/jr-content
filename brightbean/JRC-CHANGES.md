@@ -1,5 +1,28 @@
 # Úpravy JR Content
 
+## 2026-11-13 — P2-B03
+
+- Starý editor (`composer.views.compose`, adresy `compose/` a `compose/<id>/`) se už nezobrazuje: po vlastních kontrolách
+  přístupu (stejné odmítnutí jako dřív) přesměruje existující obsah na detail JR (`?tab=publish`, když odkaz nesl kanál
+  nebo `publish_now`) a nový příspěvek na stránku New content (`jrc_production:new_content`) s datem a kanálem z kalendáře.
+  Všechny odkazy šablon (kalendář, fronta, koncepty, schvalování, kalendář organizace, + New v menu) vedou rovnou na
+  detail (z kalendáře a fronty na záložku Publish, ze schvalování na Approval) nebo na New content. Ostatní endpointy
+  composeru (uložení, mazání, klon, šablony) zůstávají; jejich přesměrování na editor skončí na detailu.
+- Delete obsahu se přesunul na detail JR (stejný endpoint `post_delete` a pravidlo `content_delete_blocker`).
+- Jediná cesta vytvoření obsahu `jrc_production.services.create_content`: popis = verze 1 Conceptu
+  (`jrc_texts.services.create_initial_concept`, prostý text bez Markdownu), volitelná výchozí fáze přesunem z Idea přes
+  `move_content` (nabídka `initial_stages`), datum = návrh, u Ready plánované datum.
+- + New v menu: Idea (okno New idea) a Content (prázdný detail). Hláška po vytvoření obsahu má odkaz na nový obsah.
+- Nástěnka: datované karty podle data (nejbližší nahoře), pod nimi nedatované v pořadí vytvoření (nejnovější dole);
+  Published beze změny. Detail má odkaz „Content board“ zpět na nástěnku s naposledy použitým filtrem.
+## 2026-11-13 — P2-B01
+
+- Testovací kopie mají v `BudgetedEmailBackend` kontrolu všech příjemců (To/Cc/Bcc) před rozpočty a SMTP.
+  Povoleny jsou domény `.invalid` a přesné adresy z `JRC_TEST_EMAIL_ALLOW`; jiná adresa zastaví celou zprávu,
+  logují se jen počty. Pouze projekt `jrc` zachovává původní chování.
+- Obnova mimo `jrc` před spuštěním aplikací anonymizuje adresy BB i FF, odstraní uloženou poštu a čekající
+  e-mailová doručení. `make sanitize-test` provede stejný krok nad existující kopií; ID a hesla zachovává.
+
 ## 2026-11-07 — P1-B34
 
 - CSV import (`composer.views`): náhled používal neexistující `SocialAccount.Platform` (upstream volby přesunul do
@@ -853,3 +876,16 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
 - Výběr účtů po OAuth (`social_accounts:select_account`) je svázaný s ID toku (`?flow=` a skryté pole); každý tok má
   vlastní záznam v relaci a před zápisem se znovu ověří přístup k workspace.
 - Zpětné volání OAuth sociálních sítí bere organizaci z workspace v podepsaném stavu, ne z relace.
+
+### P2-B04 — úpravy detailu obsahu
+
+- Název se upravuje přímo kliknutím v hlavičce (Enter nebo opuštění pole uloží, Escape zruší); používá stávající
+  službu přejmenování včetně návratu ke schválení. Kategorie workspace a navržené datum se ukládají bez načtení stránky.
+- Navržené datum respektuje časové pásmo workspace, lze ho vymazat a nejde jím přepsat skutečný publikační plán.
+  Změny kategorií a navržených dat mají vlastní záznam v History.
+- Uložené verze konceptu, scriptu a popisků mají volitelný upravitelný název s historií. Metadata žijí v samostatné
+  tabulce; databázová ochrana uloženého textu, autora a času uložení zůstává. Popisky zobrazují autora a čas všech verzí.
+- Copy kopíruje právě zobrazený text (i rozepsaný), popisek nebo řádky shotlistu. Záložka Caption už nemá Instagram
+  preview, počítadlo znaků zůstává. Comments se v detailu jmenuje Discussion; staré odkazy se dál otevřou.
+- Migrace: `jrc_production.0006`, `jrc_production.0007`, `jrc_texts.0005`. Při nasazení znovu sestavit editor z
+  `apps/jrc_texts/editor/script.mjs` a shromáždit statické soubory. Ověřovací skripty: `scripts/P2-B04/` v kořeni repozitáře.

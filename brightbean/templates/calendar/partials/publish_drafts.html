@@ -27,7 +27,7 @@ Shows all draft platform posts in a table. Loaded via HTMX into #tab-content.
         <tbody>
             {% for pp in platform_posts %}
             <tr class="border-b border-stone-100 hover:bg-stone-50 transition-colors duration-100 cursor-pointer"
-                @click="window.location='{% url 'composer:compose_edit' workspace_id=workspace.id post_id=pp.post_id %}?account={{ pp.social_account_id }}'">
+                @click="window.location='{% url 'jrc_production:content_detail' workspace_id=workspace.id post_id=pp.post_id %}?tab=publish'">
                 <td class="pl-4 pr-1 py-3" @click.stop>
                     {% if pp.is_bulk_selectable %}{% include "calendar/partials/_select_checkbox.html" with pp_id=pp.id extra_class="row-select-box" %}{% endif %}
                 </td>
@@ -99,7 +99,7 @@ Shows all draft platform posts in a table. Loaded via HTMX into #tab-content.
         </div>
         <p class="text-sm font-medium text-stone-500 mb-1">No drafts</p>
         <p class="text-xs text-stone-400 mb-5 max-w-[240px] mx-auto">Draft posts will appear here as you create them</p>
-        <a href="{% url 'composer:compose' workspace_id=workspace.id %}"
+        <a href="{% url 'jrc_production:new_content' %}?client={{ workspace.id }}"
            class="inline-flex items-center gap-1.5 px-5 py-1.5 text-sm font-semibold text-orange-600 bg-orange-50 border border-orange-200 rounded-full hover:bg-orange-100 hover:border-orange-300 active:bg-orange-100 transition-all duration-150">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
             Create Post

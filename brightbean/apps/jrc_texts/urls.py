@@ -4,6 +4,11 @@ from . import views
 
 app_name = "jrc_texts"
 urlpatterns = [
+    path(
+        "workspace/<uuid:workspace_id>/content/<uuid:post_id>/versions/<uuid:version_id>/name/",
+        views.version_name,
+        name="version_name",
+    ),
     path("workspace/<uuid:workspace_id>/content/<uuid:post_id>/script/", views.script, name="script"),
     # P1-B08: the Concept tab (same editor rules as the script) and "Use as script draft".
     path("workspace/<uuid:workspace_id>/content/<uuid:post_id>/concept/", views.concept, name="concept"),
