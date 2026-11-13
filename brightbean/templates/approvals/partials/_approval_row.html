@@ -43,7 +43,7 @@ can_approve, display_timezone, and the parent Alpine scope (selectedPosts, diffO
             <p class="text-[0.875rem] text-stone-700 leading-snug cursor-pointer hover:text-stone-900 line-clamp-1" @click="expanded = !expanded">{{ post.title|default:post.caption_snippet|default:"(no caption)" }}</p>
 
             <div class="flex items-center gap-1.5 mt-1.5">
-                <span class="w-[18px] h-[18px] rounded-full flex items-center justify-center text-[9px] font-bold text-white flex-shrink-0" style="background: var(--primary);">{{ post.author.display_name|default:"?"|make_list|first|upper }}</span>
+                <span class="w-[18px] h-[18px] rounded-full flex items-center justify-center text-[9px] font-bold text-white flex-shrink-0" style="background: var(--primary);color:var(--accent-text);">{{ post.author.display_name|default:"?"|make_list|first|upper }}</span>
                 <span class="text-[0.75rem] text-stone-400">by {{ post.author.display_name|default:"Unknown" }}</span>
                 <button @click="expanded = !expanded" class="text-[0.75rem] text-stone-400 hover:text-stone-600 inline-flex items-center gap-0.5 ml-1">
                     <span x-text="expanded ? 'Hide' : 'Details'"></span>
@@ -71,7 +71,7 @@ can_approve, display_timezone, and the parent Alpine scope (selectedPosts, diffO
                 <div class="mb-3 space-y-2">
                     {% for c in post.visible_comments %}
                     <div class="flex gap-2">
-                        <span class="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white flex-shrink-0" style="background: var(--primary);">{{ c.author.display_name|default:"?"|make_list|first|upper }}</span>
+                        <span class="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white flex-shrink-0" style="background: var(--primary);color:var(--accent-text);">{{ c.author.display_name|default:"?"|make_list|first|upper }}</span>
                         <div class="bg-stone-50 rounded-lg px-3 py-1.5 flex-1 min-w-0">
                             <div class="flex items-center gap-1.5">
                                 <span class="text-[0.6875rem] font-semibold text-stone-700">{{ c.author.display_name|default:"Unknown" }}</span>
@@ -88,7 +88,7 @@ can_approve, display_timezone, and the parent Alpine scope (selectedPosts, diffO
                 {% if post.versions.all|length >= 2 %}
                 <button hx-get="{% url 'approvals:version_diff' workspace_id=workspace.id post_id=post.id %}"
                         hx-target="#diff-modal-body" hx-swap="innerHTML" @click="diffOpen = true"
-                        class="text-[0.8125rem] font-semibold inline-flex items-center gap-1 hover:underline" style="color: var(--primary);">
+                        class="text-[0.8125rem] font-semibold inline-flex items-center gap-1 hover:underline" style="color: var(--primary-text);">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M12 3v12"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M6 9v6a3 3 0 003 3h6"/></svg>
                     View changes <span class="text-stone-400 font-normal">· v{{ post.versions.all|length }}</span>
                 </button>
@@ -108,7 +108,7 @@ can_approve, display_timezone, and the parent Alpine scope (selectedPosts, diffO
         {% elif post.status == 'changes_requested' or post.status == 'rejected' or post.status == 'approved' %}
         <div class="flex items-center gap-1.5 flex-shrink-0">
             <a href="{% url 'jrc_production:content_detail' workspace_id=workspace.id post_id=post.id %}?tab=approval"
-               class="px-3.5 py-1.5 text-[0.8125rem] font-semibold rounded-full text-white inline-flex items-center gap-1.5 transition-colors" style="background: var(--primary);">
+               class="px-3.5 py-1.5 text-[0.8125rem] font-semibold rounded-full text-white inline-flex items-center gap-1.5 transition-colors" style="background: var(--primary);color:var(--accent-text);">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.12 2.12 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg> Open
             </a>
         </div>

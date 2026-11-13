@@ -20,8 +20,8 @@
     .channel-link { display: inline-block; margin-top: 10px; font-size: 14px; color: #9a3412; text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
     .channel-actions { margin-top: 18px; display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
     .profile-button { display: inline-flex; justify-content: center; align-items: center; min-height: 44px; padding: 9px 18px; border: 1px solid var(--border); background: var(--surface-0); border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; color: var(--text-primary); }
-    .profile-button.primary { background: #c2410c; color: white; border-color: #c2410c; }
-    .client-profile :is(button, a, summary, input, select):focus-visible { outline: 3px solid #c2410c; outline-offset: 3px; }
+    .profile-button.primary { background: var(--primary, #c2410c); color: var(--accent-text, white); border-color: color-mix(in srgb, var(--accent-text, white) 22%, var(--primary, #c2410c)); }
+    .client-profile :is(button, a, summary, input, select):focus-visible { outline: 3px solid var(--primary, #c2410c); outline-offset: 3px; }
     .channel-editor { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 16px; }
     .client-profile summary { cursor: pointer; font-size: 14px; font-weight: 600; min-height: 44px; padding: 11px 0; }
     .channel-editor[open] summary { margin-bottom: 12px; }
@@ -45,7 +45,7 @@
 {% block content %}
 <div class="client-profile">
     <header class="profile-heading">
-        <div class="profile-avatar" style="background:{{ workspace.accent_color }};color:white" aria-hidden="true">{{ workspace.name|first|upper }}</div>
+        <div class="profile-avatar" style="background:{{ workspace.accent_color }};color:{{ workspace.accent_text_color }}" aria-hidden="true">{{ workspace.name|first|upper }}</div>
         <div style="min-width:0">
             <p style="font-size:13px">Client profile</p>
             <h1>{{ workspace.name }}</h1>
@@ -54,7 +54,7 @@
     <p class="profile-note">Plan content here, then publish it yourself. Channels do not sign in to social networks or publish automatically.</p>
     <section class="channel-card" aria-labelledby="colour-title">
         <h2 id="colour-title">Workspace colour</h2>
-        <p><span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:{{ workspace.accent_color }}" aria-hidden="true"></span> Current colour: {{ workspace.accent_color }}</p>
+        <p><span data-colour-preview style="display:inline-block;width:14px;height:14px;border-radius:50%;background:{{ workspace.accent_color }}" aria-hidden="true"></span> Current colour: <span data-colour-value>{{ workspace.accent_color }}</span></p>
         {% if can_change_color %}
         <form method="post" action="{% url 'jrc_channels:color' workspace_id=workspace.id %}">
             {% csrf_token %}
@@ -64,7 +64,15 @@
         </form>
         <form method="post" action="{% url 'jrc_channels:color' workspace_id=workspace.id %}">
             {% csrf_token %}
-            <div class="profile-fields"><div class="profile-field">{{ color_form.color.label_tag }}{{ color_form.color }}<div role="alert">{{ color_form.color.errors }}</div><p class="profile-help">Use #RRGGBB. Choose a dark colour for readable white labels (contrast at least 4.5:1).</p></div></div>
+            <div class="profile-fields"><div class="profile-field">
+                {{ color_form.color.label_tag }}
+                <div style="display:flex;gap:10px;align-items:center">
+                    <input type="color" value="{{ workspace.accent_color }}" aria-label="Choose workspace colour" data-colour-picker style="width:56px;height:44px;padding:3px;border:1px solid #a8a29e;border-radius:8px;background:var(--surface-0)">
+                    {{ color_form.color }}
+                </div>
+                <div role="alert">{{ color_form.color.errors }}</div>
+                <p class="profile-help">Choose any colour. Text automatically uses black or white for at least 4.5:1 contrast.</p>
+            </div></div>
             <button class="profile-button primary" type="submit">Save colour</button>
         </form>
         {% endif %}
@@ -140,4 +148,21 @@
 </div>
 {% endblock %}
 
-{% block extra_js %}<script src="{% static 'jrc_channels/icon-upload.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endblock %}
+{% block extra_js %}<script src="{% static 'jrc_channels/icon-upload.js' %}" nonce="{{ request.csp_nonce }}"></script>
+<script nonce="{{ request.csp_nonce }}">
+document.addEventListener('DOMContentLoaded', function () {
+    const picker = document.querySelector('[data-colour-picker]');
+    const hex = document.querySelector('#id_color');
+    const preview = document.querySelector('[data-colour-preview]');
+    const value = document.querySelector('[data-colour-value]');
+    if (!picker || !hex) return;
+    picker.addEventListener('input', function () { hex.value = picker.value.toUpperCase(); hex.dispatchEvent(new Event('input', {bubbles: true})); });
+    hex.addEventListener('input', function () {
+        if (/^#[0-9a-f]{6}$/i.test(hex.value)) {
+            picker.value = hex.value;
+            preview.style.backgroundColor = hex.value;
+            value.textContent = hex.value.toUpperCase();
+        }
+    });
+});
+</script>{% endblock %}

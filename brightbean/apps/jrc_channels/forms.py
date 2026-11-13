@@ -40,7 +40,11 @@ class AddChannelForm(ChannelDetailsForm):
 
 
 class WorkspaceColorForm(forms.Form):
-    color = forms.CharField(label="Workspace colour (HEX)", max_length=7)
+    color = forms.CharField(
+        label="Workspace colour (HEX)",
+        max_length=7,
+        widget=forms.TextInput(attrs={"autocomplete": "off", "inputmode": "text"}),
+    )
 
     def clean_color(self):
         from apps.workspaces.colors import validate_accent

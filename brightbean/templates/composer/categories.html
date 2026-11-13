@@ -87,7 +87,7 @@
                         {% csrf_token %}
                         <input type="color" name="color" value="{{ cat.color }}" class="w-8 h-8 rounded border border-stone-200 cursor-pointer p-0.5">
                         <input type="text" name="name" value="{{ cat.name }}" class="form-input flex-1 text-sm" required>
-                        <button type="submit" class="text-sm font-semibold" style="color: var(--primary);">Save</button>
+                        <button type="submit" class="text-sm font-semibold" style="color: var(--primary-text);">Save</button>
                         <button type="button" @click="editing = false" class="text-sm text-stone-500">Cancel</button>
                     </form>
                 </template>

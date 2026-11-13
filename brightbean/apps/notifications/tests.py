@@ -5,6 +5,7 @@ import pytest
 from django.utils import timezone
 
 from apps.notifications.engine import notify
+from apps.notifications.engine import APPROVAL_DAILY_EVENTS, DEFAULT_CHANNELS, _digest_heading
 from apps.notifications.models import (
     Channel,
     DeliveryStatus,
@@ -36,6 +37,31 @@ class TestNotifyEngine:
         channels = set(deliveries.values_list("channel", flat=True))
         assert Channel.IN_APP in channels
         assert Channel.EMAIL not in channels
+
+    def test_feedback_defaults_only_email_actionable_events(self):
+        email_events = {event for event, channels in DEFAULT_CHANNELS.items() if channels.get(Channel.EMAIL)}
+        assert email_events == {
+            EventType.POST_SUBMITTED,
+            EventType.POST_CHANGES_REQUESTED,
+            EventType.POST_REJECTED,
+            EventType.POST_FAILED,
+            EventType.APPROVAL_HOLD_REQUESTED,
+            EventType.SOCIAL_ACCOUNT_DISCONNECTED,
+            EventType.CLIENT_APPROVAL_REQUESTED,
+            EventType.TEAM_MEMBER_INVITED,
+            EventType.COMMENT_MENTION,
+            EventType.APPROVAL_REMINDER,
+            EventType.APPROVAL_STALLED,
+        }
+        assert APPROVAL_DAILY_EVENTS == {EventType.APPROVAL_REMINDER, EventType.APPROVAL_STALLED}
+        assert _digest_heading("__approval_daily__", 2) == "Approval summary"
+
+    def test_approval_reminders_queue_for_daily_summary(self, user):
+        for event in APPROVAL_DAILY_EVENTS:
+            notification = notify(user, event, "Approval reminder")
+            delivery = NotificationDelivery.objects.get(notification=notification, channel=Channel.EMAIL)
+            assert delivery.batch_queued_at is not None
+            assert delivery.next_retry_at is None
 
     def test_respects_user_preference_override(self, user):
         # Disable in-app, enable email

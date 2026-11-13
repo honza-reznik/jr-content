@@ -47,7 +47,7 @@ def local_storage(settings, tmp_path):
     settings.MEDIA_ROOT = tmp_path
 
 
-@pytest.mark.parametrize("value", ["#ffffff", "#AAAAAA", "#00FF00", "#fff", "red", "#000000;", "#12345g"])
+@pytest.mark.parametrize("value", ["#fff", "red", "#000000;", "#12345g"])
 def test_invalid_or_low_contrast_colour(value):
     with pytest.raises(ValidationError):
         validate_accent(value)
@@ -62,9 +62,18 @@ def test_palette_and_stable_default(workspace):
     assert workspace.accent_color == first
     assert Workspace(id=UUID(int=1)).accent_color != Workspace(id=UUID(int=2)).accent_color
     workspace.primary_color = "#FFFFFF"
-    assert workspace.accent_color == first
+    assert workspace.accent_color == "#FFFFFF"
     workspace.primary_color = '" onload="bad'
     assert workspace.accent_color == first
+
+
+@pytest.mark.parametrize(("colour", "text"), [("#FFFFFF", "#000000"), ("#000000", "#FFFFFF"), ("#00FF00", "#000000")])
+def test_custom_colour_chooses_accessible_text(colour, text):
+    from apps.workspaces.colors import accent_text_color, contrast_ratio
+
+    assert validate_accent(colour) == colour
+    assert accent_text_color(colour) == text
+    assert contrast_ratio(colour, text) >= 4.5
 
 
 @pytest.mark.parametrize("role", ["owner", "manager", "editor", "contributor", "viewer", "client"])
@@ -87,11 +96,11 @@ def test_colour_roles(client, user, workspace, role):
 def test_invalid_colour_keeps_previous_and_shows_error(owner, workspace):
     workspace.primary_color = "#1D4ED8"
     workspace.save()
-    response = owner.post(url(workspace), {"color": "#FFFFFF"})
-    assert b"contrast with white" in response.content
+    response = owner.post(url(workspace), {"color": "#GGGGGG"})
+    assert b"Color must be a 6-digit hex value" in response.content
     workspace.refresh_from_db()
     assert workspace.primary_color == "#1D4ED8"
-    assert b'value="#FFFFFF"' in response.content
+    assert b'value="#GGGGGG"' in response.content
 
 
 @pytest.mark.parametrize(
@@ -228,6 +237,12 @@ def test_identity_on_board_detail_caption_publish_and_switcher(owner, user, work
         html = owner.get(path).content.decode()
         assert "#6D28D9" in html
         assert f'data-channel-icon="{account.pk}"' in html
+    board_html = owner.get(reverse("jrc_production:board")).content.decode()
+    assert f"?client={workspace.pk}&amp;channel={account.pk}" in board_html
+    assert f"#title-{account.pk}" in board_html
+    profile_html = owner.get(url(workspace, "profile")).content.decode()
+    assert 'type="color"' in profile_html
+    assert "data-colour-picker" in profile_html
     # Known platforms retain the existing Brightbean SVG, with or without a local profile.
     from django.template.loader import render_to_string
 
@@ -242,3 +257,70 @@ def test_identity_on_board_detail_caption_publish_and_switcher(owner, user, work
     profile.save()
     assert "<svg" in render_to_string("jrc_channels/icon.html", {"account": account})
     assert "<svg" in render_to_string("jrc_channels/icon.html", {"account": account, "calendar_icon": True})
+
+
+# --- P2-B07 review fixes (R1, R3) -------------------------------------------------------------
+
+LIGHT_AND_DARK = ["#FFE600", "#FFFFFF", "#FFFF00", "#00FF00", "#6D28D9", "#000000", *[hex_ for hex_, _ in PALETTE]]
+
+
+@pytest.mark.parametrize("colour", LIGHT_AND_DARK)
+def test_accent_as_writing_is_readable_on_white_and_on_soft_tint(colour):
+    from apps.workspaces.colors import SIDEBAR_SURFACE, _mix, accent_link_color, accent_text_color, contrast_ratio
+
+    link = accent_link_color(colour)
+    assert contrast_ratio(link, "#FFFFFF") >= 4.5
+    assert contrast_ratio(link, _mix(colour, "#FFFFFF", 0.94)) >= 4.5
+    assert contrast_ratio(link, SIDEBAR_SURFACE) >= 4.5
+    assert contrast_ratio(colour, accent_text_color(colour)) >= 4.5
+
+
+def test_dark_accent_stays_unchanged_as_writing():
+    from apps.workspaces.colors import accent_link_color
+
+    assert accent_link_color("#1D4ED8") == "#1D4ED8"
+    assert accent_link_color("#FFE600") != "#FFE600"
+
+
+@pytest.mark.parametrize("colour", ["#FFE600", "#FFFFFF", "#6D28D9"])
+def test_pages_set_one_text_variable_per_accent(owner, workspace, colour):
+    from apps.workspaces.colors import accent_link_color, accent_text_color
+
+    workspace.primary_color = colour
+    workspace.save()
+    html = owner.get(reverse("calendar:calendar", kwargs={"workspace_id": workspace.pk})).content.decode()
+    assert f"--primary-text: {accent_link_color(colour)};" in html
+    assert f"--accent-text: {accent_text_color(colour)};" in html
+    # No attribute-selector patches: the colour comes from the variables only.
+    assert '[style*="background: var(--primary)"]' not in html
+
+
+def test_templates_never_use_accent_as_writing_or_white_on_accent():
+    """Cause check for R1: every use of the accent as text or as a background carries a contrast variable."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    offenders = []
+    for path in [*(root / "templates").rglob("*.html"), root / "theme/static_src/src/styles.css"]:
+        for number, line in enumerate(path.read_text().splitlines(), 1):
+            if re.search(r"(?<![-\w])color:\s*var\(--(primary|brand-700|brand-800)\s*[,)]", line):
+                offenders.append(f"{path.name}:{number} accent used as text colour: {line.strip()[:90]}")
+            if re.search(r"background:\s*var\(--primary\)", line) and re.search(
+                r"(?<![-\w])color:\s*(white|#fff\b|#ffffff|var\(--text-inverse\))", line, re.I
+            ):
+                offenders.append(f"{path.name}:{number} white text on accent: {line.strip()[:90]}")
+    assert offenders == []
+
+
+@pytest.mark.parametrize("value", ["#FFE600\n", "#FFE600 ", "\n#FFE600"])
+def test_hex_validator_rejects_trailing_newline(value):
+    with pytest.raises(ValidationError):
+        validate_accent(value)
+
+
+def test_channel_gear_has_44px_touch_target_on_small_screens(owner, user, workspace):
+    create_manual_channel(workspace, "custom", "Forendors")
+    html = owner.get(reverse("calendar:calendar", kwargs={"workspace_id": workspace.pk})).content.decode()
+    gear = next(chunk for chunk in html.split("<a ") if 'aria-label="Manage Forendors channel"' in chunk)
+    assert "max-lg:w-11" in gear and "max-lg:h-11" in gear
