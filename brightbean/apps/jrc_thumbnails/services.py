@@ -1,21 +1,25 @@
 # JR Content: přidáno 2026-11-04 (blok P1-B10), AGPL-3.0.
 """Channel thumbnail rules: who uploads, who downloads, what counts as an image."""
 
+import logging
 import uuid
 import warnings
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.files import File
+from django.core.files.base import ContentFile
 from django.db import transaction
 from django.db.models import Max
 from django.utils.text import slugify
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from apps.jrc_texts.services import can_edit_text
 from apps.jrc_video.downloads import channel_caption, downloadable_final, missing_for_publication
 from apps.members.models import WorkspaceMembership
 
 from .models import ChannelThumbnail
+
+logger = logging.getLogger(__name__)
 
 MAX_BYTES = 20 * 1024 * 1024
 # Bound decoded dimensions as well as compressed bytes to limit memory usage.
@@ -26,6 +30,8 @@ FORMATS = {"JPEG": ("image/jpeg", "jpg"), "PNG": ("image/png", "png"), "WEBP": (
 EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
 DECLARED_TYPES = {"image/jpeg", "image/jpg", "image/pjpeg", "image/png", "image/webp"}
 TYPE_ERROR = "Upload a JPG, PNG or WebP image."
+SMALL_IMAGE_MAX_SIDE = 480
+SMALL_IMAGE_QUALITY = 82
 
 
 def member(workspace, user):
@@ -112,6 +118,27 @@ def validate_image(upload):
     return {"content_type": content_type, "extension": canonical, "width": width, "height": height}
 
 
+def generate_small_image(image_file):
+    """Return a bounded JPEG preview while leaving the source file unchanged."""
+    from io import BytesIO
+
+    image_file.seek(0)
+    with Image.open(image_file) as opened:
+        # Phones store rotation in EXIF; browsers apply it to the original, so the preview must too.
+        source = ImageOps.exif_transpose(opened)
+        source.thumbnail((SMALL_IMAGE_MAX_SIDE, SMALL_IMAGE_MAX_SIDE), Image.Resampling.LANCZOS)
+        if source.mode in ("RGBA", "LA") or (source.mode == "P" and "transparency" in source.info):
+            rgba = source.convert("RGBA")
+            preview = Image.new("RGB", rgba.size, "white")
+            preview.paste(rgba, mask=rgba.getchannel("A"))
+        else:
+            preview = source.convert("RGB")
+        output = BytesIO()
+        preview.save(output, format="JPEG", quality=SMALL_IMAGE_QUALITY, optimize=True)
+    image_file.seek(0)
+    return ContentFile(output.getvalue(), name="preview.jpg")
+
+
 def upload_thumbnail(post, platform_post, user, upload, membership):
     """Store a new version; the newest version is the channel's current thumbnail.
 
@@ -148,6 +175,11 @@ def upload_thumbnail(post, platform_post, user, upload, membership):
             uploaded_by=user,
         )
         thumbnail.image.save(f"{thumbnail.id}.{found['extension']}", File(upload), save=False)
+        try:
+            thumbnail.small_image.save(f"{thumbnail.id}-small.jpg", generate_small_image(upload), save=False)
+        except (OSError, ValueError, Image.DecompressionBombError):
+            # The original passed validation; without a preview the templates fall back to it.
+            logger.warning("Could not create a small preview for thumbnail %s", thumbnail.id, exc_info=True)
         thumbnail.save()
         thumbnail.returned = return_edited_to_review(post, before)
     return thumbnail

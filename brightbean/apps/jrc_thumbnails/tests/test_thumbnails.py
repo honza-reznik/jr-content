@@ -1,12 +1,13 @@
 """P1-B10: image bytes, channel history, live permissions and all three screens."""
 
-from io import BytesIO
+from io import BytesIO, StringIO
 from unittest.mock import Mock, patch
 from uuid import uuid4
 
 import pytest
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.management import call_command
 from django.urls import reverse
 from django.utils import timezone
 from PIL import Image
@@ -74,17 +75,22 @@ def downloadable(variant):
 
 @pytest.mark.parametrize("fmt", ["JPEG", "PNG", "WEBP"])
 def test_supported_images_are_stored_with_verified_metadata(post, variant, user, fmt):
-    picture = image_upload(fmt)
+    picture = image_upload(fmt, size=(1200, 600))
     data = picture.read()
     picture.seek(0)
     thumbnail = upload(post, variant, user, picture)
-    assert (thumbnail.number, thumbnail.width, thumbnail.height, thumbnail.size) == (1, 32, 24, len(data))
+    assert (thumbnail.number, thumbnail.width, thumbnail.height, thumbnail.size) == (1, 1200, 600, len(data))
     assert thumbnail.content_type == services.FORMATS[fmt][0]
     assert thumbnail.image.name.startswith(f"jrc_thumbnails/{post.workspace_id}/{variant.pk}/")
     assert thumbnail.image.name.endswith("." + services.FORMATS[fmt][1])
+    assert thumbnail.small_image.name.endswith(f"{thumbnail.pk}-small.jpg")
     assert thumbnail.uploaded_by == user
     with thumbnail.image.open("rb") as stored:
         assert stored.read() == data
+    with thumbnail.small_image.open("rb") as stored, Image.open(stored) as preview:
+        assert preview.format == "JPEG"
+        assert max(preview.size) <= services.SMALL_IMAGE_MAX_SIDE
+        assert preview.size == (480, 240)
 
 
 def test_replacement_keeps_history_and_channels_independent(post, variant, workspace, user):
@@ -191,6 +197,9 @@ def test_download_reuses_publication_permissions(
     thumbnail = upload(post, variant, user)
     WorkspaceMembership.objects.filter(workspace=workspace, user=user).update(workspace_role=role)
     client.force_login(user)
+    content = client.get(detail(post), {"tab": "publish"}).content
+    assert (b"data-thumbnail-download" in content) == allowed
+    assert b"data-thumbnail-image" in content
     response = client.get(url("download", post, variant, thumbnail))
     assert response.status_code == (200 if allowed else 403)
     if allowed:
@@ -198,14 +207,20 @@ def test_download_reuses_publication_permissions(
         assert response["Content-Type"] == "image/png"
         assert response["Cache-Control"] == "private, no-store"
         assert b"".join(response.streaming_content) == b"0123456789"
+        response.close()
+        assert gateway.get_object.call_args.kwargs["Key"] == thumbnail.image.name
     else:
         gateway.head_object.assert_not_called()
-    content = client.get(detail(post), {"tab": "publish"}).content
-    assert (b"data-thumbnail-download" in content) == allowed
-    assert b"data-thumbnail-image" in content
-    # Everyone in this workspace, including a viewer, may see the image.
-    response = client.get(reverse("jrc_private_file", kwargs={"path": thumbnail.image.name}))
+
+
+@pytest.mark.parametrize("field_name", ["image", "small_image"])
+def test_thumbnail_files_use_private_file_access(client, post, variant, user, gateway, field_name):
+    thumbnail = upload(post, variant, user)
+    client.force_login(user)
+    image_field = getattr(thumbnail, field_name)
+    response = client.get(reverse("jrc_private_file", kwargs={"path": image_field.name}))
     assert response.status_code == 200
+    assert b"".join(response.streaming_content) == b"0123456789"
     response.close()
 
 
@@ -432,6 +447,7 @@ def test_screens_include_current_and_complete_history(client, post, variant, use
                 platform_post=variant,
                 number=n,
                 image=f"jrc_thumbnails/{n}.png",
+                small_image=f"jrc_thumbnails/{n}-small.jpg",
                 content_type="image/png",
                 size=10,
                 width=1,
@@ -445,11 +461,29 @@ def test_screens_include_current_and_complete_history(client, post, variant, use
         content = client.get(detail(post), {"tab": tab}).content
         assert b"Version 23" in content
         assert b"Earlier versions (22)" in content
-        assert thumbnail.image.url.encode() in content
+        current = ChannelThumbnail.objects.get(number=23)
+        assert f'src="{current.small_image.url}"'.encode() in content
+        assert f'href="{current.image.url}"'.encode() in content
+        assert f'href="{thumbnail.image.url}"'.encode() in content
     approval = client.get(detail(post), {"tab": "approval"}).content
     assert b"Thumbnail for Instagram" in approval
     assert b"version 23" in approval
     assert b"data-thumbnail-form" not in approval
+
+
+def test_backfill_thumbnail_previews_is_idempotent(post, variant, user):
+    thumbnail = upload(post, variant, user)
+    thumbnail.small_image.delete(save=False)
+    thumbnail.small_image = ""
+    thumbnail.save(update_fields=["small_image"])
+    first_output = StringIO()
+    call_command("backfill_thumbnail_previews", stdout=first_output)
+    thumbnail.refresh_from_db()
+    assert thumbnail.small_image
+    assert "Created 1 preview(s); 0 failed." in first_output.getvalue()
+    second_output = StringIO()
+    call_command("backfill_thumbnail_previews", stdout=second_output)
+    assert "Generating previews for 0 thumbnail(s)" in second_output.getvalue()
 
 
 def test_channel_removal_preserves_thumbnail_history_and_parent_can_be_deleted(post, variant, user):
@@ -541,3 +575,37 @@ def test_invalid_image_error_is_by_the_field_and_keeps_previous_version(client, 
     assert "data-thumbnail-status>Upload a JPG, PNG or WebP image." in page
     assert "up to 20 MB" in page
     assert list(ChannelThumbnail.objects.values_list("pk", flat=True)) == [first.pk]
+
+
+def test_small_preview_follows_exif_orientation_and_flattens_transparency(post, variant, user):
+    from io import BytesIO
+
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    exif = Image.Exif()
+    exif[0x0112] = 6  # stored landscape, shown rotated 90° (typical phone photo)
+    data = BytesIO()
+    Image.new("RGB", (40, 20), "red").save(data, format="JPEG", exif=exif)
+    rotated = upload(post, variant, user, SimpleUploadedFile("phone.jpg", data.getvalue(), content_type="image/jpeg"))
+    with rotated.small_image.open("rb") as stored, Image.open(stored) as preview:
+        assert preview.size == (20, 40)
+
+    data = BytesIO()
+    Image.new("RGBA", (10, 10), (0, 0, 0, 0)).save(data, format="PNG")
+    clear = upload(post, variant, user, SimpleUploadedFile("clear.png", data.getvalue(), content_type="image/png"))
+    with clear.small_image.open("rb") as stored, Image.open(stored) as preview:
+        assert preview.mode == "RGB"
+        assert preview.getpixel((5, 5)) == (255, 255, 255)
+
+
+def test_failed_preview_keeps_upload_and_falls_back_to_original(client, post, variant, user, monkeypatch):
+    def broken(_file):
+        raise OSError("cannot decode")
+
+    monkeypatch.setattr(services, "generate_small_image", broken)
+    thumbnail = upload(post, variant, user)
+    assert thumbnail.image
+    assert not thumbnail.small_image
+    client.force_login(user)
+    content = client.get(detail(post), {"tab": "publish"}).content
+    assert f'src="{thumbnail.image.url}"'.encode() in content

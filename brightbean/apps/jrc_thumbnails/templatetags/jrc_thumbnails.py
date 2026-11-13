@@ -45,7 +45,8 @@ def channel_thumbnail(context, variant, mode="caption", label=""):
         "label": label or f"{variant.social_account.get_platform_display()} · {variant.social_account.account_name}",
         "variant": variant,
         "current": current,
-        "current_url": current.image.url if current else "",
+        "current_url": (current.small_image or current.image).url if current else "",
+        "current_original_url": current.image.url if current else "",
         "download_url": download_url(current) if current else "",
         "download_blocked": mode == "publish" and current is not None and not may_download,
         # P1-B27: the reason comes from the same rule as the download itself.
@@ -53,7 +54,13 @@ def channel_thumbnail(context, variant, mode="caption", label=""):
         if mode == "publish" and current is not None and not may_download
         else "",
         "history": [
-            {"thumbnail": item, "url": item.image.url, "download_url": download_url(item)} for item in versions[1:]
+            {
+                "thumbnail": item,
+                "url": (item.small_image or item.image).url,
+                "original_url": item.image.url,
+                "download_url": download_url(item),
+            }
+            for item in versions[1:]
         ],
         "can_upload": mode != "approval" and post is not None and services.can_upload(post, membership),
         "upload_url": reverse("jrc_thumbnails:upload", kwargs=kwargs),

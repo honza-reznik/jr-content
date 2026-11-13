@@ -11,7 +11,8 @@ from django.db.models import Q
 def thumbnail_path(instance, filename):
     """Private key in the jrc-app bucket; read only through the session-checked file gateway (P1-B03)."""
     extension = filename.rsplit(".", 1)[-1].lower()
-    return f"jrc_thumbnails/{instance.post.workspace_id}/{instance.platform_post_id}/{instance.id}.{extension}"
+    suffix = "-small" if filename.rsplit("/", 1)[-1].rsplit(".", 1)[0].endswith("-small") else ""
+    return f"jrc_thumbnails/{instance.post.workspace_id}/{instance.platform_post_id}/{instance.id}{suffix}.{extension}"
 
 
 class ChannelThumbnail(models.Model):
@@ -22,6 +23,7 @@ class ChannelThumbnail(models.Model):
     platform_post = models.ForeignKey("composer.PlatformPost", on_delete=models.RESTRICT, related_name="jrc_thumbnails")
     number = models.PositiveIntegerField()
     image = models.FileField(upload_to=thumbnail_path, max_length=255)
+    small_image = models.FileField(upload_to=thumbnail_path, max_length=255, blank=True, default="")
     original_name = models.CharField(max_length=255, blank=True, default="")
     content_type = models.CharField(max_length=20)
     size = models.PositiveBigIntegerField()
