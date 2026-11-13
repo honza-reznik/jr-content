@@ -252,17 +252,53 @@ def _stream_s3_client():
 
 
 class _HlsStreamResponse(StreamingResponse):
-    """Close storage and release capacity even on cancellation or iterator failure."""
+    """Close storage and release capacity even on cancellation or iterator failure.
+
+    A segment has one deadline for the whole response. A file transfer sets
+    ``idle_seconds`` instead (P2-B05): no total limit, but every piece must be
+    read and accepted by the client within it, and the capacity lease is
+    renewed while pieces keep moving.
+    """
     release = None
+    idle_seconds = None
 
     def __init__(self, *args, body, **kwargs):
         super().__init__(*args, **kwargs)
         self.storage_body = body
 
+    async def stream_response(self, send):
+        idle = self.idle_seconds
+        if idle is None:
+            await super().stream_response(send)
+            return
+        renew = getattr(self.release, "renew", None)
+        with anyio.fail_after(idle):
+            await send({"type": "http.response.start", "status": self.status_code, "headers": self.raw_headers})
+        pieces = self.body_iterator.__aiter__()
+        while True:
+            started = monotonic()
+            with anyio.fail_after(idle):
+                try:
+                    chunk = await pieces.__anext__()
+                except StopAsyncIteration:
+                    break
+                # A storage read runs in a worker thread, which a timeout cannot
+                # interrupt; a piece that arrived too late is not sent either.
+                if monotonic() - started > idle:
+                    raise TimeoutError("File transfer stalled")
+                await send({"type": "http.response.body", "body": chunk, "more_body": True})
+            if renew is not None:
+                renew()
+        with anyio.fail_after(idle):
+            await send({"type": "http.response.body", "body": b"", "more_body": False})
+
     async def __call__(self, scope, receive, send):
         try:
-            with anyio.fail_after(getattr(self, "timeout_seconds", settings.hls_stream_timeout_seconds)):
+            if self.idle_seconds is not None:
                 await super().__call__(scope, receive, send)
+            else:
+                with anyio.fail_after(settings.hls_stream_timeout_seconds):
+                    await super().__call__(scope, receive, send)
         finally:
             try:
                 self.storage_body.close()

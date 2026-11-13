@@ -656,7 +656,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
               setTimeout(() => refetchVersions(), 2500)
             }}
           />
-          <VersionSwitcher versions={versions} />
+          <VersionSwitcher assetId={asset?.id} versions={versions} />
           {asset && canCompare(asset.asset_type, versions) && (
             <button
               onClick={() => {

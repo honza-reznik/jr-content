@@ -301,3 +301,72 @@ def test_video_error_does_not_forward_length_of_discarded_body(client, user, mon
     assert response.get("Content-Length", "0") == "0"
     assert response["Retry-After"] == "60"
     upstream.close.assert_called_once()
+
+
+class _SlowRead:
+    """A locally generated object handed over one piece at a time, with a pause between pieces."""
+
+    def __init__(self, data, pause=0.0, stall_at=None, stall=0.0):
+        self.data, self.pause, self.stall_at, self.stall = BytesIO(data), pause, stall_at, stall
+        self.reads = 0
+
+    def read(self, size):
+        import time
+
+        self.reads += 1
+        time.sleep(self.stall if self.reads == self.stall_at else self.pause)
+        return self.data.read(size)
+
+
+def test_slow_large_transfer_has_no_total_deadline_and_renews_its_lease(monkeypatch):
+    """P2-B05: the gateway used to stop every transfer at 300 s; only a stalled piece ends it now."""
+    import hashlib
+    import os
+    import time
+
+    monkeypatch.setattr(views, "IDLE_SECONDS", 0.25)
+    data = os.urandom(6 * 1024 * 1024)
+    source, close, release = _SlowRead(data, pause=0.01), Mock(), Mock()
+    started = time.monotonic()
+    response = views._stream(source.read, close, release)
+    received = b"".join(response.streaming_content)
+    assert time.monotonic() - started > 4 * views.IDLE_SECONDS
+    assert hashlib.sha256(received).digest() == hashlib.sha256(data).digest()
+    assert release.renew.call_count == len(data) // views.CHUNK_BYTES
+    close.assert_called()
+    release.assert_called()
+
+
+@pytest.mark.parametrize("stalled", ["storage", "client"])
+def test_stalled_transfer_is_cut_and_releases_capacity(monkeypatch, stalled):
+    import time
+
+    monkeypatch.setattr(views, "IDLE_SECONDS", 0.1)
+    source = _SlowRead(b"x" * views.CHUNK_BYTES * 5, stall_at=3 if stalled == "storage" else None, stall=0.3)
+    close, release = Mock(), Mock()
+    pieces = iter(views._stream(source.read, close, release).streaming_content)
+    assert next(pieces) and next(pieces)
+    if stalled == "client":
+        time.sleep(0.3)  # the client stops taking data
+    with pytest.raises(RuntimeError, match="stalled"):
+        next(pieces)
+    close.assert_called()
+    release.assert_called()
+
+
+def test_lease_renewal_is_throttled_and_keeps_the_shared_ttl(user, monkeypatch):
+    from apps.jrc_storage import limits
+
+    redis = Mock()
+    redis.eval.return_value = 1
+    monkeypatch.setattr(limits, "connection", lambda: redis)
+    lease = limits.acquire(user)
+    assert redis.eval.call_args.args[10] == limits.LEASE_SECONDS == 369
+    keys, member = redis.eval.call_args.args[2:4], redis.eval.call_args.args[-1]
+    lease.renew()
+    assert redis.eval.call_count == 1  # just admitted, nothing to renew yet
+    lease.renewed -= limits.LEASE_SECONDS
+    lease.renew()
+    assert redis.eval.call_args.args == (limits.RENEW, 2, *keys, member, limits.LEASE_SECONDS)
+    lease()
+    assert redis.eval.call_args.args == (limits.RELEASE, 2, *keys, member)

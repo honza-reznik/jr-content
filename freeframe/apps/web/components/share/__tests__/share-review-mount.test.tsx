@@ -62,7 +62,7 @@ describe('folder share — opening an asset mounts the review UI (#192)', () => 
     fireEvent.doubleClick(screen.getByText('Clip.mp4'))
 
     await waitFor(() => expect(screen.getAllByPlaceholderText('Leave your comment...').length).toBeGreaterThan(0), { timeout: 3000 })
-    expect(screen.queryByRole('button', { name: 'Public' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Internal' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Team and client' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Team only' })).toBeNull()
   })
 })

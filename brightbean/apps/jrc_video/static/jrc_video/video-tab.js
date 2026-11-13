@@ -85,6 +85,12 @@
     versions.forEach(function (v) { select.appendChild(option(v)); });
     if (version) select.value = version.id;
     show(toolbar, versions.length > 0, "flex");
+    var download = panel.querySelector("[data-video-download]");
+    if (download) {
+      if (version && version.download_url) download.href = version.download_url;
+      else download.removeAttribute("href");
+      show(download, !!(version && version.download_url));
+    }
     show(select.closest("label"), versions.length > 0);
 
     show(badge, !!(version && version.is_final), "inline-flex");

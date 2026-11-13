@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlsplit
 from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
+from django.urls import reverse
 from django.utils import timezone
 
 from apps.composer.models import PlatformPost
@@ -610,6 +611,7 @@ def channel_cards(user, post, membership):
     """Channels of this content with their video versions, for the Video tab and the status feed."""
     from apps.jrc_production.views import _enabled_caption_accounts
 
+    from .downloads import can_download_version
     from .player import can_mark_final
 
     editor = can_upload(post, membership)
@@ -629,6 +631,20 @@ def channel_cards(user, post, membership):
         rows = list(video.versions.all()) if video else []
         percents = _progress(rows)
         versions = [_version_row(v, user, percents.get(v.pk)) for v in rows]
+        for row, version in zip(rows, versions, strict=True):
+            # The same rule as the endpoint: the link is shown only where the download is allowed.
+            version["download_url"] = (
+                reverse(
+                    "jrc_video:version_download",
+                    kwargs={
+                        "workspace_id": post.workspace_id,
+                        "post_id": post.pk,
+                        "version_id": version["id"],
+                    },
+                )
+                if can_download_version(membership, variant, row)
+                else ""
+            )
         final = video.final_version if video and video.final_version_id else None
         cards.append(
             {

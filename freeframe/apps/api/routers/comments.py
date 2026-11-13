@@ -177,7 +177,7 @@ def _require_visible_comment(db: Session, asset: Asset, comment: Comment, user: 
 def _require_public_comment_input(db: Session, asset: Asset, user: Optional[User], visibility: Optional[str]):
     """Clients and viewers write public comments only; the web interface does not offer more."""
     if visibility == "internal" and hides_internal_comments(db, asset.project_id, user):
-        raise HTTPException(status_code=403, detail="Internal comments are for the team")
+        raise HTTPException(status_code=403, detail="Only the team can write Team only comments; use Team and client")
 
 
 def _get_comment(db: Session, comment_id: uuid.UUID) -> Comment:

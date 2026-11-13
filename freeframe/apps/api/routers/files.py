@@ -2,7 +2,6 @@
 import json
 import posixpath
 import uuid
-from time import monotonic
 
 from botocore.exceptions import ClientError, ConnectTimeoutError, ReadTimeoutError
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -168,19 +167,16 @@ def file_bytes(
             body.close()
             release()
             return Response(status_code=status, headers=headers, media_type=obj.get("ContentType"))
-        deadline = monotonic() + settings.file_stream_timeout_seconds
-
         def chunks():
             try:
-                for chunk in body.iter_chunks(chunk_size=64 * 1024):
-                    if monotonic() > deadline:
-                        raise RuntimeError("File transfer deadline exceeded")
-                    yield chunk
+                yield from body.iter_chunks(chunk_size=64 * 1024)
             finally:
                 body.close()
                 release()
+        # No total deadline: a 4 GB original must finish on a slow line. A
+        # stalled storage read or client is cut by the idle limit instead.
         response = _HlsStreamResponse(chunks(), body=body, headers=headers, status_code=status, media_type=obj.get("ContentType"))
-        response.timeout_seconds = settings.file_stream_timeout_seconds
+        response.idle_seconds = settings.file_stream_idle_seconds
         response.release = release
         return response
     except ClientError as exc:

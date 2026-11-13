@@ -27,7 +27,9 @@ from .limits import TransferUnavailableError, acquire
 from .s3 import client_and_bucket
 
 CHUNK_BYTES = 64 * 1024
-TIMEOUT = 300
+# P2-B05: a transfer (a 4 GB original included) has no total time limit. It is cut when one piece
+# is not read from storage and taken by the client within this many seconds (slower than ~2 KiB/s).
+IDLE_SECONDS = 30
 
 
 def _authorized(user, key, workspace=None):
@@ -93,16 +95,21 @@ class FileStream(StreamingHttpResponse):
 
 
 def _stream(read, close, release, *, status=200, content_type=None, headers=None):
-    deadline = time.monotonic() + TIMEOUT
+    renew = getattr(release, "renew", None)
 
     def chunks():
         try:
+            moved = time.monotonic()
             while True:
-                if time.monotonic() > deadline:
-                    raise RuntimeError("File transfer deadline exceeded")
                 chunk = read(CHUNK_BYTES)
+                # Measured from handing over the previous piece: covers the client taking it and this read.
+                if time.monotonic() - moved > IDLE_SECONDS:
+                    raise RuntimeError("File transfer stalled")
                 if not chunk:
                     break
+                if renew is not None:
+                    renew()
+                moved = time.monotonic()
                 yield chunk
         finally:
             close()

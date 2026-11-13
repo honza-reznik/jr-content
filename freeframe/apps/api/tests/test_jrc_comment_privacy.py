@@ -126,6 +126,15 @@ def test_client_cannot_write_internal_comments_or_reply_into_internal_threads(wo
     assert reply.visibility == "public"
 
 
+def test_client_refusal_uses_the_shared_visibility_names(world):
+    """P2-B05: the error a client may see names the options as the whole app does."""
+    with pytest.raises(HTTPException) as exc:
+        _create(world, world["client"], visibility="internal")
+    assert exc.value.status_code == 403
+    assert "Team only" in exc.value.detail and "Team and client" in exc.value.detail
+    assert "Internal" not in exc.value.detail
+
+
 def test_team_can_write_internal(world):
     assert _create(world, world["team"], visibility="internal").visibility == "internal"
 

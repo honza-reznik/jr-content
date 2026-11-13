@@ -660,6 +660,24 @@ def test_video_tab_has_the_button_for_editors_and_a_script_with_nonce(client, ff
     assert "ff-access" not in html and "Bearer" not in html
 
 
+def test_drop_area_is_for_wide_screens_only_and_never_for_members_without_upload(client, ff, workspace, user, setup):
+    """P2-B05 (2i): a phone cannot drag a file in, so it keeps only the Upload version button."""
+    import re
+
+    detail = (
+        reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.id, "post_id": setup.id})
+        + "?tab=video"
+    )
+    client.force_login(user)
+    html = client.get(detail).content.decode()
+    zone = re.search(r'<div data-video-drop[^>]*class="([^"]*)"', html)
+    assert zone, "editors get the drop area"
+    classes = zone.group(1).split()
+    assert "hidden" in classes and "sm:flex" in classes
+    client.force_login(make_user(workspace, "drop-viewer@example.com", "viewer"))
+    assert "data-video-drop" not in client.get(detail).content.decode()
+
+
 def test_status_is_not_cached_and_never_carries_tokens(client, ff, workspace, user, setup):
     client.force_login(user)
     response = client.get(url("upload_status", workspace, setup))
