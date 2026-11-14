@@ -14,3 +14,37 @@
 .script-versions li { min-width:0; overflow-wrap:anywhere; }
 .script-versions [data-version-name] button { width:auto; }
 .proposal-actions { display:flex; flex-wrap:wrap; gap:.5rem; margin-top:.5rem; }
+/* P2-B08: automatic saving status, channel tags and the tab link. */
+.jrc-save-status { min-height: 1rem; margin: 0; font-size: .75rem; color: #78716c; }
+.jrc-save-status[data-state="saving"] { color: #57534e; }
+.jrc-save-status[data-state="saved"] { color: #047857; }
+.jrc-save-status[data-state="error"], .jrc-save-status[data-state="offline"] { color: #b91c1c; font-weight: 600; }
+.caption-label-row { display:flex; align-items:center; justify-content:space-between; gap:.5rem; margin-bottom:.35rem; }
+.caption-field[readonly] { background:#fafaf9; }
+.channel-tags { display:flex; flex-wrap:wrap; align-items:center; gap:.375rem; margin:.25rem 0 0; padding:0; list-style:none; }
+.channel-tag { display:inline-flex; align-items:center; max-width:100%; min-width:0; border-radius:.375rem; background:#f5f5f4; color:#44403c; font-size:.75rem; line-height:1rem; }
+.channel-tag-name { min-width:0; padding:.25rem .5rem; overflow-wrap:anywhere; }
+.channel-tag-status { color:#78716c; }
+.channel-tag-remove { margin:0; display:flex; }
+.channel-tag-remove button { min-width:28px; min-height:28px; border:0; border-left:1px solid #e7e5e4; border-radius:0 .375rem .375rem 0; background:transparent; color:#78716c; font-size:1rem; line-height:1; cursor:pointer; }
+.channel-tag-remove button:hover, .channel-tag-remove button:focus-visible { background:#fee2e2; color:#b91c1c; }
+.channel-tag-add { position:relative; list-style:none; }
+.channel-tag-add summary { display:inline-flex; align-items:center; justify-content:center; min-width:28px; min-height:28px; border:1px dashed #a8a29e; border-radius:.375rem; color:#9a3412; font-size:1rem; font-weight:600; cursor:pointer; list-style:none; }
+.channel-tag-add summary::-webkit-details-marker { display:none; }
+.channel-tag-add summary:hover, .channel-tag-add summary:focus-visible, .channel-tag-add details[open] summary { border-color:#ea580c; background:#fff7ed; }
+.channel-add-form { display:flex; flex-wrap:wrap; gap:.375rem; margin-top:.375rem; }
+.channel-add-form select { min-width:0; max-width:100%; border:1px solid #d6d3d1; border-radius:.5rem; padding:.375rem .5rem; font-size:.875rem; background:#fff; }
+.channel-add-form button { border-radius:.5rem; background:#ea580c; color:#fff; font-size:.875rem; font-weight:600; padding:.375rem .75rem; }
+.channel-tags-status, .channel-tags-hint { margin:.25rem 0 0; font-size:.75rem; color:#78716c; }
+.channel-tags-error { margin:.25rem 0 0; font-size:.75rem; color:#b91c1c; }
+.channel-tags-empty { font-size:.875rem; color:#78716c; }
+.jrc-content-tabs-row { display:flex; align-items:flex-end; gap:.5rem; }
+.jrc-content-tabs-row .jrc-content-tabs { flex:1; min-width:0; }
+.jrc-copy-link { flex:none; display:inline-flex; align-items:center; gap:.35rem; margin-bottom:.4rem; border:1px solid #d6d3d1; border-radius:.5rem; background:#fff; color:#44403c; padding:.4rem .65rem; font-size:.8125rem; font-weight:500; min-height:36px; white-space:nowrap; }
+.jrc-copy-link:hover { background:#fafaf9; }
+.jrc-copy-link:focus-visible, .jrc-tab:focus-visible { outline:2px solid #ea580c; outline-offset:2px; }
+[data-content-panel][aria-busy="true"] > section { opacity:.6; transition:opacity .15s; }
+@media (max-width: 639px) {
+  .jrc-copy-link [data-copy-tab-link-label] { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
+  .jrc-copy-link { padding:.4rem .55rem; }
+}

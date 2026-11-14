@@ -4,7 +4,11 @@
 {% block extra_head %}
 <link rel="stylesheet" href="{% static 'jrc_production/detail-edit.css' %}">
 <link rel="stylesheet" href="{% static 'jrc_production/content-tabs.css' %}">
-{% if active_tab == "caption" or active_tab == "publish" or active_tab == "approval" %}<link rel="stylesheet" href="{% static 'jrc_thumbnails/thumbnail.css' %}">{% endif %}
+{# P2-B08: tabs switch without a page load, so every tab's styles are here from the start. #}
+<link rel="stylesheet" href="{% static 'jrc_thumbnails/thumbnail.css' %}">
+<link rel="stylesheet" href="{% static 'jrc_production/shotlist.css' %}">
+<link rel="stylesheet" href="{% static 'jrc_texts/script.css' %}">
+<script src="{% static 'jrc_production/autosave.js' %}" nonce="{{ request.csp_nonce }}"></script>
 {% endblock %}
 {% block page_header %}{% endblock %}
 {% block content %}
@@ -39,9 +43,9 @@
             </div>
         </div>
         <div class="mt-5 grid grid-cols-1 gap-3 border-t border-stone-100 pt-4 sm:grid-cols-3">
-            <div><p class="text-xs text-stone-400">Channels</p><div class="mt-1 flex flex-wrap gap-1.5">
-                {% for platform_post in post.platform_posts.all %}<span class="rounded-md bg-stone-100 px-2 py-1 text-xs text-stone-700">{% include "jrc_channels/icon.html" with account=platform_post.social_account %} {{ platform_post.social_account.jrc_channel.display_name|default:platform_post.social_account.account_name }} · {{ platform_post.get_status_display }}</span>{% empty %}<span class="text-sm text-stone-500">No channels</span>{% endfor %}
-            </div></div>
+            <div class="min-w-0"><p class="text-xs text-stone-400" id="content-channels-label">Channels</p>
+                <div id="content-channels" data-channel-tags data-url="{% url 'jrc_production:channels' workspace_id=workspace.id post_id=post.id %}">{% include "jrc_production/_channel_tags.html" %}</div>
+            </div>
             <div>{% timezone workspace.effective_timezone %}
                 {% if can_edit_proposal %}
                 <form data-proposal-form action="{% url 'jrc_production:proposed_date' workspace_id=workspace.id post_id=post.id %}">{% csrf_token %}
@@ -56,186 +60,32 @@
                 <form data-category-form action="{% url 'jrc_production:category' workspace_id=workspace.id post_id=post.id %}">{% csrf_token %}<select id="content-category" name="category" class="content-category" data-saved="{{ post.category_id|default:'' }}"><option value="">None</option>{% for category in content_categories %}<option value="{{ category.pk }}" {% if post.category_id == category.pk %}selected{% endif %}>{{ category.name }}</option>{% endfor %}</select></form>
                 {% else %}<p class="mt-1 text-sm font-medium text-stone-700">{{ post.category.name|default:"None" }}</p>{% endif %}</div>
         </div>
-        <details id="content-channels" class="mt-5 border-t border-stone-100 pt-4" {% if channel_error %}open{% endif %}>
-            <summary class="text-sm font-medium text-stone-700">Manage channels</summary>
-            {% if channel_error %}<p role="alert" class="mt-3 text-sm text-red-700">{{ channel_error }}</p>{% endif %}
-            {% if can_manage_channels %}
-                <p class="mt-3 text-sm text-stone-500">Add channels explicitly. New client channels never attach to existing content automatically. Move content to Editing to change its channels.</p>
-                {% if addable_channels %}<form method="post" class="mt-3 flex flex-wrap gap-2">{% csrf_token %}<input type="hidden" name="action" value="add_channel"><label for="add-channel" class="sr-only">Channel to add</label><select id="add-channel" name="channel" class="rounded-lg border border-stone-300 px-3 py-2">{% for account in addable_channels %}<option value="{{ account.id }}">{{ account.jrc_channel.display_name|default:account.account_name }}</option>{% endfor %}</select><button class="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white">Add channel</button></form>{% else %}<p class="mt-3 text-sm text-stone-500">No more enabled channels. Enable a channel in the client profile first.</p>{% endif %}
-                {% for variant in post.platform_posts.all %}<form method="post" class="mt-3 flex flex-wrap items-center gap-2">{% csrf_token %}<input type="hidden" name="action" value="remove_channel"><input type="hidden" name="platform_post" value="{{ variant.id }}"><span class="text-sm">{{ variant.social_account.account_name }}</span><button class="rounded-lg border border-stone-300 px-3 py-2 text-sm">Remove channel</button></form>{% endfor %}
-                <p class="mt-3 text-xs text-stone-500">Channels with caption history, video or thumbnails cannot be removed.</p>
-            {% else %}<p class="mt-3 text-sm text-stone-500">Ask an editor to add a channel to this content.</p>{% endif %}
-        </details>
     </header>
 
-    <div class="jrc-content-tabs mt-5" data-content-tabs>
+    <div class="jrc-content-tabs-row mt-5">
+    <div class="jrc-content-tabs" data-content-tabs>
     <nav aria-label="Content sections" class="overflow-x-auto" data-tabs-scroll>
         <div class="flex min-w-max border-b border-stone-200" role="tablist">
             {% for tab in tabs %}
-            <a role="tab" aria-selected="{% if active_tab == tab %}true{% else %}false{% endif %}" href="?tab={{ tab }}" class="border-b-2 px-3 py-3 text-sm font-medium capitalize sm:px-5 {% if active_tab == tab %}border-orange-500 text-orange-700{% else %}border-transparent text-stone-500 hover:text-stone-800{% endif %}">{{ tab }}</a>
+            <a role="tab" id="content-tab-{{ tab }}" data-tab-link="{{ tab }}" aria-controls="content-tabpanel" aria-selected="{% if active_tab == tab %}true{% else %}false{% endif %}" href="?tab={{ tab }}" class="jrc-tab border-b-2 px-3 py-3 text-sm font-medium capitalize sm:px-5 {% if active_tab == tab %}border-orange-500 text-orange-700{% else %}border-transparent text-stone-500 hover:text-stone-800{% endif %}">{{ tab }}</a>
             {% endfor %}
         </div>
     </nav>
     <button type="button" class="jrc-tabs-arrow jrc-tabs-previous" aria-label="Previous content sections" hidden>‹</button>
     <button type="button" class="jrc-tabs-arrow jrc-tabs-next" aria-label="More content sections" hidden>›</button>
     </div>
+    {# P2-B08: the address of the open tab (each tab has its own). #}
+    <button type="button" class="jrc-copy-link" data-copy-tab-link aria-label="Copy link to this tab"><svg aria-hidden="true" viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8.5 11.5a3.5 3.5 0 0 0 5 0l2.5-2.5a3.5 3.5 0 0 0-5-5l-1 1"/><path d="M11.5 8.5a3.5 3.5 0 0 0-5 0L4 11a3.5 3.5 0 0 0 5 5l1-1"/></svg><span data-copy-tab-link-label>Copy link</span></button>
+    </div>
 
-    <section class="mt-5 rounded-2xl border border-stone-200 bg-white p-4 sm:p-6" role="tabpanel" aria-label="{{ active_tab|title }}">
-        {% if needs_channel %}
-            <p class="text-sm text-stone-500">Add a channel first</p>
-            {% if can_manage_channels %}<a href="#content-channels" data-open-channels class="mt-3 inline-flex rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white">Add channel</a>{% else %}<p class="mt-3 text-sm text-stone-500">Ask an editor to add a channel.</p>{% endif %}
-        {% elif active_tab == "discussion" %}
-            <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">Discussion</h2><p class="mt-1 text-sm text-stone-500">Discuss this content with your team{% if is_client %}.{% else %}. Team only comments are not visible to the client.{% endif %}</p></div>
-            {% if can_comment %}<form method="post" action="{% url 'jrc_production:add_content_comment' workspace_id=workspace.id post_id=post.id %}" class="mb-6 rounded-xl border border-stone-200 bg-stone-50 p-3 sm:p-4">
-                {% csrf_token %}
-                <label for="new-comment" class="sr-only">Write a comment</label>
-                <textarea id="new-comment" name="body" required rows="3" maxlength="10000" class="w-full rounded-lg border border-stone-300 bg-white p-3 text-sm text-stone-800 placeholder:text-stone-400 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-100" placeholder="Write a comment…"></textarea>
-                <div class="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    {% if not is_client %}<label class="flex items-center gap-2 text-sm text-stone-600"><span>Visible to</span><select name="visibility" class="rounded-lg border border-stone-300 bg-white px-2 py-2 text-sm"><option value="internal" selected>Team only</option><option value="external">Team and client</option></select></label>{% else %}<span class="text-xs text-stone-500">Visible to you and the team</span>{% endif %}
-                    <button type="submit" class="w-full rounded-lg bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-orange-700 sm:w-auto">Add comment</button>
-                </div>
-            </form>{% endif %}
-            <ol class="space-y-4">
-                {% for comment in comments %}
-                <li class="rounded-xl border {% if comment.visibility == 'internal' %}border-amber-200 bg-amber-50/60{% else %}border-stone-200 bg-white{% endif %} p-3 sm:p-4">
-                    <article>
-                        <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"><div class="flex flex-wrap items-center gap-2"><p class="text-sm font-semibold text-stone-800">{% if comment.author %}{{ comment.author.display_name|default:comment.author.email }}{% else %}Former member{% endif %}</p><time class="text-xs text-stone-400">{{ comment.created_at|date:"M j, Y · g:i A" }}</time>{% if comment.visibility == 'internal' %}<span class="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">Team only</span>{% else %}<span class="rounded-full bg-teal-50 px-2 py-0.5 text-xs font-medium text-teal-800">Team and client</span>{% endif %}</div>
-                            {% if can_resolve_comments %}<form method="post" action="{% url 'jrc_production:resolve_content_comment' workspace_id=workspace.id post_id=post.id comment_id=comment.id %}">{% csrf_token %}<input type="hidden" name="resolved" value="{% if comment.is_resolved %}false{% else %}true{% endif %}"><button class="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50">{% if comment.is_resolved %}Reopen{% else %}Mark resolved{% endif %}</button></form>{% elif comment.is_resolved %}<span class="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-800">Resolved</span>{% endif %}</div>
-                        <p class="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-stone-700">{{ comment.body }}</p>
-                        {% if comment.is_resolved and can_resolve_comments %}<p class="mt-2 text-xs font-medium text-emerald-700">Resolved</p>{% endif %}
-                    </article>
-                    {% include "approvals/partials/comment_replies.html" with replies=comment.visible_replies only %}
-                    {% if can_comment %}<form method="post" action="{% url 'jrc_production:reply_to_content_comment' workspace_id=workspace.id post_id=post.id comment_id=comment.id %}" class="mt-4 flex flex-col gap-2 sm:flex-row">{% csrf_token %}<label for="reply-{{ comment.id }}" class="sr-only">Reply to comment</label><input id="reply-{{ comment.id }}" name="body" required maxlength="10000" class="min-w-0 flex-1 rounded-lg border border-stone-300 bg-white px-3 py-2.5 text-sm" placeholder="Write a reply…"><button type="submit" class="rounded-lg border border-stone-300 bg-white px-4 py-2.5 text-sm font-semibold text-stone-700 hover:bg-stone-50">Reply</button></form>{% endif %}
-                </li>
-                {% empty %}<li class="rounded-xl border border-dashed border-stone-300 px-4 py-8 text-center text-sm text-stone-500">No comments yet. Start the conversation.</li>{% endfor %}
-            </ol>
-        {% elif active_tab == "history" %}
-            <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">History</h2><p class="mt-1 text-sm text-stone-500">Saved text versions, stage changes, approval decisions, videos and shotlist changes for this content.</p></div>
-            <ol class="space-y-0">
-                {% for item in history %}
-                <li class="relative border-l border-stone-200 pb-6 pl-5 last:border-transparent last:pb-0">
-                    <span class="absolute -left-[5px] top-1 h-2.5 w-2.5 rounded-full {% if item.kind == 'approval' %}bg-blue-500{% elif item.kind == 'shotlist' %}bg-emerald-500{% else %}bg-orange-500{% endif %}"></span>
-                    <div class="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between"><p class="text-sm font-medium text-stone-800">{{ item.label }}</p><time class="text-xs text-stone-400">{{ item.created_at|date:"M j, Y · g:i A" }}</time></div>
-                    <p class="mt-1 text-xs text-stone-500">{% if item.actor %}{{ item.actor.display_name|default:item.actor.email }}{% else %}System{% endif %} · {% if item.kind == "approval" %}Approval{% elif item.kind == "shotlist" %}Shotlist{% elif item.kind == "text" %}Text version{% elif item.kind == "publication" %}Publication{% elif item.kind == "video" %}Video{% elif item.kind == "category" %}Category{% elif item.kind == "proposal" %}Proposed publication{% elif item.kind == "rename" %}Title{% else %}Production stage{% endif %}</p>
-                    {% if item.note and item.can_view_note %}{% if item.kind == "publication" and item.note|slice:":8" == "https://" %}<a href="{{ item.note }}" target="_blank" rel="noopener noreferrer" class="mt-2 inline-block break-all text-sm text-orange-700 underline">View published post</a>{% else %}<p class="mt-2 whitespace-pre-wrap rounded-lg bg-stone-50 p-3 text-sm text-stone-600">{{ item.note }}</p>{% endif %}{% endif %}
-                </li>
-                {% empty %}<li class="rounded-xl border border-dashed border-stone-300 px-4 py-8 text-center text-sm text-stone-500">No history yet.</li>{% endfor %}
-            </ol>
-        {% elif active_tab == "concept" %}
-            {% include "jrc_texts/script.html" with text_kind="concept" %}
-        {% elif active_tab == "script" %}
-            {% include "jrc_texts/script.html" with text_kind="script" %}
-        {% elif active_tab == "shotlist" %}
-            <link rel="stylesheet" href="{% static 'jrc_production/shotlist.css' %}">
-            <div id="shotlist" class="shotlist" data-shotlist>{% include "jrc_production/_shotlist.html" %}</div>
-            <p class="sr-only" role="status" data-shotlist-status></p>
-        {% elif active_tab == "video" %}
-            {% include "jrc_video/_upload_tab.html" %}
-        {% elif active_tab == "publish" %}
-            <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">Publish channels</h2><p class="mt-1 text-sm text-stone-500">Download the final video and the thumbnail, copy the saved caption, then record when you publish it manually.</p></div>
-            <div class="space-y-4">
-                {% for item in publish_channels %}
-                <article class="rounded-xl border border-stone-200 p-4 sm:p-5" aria-labelledby="publish-channel-{{ forloop.counter }}">
-                    <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                        <h3 id="publish-channel-{{ forloop.counter }}" class="font-semibold text-stone-900">{% include "jrc_channels/icon.html" with account=item.variant.social_account %} {{ item.label }}</h3>
-                        {% if item.published %}<span class="w-fit rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800">Published manually</span>{% else %}<span class="w-fit rounded-full bg-stone-100 px-3 py-1 text-xs font-medium text-stone-700">{{ item.variant.get_status_display }}</span>{% endif %}
-                    </div>
-                    <p class="mt-3 text-xs font-medium uppercase tracking-wide text-stone-500">Scheduled publication</p>
-                    {% if item.date_error %}<p role="alert" class="text-sm text-red-700">{{ item.date_error }}</p>{% endif %}
-                    <p class="mt-1 text-sm text-stone-800">{% if item.scheduled_label %}{{ item.scheduled_label }}{% else %}No date or time scheduled{% endif %}</p>
-                    {% if item.can_schedule %}
-                    <details class="mt-3" {% if item.date_open %}open{% endif %}>
-                        <summary class="cursor-pointer text-sm text-orange-700 underline">{% if item.scheduled_at %}Change date{% else %}Set date{% endif %}</summary>
-                        <form method="post" action="?tab=publish" class="mt-3 max-w-sm space-y-3">
-                            {% csrf_token %}<input type="hidden" name="action" value="set_date"><input type="hidden" name="platform_post" value="{{ item.variant.pk }}">
-                            <label for="{{ item.date_form.scheduled_at.id_for_label }}" class="block text-sm font-medium">Publication date and time ({{ workspace.effective_timezone }})</label>
-                            {{ item.date_form.scheduled_at }}
-                            {% for error in item.date_form.scheduled_at.errors %}<p role="alert" class="text-sm text-red-700">{{ error }}</p>{% endfor %}
-                            <p class="text-xs text-stone-500">This channel will wait for you to publish it manually.</p>
-                            <button class="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white">Save date</button>
-                        </form>
-                    </details>
-                    {% elif item.schedule_blocker %}<p class="mt-2 text-sm text-stone-500" data-schedule-blocker>No date can be set yet. {{ item.schedule_blocker }}</p>
-                    {% endif %}
-                    <div class="mt-4">
-                        <label for="publish-caption-{{ forloop.counter }}" class="mb-1 block text-xs font-medium uppercase tracking-wide text-stone-500">Saved caption</label>
-                        <textarea id="publish-caption-{{ forloop.counter }}" readonly rows="5" class="block w-full rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-stone-800">{{ item.caption }}</textarea>
-                        <div class="mt-2 flex flex-wrap items-center gap-2">
-                            {% if item.caption %}<button type="button" data-copy-caption="publish-caption-{{ forloop.counter }}" class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">Copy caption</button><span data-copy-status="publish-caption-{{ forloop.counter }}" class="text-xs text-stone-500" aria-live="polite"></span>{% else %}<span class="text-sm text-amber-700">Add a caption before publishing.</span>{% endif %}
-                            {% if item.video_final %}<span class="text-sm text-stone-700">Final video · v{{ item.video_number }}</span>{% endif %}
-                            {% if item.download_url %}<a href="{{ item.download_url }}" class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">Download final video</a>{% elif item.has_video and not item.video_final %}<span class="text-sm text-amber-700">No final video selected. Open <a href="?tab=video" class="text-orange-700 underline">Video</a> and mark a ready version as “Final for publishing”.</span>{% elif item.has_video and item.download_missing %}<span class="text-sm text-amber-700" data-download-blocker>To download the final video: {{ item.download_missing|join:" " }}</span>{% elif item.has_video %}<span class="text-sm text-stone-500">Members with publishing rights can download the final video.</span>{% endif %}
-                        </div>
-                    </div>
-                    {% channel_thumbnail item.variant "publish" item.label %}
-                    {% if item.published %}
-                        {% if item.publication_url %}<a href="{{ item.publication_url }}" target="_blank" rel="noopener noreferrer" class="mt-4 inline-block break-all text-sm text-orange-700 underline">View published post</a>{% endif %}
-                    {% elif item.can_mark %}
-                    <form method="post" action="{% url 'jrc_production:mark_published' workspace_id=workspace.id post_id=post.id %}" class="mt-5 border-t border-stone-100 pt-4" data-confirm-publication="{{ item.label }}">
-                        {% csrf_token %}<input type="hidden" name="platform_post" value="{{ item.variant.id }}">
-                        <label for="post-url-{{ forloop.counter }}" class="mb-1 block text-sm font-medium text-stone-700">Published post link <span class="font-normal text-stone-500">(optional, HTTPS)</span></label>
-                        <input id="post-url-{{ forloop.counter }}" name="post_url" type="url" inputmode="url" placeholder="https://…" class="block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm sm:max-w-xl">
-                        <button type="submit" class="mt-3 w-full rounded-lg bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-orange-700 sm:w-auto">Mark as published</button>
-                    </form>
-                    {% elif item.missing %}<p class="mt-4 text-sm text-stone-500" data-publish-blocker>To mark this channel as published: {{ item.missing|join:" " }}</p>{% elif not item.can_publish %}<p class="mt-4 text-sm text-stone-500">Members with publishing rights can mark this channel as published.</p>{% endif %}
-                </article>
-                {% empty %}<div class="rounded-xl border border-dashed border-stone-300 px-4 py-10 text-center text-sm text-stone-500">No enabled channels for this content.</div>{% endfor %}
-            </div>
-        {% elif active_tab == "caption" %}
-            <style>.jrc-caption-preview .preview-card{background:#fff;border:1px solid #e7e5e4;border-radius:14px;overflow:hidden}</style>
-            <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">Channel captions</h2><p class="mt-1 text-sm text-stone-500">Each enabled channel has its own plain text caption and saved versions. The composer shows the latest saved version read-only.</p></div>
-            {% if caption_error %}<p role="alert" class="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{{ caption_error }}</p>{% endif %}
-            <div class="space-y-5">
-                {% for item in caption_channels %}
-                <article class="rounded-xl border border-stone-200 p-4 sm:p-5" aria-labelledby="caption-title-{{ forloop.counter }}">
-                    <div class="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
-                        <h3 id="caption-title-{{ forloop.counter }}" class="font-semibold text-stone-900">{% include "jrc_channels/icon.html" with account=item.account %} {{ item.platform_label }} · {{ item.account.account_name }}</h3>
-                        {% if item.latest %}<p class="text-xs text-stone-500"><span data-version-label="{{ item.latest.pk }}">V{{ item.latest.number }}{% if item.latest.name %} – {{ item.latest.name }}{% endif %}</span> · {{ item.latest.created_by.display_name|default:"Former member" }} · {{ item.latest.finalized_at|date:"M j, Y · g:i A" }}</p>{% elif not item.variant %}<p class="text-xs text-stone-500">New channel · saving creates its copy of this content</p>{% endif %}
-                    </div>
-                    <button type="button" data-copy-target="caption-{{ forloop.counter }}" class="detail-button">Copy</button>
-                    <form method="post" class="mt-4">
-                        {% csrf_token %}
-                        <input type="hidden" name="action" value="save_caption">
-                        <input type="hidden" name="platform_post" value="{{ item.key }}">
-                        {% if item.latest %}<input type="hidden" name="base_version" value="{{ item.latest.id }}">{% endif %}
-                        <label for="caption-{{ forloop.counter }}" class="mb-1 block text-sm font-medium text-stone-700">Caption</label>
-                        <textarea id="caption-{{ forloop.counter }}" name="caption" rows="7" class="block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm text-stone-900 shadow-sm focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-200 disabled:bg-stone-50" data-caption-counter data-limit="{{ item.char_limit }}" data-escaped-chars="{{ item.escaped_chars }}" {% if not can_edit_captions %}readonly{% endif %}>{{ item.text }}</textarea>
-                        <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
-                            <p class="text-xs text-stone-500">Counted for {{ item.platform_label }}: <span data-caption-count>{{ item.char_count }}</span> / {{ item.char_limit }}</p>
-                            {% if can_edit_captions and item.reopens_review %}<p class="text-xs font-medium text-amber-700" data-reopens-review>{{ item.reopens_review }}</p>{% endif %}
-                            {% if can_edit_captions %}<button type="submit" class="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-300">Save version</button>{% endif %}
-                        </div>
-                    </form>
-                    {% if item.versions %}<details class="caption-versions"><summary>Saved versions</summary><ol>{% for version in item.versions %}<li class="version-label-item">
-                        <p data-version-label="{{ version.pk }}">V{{ version.number }}{% if version.name %} – {{ version.name }}{% endif %}</p><p class="text-xs text-stone-500">{{ version.created_by.display_name|default:"Former member" }} · {{ version.finalized_at|date:"M j, Y · g:i A" }}</p>
-                        {% if can_edit_captions %}<form data-version-name data-version="{{ version.pk }}" data-number="{{ version.number }}" action="{% url 'jrc_texts:version_name' workspace_id=workspace.id post_id=post.id version_id=version.pk %}">{% csrf_token %}<label>Version name (optional)<input name="name" maxlength="100" value="{{ version.name }}"></label><button type="submit" class="detail-button">Save name</button><span role="status"></span></form>{% endif %}
-                    </li>{% endfor %}</ol></details>{% endif %}
-                    {% channel_thumbnail item.variant "caption" %}
-                    {% if item.previous %}
-                    <details class="mt-4 border-t border-stone-100 pt-3">
-                        <summary class="cursor-pointer text-sm font-medium text-stone-700">Compare with <span data-version-label="{{ item.previous.pk }}">V{{ item.previous.number }}{% if item.previous.name %} – {{ item.previous.name }}{% endif %}</span> · {{ item.previous.created_by.display_name|default:"Former member" }} · {{ item.previous.finalized_at|date:"M j, Y · g:i A" }}{% if not item.previous.text %} · Empty text{% endif %}</summary>
-                        <div class="mt-3 grid gap-3 sm:grid-cols-2">
-                            <section class="min-w-0 rounded-lg bg-stone-50 p-3"><h4 class="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">Previous</h4><p class="whitespace-pre-wrap break-words text-sm text-stone-700">{% for part in item.old_diff %}{% if part.changed %}<del class="rounded bg-red-100 text-red-900">{{ part.text }}</del>{% else %}{{ part.text }}{% endif %}{% endfor %}</p></section>
-                            <section class="min-w-0 rounded-lg bg-stone-50 p-3"><h4 class="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">Current</h4><p class="whitespace-pre-wrap break-words text-sm text-stone-700">{% for part in item.new_diff %}{% if part.changed %}<ins class="rounded bg-green-100 text-green-900 no-underline">{{ part.text }}</ins>{% else %}{{ part.text }}{% endif %}{% endfor %}</p></section>
-                        </div>
-                    </details>
-                    {% endif %}
-                </article>
-                {% empty %}<div class="rounded-xl border border-dashed border-stone-300 px-4 py-10 text-center text-sm text-stone-500">No channels yet. Add a channel before writing a caption.</div>{% endfor %}
-            </div>
-        {% else %}
-            {% include "jrc_production/_approval_tab.html" %}
-        {% endif %}
-        {% if can_view_internal_notes and post.internal_notes %}<aside class="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4"><h3 class="text-sm font-semibold text-amber-900">Team notes</h3><p class="mt-2 whitespace-pre-wrap text-sm text-amber-900">{{ post.internal_notes }}</p></aside>{% endif %}
-    </section>
+    <div id="content-panel" data-content-panel>{% include "jrc_production/_detail_panel.html" %}</div>
 </div>
 {% endblock %}
 {% block extra_js %}
 <script src="{% static 'jrc_production/detail-edit.js' %}" nonce="{{ request.csp_nonce }}"></script>
 <script src="{% static 'jrc_production/content-tabs.js' %}" nonce="{{ request.csp_nonce }}"></script>
+<script src="{% static 'jrc_production/channel-tags.js' %}" nonce="{{ request.csp_nonce }}"></script>
 <script nonce="{{ request.csp_nonce }}">
-const channels = document.getElementById('content-channels');
-if (location.hash === '#content-channels') channels.open = true;
-document.querySelectorAll('[data-open-channels]').forEach(button => button.addEventListener('click', () => { channels.open = true; }));
 // P2-B03: Delete (formerly in the old composer) uses the composer's endpoint and its one deletion rule.
 const deleteForm = document.getElementById('content-delete');
 if (deleteForm) deleteForm.addEventListener('submit', async (event) => {
@@ -258,10 +108,4 @@ if (deleteForm) deleteForm.addEventListener('submit', async (event) => {
   button.disabled = false;
 });
 </script>
-{% if active_tab == "script" or active_tab == "concept" %}<script type="module" src="{% static 'jrc_texts/dist/script.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
-{% if active_tab == "caption" %}<script src="{% static 'jrc_production/caption-counter.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
-{% if active_tab == "video" %}<script src="{% static 'jrc_video/upload.js' %}" nonce="{{ request.csp_nonce }}"></script><script src="{% static 'jrc_video/video-tab.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
-{% if active_tab == "shotlist" %}<script src="{% static 'jrc_production/shotlist.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
-{% if active_tab == "publish" %}<script src="{% static 'jrc_production/publish.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
-{% if active_tab == "caption" or active_tab == "publish" %}<script src="{% static 'jrc_thumbnails/thumbnail.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
 {% endblock %}

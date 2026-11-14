@@ -9,7 +9,6 @@ from uuid import UUID
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.db import transaction
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
@@ -45,7 +44,7 @@ def _snapshot(post, user, membership, selected=None, compare_old=None, compare_n
     if bool(compare_old) != bool(compare_new):
         raise ValidationError("Choose both versions to compare.")
     can_edit = services.can_edit_text(post, membership)
-    result = {"can_edit": can_edit, "versions": [], "latest": None, "shown": None, "draft": None}
+    result = {"can_edit": can_edit, "versions": [], "latest": None, "shown": None}
     document = TextDocument.objects.filter(post=post, kind=kind).first()
     if document is None:
         if selected or compare_old or compare_new:
@@ -86,21 +85,18 @@ def _snapshot(post, user, membership, selected=None, compare_old=None, compare_n
                 "old": _version(old, content=size <= MAX_COMPARE_BYTES),
                 "new": _version(new, content=size <= MAX_COMPARE_BYTES),
             }
-    draft = document.versions.filter(state="draft").select_related("created_by", "draft_owner").first()
-    if draft:
-        own = draft.draft_owner_id == user.pk and can_edit
-        result["draft"] = {
-            "id": str(draft.pk),
-            "number": draft.number,
-            "revision": draft.revision,
-            "owner": draft.draft_owner.display_name if draft.draft_owner else "Former member",
-            "since": draft.created_at.isoformat(),
-            "own": own,
-            "recoverable": can_edit and services.can_recover_orphan(draft, user),
-        }
-        if own:
-            result["draft"]["content"] = draft.content
     return result
+
+
+def _saved(result):
+    """What the editor needs after an automatic save (P2-B08)."""
+    version, concurrent = result.version, result.concurrent
+    return {
+        "version": _version(version) if version else None,
+        "created": result.created,
+        "changed": result.changed,
+        "concurrent": {"number": concurrent.number, "author": _version(concurrent)["author"]} if concurrent else None,
+    }
 
 
 def _uuid(value):
@@ -131,42 +127,33 @@ def _text_editor(request, workspace_id, post_id, kind):
             raise ValidationError("Send a valid JSON object.") from exc
         if not isinstance(data, dict):
             raise ValidationError("Send a valid JSON object.")
-        action = data.get("action")
-        if not isinstance(action, str):
+        # P2-B08: the editor saves automatically (no Edit, Save or drafts); the service applies the
+        # version rule (same person, same device, 15 minutes) and never writes over another version.
+        if data.get("action") != "autosave":
             raise ValidationError(f"Choose a valid {kind} action.")
-        if action == "edit":
-            # Serialize first creation as well as two simultaneous Edit clicks.
-            with transaction.atomic():
-                Post.objects.select_for_update().get(pk=post.pk)
-                document = TextDocument.objects.filter(post=post, kind=kind).first()
-                if document is None:
-                    if data.get("base") is not None:
-                        raise services.ConflictError(f"The {kind} changed. Reload the text.")
-                    services.create_document(post.pk, request.user, kind=kind, markdown="", initial_draft=True)
-                else:
-                    if data.get("base") is None:
-                        services.start_draft(document.pk, request.user)
-                    else:
-                        base = get_object_or_404(document.versions.filter(state="final"), pk=_uuid(data.get("base")))
-                        services.edit(base.pk, request.user)
-                return JsonResponse(_snapshot(post, request.user, membership, kind=kind))
-        if action not in {"autosave", "save", "discard"}:
-            raise ValidationError(f"Choose a valid {kind} action.")
-        version_id = _uuid(data.get("version"))
+        base = _uuid(data["base"]) if data.get("base") is not None else None
         revision = data.get("revision")
-        if type(revision) is not int or revision < 0:
-            raise ValidationError("Provide the draft revision.")
-        # Never resolve a caller-supplied draft outside this post or text kind.
-        if not TextVersion.objects.filter(pk=version_id, document__post=post, document__kind=kind).exists():
-            raise services.ConflictError("This draft no longer exists. Reload the text.")
-        if action == "discard":
-            services.discard(version_id, request.user, expected_revision=revision)
-        else:
-            if not isinstance(data.get("content"), dict):
-                raise ValidationError("Provide the editor content.")
-            operation = services.update_draft if action == "autosave" else services.save
-            operation(version_id, request.user, expected_revision=revision, content=data["content"])
-        return JsonResponse(_snapshot(post, request.user, membership, kind=kind))
+        if base is not None and (type(revision) is not int or revision < 0):
+            raise ValidationError("Provide the version revision.")
+        if not isinstance(data.get("content"), dict):
+            raise ValidationError("Provide the editor content.")
+        # Never resolve a caller-supplied version outside this post or text kind.
+        if base is not None and not TextVersion.objects.filter(
+            pk=base, document__post=post, document__kind=kind, state="final"
+        ).exists():
+            raise services.ConflictError(f"This {kind} changed in another place. Reload the text.")
+        result = services.autosave_text(
+            post.pk,
+            request.user,
+            kind=kind,
+            content=data["content"],
+            base_version_id=base,
+            revision=revision,
+            device=data.get("device"),
+        )
+        snapshot = _snapshot(post, request.user, membership, kind=kind)
+        snapshot["saved"] = _saved(result)
+        return JsonResponse(snapshot)
     except services.ConflictError as exc:
         return JsonResponse({"error": str(exc)}, status=409)
     except ValidationError as exc:

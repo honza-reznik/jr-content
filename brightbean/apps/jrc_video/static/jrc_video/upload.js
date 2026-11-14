@@ -14,6 +14,7 @@
   var notice = root.querySelector("[data-video-notice]");
   var active = null; // upload in progress in this tab: { channel, version, aborted }
   var pollTimer = null;
+  var stopped = false; // P2-B08: the panel was replaced by another tab
   var preparing = false;
 
   function show(el, on) { el.classList.toggle("hidden", !on); }
@@ -151,6 +152,7 @@
 
   function schedulePoll() {
     clearTimeout(pollTimer);
+    if (stopped) return;
     if (!needsPolling()) return;
     pollTimer = setTimeout(function () { refresh().then(schedulePoll); }, POLL_MS);
   }
@@ -443,6 +445,23 @@
   // video-tab.js asks for a fresh feed after marking a final version.
   root.addEventListener("jrc-video:refresh", function () { refresh().then(schedulePoll); });
 
+  // P2-B08: the detail switches tabs without a page load. Leaving the Video tab stops this panel's
+  // polling; a running upload is only left after the person confirms (it can be continued later).
+  var guard = function () {
+    return !active || window.confirm("A video is uploading. Leave this tab and stop the upload? You can continue it later.");
+  };
+  if (window.jrcAutosave) window.jrcAutosave.guards.add(guard);
+  document.addEventListener("jrc:panel-unload", function stop(event) {
+    if (event.detail && event.detail.panel && !event.detail.panel.contains(root)) return;
+    document.removeEventListener("jrc:panel-unload", stop);
+    stopped = true;
+    clearTimeout(pollTimer);
+    if (active) {
+      active.aborted = true;
+      active.xhr.forEach(function (request) { request.abort(); });
+    }
+    if (window.jrcAutosave) window.jrcAutosave.guards.delete(guard);
+  });
   refresh().then(schedulePoll);
   schedulePoll();
 })();

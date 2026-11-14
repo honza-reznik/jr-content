@@ -97,8 +97,10 @@ document.addEventListener("click", event => {
     if (!button) return;
     const text = button.hasAttribute("data-copy-shotlist")
         ? [...document.querySelectorAll(".shotlist-row")].map(row => {
-            const text = row.querySelector("[data-shotlist-copy-text]").textContent;
-            const note = row.querySelector(".shotlist-note")?.textContent;
+            // P2-B08: editors see the text in fields (edited in place), readers as plain text.
+            const read = element => (element ? ("value" in element ? element.value : element.textContent) : "");
+            const text = read(row.querySelector("[data-shotlist-copy-text]"));
+            const note = read(row.querySelector(".shotlist-note")).trim();
             return text + (note ? " — " + note : "");
         }).join("\n")
         : document.getElementById(button.dataset.copyTarget).value;

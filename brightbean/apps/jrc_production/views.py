@@ -1,4 +1,5 @@
 import difflib
+import json
 import re
 from datetime import datetime
 from urllib.parse import urlencode
@@ -11,10 +12,13 @@ from django.db import transaction
 from django.db.models import Count, Prefetch, Q
 from django.http import Http404, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.dateformat import format as date_format
 from django.utils.dateparse import parse_datetime
 from django.utils.html import format_html
+from django.utils.cache import add_never_cache_headers, patch_vary_headers
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
@@ -1029,9 +1033,11 @@ def content_detail(request, workspace_id, post_id):
                     else "",
                 }
             )
-    return render(
+    # P2-B08: switching tabs asks only for the panel (content-tabs.js); a direct visit gets the whole page.
+    fragment = request.method == "GET" and request.headers.get("X-JRC-Tab") == "1"
+    response = render(
         request,
-        "jrc_production/content_detail.html",
+        "jrc_production/_detail_panel.html" if fragment else "jrc_production/content_detail.html",
         {
             **video_context,
             **approval_ctx,
@@ -1060,15 +1066,7 @@ def content_detail(request, workspace_id, post_id):
             "can_edit_captions": can_edit_captions,
             "content_categories": workspace.content_categories.all(),
             "can_rename": can_rename_content(post, membership),
-            "can_manage_channels": can_manage_channels(post, membership),
             "channel_error": channel_error,
-            "addable_channels": SocialAccount.objects.filter(
-                workspace=workspace,
-                jrc_channel__is_enabled=True,
-            )
-            .exclude(platform_posts__post=post)
-            .select_related("jrc_channel")
-            .order_by("account_name"),
             "needs_channel": not post.platform_posts.exists() and active_tab in {"video", "caption", "publish"},
             "caption_channels": caption_channels,
             "caption_error": caption_error,
@@ -1077,7 +1075,162 @@ def content_detail(request, workspace_id, post_id):
             "board_url": _board_url(request),
             # P2-B03: Delete moved here from the old composer; the one deletion rule decides (P1-B37).
             "can_delete": can_delete_content(membership, post, list(post.platform_posts.all())),
+            **_channel_tags_context(post, membership),
         },
+    )
+    # The panel and the page share one address: a cache must never answer one with the other.
+    patch_vary_headers(response, ["X-JRC-Tab"])
+    if fragment:
+        add_never_cache_headers(response)
+        response["X-JRC-Tab"] = active_tab
+    return response
+
+
+def _channel_tags_context(post, membership):
+    """The channel tags in the detail header (P2-B08); the same rules as the services that change them."""
+    return {
+        "can_manage_channels": can_manage_channels(post, membership),
+        # ``_lock_channel_content``: channels change only while every copy is still in Editing.
+        "channels_locked": post.platform_posts.exclude(status=PlatformPost.Status.DRAFT).exists(),
+        "addable_channels": SocialAccount.objects.filter(workspace=post.workspace, jrc_channel__is_enabled=True)
+        .exclude(platform_posts__post=post)
+        .select_related("jrc_channel")
+        .order_by("account_name"),
+    }
+
+
+def _json_body(request):
+    try:
+        data = json.loads(request.body)
+    except (ValueError, UnicodeDecodeError, RecursionError) as exc:
+        raise ValidationError("Send a valid JSON object.") from exc
+    if not isinstance(data, dict):
+        raise ValidationError("Send a valid JSON object.")
+    return data
+
+
+@login_required
+@require_POST
+def channels(request, workspace_id, post_id):
+    """Add or remove a channel of the content from its tags, without a page load (P2-B08).
+
+    The same services and rules as the detail form (``add_content_channel``/``remove_content_channel``);
+    answers with the re-rendered tags so the page shows exactly what is stored.
+    """
+    workspace = get_object_or_404(Workspace, pk=workspace_id)
+    membership = WorkspaceMembership.objects.filter(user=request.user, workspace=workspace).first()
+    if membership is None:
+        raise Http404
+    post = get_object_or_404(Post.objects.filter(workspace=workspace), pk=post_id)
+    if not can_manage_channels(post, membership):
+        return JsonResponse({"error": "You cannot change channels for this content."}, status=403)
+    action = request.POST.get("action")
+    status, message = 200, ""
+    try:
+        if action == "add_channel":
+            account = SocialAccount.objects.filter(pk=request.POST.get("channel"), workspace=workspace).first()
+            if account is None:
+                raise ValidationError("Choose an enabled channel of this client.")
+            add_content_channel(post, account.pk, request.user)
+            message = "Channel added."
+        elif action == "remove_channel":
+            variant = PlatformPost.objects.filter(pk=request.POST.get("platform_post"), post=post).first()
+            if variant is None:
+                raise ValidationError("This channel is no longer part of the content. Reload the page.")
+            remove_content_channel(post, variant.pk, request.user)
+            message = "Channel removed."
+        else:
+            return HttpResponseBadRequest("Unknown action.")
+    except ValidationError as exc:
+        status, message = 400, " ".join(exc.messages)
+    except PermissionDenied as exc:
+        status, message = 403, str(exc) or "You cannot change channels for this content."
+    post = Post.objects.prefetch_related("platform_posts__social_account").get(pk=post.pk)
+    html = render_to_string(
+        "jrc_production/_channel_tags.html",
+        {
+            "post": post,
+            "workspace": workspace,
+            "active_tab": request.POST.get("tab", ""),
+            **_channel_tags_context(post, membership),
+        },
+        request=request,
+    )
+    key = "message" if status == 200 else "error"
+    return JsonResponse({"html": html, key: message}, status=status)
+
+
+@login_required
+@require_POST
+def caption_autosave(request, workspace_id, post_id, platform_post_id):
+    """Automatic saving of one channel caption (P2-B08); the version rule is in ``autosave_caption``."""
+    workspace = get_object_or_404(Workspace, pk=workspace_id)
+    membership = WorkspaceMembership.objects.filter(user=request.user, workspace=workspace).first()
+    if membership is None:
+        raise Http404
+    post = get_object_or_404(Post.objects.filter(workspace=workspace), pk=post_id)
+    variant = get_object_or_404(PlatformPost, pk=platform_post_id, post=post)
+    if not text_services.can_edit_text(post, membership):
+        return JsonResponse({"error": "You cannot edit captions for this content."}, status=403)
+    try:
+        data = _json_body(request)
+        base = data.get("base") or None
+        if base is not None and not TextVersion.objects.filter(
+            pk=base, document__platform_post=variant, document__kind=TextDocument.Kind.CAPTION, state="final"
+        ).exists():
+            raise ConflictError("This caption changed in another place. Reload the text.")
+        result = text_services.autosave_caption(
+            post.pk,
+            variant.pk,
+            request.user,
+            data.get("text"),
+            base_version_id=base,
+            revision=data.get("revision"),
+            device=data.get("device"),
+        )
+    except ConflictError as exc:
+        return JsonResponse({"error": str(exc)}, status=409)
+    except ValidationError as exc:
+        return JsonResponse({"error": " ".join(exc.messages)}, status=400)
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "Send a valid JSON object."}, status=400)
+    post = Post.objects.select_related("workspace").get(pk=post.pk)
+    item = next((item for item in _caption_channels(post) if item["variant"] and item["variant"].pk == variant.pk), None)
+    version, concurrent = result.version, result.concurrent
+    return JsonResponse(
+        {
+            "version": {
+                "id": str(version.pk),
+                "number": version.number,
+                "revision": version.revision,
+                "label": " · ".join(
+                    (
+                        f"V{version.number}" + (f" – {version.name}" if version.name else ""),
+                        version.created_by.display_name if version.created_by else "Former member",
+                        date_format(timezone.localtime(version.finalized_at), "M j, Y · g:i A"),
+                    )
+                ),
+            }
+            if version
+            else None,
+            "created": result.created,
+            "changed": result.changed,
+            "concurrent": {
+                "number": concurrent.number,
+                "author": concurrent.created_by.display_name if concurrent.created_by else "Former member",
+            }
+            if concurrent
+            else None,
+            "notice": review_return_notice(result.returned, "caption"),
+            "hint": item["reopens_review"] if item else "",
+            "versions_html": render_to_string(
+                "jrc_production/_caption_versions.html",
+                {"item": item, "workspace": workspace, "post": post, "can_edit_captions": True},
+                request=request,
+            )
+            if item
+            else "",
+        }
     )
 
 
@@ -1125,6 +1278,28 @@ def shotlist_action(request, workspace_id, post_id):
     item_id = request.POST.get("item", "")
     text, note = request.POST.get("text"), request.POST.get("note")
     focus, error, status = "", "", 200
+    if action == "update" and request.headers.get("X-JRC-Shotlist-Autosave") == "1":
+        # P2-B08: editing right in the text saves automatically and answers with JSON, so the list is
+        # not redrawn under the person typing.
+        try:
+            item = shotlist_services.update_item(post, item_id, request.user, text=text, note=note)
+        except shotlist_services.ItemNotFoundError as exc:
+            return JsonResponse({"error": str(exc)}, status=409)
+        except ValidationError as exc:
+            return JsonResponse({"error": " ".join(exc.messages)}, status=400)
+        except PermissionDenied as exc:
+            return JsonResponse({"error": str(exc) or "You cannot edit this shotlist."}, status=403)
+        who = item.updated_by.display_name or item.updated_by.email if item.updated_by else ""
+        return JsonResponse(
+            {
+                "text": item.text,
+                "note": item.note,
+                "meta": f"{'Checked off' if item.is_done else 'Updated'} by {who} · "
+                f"{date_format(timezone.localtime(item.updated_at), 'M j, g:i A')}"
+                if who
+                else "",
+            }
+        )
     try:
         if action == "add":
             shotlist_services.add_item(post, request.user, text or "", note or "")

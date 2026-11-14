@@ -16,15 +16,19 @@ document.querySelectorAll("[data-thumbnail-form]").forEach((form) => {
         input.value = "";
     };
 
-    input.addEventListener("change", () => {
+    input.addEventListener("change", async () => {
         const file = input.files && input.files[0];
         if (!file) return;
-        // Uploading navigates back to this tab. Keep unsaved captions in every
-        // channel intact instead of silently discarding them during that reload.
-        const unsavedCaption = Array.from(document.querySelectorAll("[data-caption-counter]"))
+        // Uploading navigates back to this tab. Captions save automatically (P2-B08): let them reach
+        // the server first, and never discard one that could not be saved.
+        const unsaved = () => Array.from(document.querySelectorAll("[data-caption-counter]"))
             .some((field) => field.value !== field.defaultValue);
-        if (unsavedCaption) {
-            reject("Save caption changes before uploading a thumbnail.");
+        if (unsaved() && window.jrcAutosave) {
+            status.textContent = "Saving the caption first…";
+            await window.jrcAutosave.flushAll();
+        }
+        if (unsaved()) {
+            reject("The caption changes are not saved yet. Wait until they are saved, then choose the image again.");
             return;
         }
         if (maxBytes && file.size > maxBytes) {
