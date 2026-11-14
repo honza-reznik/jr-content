@@ -736,6 +736,46 @@ def test_team_with_download_right_gets_any_ready_version_and_its_link(client, wo
     assert "filename" not in query
 
 
+def test_version_download_streams_through_service_path_for_the_real_actor(client, workspace, user, post):
+    """P2-B18 R3: the bytes come from /jrc-sync/assets/{id}/download for this user's own FreeFrame id,
+    not from any generic file URL, and only with the selected version."""
+    from django.http import HttpResponse
+
+    from apps.jrc_video.models import VideoAccount
+
+    variant, older, _final = _versions_with_final(post, approved=False)
+    WorkspaceMembership.objects.filter(workspace=workspace, user=user).update(workspace_role="owner")
+    client.force_login(user)
+    account = VideoAccount.objects.get(user=user)
+    asset_id = older.video.ff_asset_id
+    with (
+        patch("apps.jrc_video.client.FreeFrameClient.request", return_value={"filename": "original.MOV"}),
+        patch("apps.jrc_storage.views.proxy_video_file", return_value=HttpResponse(b"x")) as proxy,
+    ):
+        assert client.get(_version_download_url(workspace, post, older)).status_code == 200
+    proxy.assert_called_once()
+    assert proxy.call_args.args[2] == f"/jrc-sync/assets/{asset_id}/download"
+    assert proxy.call_args.kwargs["params"] == {
+        "version_id": str(older.ff_version_id),
+        "actor_id": str(account.ff_user_id),
+    }
+
+
+def test_version_download_without_hls_account_never_reaches_the_service_path(client, workspace, user, post):
+    from apps.jrc_video.models import VideoAccount
+
+    _variant, older, _final = _versions_with_final(post, approved=False)
+    WorkspaceMembership.objects.filter(workspace=workspace, user=user).update(workspace_role="owner")
+    VideoAccount.objects.filter(user=user).delete()
+    client.force_login(user)
+    with (
+        patch("apps.jrc_video.client.FreeFrameClient.request", return_value={"filename": "original.MOV"}),
+        patch("apps.jrc_storage.views.proxy_video_file") as proxy,
+    ):
+        assert client.get(_version_download_url(workspace, post, older)).status_code == 404
+    proxy.assert_not_called()
+
+
 @pytest.mark.parametrize("role", ["client", "viewer", "editor", "contributor"])
 def test_without_download_right_no_working_version_link_or_download(client, workspace, user, post, role):
     """P2-B05 R1: clients, viewers and team members without the right never get a draft or older version."""

@@ -110,6 +110,10 @@ def authorize_share_file(db, user, binding, asset, version_id):
     validate_asset_in_share(db, link, asset)
     if binding["operation"] == "download" and not link.allow_download:
         raise HTTPException(403, "Downloads are disabled")
+    if binding["operation"] == "download" and (
+        user.jrc_managed is True or db.query(Project.jrc_managed).filter(Project.id == asset.project_id).scalar() is True
+    ):
+        raise HTTPException(403, "Download videos through JR Content")
     if version_id:
         selected = _share_media_file(db, link, asset, version_id)
         if selected.version_id != version_id:

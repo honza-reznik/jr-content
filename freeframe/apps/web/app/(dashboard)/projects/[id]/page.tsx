@@ -41,6 +41,7 @@ import { CommentPanel } from "@/components/review/comment-panel";
 import { UploadZone } from "@/components/upload/upload-zone";
 import { useFileDropRegion } from "@/components/projects/use-file-drop-region";
 import { useUploadStore } from "@/stores/upload-store";
+import { canDownloadFiles } from "@/lib/download-access";
 import { useAuthStore } from "@/stores/auth-store";
 import { useViewStore } from "@/stores/view-store";
 import { useBreadcrumbStore } from "@/stores/breadcrumb-store";
@@ -133,7 +134,7 @@ export default function ProjectDetailPage() {
 
   const startUpload = useUploadStore((s) => s.startUpload);
   const { user } = useAuthStore();
-  const canDownload = !!user && user.jrc_managed !== true;
+  const canDownload = canDownloadFiles(user);
 
   const {
     tree,

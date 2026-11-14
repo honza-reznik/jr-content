@@ -4,6 +4,8 @@
 
 - Stažení verze i finálního videa po kontrole oprávnění streamuje přes servisní účet FreeFrame. Každý nový požadavek včetně rozsahu bajtů znovu prochází pravidlem JRC; prohlížeč nedostává obecný odkaz na originál. Chybějící originál má dál vysvětlené potvrzení MP4, které vede zpět na stejný autorizovaný endpoint.
 - Kapacita se počítá skutečnému uživateli společně s přehráváním. Přenos musí dosahovat průměru alespoň 64 KiB/s v každém samostatném 300s okně; 30s limit nečinnosti zůstává. Přenos 4 GiB při této rychlosti trvá přibližně 18,2 hodiny a smí pokračovat.
+- Proxy: `/jrc/video-api/jrc-sync/*` vrací zvenku 404; Brightbean volá FreeFrame API interně (`http://jrc-ff-api:8000`), prohlížeč tyto cesty nepoužívá.
+- Sdílené odkazy FreeFrame ve spravovaných projektech: stahování vždy vypnuté (403 při pokusu, nové i upravené odkazy `allow_download=false`).
 
 ## 2026-11-13 — P2-B03
 

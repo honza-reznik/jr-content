@@ -9,16 +9,19 @@ from .test_jrc_live_membership import live_project, isolate_request_limits  # no
 from .test_private_files import storage  # noqa: F401
 
 
-@pytest.mark.parametrize('role', ['owner', 'manager', 'editor', 'client', 'viewer'])
+@pytest.mark.parametrize('role', list(ProjectRole))
 @pytest.mark.parametrize('query', ['', '&rendition=original', '&rendition=transcode', '&prefer_original=true'])
 @pytest.mark.parametrize('embed', ['', '&embed=1'])
-def test_managed_roles_cannot_mint_download_urls(client, auth_headers, test_user, role, query, embed):
-    test_user.jrc_managed = True
-    with patch('apps.api.routers.assets._ready_media_file') as ready:
-        response = client.get(f'/assets/{uuid.uuid4()}/stream?download=true{query}{embed}', headers=auth_headers)
+def test_managed_roles_cannot_mint_download_urls(client, live_project, role, query, embed):
+    """Every real membership role is refused, and refused before any storage side effect."""
+    ctx = live_project
+    ctx.member.role = role
+    ctx.db.flush()
+    with patch('apps.api.routers.assets.generate_presigned_get_url') as sign:
+        response = client.get(f'/assets/{ctx.asset.id}/stream?download=true&version_id={ctx.version.id}{query}{embed}', headers=ctx.headers)
         assert response.status_code == 403
-        ready.assert_not_called()  # No file or storage side effects before denial.
-    assert client.get(f'/assets/{uuid.uuid4()}/downloads', headers=auth_headers).status_code == 403
+        sign.assert_not_called()
+    assert client.get(f'/assets/{ctx.asset.id}/downloads', headers=ctx.headers).status_code == 403
 
 
 @pytest.mark.parametrize('role', list(ProjectRole))
