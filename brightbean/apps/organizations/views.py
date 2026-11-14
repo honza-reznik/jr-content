@@ -18,7 +18,7 @@ from apps.composer.models import PlatformPost, Post, Tag
 from apps.members.decorators import require_org_role
 from apps.members.middleware import activate_organization
 from apps.members.models import OrgMembership, WorkspaceMembership
-from apps.members.services import member_workspaces
+from apps.members.services import default_workspace_membership
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 
@@ -67,15 +67,8 @@ def switch_organization(request):
     if not membership:
         raise PermissionDenied("You are not a member of this organization.")
     request.session["active_organization_id"] = str(membership.organization_id)
-    workspace_membership = (
-        WorkspaceMembership.objects.filter(
-            user=request.user,
-            workspace__organization=membership.organization,
-            workspace__is_archived=False,
-        )
-        .order_by("workspace__name", "workspace_id")
-        .first()
-    )
+    # The new organization's current workspace: the shared rule, limited to it (R5).
+    workspace_membership = default_workspace_membership(request.user, membership.organization)
     request.user.last_workspace_id = workspace_membership.workspace_id if workspace_membership else None
     request.user.save(update_fields=["last_workspace_id"])
     return redirect("dashboard")
@@ -279,18 +272,20 @@ def _handle_cancel_deletion(request, org):
 
 @login_required
 def cross_workspace_calendar(request):
-    """Org-level calendar showing all workspaces' posts, color-coded by workspace."""
-    org = request.org
-    if not org:
-        from django.http import HttpResponseForbidden
+    """Org-level calendar showing all workspaces' posts, color-coded by workspace.
 
-        return HttpResponseForbidden("Organization required.")
+    JR Content P2-B13: the calendar of the admin overview. Only the organization owner and admins
+    see it, and it shows every active client of the organization, membership or not; everyone else
+    works in one client at a time and gets a 404 here.
+    """
+    from apps.jrc_production.overview import overview_organization, overview_workspaces
 
-    # Get workspaces the user has membership in
-    workspaces = member_workspaces(request.user, org)
+    org = overview_organization(request)
+    workspaces = overview_workspaces(org)
 
-    # Workspace filter
-    selected_ws_ids = request.GET.getlist("workspace")
+    # Workspace filter (only ids of this organization's clients count).
+    known = {str(ws_id) for ws_id in workspaces.values_list("id", flat=True)}
+    selected_ws_ids = [ws_id for ws_id in request.GET.getlist("workspace") if ws_id in known]
     filtered_workspaces = workspaces.filter(id__in=selected_ws_ids) if selected_ws_ids else workspaces
 
     # View type (month/week/day)
@@ -365,7 +360,7 @@ def cross_workspace_calendar(request):
             "selected_workspace_ids": selected_ws_ids,
             "workspace_colors": workspace_colors,
             "target_date": target_date,
-            "default_workspace": workspaces.first(),
+            "overview_tab": "calendar",
             "day_names": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
             "settings_active": "calendars",
             "view_type": view_type,

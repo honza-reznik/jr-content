@@ -1,4 +1,5 @@
-{% comment %}JR Content: přidáno 2026-11-13 (blok P2-B03), AGPL-3.0. Okno „New idea“ (tlačítko na nástěnce a + New v menu).
+{% comment %}JR Content: přidáno 2026-11-13 (blok P2-B03), upraveno 2026-11-14 (blok P2-B13), AGPL-3.0. Okno „New idea“
+(tlačítko na nástěnce a + New v menu). Nápad vzniká vždy v aktuálním workspace (``new_ctx.fixed``), klient se nevybírá.
 Expects ``new_ctx`` from ``new_content_options``.{% endcomment %}
 <style>
   .jrc-idea-dialog { width:min(560px, calc(100vw - 24px)); max-height:calc(100dvh - 24px); margin:auto; padding:0; border:0; border-radius:14px; box-shadow:0 20px 50px #0003; color:#292524; overflow:auto; }
@@ -38,19 +39,11 @@ Expects ``new_ctx`` from ``new_content_options``.{% endcomment %}
     <input type="hidden" name="stage" value="idea">
     <input type="hidden" name="next" value="">
     <header>
-      <div><h2 id="jrc-new-idea-heading">New idea</h2>{% if new_ctx.fixed %}<p class="idea-client">{{ new_ctx.fixed.workspace.name }}</p>{% endif %}</div>
+      <div><h2 id="jrc-new-idea-heading">New idea</h2><p class="idea-client"><span aria-hidden="true" style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:{{ new_ctx.fixed.workspace.accent_color }}"></span>{{ new_ctx.fixed.workspace.name }}</p></div>
       <button type="button" class="idea-close" data-close-new-idea aria-label="Close">×</button>
     </header>
     <p class="idea-error" role="alert" data-idea-error hidden></p>
-    {% if new_ctx.fixed %}
     <input type="hidden" name="workspace" value="{{ new_ctx.fixed.workspace.id }}">
-    {% else %}
-    <div class="idea-field"><label class="idea-label" for="new-idea-client">Client</label>
-      <select id="new-idea-client" name="workspace" required data-idea-client>
-        <option value="">Choose a client…</option>
-        {% for entry in new_ctx.clients %}<option value="{{ entry.workspace.id }}">{{ entry.workspace.name }}</option>{% endfor %}
-      </select></div>
-    {% endif %}
     <div class="idea-field"><label class="idea-label" for="new-idea-title">Title</label>
       <input type="text" id="new-idea-title" name="title" required maxlength="255" autocomplete="off" placeholder="e.g. A morning in the studio"></div>
     <div class="idea-field"><label class="idea-label" for="new-idea-description">Description <span style="font-weight:400;color:#78716c">(optional)</span></label>
@@ -58,9 +51,9 @@ Expects ``new_ctx`` from ``new_content_options``.{% endcomment %}
       <p class="idea-help">Saved as the first version of the Concept.</p></div>
     <fieldset class="idea-field"><legend>Channels <span style="font-weight:400;color:#78716c">(optional)</span></legend>
       <div class="idea-channels">
-        {% for entry in new_ctx.clients %}{% if not new_ctx.fixed or entry == new_ctx.fixed %}{% for account in entry.channels %}<label class="idea-channel" data-client="{{ entry.workspace.id }}"><input type="checkbox" name="channels" value="{{ account.id }}">{% include "jrc_channels/icon.html" with account=account %} <span>{{ account.jrc_channel.display_name|default:account.account_name }}</span></label>{% endfor %}{% endif %}{% endfor %}
+        {% for account in new_ctx.fixed.channels %}<label class="idea-channel"><input type="checkbox" name="channels" value="{{ account.id }}">{% include "jrc_channels/icon.html" with account=account %} <span>{{ account.jrc_channel.display_name|default:account.account_name }}</span></label>{% endfor %}
       </div>
-      <p class="idea-help" data-idea-no-channels>Leave empty for an idea without a channel.</p>
+      <p class="idea-help">{% if new_ctx.fixed.channels %}Leave empty for an idea without a channel.{% else %}This client has no enabled channels yet.{% endif %}</p>
     </fieldset>
     <div class="idea-actions">
       <button type="button" class="idea-cancel" data-close-new-idea>Cancel</button>
@@ -74,29 +67,12 @@ Expects ``new_ctx`` from ``new_content_options``.{% endcomment %}
   if (!dialog) return;
   const form = dialog.querySelector('[data-new-idea-form]');
   const error = form.querySelector('[data-idea-error]');
-  const client = form.querySelector('[data-idea-client]');
   const submit = form.querySelector('.idea-submit');
-  const hint = form.querySelector('[data-idea-no-channels]');
-  const hintText = hint.textContent;
-  function showChannels() {
-    if (!client) return;
-    let count = 0;
-    form.querySelectorAll('.idea-channel').forEach(label => {
-      const shown = label.dataset.client === client.value;
-      label.hidden = !shown;
-      const box = label.querySelector('input');
-      box.disabled = !shown;
-      if (!shown) box.checked = false;
-      if (shown) count += 1;
-    });
-    hint.textContent = !client.value ? 'Choose a client to see its channels.' : count ? hintText : 'This client has no enabled channels yet.';
-  }
   function open(event) {
     if (event) event.preventDefault();
     error.hidden = true;
-    showChannels();
     if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', '');
-    (client && !client.value ? client : form.elements.title).focus();
+    form.elements.title.focus();
   }
   document.addEventListener('click', event => {
     const opener = event.target.closest('[data-open-new-idea]');
@@ -105,7 +81,6 @@ Expects ``new_ctx`` from ``new_content_options``.{% endcomment %}
   });
   // A click on the backdrop (outside the form) closes the window too.
   dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
-  if (client) client.addEventListener('change', showChannels);
   form.addEventListener('submit', async event => {
     event.preventDefault();
     if (!form.elements.title.value.trim()) { error.textContent = 'Enter a title for the idea.'; error.hidden = false; form.elements.title.focus(); return; }

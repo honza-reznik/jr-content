@@ -229,6 +229,8 @@ READ_VIEWS = {
     "jrc_production:board",
     "jrc_production:trash",
     "jrc_production:new_content",
+    "jrc_production:overview_board",
+    "jrc_production:overview_content",
     "jrc_video:final_download",
     "jrc_video:version_download",
     "jrc_thumbnails:download",

@@ -1,4 +1,4 @@
-"""P1-B07: compact clickable cards, column order, remembered client filter and quick ideas."""
+"""P1-B07: compact clickable cards, column order, remembered client and quick ideas (P2-B13: one client)."""
 
 import re
 from datetime import timedelta
@@ -75,20 +75,18 @@ def test_compact_card_shows_only_useful_details(http, workspace, organization, u
     WorkspaceMembership.objects.create(workspace=other, user=user, workspace_role="owner")
     create_content(other, "Other client idea", user)
 
-    html = http.get(reverse(BOARD), {"client": ""}).content.decode()
+    html = http.get(reverse(BOARD), {"client": workspace.pk}).content.decode()
     first, second = card_html(html, with_channel), card_html(html, without)
-    # cards of several clients on the board: the client name helps
-    assert '<div class="board-grid show-clients">' in html
-    assert re.search(r'<span class="board-client">.*?Production test</span>', first)
+    # P2-B13: the board shows one client, so its cards never show the client name.
+    assert (
+        '<div class="board-grid">' in html and "board-grid show-clients" not in html and "Other client idea" not in html
+    )
     assert f"background:{workspace.accent_color}" in first
     assert "Ella Instagram" in re.sub(r"<[^>]+>", "", first) and "No channel" not in first
     assert "board-channel board-channel-none" in second and ">No channel</span>" in second
     assert '3<span class="board-sr"> comments</span>' in first
     assert "board-comments" not in second
     assert "Proposed " in second and "<time" not in first
-
-    filtered = http.get(reverse(BOARD), {"client": workspace.pk}).content.decode()
-    assert '<div class="board-grid">' in filtered and "board-grid show-clients" not in filtered
 
 
 def test_clients_count_only_comments_they_may_read(client, workspace, user):
@@ -112,26 +110,25 @@ def test_single_client_member_does_not_see_client_name(http, workspace, user):
     only_workspace(user, workspace)
     post = create_content(workspace, "One client", user)
     response = http.get(reverse(BOARD))
-    assert response.context["show_client"] is False
     assert f'data-client="{workspace.pk}"' in card_html(response.content.decode(), post)
     assert '<div class="board-grid">' in response.content.decode()
 
 
-def test_client_names_follow_cards_on_screen_not_memberships(http, workspace, organization, user):
-    # Member of two clients, but only one of them has content (also with "All clients"): no names.
-    other = Workspace.objects.create(organization=organization, name="Empty client")
+def test_board_never_mixes_clients(http, workspace, organization, user):
+    # P2-B13 (4f): a member of two clients sees one board per client, never both together.
+    other = Workspace.objects.create(organization=organization, name="Zeta client")
     WorkspaceMembership.objects.create(workspace=other, user=user, workspace_role="owner")
-    create_content(workspace, "Only client with content", user)
-    response = http.get(reverse(BOARD), {"client": ""})
-    assert response.context["show_client"] is False
-    assert "board-grid show-clients" not in response.content.decode()
-    create_content(other, "Now two clients", user)
-    response = http.get(reverse(BOARD), {"client": ""})
-    assert response.context["show_client"] is True
-    # A channel filter that leaves one client's cards hides the names again.
-    channel = create_manual_channel(other, "instagram", "Other IG")
-    create_content(other, "Other with channel", user, social_account_ids=[channel.pk])
-    assert http.get(reverse(BOARD), {"client": "", "channel": channel.pk}).context["show_client"] is False
+    create_content(workspace, "Only in production test", user)
+    create_content(other, "Only in Zeta", user)
+    for client, shown, hidden in (
+        (workspace, "Only in production test", "Only in Zeta"),
+        (other, "Only in Zeta", "Only in production test"),
+    ):
+        html = http.get(reverse(BOARD), {"client": client.pk}).content.decode()
+        assert shown in html and hidden not in html and "board-grid show-clients" not in html
+    # "?client=" without a value (the old "All clients") keeps the current client.
+    html = http.get(reverse(BOARD), {"client": ""}).content.decode()
+    assert "Only in Zeta" in html and "Only in production test" not in html
 
 
 def test_columns_sort_by_publication_date_then_creation_newest_last(http, workspace, user):
@@ -170,32 +167,30 @@ def test_published_column_shows_newest_first(http, workspace, user):
 
 
 def test_board_remembers_last_client_in_session(http, workspace, organization, user):
+    # P2-B13: the current workspace (as chosen in the menu) is remembered, not a board filter.
     other = Workspace.objects.create(organization=organization, name="Other client")
     WorkspaceMembership.objects.create(workspace=other, user=user, workspace_role="owner")
     create_content(workspace, "Mine", user)
     create_content(other, "Theirs", user)
     url = reverse(BOARD)
-    assert http.get(url).context["selected_client"] == ""
+    http.get(url, {"client": workspace.pk})
+    assert http.get(url).context["selected_client"] == str(workspace.pk)
     http.get(url, {"client": other.pk})
     remembered = http.get(url)
     assert remembered.context["selected_client"] == str(other.pk)
     assert [c["post"].title for col in remembered.context["columns"] for c in col["cards"]] == ["Theirs"]
-    assert f'<option value="{other.pk}" selected>' in remembered.content.decode()
-    # "Clear" and "All clients" are explicit choices and are remembered too.
-    assert f'href="{url}?client="' in remembered.content.decode()
-    http.get(url, {"client": ""})
-    assert http.get(url).context["selected_client"] == ""
+    user.refresh_from_db()
+    assert user.last_workspace_id == other.pk
     # A remembered client the user lost access to is ignored, never an error.
-    http.get(url, {"client": other.pk})
     WorkspaceMembership.objects.filter(workspace=other, user=user).delete()
     response = http.get(url)
-    assert response.status_code == 200 and response.context["selected_client"] == ""
+    assert response.status_code == 200 and response.context["selected_client"] == str(workspace.pk)
 
 
 def test_invalid_filter_is_not_remembered(http, workspace, organization, user):
     hidden = Workspace.objects.create(organization=organization, name="Hidden")
     http.get(reverse(BOARD), {"client": workspace.pk})
-    assert http.get(reverse(BOARD), {"client": hidden.pk}).status_code == 400
+    assert http.get(reverse(BOARD), {"client": hidden.pk}).status_code == 404
     assert http.get(reverse(BOARD)).context["selected_client"] == str(workspace.pk)
 
 
@@ -260,7 +255,7 @@ def test_client_sees_quick_idea_for_own_workspace_only(client, workspace, organi
     client.force_login(ella)
     html = client.get(reverse(BOARD)).content.decode()
     form = html.split('id="quick-idea"', 1)[1].split("</form>", 1)[0]
-    assert f'<input type="hidden" name="workspace" value="{workspace.pk}" data-client-name="Production test">' in form
+    assert f'<input type="hidden" name="workspace" value="{workspace.pk}">' in form
     assert 'placeholder="Idea…"' in form
     assert client.post(reverse(IDEA), {"workspace": foreign.pk, "title": "Leak"}, **XHR).status_code == 404
     assert not Post.objects.filter(title="Leak").exists()
@@ -273,21 +268,22 @@ def test_viewer_has_no_quick_idea(http, workspace, user):
     assert 'id="quick-idea"' not in html and "+ Idea" not in html
 
 
-def test_quick_idea_defaults_to_filter_then_last_used_client(http, workspace, organization, user):
+def test_quick_idea_goes_to_the_current_client(http, workspace, organization, user):
+    # P2-B13 (4g): no client choice; the quick idea is for the client the board shows.
     other = Workspace.objects.create(organization=organization, name="Zeta client")
     WorkspaceMembership.objects.create(workspace=other, user=user, workspace_role="owner")
     url = reverse(BOARD)
 
-    def selected_idea_client(**query):
+    def idea_form(**query):
         html = http.get(url, query).content.decode()
-        form = html.split('id="quick-idea"', 1)[1].split("</form>", 1)[0]
-        return re.search(r'<option value="([^"]+)" selected>', form).group(1)
+        return html.split('id="quick-idea"', 1)[1].split("</form>", 1)[0]
 
-    assert selected_idea_client(client=other.pk) == str(other.pk)
-    assert selected_idea_client(client=workspace.pk) == str(workspace.pk)
-    http.post(reverse(IDEA), {"workspace": other.pk, "title": "For Zeta"}, **XHR)
-    assert selected_idea_client(client="") == str(other.pk)
-    assert selected_idea_client(client=workspace.pk) == str(workspace.pk)
+    for client in (other, workspace):
+        form = idea_form(client=client.pk)
+        assert f'<input type="hidden" name="workspace" value="{client.pk}">' in form and "<select" not in form
+    # The board shows Production test now: an idea for Zeta (a stale tab) is refused.
+    assert http.post(reverse(IDEA), {"workspace": other.pk, "title": "For Zeta"}, **XHR).status_code == 409
+    assert not Post.objects.filter(title="For Zeta").exists()
 
 
 def test_quick_idea_card_keeps_only_valid_board_filters(http, workspace, organization, user):
@@ -333,6 +329,8 @@ def test_moved_quick_idea_keeps_working(http, workspace, user):
 def test_quick_idea_reports_whether_active_filters_show_it(http, workspace, organization, user, board, match):
     other = Workspace.objects.create(organization=organization, name="Other client")
     WorkspaceMembership.objects.create(workspace=other, user=user, workspace_role="owner")
+    user.last_workspace_id = workspace.pk
+    user.save(update_fields=["last_workspace_id"])
     channel = create_manual_channel(workspace, "instagram", "Ella Instagram")
     values = {"same": str(workspace.pk), "other": str(other.pk), "channel": str(channel.pk)}
     data = {key: values.get(value, value) for key, value in board.items()}
