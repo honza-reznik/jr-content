@@ -29,9 +29,9 @@
     {% comment %} Resume CTA, a teammate started checkout already. {% endcomment %}
     <div class="mb-6 p-4 rounded-xl border-l-4 flex items-start gap-3"
          style="border-color: var(--primary); background: var(--primary-soft, #fff7ed);">
-        <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary);"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary-text);"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         <div class="flex-1 min-w-0">
-            <h2 class="text-sm font-semibold" style="color: var(--primary);">Resume your checkout</h2>
+            <h2 class="text-sm font-semibold" style="color: var(--primary-text);">Resume your checkout</h2>
             <p class="text-sm mt-1 text-stone-700">
                 Someone in your org already started a checkout for this organization.
             </p>
@@ -105,7 +105,7 @@
                            class="sr-only" required{% if forloop.counter == 2 %} checked{% endif %}>
                     {% if forloop.counter == 2 %}
                     <span class="absolute -top-2.5 right-4 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide"
-                          style="background: var(--primary); color: white; box-shadow: 0 2px 6px rgba(249, 115, 22, 0.3);">
+                          style="background: var(--primary);color:var(--accent-text); box-shadow: 0 2px 6px rgba(249, 115, 22, 0.3);">
                         Most popular
                     </span>
                     {% endif %}
@@ -114,7 +114,7 @@
                         <div class="text-base font-semibold text-stone-900">{{ plan.name }}</div>
                         <span class="plan-card-check w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0"
                               style="border-color: #d6d3d1;">
-                            <svg class="plan-card-check-icon w-3 h-3 hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color: white;"><polyline points="20 6 9 17 4 12"/></svg>
+                            <svg class="plan-card-check-icon w-3 h-3 hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color: var(--accent-text);"><polyline points="20 6 9 17 4 12"/></svg>
                         </span>
                     </div>
 
@@ -125,7 +125,7 @@
 
                     <ul class="mt-4 space-y-2 text-xs text-stone-600">
                         <li class="flex items-start gap-2">
-                            <svg class="w-3.5 h-3.5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary);"><polyline points="20 6 9 17 4 12"/></svg>
+                            <svg class="w-3.5 h-3.5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary-text);"><polyline points="20 6 9 17 4 12"/></svg>
                             <span><span class="font-semibold text-stone-900 tabular-nums">{{ plan.monthly_credits|intcomma }}</span> credits / month</span>
                         </li>
                     </ul>
@@ -140,27 +140,27 @@
                         <div class="text-[10px] uppercase tracking-wide text-stone-500 font-semibold mb-2">All six tools included</div>
                         <ul class="space-y-1.5 text-xs text-stone-600">
                             <li class="flex items-start gap-2">
-                                <svg class="w-3 h-3 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary);"><polyline points="20 6 9 17 4 12"/></svg>
+                                <svg class="w-3 h-3 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary-text);"><polyline points="20 6 9 17 4 12"/></svg>
                                 <span>Score packaging</span>
                             </li>
                             <li class="flex items-start gap-2">
-                                <svg class="w-3 h-3 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary);"><polyline points="20 6 9 17 4 12"/></svg>
+                                <svg class="w-3 h-3 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary-text);"><polyline points="20 6 9 17 4 12"/></svg>
                                 <span>Score video hook</span>
                             </li>
                             <li class="flex items-start gap-2">
-                                <svg class="w-3 h-3 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary);"><polyline points="20 6 9 17 4 12"/></svg>
+                                <svg class="w-3 h-3 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary-text);"><polyline points="20 6 9 17 4 12"/></svg>
                                 <span>Benchmark channel</span>
                             </li>
                             <li class="flex items-start gap-2">
-                                <svg class="w-3 h-3 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary);"><polyline points="20 6 9 17 4 12"/></svg>
+                                <svg class="w-3 h-3 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary-text);"><polyline points="20 6 9 17 4 12"/></svg>
                                 <span>Benchmark video</span>
                             </li>
                             <li class="flex items-start gap-2">
-                                <svg class="w-3 h-3 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary);"><polyline points="20 6 9 17 4 12"/></svg>
+                                <svg class="w-3 h-3 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary-text);"><polyline points="20 6 9 17 4 12"/></svg>
                                 <span>Research content gaps</span>
                             </li>
                             <li class="flex items-start gap-2">
-                                <svg class="w-3 h-3 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary);"><polyline points="20 6 9 17 4 12"/></svg>
+                                <svg class="w-3 h-3 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary-text);"><polyline points="20 6 9 17 4 12"/></svg>
                                 <span>List niches</span>
                             </li>
                         </ul>
