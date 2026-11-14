@@ -27,6 +27,7 @@ from apps.approvals.edits import review_return_hint, review_return_notice
 from apps.approvals.models import ApprovalAction, PostComment
 from apps.composer.models import PlatformPost, Post
 from apps.jrc_texts import services as text_services
+from apps.jrc_texts.editor_colors import TEXT_COLORS
 from apps.jrc_texts.models import TextDocument, TextVersion, TextVersionNameChange
 from apps.jrc_texts.services import ConflictError
 from apps.jrc_video.downloads import can_download_final, missing_for_publication
@@ -1081,6 +1082,7 @@ def content_detail(request, workspace_id, post_id):
             "post": post,
             "pipeline_stage": pipeline_stage(post),
             "active_tab": active_tab,
+            "text_colors": TEXT_COLORS,
             "tabs": TABS,
             "history": history[:100],
             "empty_initial_text": TextVersion.objects.filter(

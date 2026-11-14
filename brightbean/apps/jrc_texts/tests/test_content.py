@@ -32,6 +32,47 @@ def test_numbered_list_start_and_task_checked_are_preserved():
     assert [item["attrs"]["checked"] for item in items] == [False, True]
 
 
+def test_text_color_round_trips_through_html_in_markdown_export():
+    content = {
+        "type": "doc",
+        "content": [
+            {
+                "type": "paragraph",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Blue line",
+                        "marks": [{"type": "textColor", "attrs": {"color": "#0369a1"}}],
+                    }
+                ],
+            }
+        ],
+    }
+    exported = content_to_markdown(content)
+    assert 'data-jrc-text-color="#0369a1"' in exported
+    assert markdown_to_content(exported) == content
+    assert content_to_plain_text(content) == "Blue line"
+
+
+def test_unapproved_text_color_is_not_rendered_as_html():
+    content = {
+        "type": "doc",
+        "content": [
+            {
+                "type": "paragraph",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Unsafe",
+                        "marks": [{"type": "textColor", "attrs": {"color": "red; background:url(x)"}}],
+                    }
+                ],
+            }
+        ],
+    }
+    assert "style=" not in content_to_markdown(content)
+
+
 @pytest.mark.parametrize(
     "content",
     [

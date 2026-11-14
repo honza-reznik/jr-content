@@ -8,7 +8,7 @@ Expectations are written by hand, not derived from ``apps.approvals.edits`` or `
   (approved, waiting for the client, planned, on hold, failed) sends it back to review on every path; a
   planned copy is taken out of the plan (its time and queue slot dropped, the time kept as the proposed
   date) and the editor is told so. "No approvals" and "Optional approvals" change nothing.
-* Marking another final video version or uploading a new thumbnail after approval is such a change.
+* Marking another final video version after approval is such a change; thumbnails are outside approval (P2-B11).
 * Deleting planned content (bulk Delete, composer Delete, a deselected channel, removing a channel)
   needs the right to take it out of the plan: owner and manager may, editor and contributor may not.
   Unplanned content stays under edit rights.
@@ -350,7 +350,7 @@ def test_edited_failed_copy_cannot_be_retried_unreviewed(make):
     assert _statuses(copy) == ["pending_review"]
 
 
-# -------------------------------------------------------------- AK2 final video and thumbnail
+# -------------------------------------------------------------- AK2 final video; thumbnails are not reviewed
 
 
 def _video(copy, *numbers):
@@ -421,19 +421,32 @@ def _image():
     return SimpleUploadedFile("nahled.png", stream.getvalue(), content_type="image/png")
 
 
-@pytest.mark.parametrize("mode", MODES)
-def test_new_thumbnail_after_approval(make, mode):
+def test_new_thumbnail_after_approval_does_not_return_content_to_review(make):
+    """A thumbnail is production material, not part of the content the reviewer approves."""
+    mode = "required_internal"
     workspace, account, second, actor, client = make(mode)
     post, (copy, other), when = _held(workspace, [account, second], actor, "scheduled")
     response = client.post(
         f"/workspace/{workspace.pk}/content/{post.pk}/channels/{copy.pk}/thumbnail/", {"image": _image()}
     )
     assert response.status_code == 302
-    expected = "pending_review" if RETURNS[mode] else "scheduled"
-    assert _statuses(copy, other) == [expected, "scheduled"]
+    assert _statuses(copy, other) == ["scheduled", "scheduled"]
     page = client.get(response["Location"]).content.decode()
     assert "Thumbnail uploaded as version 1." in page
-    assert ("taken out of the plan because the thumbnail changed" in page) == RETURNS[mode]
+    assert "taken out of the plan because the thumbnail changed" not in page
+
+
+def test_script_edit_after_approval_does_not_return_content_to_review(make):
+    """Production scripts are not published content and do not invalidate a channel's review."""
+    from apps.jrc_texts import services as texts
+
+    workspace, account, second, actor, client = make("required_internal")
+    post, (copy,) = _content(workspace, [account], actor, status="approved")
+    document = texts.create_document(post.pk, actor, markdown="First script", kind="script")
+    draft = texts.edit(document.versions.get(state="final").pk, actor)
+    texts.save(draft.pk, actor, expected_revision=0, markdown="Revised script")
+    copy.refresh_from_db()
+    assert copy.status == "approved"
 
 
 def test_platform_extra_is_not_reviewed_content(make):
