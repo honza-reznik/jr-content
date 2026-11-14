@@ -238,6 +238,106 @@ def test_mcp_oauth_request_works_in_the_workspace_the_web_showed(editor, posts, 
     assert actor is not None and actor.workspace_id == ella.id
 
 
+def _two_organizations(editor_user):
+    """A second organization where the user has the earliest-joined workspace; the first one has none."""
+    other = Organization.objects.create(name="Other agency")
+    zed = Workspace.objects.create(organization=other, name="Zed", approval_workflow_mode="optional")
+    OrgMembership.objects.create(user=editor_user, organization=other, org_role="member")
+    return other, zed
+
+
+def test_several_organizations_web_and_oauth_work_in_the_same_workspace(org):
+    """R4: no usable last workspace in the selected organization; the user has a workspace only in another one."""
+    from apps.api.auth import _resolve_active_membership
+
+    user = make_user("two-orgs@example.invalid")
+    OrgMembership.objects.create(user=user, organization=org, org_role="member")  # member, no workspace here
+    other, zed = _two_organizations(user)
+    WorkspaceMembership.objects.create(user=user, workspace=zed, workspace_role="editor")
+    user.last_workspace_id = None
+    user.save(update_fields=["last_workspace_id"])
+    client = login(user)
+    session = client.session
+    session["active_organization_id"] = str(org.id)  # the selection points at the organization without a workspace
+    session.save()
+    assert _resolve_active_membership(user).workspace_id == zed.id
+    # The user is not an organization admin, so the page opens in Zed (and the selection follows it).
+    response = client.get(BOARD)
+    assert response.status_code == 200 and response.context["workspace"] == zed
+    user.refresh_from_db()
+    assert user.last_workspace_id == zed.id
+    assert client.session["active_organization_id"] == str(other.id)
+    assert _resolve_active_membership(user).workspace_id == response.context["workspace"].id
+
+
+def test_earliest_membership_wins_across_organizations_when_no_organization_is_selected(org, ella):
+    from apps.api.auth import _resolve_active_membership
+
+    user = make_user("across@example.invalid")
+    other, zed = _two_organizations(user)
+    WorkspaceMembership.objects.create(user=user, workspace=zed, workspace_role="editor")
+    member(user, org, ella)  # joined later
+    user.last_workspace_id = None
+    user.save(update_fields=["last_workspace_id"])
+    client = login(user)
+    response = client.get(BOARD)
+    assert response.context["workspace"] == zed
+    assert _resolve_active_membership(user).workspace_id == zed.id
+
+
+def test_organization_admin_without_workspace_in_selected_organization_keeps_it(org, ella):
+    """An organization admin who selected an organization where they have no workspace stays in it."""
+    user = make_user("admin-only@example.invalid")
+    OrgMembership.objects.create(user=user, organization=org, org_role="admin")
+    other, zed = _two_organizations(user)
+    WorkspaceMembership.objects.create(user=user, workspace=zed, workspace_role="editor")
+    user.last_workspace_id = None
+    user.save(update_fields=["last_workspace_id"])
+    client = login(user)
+    session = client.session
+    session["active_organization_id"] = str(org.id)
+    session.save()
+    response = client.get(reverse("organizations:settings"))
+    assert response.status_code == 200
+    assert client.session["active_organization_id"] == str(org.id)
+
+
+def test_entering_the_app_uses_the_shared_rule_and_stores_it(editor, ella, bruno):
+    """R5: the entry page does not pick the first workspace alphabetically (Bruno) but the earliest membership (Ella)."""
+    editor.last_workspace_id = None
+    editor.save(update_fields=["last_workspace_id"])
+    response = login(editor).get(reverse("dashboard"))
+    assert response.status_code == 302 and str(ella.id) in response["Location"]
+    editor.refresh_from_db()
+    assert editor.last_workspace_id == ella.id
+
+
+def test_entering_the_app_with_an_unusable_last_workspace(editor, ella, bruno):
+    bruno.is_archived = True
+    bruno.save(update_fields=["is_archived"])
+    editor.last_workspace_id = bruno.id
+    editor.save(update_fields=["last_workspace_id"])
+    response = login(editor).get(reverse("dashboard"))
+    assert response.status_code == 302 and str(ella.id) in response["Location"]
+    editor.refresh_from_db()
+    assert editor.last_workspace_id == ella.id
+
+
+def test_switching_organization_picks_the_shared_default_not_the_alphabetical_one(org, ella, bruno):
+    user = make_user("switch@example.invalid")
+    other = Organization.objects.create(name="Other agency")
+    OrgMembership.objects.create(user=user, organization=other, org_role="member")
+    OrgMembership.objects.create(user=user, organization=org, org_role="member")
+    # Ella joined first although Bruno sorts first.
+    WorkspaceMembership.objects.create(user=user, workspace=ella, workspace_role="editor")
+    WorkspaceMembership.objects.create(user=user, workspace=bruno, workspace_role="editor")
+    user.last_workspace_id = None
+    user.save(update_fields=["last_workspace_id"])
+    login(user).post(reverse("organizations:switch"), {"organization_id": str(org.id)})
+    user.refresh_from_db()
+    assert user.last_workspace_id == ella.id
+
+
 def test_a_user_without_clients_sees_an_empty_board(org):
     lonely = member(make_user("lonely@example.invalid"), org)
     response = login(lonely).get(BOARD)

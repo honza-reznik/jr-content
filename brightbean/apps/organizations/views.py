@@ -18,6 +18,7 @@ from apps.composer.models import PlatformPost, Post, Tag
 from apps.members.decorators import require_org_role
 from apps.members.middleware import activate_organization
 from apps.members.models import OrgMembership, WorkspaceMembership
+from apps.members.services import default_workspace_membership
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 
@@ -66,15 +67,8 @@ def switch_organization(request):
     if not membership:
         raise PermissionDenied("You are not a member of this organization.")
     request.session["active_organization_id"] = str(membership.organization_id)
-    workspace_membership = (
-        WorkspaceMembership.objects.filter(
-            user=request.user,
-            workspace__organization=membership.organization,
-            workspace__is_archived=False,
-        )
-        .order_by("workspace__name", "workspace_id")
-        .first()
-    )
+    # The new organization's current workspace: the shared rule, limited to it (R5).
+    workspace_membership = default_workspace_membership(request.user, membership.organization)
     request.user.last_workspace_id = workspace_membership.workspace_id if workspace_membership else None
     request.user.save(update_fields=["last_workspace_id"])
     return redirect("dashboard")
