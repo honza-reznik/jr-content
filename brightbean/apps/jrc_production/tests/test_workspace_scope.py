@@ -601,3 +601,30 @@ def test_overview_calendar_shows_all_clients_read_only(org_owner, org, posts, se
 def test_org_member_without_admin_role_has_no_all_calendars_in_settings(editor):
     html = login(editor).get(reverse("accounts:settings")).content.decode()
     assert f'href="{CALENDAR}"' not in html
+
+
+def test_remembering_the_default_never_writes_a_deleted_account(org, ella):
+    """Review 3, P2: a view that deletes the account must not end in a 500 from the middleware."""
+    from django.contrib.auth import get_user_model
+    from django.http import HttpResponseRedirect
+    from django.test import RequestFactory
+
+    from apps.members.middleware import RBACMiddleware
+
+    user = make_user("gone@example.invalid")
+    member(user, org, ella)
+    user.last_workspace_id = None
+    user.save(update_fields=["last_workspace_id"])
+
+    def view(request):
+        get_user_model().objects.filter(pk=request.user.pk).delete()
+        return HttpResponseRedirect("/")
+
+    request = RequestFactory().get("/jrc/board/")
+    request.user = user
+    from django.contrib.sessions.backends.db import SessionStore
+
+    request.session = SessionStore()
+    response = RBACMiddleware(view)(request)
+    assert response.status_code == 302
+    assert not get_user_model().objects.filter(pk=user.pk).exists()
