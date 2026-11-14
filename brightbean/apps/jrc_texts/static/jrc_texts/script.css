@@ -82,3 +82,26 @@
 .script-sections-help { margin: 0 0 .5rem; font-size: .875rem; color: #57534e; }
 .script-sections-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
 #script-panel .script-sections-actions button:disabled { opacity: 1; color: #047857; border-color: #a7f3d0; background: #ecfdf5; }
+
+/* P2-B16: shared version conversation, including captions on narrow screens. */
+.version-comments { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid #e7e5e4; min-width: 0; }
+.version-comments h3 { font-size: 1rem; font-weight: 650; }
+.version-comment-help, .version-comment-meta { font-size: .8rem; color: #57534e; }
+.version-comment-help { margin: .5rem 0 1rem; }
+.version-comments form { margin: .8rem 0; }
+.version-comments label { display: block; font-size: .85rem; }
+.version-comments textarea { display: block; width: 100%; border: 1px solid #a8a29e; border-radius: .5rem; padding: .65rem; margin-top: .35rem; color: #292524; background: #fff; }
+.version-comment-actions, .version-comment-meta { display: flex; flex-wrap: wrap; align-items: center; gap: .65rem; }
+.version-comment-actions { justify-content: space-between; margin-top: .65rem; }
+.version-comments button, .version-comments select { border: 1px solid #a8a29e; border-radius: .5rem; padding: .5rem .75rem; font-size: .85rem; background: #fff; color: #292524; }
+.version-comments button:hover { background: #f5f5f4; }
+.version-comments :focus-visible { outline: 2px solid #ea580c; outline-offset: 3px; }
+.version-comments [data-comment-error] { color: #b91c1c; font-size: .85rem; }
+.version-comment-list { display: grid; gap: 1rem; padding: 0; list-style: none; }
+.version-comment { border: 1px solid #d6d3d1; border-radius: .75rem; padding: 1rem; min-width: 0; }
+.version-comment-internal { background: #fffbeb; border-color: #fcd34d; }
+.version-comment-body, .version-comment-snapshot { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; margin: .65rem 0; font-size: .9rem; }
+.version-comment-snapshot { max-height: 22rem; overflow-y: auto; background: #f5f5f4; padding: .75rem; font-family: inherit; }
+.version-comment details { margin-top: .5rem; font-size: .8rem; color: #9a3412; }
+.version-comment summary { cursor: pointer; }
+.version-comment-reply { margin: 1rem 0 1rem .5rem; border-left: 2px solid #d6d3d1; padding-left: .75rem; }

@@ -449,6 +449,8 @@ def is_open_for(version, user, device, now=None):
         or now - version.edited_at > AMEND_WINDOW
     ):
         return False
+    if version.comments.exists():
+        return False
     return not ApprovalAction.objects.filter(
         post_id=version.document.post_id, created_at__gte=version.created_at
     ).exists()

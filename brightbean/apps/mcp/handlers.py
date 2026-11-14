@@ -396,6 +396,20 @@ def _list_comments(args: dict, context: dict[str, Any]) -> dict:
     return _wrap_text([_comment_info(comment).model_dump(mode="json") for comment in comments])
 
 
+def _get_comment_version(args: dict, context: dict[str, Any]) -> dict:
+    from apps.approvals import comments as comment_services
+
+    post = _content_post(context, args["post_id"])
+    comment_id = _parse_uuid(args["comment_id"], "comment_id")
+    comment = post.comments.filter(pk=comment_id).first()
+    if comment is None:
+        raise _content_error("Comment not found.", 404)
+    try:
+        return _wrap_text(comment_services.read_comment_version(comment, context["api_key"].issued_by))
+    except (PermissionError, ValueError) as exc:
+        raise _content_error(str(exc), 404) from exc
+
+
 def _add_comment(args: dict, context: dict[str, Any]) -> dict:
     from apps.api.routers.content import _comment_info
     from apps.approvals import comments as comment_services
@@ -413,6 +427,9 @@ def _add_comment(args: dict, context: dict[str, Any]) -> dict:
             body=body,
             visibility=args.get("visibility"),
             parent_id=parent_id,
+            text_version_id=args.get("text_version_id"),
+            shotlist_version_id=args.get("shotlist_version_id"),
+            version_revision=args.get("version_revision"),
         )
     except PermissionError as exc:
         raise _content_error(str(exc), 403) from exc
@@ -555,6 +572,20 @@ def _register_content_tools() -> None:
     )
     register_tool(
         Tool(
+            name="jrc_get_comment_version",
+            description="Načte text konkrétní verze, ke které patří komentář. Kontroluje stejná oprávnění jako čtení komentáře.",
+            input_schema={
+                "type": "object",
+                "properties": {"post_id": post_id, "comment_id": {"type": "string", "format": "uuid"}},
+                "required": ["post_id", "comment_id"],
+                "additionalProperties": False,
+            },
+            handler=_get_comment_version,
+            read_only=True,
+        )
+    )
+    register_tool(
+        Tool(
             name="jrc_add_comment",
             description="Přidá komentář nebo odpověď. Vyžaduje klíč s `create_posts` nebo `approve_posts`. Klientské role mohou přidat jen externí komentář; odpověď dědí viditelnost vlákna.",
             input_schema={
@@ -564,6 +595,9 @@ def _register_content_tools() -> None:
                     "body": {"type": "string", "minLength": 1, "maxLength": 10000},
                     "visibility": {"type": ["string", "null"], "enum": ["internal", "external", None]},
                     "parent_id": {"type": ["string", "null"], "format": "uuid"},
+                    "text_version_id": {"type": ["string", "null"], "format": "uuid"},
+                    "shotlist_version_id": {"type": ["string", "null"], "format": "uuid"},
+                    "version_revision": {"type": ["integer", "null"], "minimum": 0},
                 },
                 "required": ["post_id", "body"],
                 "additionalProperties": False,

@@ -860,7 +860,11 @@ def content_detail(request, workspace_id, post_id):
 
     caption_channels = _caption_channels(post, request.POST if request.method == "POST" else None)
     can_view_internal_notes = membership.workspace_role not in ("client", "viewer")
-    comments = comment_services.get_comments_for_post(post, request.user)
+    comments = [
+        c
+        for c in comment_services.get_comments_for_post(post, request.user)
+        if comment_services.section_key(c)[0] == "discussion"
+    ]
     history = [
         {
             "kind": "stage",
@@ -1353,6 +1357,7 @@ def _shotlist_context(post, membership, *, focus="", error="", new_text="", new_
             for value in formats
         ],
         "shotlist_format": current,
+        "shotlist_comment_version": shotlist_services.snapshot(post, current),
         "shotlist_format_label": OutputFormat(current).label if current in OutputFormat.values else "",
         "shotlist_items": items,
         "shotlist_done": done,
@@ -1401,6 +1406,7 @@ def shotlist_action(request, workspace_id, post_id):
             {
                 "text": item.text,
                 "note": item.note,
+                "comment_version": str(shotlist_services.snapshot(post, output_format).pk),
                 "meta": f"{'Checked off' if item.is_done else 'Updated'} by {who} · "
                 f"{date_format(timezone.localtime(item.updated_at), 'M j, g:i A')}"
                 if who

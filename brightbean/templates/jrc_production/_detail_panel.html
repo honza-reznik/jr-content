@@ -1,4 +1,4 @@
-{% load static jrc_thumbnails tz %}{% comment %}P2-B08: the active tab's panel. The detail page includes it; switching tabs fetches only
+{% load static jrc_thumbnails tz version_comments %}{% comment %}P2-B08: the active tab's panel. The detail page includes it; switching tabs fetches only
 this fragment (``X-JRC-Tab: 1``) and content-tabs.js swaps it in and runs its scripts.{% endcomment %}
 <section class="mt-5 rounded-2xl border border-stone-200 bg-white p-4 sm:p-6" role="tabpanel" id="content-tabpanel" aria-labelledby="content-tab-{{ active_tab }}" data-tab="{{ active_tab }}" tabindex="-1">
         {% if needs_channel %}
@@ -43,11 +43,14 @@ this fragment (``X-JRC-Tab: 1``) and content-tabs.js swaps it in and runs its sc
             </ol>
         {% elif active_tab == "concept" %}
             {% include "jrc_texts/script.html" with text_kind="concept" %}
+            {% version_comments "concept" %}
         {% elif active_tab == "script" %}
             {% include "jrc_texts/script.html" with text_kind="script" %}
+            {% version_comments "script" %}
         {% elif active_tab == "shotlist" %}
             <div id="shotlist" class="shotlist" data-shotlist>{% include "jrc_production/_shotlist.html" %}</div>
             <p class="sr-only" role="status" data-shotlist-status></p>
+            {% version_comments "shotlist" output_format=shotlist_format %}
         {% elif active_tab == "video" %}
             {% include "jrc_video/_upload_tab.html" %}
         {% elif active_tab == "publish" %}
@@ -126,6 +129,7 @@ this fragment (``X-JRC-Tab: 1``) and content-tabs.js swaps it in and runs its sc
                         {% if can_edit_captions %}<noscript><button type="submit" class="mt-2 rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700">Save version</button></noscript>{% if caption_error %}<button type="submit" class="mt-2 rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700">Save version</button>{% endif %}{% endif %}
                     </form>
                     <div data-caption-versions>{% include "jrc_production/_caption_versions.html" %}</div>
+                    {% if item.variant %}{% version_comments "caption" output=item.variant.pk %}{% endif %}
                     {% channel_thumbnail item.variant "caption" %}
                 </article>
                 {% empty %}<div class="rounded-xl border border-dashed border-stone-300 px-4 py-10 text-center text-sm text-stone-500">No channels yet. Add a channel before writing a caption.</div>{% endfor %}
@@ -141,3 +145,5 @@ this fragment (``X-JRC-Tab: 1``) and content-tabs.js swaps it in and runs its sc
 {% if active_tab == "shotlist" %}<script src="{% static 'jrc_production/shotlist.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
 {% if active_tab == "publish" %}<script src="{% static 'jrc_production/publish.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
 {% if active_tab == "caption" or active_tab == "publish" %}<script src="{% static 'jrc_thumbnails/thumbnail.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
+
+{% if active_tab == "concept" or active_tab == "script" or active_tab == "shotlist" or active_tab == "caption" %}<script src="{% static 'jrc_production/version-comments.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}

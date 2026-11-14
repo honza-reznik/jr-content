@@ -91,6 +91,13 @@ class PostComment(models.Model):
         blank=True,
         related_name="replies",
     )
+    # A null pair is the general Discussion; otherwise the document identifies the section/output.
+    text_version = models.ForeignKey(
+        "jrc_texts.TextVersion", on_delete=models.RESTRICT, null=True, blank=True, related_name="comments"
+    )
+    shotlist_version = models.ForeignKey(
+        "jrc_production.ShotlistVersion", on_delete=models.RESTRICT, null=True, blank=True, related_name="comments"
+    )
     body = models.TextField()
     visibility = models.CharField(
         max_length=10,
@@ -109,6 +116,12 @@ class PostComment(models.Model):
 
     class Meta:
         db_table = "approvals_post_comment"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(text_version__isnull=True) | models.Q(shotlist_version__isnull=True),
+                name="comment_one_version_type",
+            ),
+        ]
         ordering = ["created_at"]
         indexes = [
             models.Index(fields=["post", "created_at"], name="idx_comment_post_date"),

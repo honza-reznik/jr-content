@@ -790,3 +790,42 @@ def test_channel_response_is_materialized_before_releasing_parent_lock(
     assert blocked, "Wider request must wait until the narrow response has been assembled"
     assert response.status_code == 200, response.content
     assert str(second.pk) not in response.content.decode()
+
+
+def test_version_comment_rest_metadata_and_protected_snapshot(workspace, user, org_owner, content):
+    from django.utils import timezone
+
+    from apps.approvals.comments import create_comment
+
+    document = TextDocument.objects.create(post=content, workspace=workspace, kind="script")
+    version = TextVersion.objects.create(
+        document=document,
+        number=1,
+        state="final",
+        content={
+            "type": "doc",
+            "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Exact API version"}]}],
+        },
+        text="Exact API version",
+        created_by=user,
+        finalized_at=timezone.now(),
+    )
+    key = make_key(workspace, user)
+    result = api(
+        key,
+        "post",
+        f"{content.pk}/comments",
+        {"body": "API version comment", "text_version_id": str(version.pk), "version_revision": 0},
+    )
+    assert result.status_code == 201
+    data = result.json()
+    assert data["section"] == "script" and data["version_number"] == 1
+    assert data["document_id"] == str(document.pk)
+    route = f"{content.pk}/comments/{data['id']}/version"
+    assert api(key, "get", route).json() == {"number": 1, "text": "Exact API version"}
+    shared = create_comment(content, user, "Public version comment", visibility="external", text_version_id=version.pk)
+    WorkspaceMembership.objects.filter(user=user, workspace=workspace).update(workspace_role="client")
+    assert api(key, "get", route).status_code == 404
+    listed = api(key, "get", f"{content.pk}/comments").json()
+    assert [c["id"] for c in listed] == [str(shared.pk)]
+    assert api(key, "get", f"{content.pk}/comments/{shared.pk}/version").status_code == 200

@@ -56,7 +56,10 @@ def shotlist_formats(post):
     from apps.composer.output_formats import format_sort_key
 
     formats = set(post.platform_posts.values_list("output_format", flat=True))
-    formats |= set(ShotlistItem.objects.filter(post_id=post.pk).exclude(output_format="").values_list("output_format", flat=True))
+    formats |= set(post.shotlist_versions.values_list("output_format", flat=True))
+    formats |= set(
+        ShotlistItem.objects.filter(post_id=post.pk).exclude(output_format="").values_list("output_format", flat=True)
+    )
     return sorted((value for value in formats if value), key=format_sort_key)
 
 
@@ -149,6 +152,7 @@ def add_item(post, user, text, note="", *, membership=None, output_format=""):
         updated_by=user,
     )
     _log(post, item, ShotlistChange.Action.ADDED, user)
+    snapshot(post, output_format)
     return item
 
 
@@ -179,6 +183,8 @@ def update_item(post, item_id, user, *, text=None, note=None, is_done=None, memb
         item.save(update_fields=[*fields, "updated_by", "updated_at"])
     if action:
         _log(post, item, action, user)
+    if fields:
+        snapshot(post, item.output_format)
     return item
 
 
@@ -216,6 +222,8 @@ def move_item(post, item_id, user, *, index=None, offset=None, membership=None):
         item.updated_by = user
         item.save(update_fields=["updated_by", "updated_at"])
     item.refresh_from_db()
+    if changed:
+        snapshot(post, item.output_format)
     return item
 
 
@@ -226,4 +234,30 @@ def delete_item(post, item_id, user, *, membership=None):
     if item.kind == ShotlistItem.Kind.THUMBNAIL:
         raise ValidationError("The thumbnail photo item cannot be deleted. Check it off when the photo is taken.")
     _log(post, item, ShotlistChange.Action.DELETED, user)
+    output_format = item.output_format
     item.delete()
+    snapshot(post, output_format)
+
+
+@transaction.atomic
+def snapshot(post, output_format=""):
+    """Record the current list only when changed. Serializes with all shotlist writers."""
+    from .models import ShotlistVersion
+
+    post = Post.objects.select_for_update().get(pk=post.pk)
+    ensure_thumbnail_item(post)
+    output_format = clean_format(post, output_format)
+    # The first output adopts the list written before channels existed (P2-B14).
+    # Move its history with it, preserving both the snapshot text and version numbers.
+    if output_format and output_format == shotlist_formats(post)[0]:
+        ShotlistVersion.objects.filter(post=post, output_format="").update(output_format=output_format)
+    content = [
+        {"id": str(item.pk), "text": item.text, "note": item.note, "done": item.is_done}
+        for item in items_for(post, output_format)
+    ]
+    latest = ShotlistVersion.objects.filter(post=post, output_format=output_format).order_by("-number").first()
+    if latest and latest.content == content:
+        return latest
+    return ShotlistVersion.objects.create(
+        post=post, output_format=output_format, number=latest.number + 1 if latest else 1, content=content
+    )

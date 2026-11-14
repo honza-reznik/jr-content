@@ -173,3 +173,20 @@ class VideoDeletionRequest(models.Model):
     ff_asset_id = models.UUIDField(primary_key=True)
     requested_at = models.DateTimeField(auto_now_add=True)
     last_error = models.CharField(max_length=255, blank=True)
+
+
+class ShotlistVersion(models.Model):
+    """Immutable snapshot of a format's shotlist, used by version comments (P2-B16)."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    post = models.ForeignKey("composer.Post", on_delete=models.CASCADE, related_name="shotlist_versions")
+    output_format = models.CharField(max_length=20, blank=True, default="")
+    number = models.PositiveIntegerField()
+    content = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["number"]
+        constraints = [
+            models.UniqueConstraint(fields=["post", "output_format", "number"], name="shotlist_version_number"),
+        ]

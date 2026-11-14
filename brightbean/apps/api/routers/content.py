@@ -24,6 +24,7 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.http import Http404, HttpRequest
 from django.shortcuts import get_object_or_404
+from django.urls import reverse
 from ninja import Field, Router, Schema
 from ninja.errors import HttpError
 
@@ -559,6 +560,15 @@ class CommentInfo(Schema):
     visibility: str = Field(description="internal (team only) or external (the client sees it too).")
     is_resolved: bool
     created_at: str
+    section: str = "discussion"
+    text_version_id: uuid.UUID | None = None
+    shotlist_version_id: uuid.UUID | None = None
+    version_number: int | None = None
+    version_revision: int | None = None
+    document_id: uuid.UUID | None = None
+    platform_post_id: uuid.UUID | None = None
+    output_format: str = ""
+    version_url: str | None = None
     replies: list[CommentInfo] = Field(default_factory=list)
 
 
@@ -572,6 +582,9 @@ class CommentWrite(Schema):
         ),
     )
     parent_id: uuid.UUID | None = Field(None, description="Id of the thread (top-level comment) to reply to.")
+    text_version_id: uuid.UUID | None = None
+    shotlist_version_id: uuid.UUID | None = None
+    version_revision: int | None = None
 
 
 def _comment_info(comment) -> CommentInfo:
@@ -582,6 +595,21 @@ def _comment_info(comment) -> CommentInfo:
         visibility=comment.visibility,
         is_resolved=comment.is_resolved,
         created_at=_iso(comment.created_at),
+        section=comment_services.section_key(comment)[0],
+        version_revision=comment.text_version.revision if comment.text_version_id else None,
+        document_id=comment.text_version.document_id if comment.text_version_id else None,
+        platform_post_id=comment.text_version.document.platform_post_id if comment.text_version_id else None,
+        output_format=comment.shotlist_version.output_format if comment.shotlist_version_id else "",
+        text_version_id=comment.text_version_id,
+        shotlist_version_id=comment.shotlist_version_id,
+        version_number=(comment.text_version or comment.shotlist_version).number
+        if (comment.text_version_id or comment.shotlist_version_id)
+        else None,
+        version_url=reverse(
+            "jrc_production:comment_version", args=[comment.post.workspace_id, comment.post_id, comment.pk]
+        )
+        if (comment.text_version_id or comment.shotlist_version_id)
+        else None,
         replies=[_comment_info(reply) for reply in getattr(comment, "visible_replies", [])],
     )
 
@@ -626,6 +654,9 @@ def comment_add(request, post_id: uuid.UUID, payload: CommentWrite):
             body=body,
             visibility=payload.visibility,
             parent_id=payload.parent_id,
+            text_version_id=payload.text_version_id,
+            shotlist_version_id=payload.shotlist_version_id,
+            version_revision=payload.version_revision,
         )
     except PermissionError as exc:
         raise HttpError(403, str(exc)) from exc
@@ -638,6 +669,22 @@ def comment_add(request, post_id: uuid.UUID, payload: CommentWrite):
     return 201, _comment_info(comment)
 
 
+class CommentVersion(Schema):
+    number: int
+    text: str
+
+
+@router.get("/{post_id}/comments/{comment_id}/version", response=CommentVersion, operation_id="read_comment_version")
+def comment_version_get(request, post_id: uuid.UUID, comment_id: uuid.UUID):
+    enforce_http_rate_limits(request, is_write=False)
+    post = _post(request, post_id)
+    comment = get_object_or_404(post.comments, pk=comment_id)
+    try:
+        return comment_services.read_comment_version(comment, request.user)
+    except (PermissionError, ValueError) as exc:
+        raise HttpError(404, str(exc)) from exc
+
+
 class ChannelWrite(Schema):
     social_account_id: uuid.UUID = Field(description="Enabled client channel in the key's account allowlist.")
     output_format: str = Field(
@@ -647,7 +694,9 @@ class ChannelWrite(Schema):
     )
 
 
-@router.post("/{post_id}/channels", response=PostResponse, summary="Explicitly add an output (channel + format) to draft content")
+@router.post(
+    "/{post_id}/channels", response=PostResponse, summary="Explicitly add an output (channel + format) to draft content"
+)
 def channel_add(request, post_id: uuid.UUID, payload: ChannelWrite):
     enforce_http_rate_limits(request, is_write=True)
     _require_perm(request, "create_posts")

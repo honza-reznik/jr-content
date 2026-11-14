@@ -6,6 +6,8 @@ Handles creation, updating, deletion, and @mention parsing for post comments.
 import re
 from collections import defaultdict
 
+from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.utils import timezone
 
 from apps.members.models import WorkspaceMembership
@@ -33,7 +35,13 @@ def can_view_comment(comment, user):
     seen = set()
     current = comment
     while current is not None:
-        if current.pk in seen or current.post_id != comment.post_id or current.is_deleted:
+        if (
+            current.pk in seen
+            or current.post_id != comment.post_id
+            or current.is_deleted
+            or not version_belongs_to_post(current)
+            or section_key(current) != section_key(comment)
+        ):
             return False
         seen.add(current.pk)
         if external_only and current.visibility != PostComment.Visibility.EXTERNAL:
@@ -42,7 +50,19 @@ def can_view_comment(comment, user):
     return True
 
 
-def create_comment(post, author, body, visibility=None, parent_id=None, attachment=None):
+@transaction.atomic
+def create_comment(
+    post,
+    author,
+    body,
+    visibility=None,
+    parent_id=None,
+    attachment=None,
+    *,
+    text_version_id=None,
+    shotlist_version_id=None,
+    version_revision=None,
+):
     """Create a comment on a post and notify @mentioned users.
 
     Args:
@@ -57,6 +77,17 @@ def create_comment(post, author, body, visibility=None, parent_id=None, attachme
     Returns:
         The created PostComment.
     """
+    from apps.composer.models import Post
+    from apps.jrc_production.models import ShotlistVersion
+    from apps.jrc_texts.models import TextVersion
+
+    # Same lock as autosave: a commented version is closed before the next edit can amend it.
+    post = Post.all_objects.select_for_update().select_related("workspace").get(pk=post.pk)
+    if post.trashed_at is not None:
+        raise PermissionError("This content is in the trash.")
+    body = body.strip()
+    if not body or len(body) > 10000:
+        raise ValueError("Write a comment under 10000 characters.")
     if attachment and attachment.size > MAX_ATTACHMENT_SIZE:
         raise ValueError("Attachment exceeds 5MB limit.")
 
@@ -90,6 +121,27 @@ def create_comment(post, author, body, visibility=None, parent_id=None, attachme
     if visibility not in PostComment.Visibility.values:
         raise ValueError("Choose a valid comment visibility.")
 
+    text_version = shotlist_version = None
+    try:
+        if text_version_id:
+            text_version = TextVersion.objects.select_related("document").get(
+                pk=text_version_id, document__post=post, state="final"
+            )
+            if version_revision is not None and text_version.revision != int(version_revision):
+                raise ValueError("This version changed. Reload the text before commenting.")
+        if shotlist_version_id:
+            shotlist_version = ShotlistVersion.objects.get(pk=shotlist_version_id, post=post)
+    except (TextVersion.DoesNotExist, ShotlistVersion.DoesNotExist, TypeError, ValidationError) as exc:
+        raise ValueError("Text version not found.") from exc
+    if text_version and shotlist_version:
+        raise ValueError("Choose one version.")
+    if parent_comment:
+        # Replies cannot escape the document/format of their root. Legacy callers inherit its version.
+        if not text_version and not shotlist_version:
+            text_version, shotlist_version = parent_comment.text_version, parent_comment.shotlist_version
+        if section_key(parent_comment) != version_section(text_version, shotlist_version):
+            raise ValueError("Choose a version from this thread's section.")
+
     comment = PostComment.objects.create(
         post=post,
         author=author,
@@ -97,6 +149,8 @@ def create_comment(post, author, body, visibility=None, parent_id=None, attachme
         body=body,
         visibility=visibility,
         attachment=attachment,
+        text_version=text_version,
+        shotlist_version=shotlist_version,
     )
 
     if membership.workspace_role == WorkspaceMembership.WorkspaceRole.CLIENT:
@@ -108,7 +162,7 @@ def create_comment(post, author, body, visibility=None, parent_id=None, attachme
     workspace = post.workspace
     mentions = MENTION_REGEX.findall(body)
     if mentions:
-        _notify_mentions(mentions, post, author, workspace, body, visibility)
+        _notify_mentions(mentions, post, author, workspace, body, visibility, comment)
 
     return comment
 
@@ -199,9 +253,10 @@ def get_visible_comments(posts, user, workspace):
         PostComment.objects.filter(
             post_id__in=[post.pk for post in posts],
             post__workspace=workspace,
+            post__trashed_at__isnull=True,
             deleted_at__isnull=True,
         )
-        .select_related("author")
+        .select_related("author", "text_version__document", "shotlist_version")
         .order_by("created_at")
     )
 
@@ -214,6 +269,8 @@ def get_visible_comments(posts, user, workspace):
     children = defaultdict(list)
     roots = []
     for comment in qs:
+        if not version_belongs_to_post(comment):
+            continue
         comment.visible_replies = []
         if comment.parent_comment_id is None:
             roots.append(comment)
@@ -223,7 +280,11 @@ def get_visible_comments(posts, user, workspace):
     pending = list(roots)
     while pending:
         parent = pending.pop()
-        parent.visible_replies = [child for child in children.pop(parent.pk, []) if child.post_id == parent.post_id]
+        parent.visible_replies = [
+            child
+            for child in children.pop(parent.pk, [])
+            if child.post_id == parent.post_id and section_key(child) == section_key(parent)
+        ]
         pending.extend(parent.visible_replies)
     return roots
 
@@ -255,7 +316,7 @@ def resolve_comment(comment_id, user, workspace, *, resolved=True):
     return comment
 
 
-def _notify_mentions(mentions, post, author, workspace, body, visibility):
+def _notify_mentions(mentions, post, author, workspace, body, visibility, comment):
     """Send notifications to @mentioned workspace members."""
     # Build lookup of display names / email prefixes → user
     memberships = WorkspaceMembership.objects.filter(
@@ -295,7 +356,63 @@ def _notify_mentions(mentions, post, author, workspace, body, visibility):
                     "note_visibility": visibility,
                     "post_id": str(post.id),
                     "workspace_id": str(workspace.id),
-                    "action_url": content_path(post, "comments"),
+                    "action_url": comment_url(comment),
                 },
             )
             notified.add(target_user.id)
+
+
+def version_section(text_version, shotlist_version):
+    if text_version:
+        return (text_version.document.kind, str(text_version.document_id))
+    if shotlist_version:
+        return ("shotlist", shotlist_version.output_format)
+    return ("discussion", "")
+
+
+def section_key(comment):
+    return version_section(comment.text_version, comment.shotlist_version)
+
+
+def comment_url(comment):
+    from urllib.parse import urlencode
+
+    section = section_key(comment)[0]
+    query = {"tab": section}
+    if comment.text_version_id:
+        query["version"] = str(comment.text_version_id)
+    if comment.shotlist_version_id:
+        query["format"] = comment.shotlist_version.output_format
+    return content_path(comment.post).split("?", 1)[0] + "?" + urlencode(query) + "#comment-" + str(comment.pk)
+
+
+def read_comment_version(comment, user):
+    """Read the immutable text through the same privacy boundary as its comment."""
+    from apps.jrc_texts.content import content_to_plain_text
+
+    if not can_view_comment(comment, user):
+        raise PermissionError("Comment not found.")
+    if comment.text_version_id:
+        version = comment.text_version
+        text = (
+            version.content.get("text", "")
+            if version.document.format == "plain"
+            else content_to_plain_text(version.content)
+        )
+    elif comment.shotlist_version_id:
+        version = comment.shotlist_version
+        text = "\n".join(
+            ("☑ " if item["done"] else "☐ ") + item["text"] + ("\n" + item["note"] if item["note"] else "")
+            for item in version.content
+        )
+    else:
+        raise ValueError("Version not found.")
+    return {"number": version.number, "text": text}
+
+
+def version_belongs_to_post(comment):
+    return (
+        (not comment.text_version_id or comment.text_version.document.post_id == comment.post_id)
+        and (not comment.shotlist_version_id or comment.shotlist_version.post_id == comment.post_id)
+        and not (comment.text_version_id and comment.shotlist_version_id)
+    )

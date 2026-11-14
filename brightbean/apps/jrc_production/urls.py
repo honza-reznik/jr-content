@@ -1,9 +1,19 @@
 from django.urls import path
 
-from . import board_actions, views
+from . import board_actions, version_comments, views
 
 app_name = "jrc_production"
 urlpatterns = [
+    path(
+        "workspace/<uuid:workspace_id>/content/<uuid:post_id>/version-comments/",
+        version_comments.panel,
+        name="version_comments",
+    ),
+    path(
+        "workspace/<uuid:workspace_id>/content/<uuid:post_id>/version-comments/<uuid:comment_id>/",
+        version_comments.version,
+        name="comment_version",
+    ),
     path("board/actions/", board_actions.batch, name="board_actions"),
     path("board/trash/", views.trash, name="trash"),
     path(

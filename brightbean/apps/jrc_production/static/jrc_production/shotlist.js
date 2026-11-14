@@ -57,6 +57,8 @@
       failure.retry = response.status >= 500 || (!result && !response.redirected);
       throw failure;
     }
+    const list = root.querySelector('[data-shotlist-current-format]');
+    if (list && result.comment_version) list.dataset.commentVersion = result.comment_version;
     const row = form.closest('.shotlist-row');
     const meta = row && row.querySelector('[data-shotlist-meta]');
     if (result.meta && row) {
