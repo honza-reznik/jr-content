@@ -50,3 +50,7 @@ class WorkspaceColorForm(forms.Form):
         from apps.workspaces.colors import validate_accent
 
         return validate_accent(self.cleaned_data["color"])
+
+
+class ChannelColorForm(WorkspaceColorForm):
+    color = forms.CharField(label="Channel colour (HEX)", max_length=7, strip=False)

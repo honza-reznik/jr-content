@@ -9,10 +9,11 @@ from apps.members.models import WorkspaceMembership
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.colors import PALETTE
 
-from .forms import AddChannelForm, ChannelDetailsForm, WorkspaceColorForm
+from .forms import AddChannelForm, ChannelColorForm, ChannelDetailsForm, WorkspaceColorForm
 from .icons import validated_icon
 from .models import ChannelProfile
 from .services import create_manual_channel, set_channel_enabled
+from .tasks import schedule_website_icon
 
 
 def _membership(request, workspace_id, *, editing=False):
@@ -39,7 +40,17 @@ def _account(workspace_id, account_id):
     )
 
 
-def _profile(request, membership, *, add_form=None, edit_form=None, editing_id=None, color_form=None):
+def _profile(
+    request,
+    membership,
+    *,
+    add_form=None,
+    edit_form=None,
+    editing_id=None,
+    color_form=None,
+    channel_color_form=None,
+    color_id=None,
+):
     accounts = list(
         SocialAccount.objects.filter(workspace=membership.workspace, jrc_channel__isnull=False)
         .select_related("jrc_channel")
@@ -52,6 +63,10 @@ def _profile(request, membership, *, add_form=None, edit_form=None, editing_id=N
                 "account": account,
                 "profile": account.jrc_channel,
                 "is_editing": account.pk == editing_id,
+                "color_form": channel_color_form
+                if account.pk == color_id
+                else ChannelColorForm(initial={"color": account.jrc_accent_color}, auto_id=f"colour-{account.pk}-%s"),
+                "color_editing": account.pk == color_id,
                 "form": edit_form
                 if account.pk == editing_id
                 else ChannelDetailsForm(
@@ -90,13 +105,14 @@ def client_profile(request, workspace_id):
         form = AddChannelForm(request.POST, auto_id="add-%s")
         if form.is_valid():
             values = form.cleaned_data
-            create_manual_channel(
+            account = create_manual_channel(
                 membership.workspace,
                 values["platform"],
                 values["name"],
                 display_name=values["name"],
                 profile_url=values["profile_url"],
             )
+            schedule_website_icon(account)
             messages.success(request, f"{values['name']} added.")
             return redirect("jrc_channels:profile", workspace_id=workspace_id)
         return _profile(request, membership, add_form=form)
@@ -115,11 +131,26 @@ def channel_edit(request, workspace_id, account_id):
         # Use the same lock order as set_channel_enabled to keep edits and toggles safe.
         account = SocialAccount.objects.select_for_update().get(pk=account.pk)
         profile = ChannelProfile.objects.select_for_update().get(social_account=account)
+        account.jrc_channel = profile
+        # Freeze the existing default before a rename or a different website can
+        # change how a custom channel (e.g. Forendors) is recognised.
+        if not profile.color:
+            profile.color = account.jrc_accent_color
         account.account_name = form.cleaned_data["name"]
         account.save(update_fields=["account_name", "updated_at"])
+        link_changed = profile.profile_url != form.cleaned_data["profile_url"]
         profile.display_name = form.cleaned_data["name"]
         profile.profile_url = form.cleaned_data["profile_url"]
-        profile.save(update_fields=["display_name", "profile_url", "updated_at"])
+        old_favicon = profile.favicon.name if link_changed else ""
+        if link_changed:
+            profile.favicon = ""
+        profile.save(update_fields=["display_name", "profile_url", "favicon", "color", "updated_at"])
+        if old_favicon:
+            transaction.on_commit(lambda: profile.favicon.storage.delete(old_favicon))
+        if link_changed:
+            # Pass the locked, current profile to the scheduling helper.
+            account.jrc_channel = profile
+            schedule_website_icon(account)
     messages.success(request, "Channel details saved.")
     return redirect("jrc_channels:profile", workspace_id=workspace_id)
 
@@ -177,5 +208,43 @@ def channel_icon(request, workspace_id, account_id):
         profile.save(update_fields=["icon", "updated_at"])
         if old_name:
             transaction.on_commit(lambda: storage.delete(old_name))
-    messages.success(request, "Channel icon saved." if image else "Default channel icon restored.")
+    restored = "Website icon restored." if profile.favicon else "Default channel icon restored."
+    messages.success(request, "Channel icon saved." if image else restored)
+    return redirect("jrc_channels:profile", workspace_id=workspace_id)
+
+
+@login_required
+@require_POST
+def channel_color(request, workspace_id, account_id):
+    membership = _membership(request, workspace_id, editing=True)
+    account = _account(workspace_id, account_id)
+    form = ChannelColorForm(request.POST, auto_id=f"colour-{account.pk}-%s")
+    if not form.is_valid():
+        return _profile(request, membership, channel_color_form=form, color_id=account.pk)
+    profile = account.jrc_channel
+    profile.color = form.cleaned_data["color"]
+    profile.save(update_fields=["color", "updated_at"])
+    messages.success(request, "Channel colour saved.")
+    return redirect("jrc_channels:profile", workspace_id=workspace_id)
+
+
+@login_required
+@require_POST
+def channel_favicon(request, workspace_id, account_id):
+    from .favicons import refresh_favicon
+
+    _membership(request, workspace_id, editing=True)
+    account = _account(workspace_id, account_id)
+    if account.platform != "custom":
+        raise PermissionDenied("Known platforms use their built-in icon.")
+    source_url = account.jrc_channel.profile_url
+    try:
+        changed = refresh_favicon(account.pk, source_url)
+    except ValidationError as exc:
+        messages.error(request, " ".join(exc.messages))
+        return redirect("jrc_channels:profile", workspace_id=workspace_id)
+    if changed:
+        messages.success(request, "Website icon refreshed. An uploaded icon takes priority.")
+    else:
+        messages.error(request, "The profile link changed. Refresh the website icon again.")
     return redirect("jrc_channels:profile", workspace_id=workspace_id)

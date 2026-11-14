@@ -24,6 +24,9 @@ for container in $containers; do
         "jrc-smtp-relay:${project}_smtp-egress")
           # The dedicated relay is the only service allowed onto the SMTP egress network.
           test "$(docker network inspect --format '{{.Internal}}' "$network")" = false ;;
+        "jrc-favicon-relay:${project}_favicon-egress")
+          # This relay accepts only bounded public favicon requests, with no app credentials.
+          test "$(docker network inspect --format '{{.Internal}}' "$network")" = false ;;
         *) echo "CHYBA: $service má síť s internetem: $network"; exit 1 ;;
       esac
     fi
@@ -40,7 +43,7 @@ for container in $containers; do
         *) echo "CHYBA: $service publikuje neočekávané porty"; exit 1 ;;
       esac
       # PID 1 je přímo běžná aplikace, startovací oprávnění nezůstala ani v initu.
-      "$@" exec -T "$service" node -e '
+      "$@" exec -T "$service" timeout 30s node --max-old-space-size=2048 -e '
         const assert = require("node:assert/strict");
         const status = require("node:fs").readFileSync("/proc/1/status", "utf8");
         assert(!/^Uid:\s+0\s/m.test(status), "Brána běží jako root");
@@ -72,11 +75,27 @@ for container in $containers; do
     printf '%s\n' "$environment" | grep -Eq '^SMTP_TARGET_PORT=[0-9]+$'
     printf '%s\n' "$environment" | grep -Eq '^SMTP_LISTEN_PORT=[0-9]+$'
     echo "OK $service: jediná služba s řízeným SMTP výstupem"
+  elif [ "$service" = jrc-favicon-relay ]; then
+    test "$(docker inspect --format '{{.Config.User}}' "$container")" = '65534:65534'
+    test "$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' "$container")" = true
+    test "$(docker inspect --format '{{.HostConfig.Memory}}' "$container")" = 134217728
+    test "$(docker inspect --format '{{.HostConfig.PidsLimit}}' "$container")" = 16
+    test "$(docker inspect --format '{{json .HostConfig.CapDrop}}' "$container")" = '["ALL"]'
+    test "$(docker inspect --format '{{json .HostConfig.CapAdd}}' "$container")" = null
+    test "$(docker inspect --format '{{json .Config.Entrypoint}}' "$container")" = '["python","/relay/channel-favicon-relay.py"]'
+    test "$(docker inspect --format '{{len .Mounts}}' "$container")" = 2
+    for mount in '/relay/channel-favicon-relay.py false' '/favicon/favicon_fetch.py false'; do
+      docker inspect --format '{{range .Mounts}}{{.Destination}} {{.RW}}{{"\n"}}{{end}}' "$container" | grep -Fxq "$mount"
+    done
+    if docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container" | grep -Eq '^(DB_|PG|AWS_|JRC_|SMTP_|SECRET_|ENCRYPTION_)'; then
+      echo "CHYBA: favicon relay má přístupové nastavení aplikace"; exit 1
+    fi
+    echo "OK $service: omezený výstup pro favicony, bez tajemství, pouze dva soubory, bez portů hostitele"
   elif [ "$(docker inspect --format '{{.State.Running}}' "$container")" = true ]; then
     # Sdílený síťový prostor ověří i služby bez Node.js (Garage, Redis, Caddy).
-    docker run --rm --pull never --network "container:$container" \
+    docker run --rm --pull never --memory=512m --memory-swap=512m --cpus=1 --pids-limit=64 --network "container:$container" \
       --user "$(id -u):$(id -g)" --volume "$PWD/scripts/probe-isolation.cjs:/probe.cjs:ro" \
-      "jrc-dev:$project" node /probe.cjs
+      "jrc-dev:$project" timeout 30s node --max-old-space-size=2048 /probe.cjs
     echo "OK $service: bez výchozí trasy, porty jen místně, telemetrie vypnutá, IPv4 i IPv6 ven zablokované"
   else
     test "$(docker inspect --format '{{.State.ExitCode}}' "$container")" = 0
