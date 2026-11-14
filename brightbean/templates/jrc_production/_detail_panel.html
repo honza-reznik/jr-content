@@ -1,0 +1,143 @@
+{% load static jrc_thumbnails tz %}{% comment %}P2-B08: the active tab's panel. The detail page includes it; switching tabs fetches only
+this fragment (``X-JRC-Tab: 1``) and content-tabs.js swaps it in and runs its scripts.{% endcomment %}
+<section class="mt-5 rounded-2xl border border-stone-200 bg-white p-4 sm:p-6" role="tabpanel" id="content-tabpanel" aria-labelledby="content-tab-{{ active_tab }}" data-tab="{{ active_tab }}" tabindex="-1">
+        {% if needs_channel %}
+            <p class="text-sm text-stone-500">Add a channel first</p>
+            {% if can_manage_channels %}<a href="#content-channels" data-open-channels class="mt-3 inline-flex rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white">Add channel</a>{% else %}<p class="mt-3 text-sm text-stone-500">Ask an editor to add a channel.</p>{% endif %}
+        {% elif active_tab == "discussion" %}
+            <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">Discussion</h2><p class="mt-1 text-sm text-stone-500">Discuss this content with your team{% if is_client %}.{% else %}. Team only comments are not visible to the client.{% endif %}</p></div>
+            {% if can_comment %}<form method="post" action="{% url 'jrc_production:add_content_comment' workspace_id=workspace.id post_id=post.id %}" class="mb-6 rounded-xl border border-stone-200 bg-stone-50 p-3 sm:p-4">
+                {% csrf_token %}
+                <label for="new-comment" class="sr-only">Write a comment</label>
+                <textarea id="new-comment" name="body" required rows="3" maxlength="10000" class="w-full rounded-lg border border-stone-300 bg-white p-3 text-sm text-stone-800 placeholder:text-stone-400 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-100" placeholder="Write a comment…"></textarea>
+                <div class="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    {% if not is_client %}<label class="flex items-center gap-2 text-sm text-stone-600"><span>Visible to</span><select name="visibility" class="rounded-lg border border-stone-300 bg-white px-2 py-2 text-sm"><option value="internal" selected>Team only</option><option value="external">Team and client</option></select></label>{% else %}<span class="text-xs text-stone-500">Visible to you and the team</span>{% endif %}
+                    <button type="submit" class="w-full rounded-lg bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-orange-700 sm:w-auto">Add comment</button>
+                </div>
+            </form>{% endif %}
+            <ol class="space-y-4">
+                {% for comment in comments %}
+                <li class="rounded-xl border {% if comment.visibility == 'internal' %}border-amber-200 bg-amber-50/60{% else %}border-stone-200 bg-white{% endif %} p-3 sm:p-4">
+                    <article>
+                        <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"><div class="flex flex-wrap items-center gap-2"><p class="text-sm font-semibold text-stone-800">{% if comment.author %}{{ comment.author.display_name|default:comment.author.email }}{% else %}Former member{% endif %}</p><time class="text-xs text-stone-400">{{ comment.created_at|date:"M j, Y · g:i A" }}</time>{% if comment.visibility == 'internal' %}<span class="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">Team only</span>{% else %}<span class="rounded-full bg-teal-50 px-2 py-0.5 text-xs font-medium text-teal-800">Team and client</span>{% endif %}</div>
+                            {% if can_resolve_comments %}<form method="post" action="{% url 'jrc_production:resolve_content_comment' workspace_id=workspace.id post_id=post.id comment_id=comment.id %}">{% csrf_token %}<input type="hidden" name="resolved" value="{% if comment.is_resolved %}false{% else %}true{% endif %}"><button class="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50">{% if comment.is_resolved %}Reopen{% else %}Mark resolved{% endif %}</button></form>{% elif comment.is_resolved %}<span class="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-800">Resolved</span>{% endif %}</div>
+                        <p class="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-stone-700">{{ comment.body }}</p>
+                        {% if comment.is_resolved and can_resolve_comments %}<p class="mt-2 text-xs font-medium text-emerald-700">Resolved</p>{% endif %}
+                    </article>
+                    {% include "approvals/partials/comment_replies.html" with replies=comment.visible_replies only %}
+                    {% if can_comment %}<form method="post" action="{% url 'jrc_production:reply_to_content_comment' workspace_id=workspace.id post_id=post.id comment_id=comment.id %}" class="mt-4 flex flex-col gap-2 sm:flex-row">{% csrf_token %}<label for="reply-{{ comment.id }}" class="sr-only">Reply to comment</label><input id="reply-{{ comment.id }}" name="body" required maxlength="10000" class="min-w-0 flex-1 rounded-lg border border-stone-300 bg-white px-3 py-2.5 text-sm" placeholder="Write a reply…"><button type="submit" class="rounded-lg border border-stone-300 bg-white px-4 py-2.5 text-sm font-semibold text-stone-700 hover:bg-stone-50">Reply</button></form>{% endif %}
+                </li>
+                {% empty %}<li class="rounded-xl border border-dashed border-stone-300 px-4 py-8 text-center text-sm text-stone-500">No comments yet. Start the conversation.</li>{% endfor %}
+            </ol>
+        {% elif active_tab == "history" %}
+            <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">History</h2><p class="mt-1 text-sm text-stone-500">Saved text versions, stage changes, approval decisions, videos and shotlist changes for this content.</p></div>
+            <ol class="space-y-0">
+                {% for item in history %}
+                <li class="relative border-l border-stone-200 pb-6 pl-5 last:border-transparent last:pb-0">
+                    <span class="absolute -left-[5px] top-1 h-2.5 w-2.5 rounded-full {% if item.kind == 'approval' %}bg-blue-500{% elif item.kind == 'shotlist' %}bg-emerald-500{% else %}bg-orange-500{% endif %}"></span>
+                    <div class="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between"><p class="text-sm font-medium text-stone-800">{{ item.label }}</p><time class="text-xs text-stone-400">{{ item.created_at|date:"M j, Y · g:i A" }}</time></div>
+                    <p class="mt-1 text-xs text-stone-500">{% if item.actor %}{{ item.actor.display_name|default:item.actor.email }}{% else %}System{% endif %} · {% if item.kind == "approval" %}Approval{% elif item.kind == "shotlist" %}Shotlist{% elif item.kind == "text" %}Text version{% elif item.kind == "publication" %}Publication{% elif item.kind == "video" %}Video{% elif item.kind == "category" %}Category{% elif item.kind == "proposal" %}Proposed publication{% elif item.kind == "rename" %}Title{% else %}Production stage{% endif %}</p>
+                    {% if item.note and item.can_view_note %}{% if item.kind == "publication" and item.note|slice:":8" == "https://" %}<a href="{{ item.note }}" target="_blank" rel="noopener noreferrer" class="mt-2 inline-block break-all text-sm text-orange-700 underline">View published post</a>{% else %}<p class="mt-2 whitespace-pre-wrap rounded-lg bg-stone-50 p-3 text-sm text-stone-600">{{ item.note }}</p>{% endif %}{% endif %}
+                </li>
+                {% empty %}<li class="rounded-xl border border-dashed border-stone-300 px-4 py-8 text-center text-sm text-stone-500">No history yet.</li>{% endfor %}
+            </ol>
+        {% elif active_tab == "concept" %}
+            {% include "jrc_texts/script.html" with text_kind="concept" %}
+        {% elif active_tab == "script" %}
+            {% include "jrc_texts/script.html" with text_kind="script" %}
+        {% elif active_tab == "shotlist" %}
+            <div id="shotlist" class="shotlist" data-shotlist>{% include "jrc_production/_shotlist.html" %}</div>
+            <p class="sr-only" role="status" data-shotlist-status></p>
+        {% elif active_tab == "video" %}
+            {% include "jrc_video/_upload_tab.html" %}
+        {% elif active_tab == "publish" %}
+            <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">Publish channels</h2><p class="mt-1 text-sm text-stone-500">Download the final video and the thumbnail, copy the saved caption, then record when you publish it manually.</p></div>
+            <div class="space-y-4">
+                {% for item in publish_channels %}
+                <article class="rounded-xl border border-stone-200 p-4 sm:p-5" aria-labelledby="publish-channel-{{ forloop.counter }}">
+                    <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <h3 id="publish-channel-{{ forloop.counter }}" class="font-semibold text-stone-900">{% include "jrc_channels/icon.html" with account=item.variant.social_account %} {{ item.label }}</h3>
+                        {% if item.published %}<span class="w-fit rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800">Published manually</span>{% else %}<span class="w-fit rounded-full bg-stone-100 px-3 py-1 text-xs font-medium text-stone-700">{{ item.variant.get_status_display }}</span>{% endif %}
+                    </div>
+                    <p class="mt-3 text-xs font-medium uppercase tracking-wide text-stone-500">Scheduled publication</p>
+                    {% if item.date_error %}<p role="alert" class="text-sm text-red-700">{{ item.date_error }}</p>{% endif %}
+                    <p class="mt-1 text-sm text-stone-800">{% if item.scheduled_label %}{{ item.scheduled_label }}{% else %}No date or time scheduled{% endif %}</p>
+                    {% if item.can_schedule %}
+                    <details class="mt-3" {% if item.date_open %}open{% endif %}>
+                        <summary class="cursor-pointer text-sm text-orange-700 underline">{% if item.scheduled_at %}Change date{% else %}Set date{% endif %}</summary>
+                        <form method="post" action="?tab=publish" class="mt-3 max-w-sm space-y-3">
+                            {% csrf_token %}<input type="hidden" name="action" value="set_date"><input type="hidden" name="platform_post" value="{{ item.variant.pk }}">
+                            <label for="{{ item.date_form.scheduled_at.id_for_label }}" class="block text-sm font-medium">Publication date and time ({{ workspace.effective_timezone }})</label>
+                            {{ item.date_form.scheduled_at }}
+                            {% for error in item.date_form.scheduled_at.errors %}<p role="alert" class="text-sm text-red-700">{{ error }}</p>{% endfor %}
+                            <p class="text-xs text-stone-500">This channel will wait for you to publish it manually.</p>
+                            <button class="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white">Save date</button>
+                        </form>
+                    </details>
+                    {% elif item.schedule_blocker %}<p class="mt-2 text-sm text-stone-500" data-schedule-blocker>No date can be set yet. {{ item.schedule_blocker }}</p>
+                    {% endif %}
+                    <div class="mt-4">
+                        <label for="publish-caption-{{ forloop.counter }}" class="mb-1 block text-xs font-medium uppercase tracking-wide text-stone-500">Saved caption</label>
+                        <textarea id="publish-caption-{{ forloop.counter }}" readonly rows="5" class="block w-full rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-stone-800">{{ item.caption }}</textarea>
+                        <div class="mt-2 flex flex-wrap items-center gap-2">
+                            {% if item.caption %}<button type="button" data-copy-caption="publish-caption-{{ forloop.counter }}" class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">Copy caption</button><span data-copy-status="publish-caption-{{ forloop.counter }}" class="text-xs text-stone-500" aria-live="polite"></span>{% else %}<span class="text-sm text-amber-700">Add a caption before publishing.</span>{% endif %}
+                            {% if item.video_final %}<span class="text-sm text-stone-700">Final video · v{{ item.video_number }}</span>{% endif %}
+                            {% if item.download_url %}<a href="{{ item.download_url }}" class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">Download final video</a>{% elif item.has_video and not item.video_final %}<span class="text-sm text-amber-700">No final video selected. Open <a href="?tab=video" class="text-orange-700 underline">Video</a> and mark a ready version as “Final for publishing”.</span>{% elif item.has_video and item.download_missing %}<span class="text-sm text-amber-700" data-download-blocker>To download the final video: {{ item.download_missing|join:" " }}</span>{% elif item.has_video %}<span class="text-sm text-stone-500">Members with publishing rights can download the final video.</span>{% endif %}
+                        </div>
+                    </div>
+                    {% channel_thumbnail item.variant "publish" item.label %}
+                    {% if item.published %}
+                        {% if item.publication_url %}<a href="{{ item.publication_url }}" target="_blank" rel="noopener noreferrer" class="mt-4 inline-block break-all text-sm text-orange-700 underline">View published post</a>{% endif %}
+                    {% elif item.can_mark %}
+                    <form method="post" action="{% url 'jrc_production:mark_published' workspace_id=workspace.id post_id=post.id %}" class="mt-5 border-t border-stone-100 pt-4" data-confirm-publication="{{ item.label }}">
+                        {% csrf_token %}<input type="hidden" name="platform_post" value="{{ item.variant.id }}">
+                        <label for="post-url-{{ forloop.counter }}" class="mb-1 block text-sm font-medium text-stone-700">Published post link <span class="font-normal text-stone-500">(optional, HTTPS)</span></label>
+                        <input id="post-url-{{ forloop.counter }}" name="post_url" type="url" inputmode="url" placeholder="https://…" class="block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm sm:max-w-xl">
+                        <button type="submit" class="mt-3 w-full rounded-lg bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-orange-700 sm:w-auto">Mark as published</button>
+                    </form>
+                    {% elif item.missing %}<p class="mt-4 text-sm text-stone-500" data-publish-blocker>To mark this channel as published: {{ item.missing|join:" " }}</p>{% elif not item.can_publish %}<p class="mt-4 text-sm text-stone-500">Members with publishing rights can mark this channel as published.</p>{% endif %}
+                </article>
+                {% empty %}<div class="rounded-xl border border-dashed border-stone-300 px-4 py-10 text-center text-sm text-stone-500">No enabled channels for this content.</div>{% endfor %}
+            </div>
+        {% elif active_tab == "caption" %}
+            <style>.jrc-caption-preview .preview-card{background:#fff;border:1px solid #e7e5e4;border-radius:14px;overflow:hidden}</style>
+            <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">Channel captions</h2><p class="mt-1 text-sm text-stone-500">Each enabled channel has its own plain text caption. Changes save automatically; every saved version is kept.</p></div>
+            {% if caption_error %}<p role="alert" class="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{{ caption_error }}</p>{% endif %}
+            <div class="space-y-5">
+                {% for item in caption_channels %}
+                <article class="rounded-xl border border-stone-200 p-4 sm:p-5" aria-labelledby="caption-title-{{ forloop.counter }}" data-caption-channel{% if can_edit_captions and item.variant %} data-autosave-url="{% url 'jrc_production:caption_autosave' workspace_id=workspace.id post_id=post.id platform_post_id=item.variant.pk %}" data-base="{{ item.latest.pk|default:'' }}" data-revision="{{ item.latest.revision|default:0 }}"{% endif %}>
+                    <div class="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
+                        <h3 id="caption-title-{{ forloop.counter }}" class="min-w-0 break-words font-semibold text-stone-900">{% include "jrc_channels/icon.html" with account=item.account %} {{ item.platform_label }} · {{ item.account.account_name }}</h3>
+                        <p class="text-xs text-stone-500" data-caption-version>{% if item.latest %}<span data-version-label="{{ item.latest.pk }}">V{{ item.latest.number }}{% if item.latest.name %} – {{ item.latest.name }}{% endif %}</span> · {{ item.latest.created_by.display_name|default:"Former member" }} · {{ item.latest.finalized_at|date:"M j, Y · g:i A" }}{% else %}No saved version yet{% endif %}</p>
+                    </div>
+                    <form method="post" class="mt-3">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="save_caption">
+                        <input type="hidden" name="platform_post" value="{{ item.key }}">
+                        {% if item.latest %}<input type="hidden" name="base_version" value="{{ item.latest.id }}">{% endif %}
+                        <div class="caption-label-row"><label for="caption-{{ forloop.counter }}" class="block text-sm font-medium text-stone-700">Caption</label><button type="button" data-copy-target="caption-{{ forloop.counter }}" class="detail-button">Copy</button></div>
+                        <textarea id="caption-{{ forloop.counter }}" name="caption" rows="7" class="caption-field block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm text-stone-900 shadow-sm focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-200" data-caption-counter data-caption-field data-limit="{{ item.char_limit }}" data-escaped-chars="{{ item.escaped_chars }}" {% if can_edit_captions %}placeholder="Write the caption for {{ item.platform_label }}…"{% else %}readonly{% endif %}>{{ item.text }}</textarea>
+                        <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
+                            <p class="text-xs text-stone-500">Counted for {{ item.platform_label }}: <span data-caption-count>{{ item.char_count }}</span> / {{ item.char_limit }}</p>
+                            {% if can_edit_captions %}<p class="jrc-save-status" role="status" aria-live="polite" data-save-status>{% if item.latest %}Saved{% endif %}</p>{% endif %}
+                        </div>
+                        {% if can_edit_captions and item.reopens_review %}<p class="mt-1 text-xs font-medium text-amber-700" data-reopens-review>{{ item.reopens_review }}</p>{% endif %}
+                        <p class="mt-1 hidden text-xs font-medium text-amber-800" role="alert" data-caption-notice></p>
+                        {% if can_edit_captions %}<noscript><button type="submit" class="mt-2 rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700">Save version</button></noscript>{% if caption_error %}<button type="submit" class="mt-2 rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700">Save version</button>{% endif %}{% endif %}
+                    </form>
+                    <div data-caption-versions>{% include "jrc_production/_caption_versions.html" %}</div>
+                    {% channel_thumbnail item.variant "caption" %}
+                </article>
+                {% empty %}<div class="rounded-xl border border-dashed border-stone-300 px-4 py-10 text-center text-sm text-stone-500">No channels yet. Add a channel before writing a caption.</div>{% endfor %}
+            </div>
+        {% else %}
+            {% include "jrc_production/_approval_tab.html" %}
+        {% endif %}
+        {% if can_view_internal_notes and post.internal_notes %}<aside class="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4"><h3 class="text-sm font-semibold text-amber-900">Team notes</h3><p class="mt-2 whitespace-pre-wrap text-sm text-amber-900">{{ post.internal_notes }}</p></aside>{% endif %}
+    </section>
+{% if active_tab == "script" or active_tab == "concept" %}<script type="module" src="{% static 'jrc_texts/dist/script.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
+{% if active_tab == "caption" %}<script src="{% static 'jrc_production/caption-counter.js' %}" nonce="{{ request.csp_nonce }}"></script><script src="{% static 'jrc_production/caption-autosave.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
+{% if active_tab == "video" %}<script src="{% static 'jrc_video/upload.js' %}" nonce="{{ request.csp_nonce }}"></script><script src="{% static 'jrc_video/video-tab.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
+{% if active_tab == "shotlist" %}<script src="{% static 'jrc_production/shotlist.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
+{% if active_tab == "publish" %}<script src="{% static 'jrc_production/publish.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}
+{% if active_tab == "caption" or active_tab == "publish" %}<script src="{% static 'jrc_thumbnails/thumbnail.js' %}" nonce="{{ request.csp_nonce }}"></script>{% endif %}

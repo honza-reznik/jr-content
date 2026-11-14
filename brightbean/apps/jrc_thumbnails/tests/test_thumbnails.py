@@ -8,6 +8,7 @@ import pytest
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
+from django.http import HttpResponse
 from django.urls import reverse
 from django.utils import timezone
 from PIL import Image
@@ -19,7 +20,7 @@ from apps.jrc_storage import views as files
 from apps.jrc_texts.models import TextDocument, TextVersion
 from apps.jrc_thumbnails import services
 from apps.jrc_thumbnails.models import ChannelThumbnail
-from apps.jrc_video.models import VideoAsset, VideoVersion
+from apps.jrc_video.models import VideoAccount, VideoAsset, VideoVersion
 from apps.members.models import CustomRole, WorkspaceMembership
 from apps.workspaces.models import Workspace
 
@@ -296,7 +297,7 @@ def test_download_conditions_match_final_video(
         "jrc_video:final_download",
         kwargs={"workspace_id": workspace.pk, "post_id": post.pk, "platform_post_id": variant.pk},
     )
-    with patch("apps.jrc_video.uploads._call") as video_service:
+    with patch("apps.jrc_video.client.FreeFrameClient.request") as video_service:
         assert client.get(final_url).status_code == 404
         for thumbnail in (previous, current):
             response = client.get(url("download", post, variant, thumbnail))
@@ -350,8 +351,12 @@ def test_ready_downloads_and_buttons_match_final_video(
         "jrc_video:final_download",
         kwargs={"workspace_id": workspace.pk, "post_id": post.pk, "platform_post_id": variant.pk},
     )
-    with patch("apps.jrc_video.uploads._call", return_value={"url": "http://testserver/files/video/raw/final.mp4"}):
-        assert client.get(final_url).status_code == 302
+    VideoAccount.objects.create(user=user, ff_user_id=uuid4(), synced_at=timezone.now())
+    with (
+        patch("apps.jrc_video.client.FreeFrameClient.request", return_value={"filename": "final.mp4"}),
+        patch("apps.jrc_storage.views.proxy_video_file", return_value=HttpResponse(b"video")),
+    ):
+        assert client.get(final_url).status_code == 200
     for thumbnail in (previous, current):
         response = client.get(url("download", post, variant, thumbnail))
         assert response.status_code == 200

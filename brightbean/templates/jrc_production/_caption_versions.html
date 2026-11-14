@@ -1,0 +1,14 @@
+{% comment %}P2-B08: saved caption versions and the comparison with the previous one; re-rendered after each automatic save.{% endcomment %}
+{% if item.versions %}<details class="caption-versions"><summary>Saved versions ({{ item.versions|length }})</summary><ol>{% for version in item.versions %}<li class="version-label-item">
+    <p data-version-label="{{ version.pk }}">V{{ version.number }}{% if version.name %} – {{ version.name }}{% endif %}</p><p class="text-xs text-stone-500">{{ version.created_by.display_name|default:"Former member" }} · {{ version.finalized_at|date:"M j, Y · g:i A" }}</p>
+    {% if can_edit_captions %}<form data-version-name data-version="{{ version.pk }}" data-number="{{ version.number }}" action="{% url 'jrc_texts:version_name' workspace_id=workspace.id post_id=post.id version_id=version.pk %}">{% csrf_token %}<label>Version name (optional)<input name="name" maxlength="100" value="{{ version.name }}"></label><button type="submit" class="detail-button">Save name</button><span role="status"></span></form>{% endif %}
+</li>{% endfor %}</ol></details>{% endif %}
+{% if item.previous %}
+<details class="mt-4 border-t border-stone-100 pt-3">
+    <summary class="cursor-pointer text-sm font-medium text-stone-700">Compare with <span data-version-label="{{ item.previous.pk }}">V{{ item.previous.number }}{% if item.previous.name %} – {{ item.previous.name }}{% endif %}</span> · {{ item.previous.created_by.display_name|default:"Former member" }} · {{ item.previous.finalized_at|date:"M j, Y · g:i A" }}{% if not item.previous.text %} · Empty text{% endif %}</summary>
+    <div class="mt-3 grid gap-3 sm:grid-cols-2">
+        <section class="min-w-0 rounded-lg bg-stone-50 p-3"><h4 class="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">Previous</h4><p class="whitespace-pre-wrap break-words text-sm text-stone-700">{% for part in item.old_diff %}{% if part.changed %}<del class="rounded bg-red-100 text-red-900">{{ part.text }}</del>{% else %}{{ part.text }}{% endif %}{% endfor %}</p></section>
+        <section class="min-w-0 rounded-lg bg-stone-50 p-3"><h4 class="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">Current</h4><p class="whitespace-pre-wrap break-words text-sm text-stone-700">{% for part in item.new_diff %}{% if part.changed %}<ins class="rounded bg-green-100 text-green-900 no-underline">{{ part.text }}</ins>{% else %}{{ part.text }}{% endif %}{% endfor %}</p></section>
+    </div>
+</details>
+{% endif %}

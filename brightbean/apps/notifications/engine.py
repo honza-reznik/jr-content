@@ -116,6 +116,8 @@ BATCHED_EMAIL_EVENTS = frozenset(BATCH_HEADINGS)
 
 # The daily digest is not per-event-type, so it has no BATCH_HEADINGS entry.
 DAILY_DIGEST_HEADINGS = ("Your daily digest: {n} notification", "Your daily digest: {n} notifications")
+APPROVAL_DIGEST_EVENT = "__approval_daily__"
+APPROVAL_DAILY_EVENTS = frozenset({EventType.APPROVAL_REMINDER, EventType.APPROVAL_STALLED})
 
 # Default channel enablement per event type.
 # Key: event_type, Value: dict of channel → default enabled.
@@ -127,17 +129,17 @@ DEFAULT_CHANNELS: dict[str, dict[str, bool]] = {
     EventType.POST_PUBLISHED: {Channel.IN_APP: True, Channel.EMAIL: False},
     EventType.POST_FAILED: {Channel.IN_APP: True, Channel.EMAIL: True},
     EventType.NEW_INBOX_MESSAGE: {Channel.IN_APP: True, Channel.EMAIL: False},
-    EventType.INBOX_SLA_OVERDUE: {Channel.IN_APP: True, Channel.EMAIL: True},
+    EventType.INBOX_SLA_OVERDUE: {Channel.IN_APP: True, Channel.EMAIL: False},
     EventType.CLIENT_APPROVAL_REQUESTED: {Channel.IN_APP: True, Channel.EMAIL: True},
     EventType.TEAM_MEMBER_INVITED: {Channel.IN_APP: False, Channel.EMAIL: True},
     EventType.SOCIAL_ACCOUNT_DISCONNECTED: {Channel.IN_APP: True, Channel.EMAIL: True},
-    EventType.REPORT_GENERATED: {Channel.IN_APP: True, Channel.EMAIL: True},
-    EventType.ENGAGEMENT_ALERT: {Channel.IN_APP: True, Channel.EMAIL: True},
+    EventType.REPORT_GENERATED: {Channel.IN_APP: True, Channel.EMAIL: False},
+    EventType.ENGAGEMENT_ALERT: {Channel.IN_APP: True, Channel.EMAIL: False},
     EventType.COMMENT_MENTION: {Channel.IN_APP: True, Channel.EMAIL: True},
     EventType.APPROVAL_REMINDER: {Channel.IN_APP: True, Channel.EMAIL: True},
     EventType.APPROVAL_STALLED: {Channel.IN_APP: True, Channel.EMAIL: True},
     EventType.APPROVAL_HOLD_REQUESTED: {Channel.IN_APP: True, Channel.EMAIL: True},
-    EventType.CLIENT_CONNECTED_ACCOUNTS: {Channel.IN_APP: True, Channel.EMAIL: True},
+    EventType.CLIENT_CONNECTED_ACCOUNTS: {Channel.IN_APP: True, Channel.EMAIL: False},
     EventType.CONTENT_SCRIPT_VERSION: {Channel.IN_APP: True, Channel.EMAIL: False},
     EventType.CONTENT_CAPTION_VERSION: {Channel.IN_APP: True, Channel.EMAIL: False},
     EventType.CONTENT_CLIENT_COMMENT: {Channel.IN_APP: True, Channel.EMAIL: False},
@@ -214,7 +216,9 @@ def notify(
         # digest_mode queues EVERY event type, not just the batched ones: the
         # queued row IS the delivery, so this replaces the immediate email
         # rather than adding a digest on top of it.
-        batched = channel == Channel.EMAIL and (digest_mode or event_type in BATCHED_EMAIL_EVENTS)
+        batched = channel == Channel.EMAIL and (
+            digest_mode or event_type in BATCHED_EMAIL_EVENTS or event_type in APPROVAL_DAILY_EVENTS
+        )
         # ``next_retry_at`` is set by the same INSERT (P1-B35): a row that is not batched must
         # never exist without the time the sweep should look at it, or a crash right after the
         # insert would leave it pending for good.
@@ -608,6 +612,8 @@ def _digest_heading(event_type: str | None, count: int) -> str:
     ``event_type is None`` is the daily digest, which spans every type and so
     has no per-event heading to use.
     """
+    if event_type == APPROVAL_DIGEST_EVENT:
+        return "Approval summary"
     singular, plural = DAILY_DIGEST_HEADINGS if event_type is None else BATCH_HEADINGS[event_type]
     return (singular if count == 1 else plural).format(n=count)
 
@@ -662,6 +668,34 @@ def _due_daily_digest_users(now, unclaimed) -> list:
     return [g["notification__user_id"] for g in groups]
 
 
+def _due_approval_digest_users(now, unclaimed) -> list:
+    """Users with approval reminders waiting before today's local 08:00 boundary."""
+    timezones = {
+        timezone_name or "UTC"
+        for timezone_name in (
+            _batchable_deliveries()
+            .filter(notification__event_type__in=APPROVAL_DAILY_EVENTS)
+            .values_list("notification__user__quiet_hours__timezone", flat=True)
+        )
+    } or {"UTC"}
+    due = Q()
+    for tz_name in timezones:
+        timezone_filter = Q(notification__user__quiet_hours__timezone=tz_name)
+        if tz_name == "UTC":
+            timezone_filter |= Q(notification__user__quiet_hours__timezone__isnull=True)
+        due |= timezone_filter & Q(oldest__lte=_last_daily_send_boundary(now, tz_name))
+    groups = (
+        _batchable_deliveries()
+        .filter(unclaimed, notification__event_type__in=APPROVAL_DAILY_EVENTS)
+        .exclude(notification__user__quiet_hours__digest_mode=True)
+        .values("notification__user_id", "notification__user__quiet_hours__timezone")
+        .annotate(oldest=Min("batch_queued_at"))
+        .filter(due)
+        .order_by("oldest")[:BATCH_GROUP_LIMIT]
+    )
+    return [g["notification__user_id"] for g in groups]
+
+
 def send_batched_email_digests() -> int:
     """Collapse each user's waiting notifications into one email per event type.
 
@@ -693,6 +727,7 @@ def send_batched_email_digests() -> int:
         # hours while these sit for minutes, so on one oldest-first LIMIT every
         # digest row would sort ahead of every rolling row and starve it.
         .exclude(notification__user__quiet_hours__digest_mode=True)
+        .exclude(notification__event_type__in=APPROVAL_DAILY_EVENTS)
         .values("notification__user_id", "notification__event_type")
         .annotate(oldest=Min("batch_queued_at"), waiting=Count("pk"))
         .filter(Q(oldest__lte=window_start) | Q(waiting__gte=BATCH_SIZE_TRIGGER))
@@ -703,6 +738,7 @@ def send_batched_email_digests() -> int:
     # email, which covers every event type at once.
     due: list[tuple] = [(g["notification__user_id"], g["notification__event_type"]) for g in groups]
     due += [(user_id, None) for user_id in _due_daily_digest_users(now, unclaimed)]
+    due += [(user_id, APPROVAL_DIGEST_EVENT) for user_id in _due_approval_digest_users(now, unclaimed)]
 
     sent = 0
     for user_id, event_type in due:
@@ -764,7 +800,9 @@ def _send_one_digest(user_id, event_type: str | None, *, now, unclaimed) -> bool
     every event type they have waiting instead of one.
     """
     wanted = _batchable_deliveries().filter(notification__user_id=user_id).filter(unclaimed)
-    if event_type is not None:
+    if event_type == APPROVAL_DIGEST_EVENT:
+        wanted = wanted.filter(notification__event_type__in=APPROVAL_DAILY_EVENTS)
+    elif event_type is not None:
         wanted = wanted.filter(notification__event_type=event_type)
     wanted = list(wanted.values_list("pk", flat=True))
     if not wanted:
@@ -881,12 +919,13 @@ def _send_digest_email(user, event_type: str | None, notifications: list) -> Non
     text_content = render_to_string("notifications/email/digest.txt", context)
     html_content = render_to_string("notifications/email/digest.html", context)
 
+    unsubscribe_event = event_type if event_type in EventType.values else None
     msg = EmailMultiAlternatives(
         subject=heading,
         body=text_content,
         from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@localhost"),
         to=[user.email],
-        headers=list_unsubscribe_headers(user.pk, event_type),
+        headers=list_unsubscribe_headers(user.pk, unsubscribe_event),
     )
     msg.attach_alternative(html_content, "text/html")
     send_or_raise(msg)

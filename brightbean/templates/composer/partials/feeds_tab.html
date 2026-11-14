@@ -25,7 +25,7 @@
         <div class="flex items-center gap-2">
             <button @click="showAddModal = true; $nextTick(() => $refs.customUrlInput.focus())"
                     class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white rounded-full transition-all duration-150 cursor-pointer"
-                    style="background: var(--primary);">
+                    style="background: var(--primary);color:var(--accent-text);">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
                 Add Feed
             </button>
@@ -194,7 +194,7 @@
                 </button>
                 <button type="submit"
                         class="px-4 py-2 text-sm font-semibold text-white rounded-xl transition-colors cursor-pointer"
-                        style="background: var(--primary);"
+                        style="background: var(--primary);color:var(--accent-text);"
                         :class="customUrl.trim() ? '' : 'opacity-50 cursor-not-allowed'">
                     Add Feed
                 </button>

@@ -110,7 +110,7 @@
 
             <!-- Forgot password link -->
             <div class="flex justify-end mb-5">
-                <a href="{% url 'account_reset_password' %}" class="text-xs font-medium hover:underline" style="color: var(--primary);">
+                <a href="{% url 'account_reset_password' %}" class="text-xs font-medium hover:underline" style="color: var(--primary-text);">
                     Forgot your password?
                 </a>
             </div>
@@ -126,7 +126,7 @@
     {% if show_signup_link %}
     <p class="text-center text-sm mt-6" style="color: var(--text-secondary);">
         Don't have an account?
-        <a href="{{ signup_url }}" class="font-semibold hover:underline" style="color: var(--primary);">Sign up</a>
+        <a href="{{ signup_url }}" class="font-semibold hover:underline" style="color: var(--primary-text);">Sign up</a>
     </p>
     {% endif %}
 </div>

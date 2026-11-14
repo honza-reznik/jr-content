@@ -21,7 +21,7 @@ from ..services.permissions import require_project_role, require_project_visible
 from ..services.s3_service import generate_presigned_get_url, build_download_filename, PREVIEW_URL_SECONDS
 from ..services.downloads import (
     describe_choices, download_choices, download_filename, may_download_original,
-    original_allowed_for_download, pick_or_refuse, managed_video_download,
+    original_allowed_for_download, pick_or_refuse,
 )
 from .hls_proxy import issue_hls_url, managed_hls_identity, HLS_TOKEN_SECONDS, MANAGED_MEDIA_SECONDS
 from ..schemas.upload import (
@@ -423,20 +423,13 @@ def get_stream_url(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    if download and current_user.jrc_managed is True:
+        raise HTTPException(403, "Download videos through JR Content")
     asset, media_file = _ready_media_file(db, asset_id, version_id, current_user)
     media_expiry = {"expires_in": MANAGED_MEDIA_SECONDS} if current_user.jrc_managed is True else {}
 
     download_note = None
-    if (download and current_user.jrc_managed is True and asset.asset_type == AssetType.video
-            and rendition in (None, "original")):
-        choice, download_note = managed_video_download(asset, media_file)
-        url = generate_presigned_get_url(
-            choice.s3_key, download_filename=(
-                media_file.original_filename if choice.id == "original"
-                else download_filename(asset, media_file, choice)
-            ), **media_expiry,
-        )
-    elif download:
+    if download:
         # A download needs one file, and the ladder is segments. With no choice
         # made this is the MP4 remuxed from the top rung: it is what the reviewer
         # watched, where the raw file is the camera master and can be an order of
@@ -458,6 +451,10 @@ def get_stream_url(
         # the S3 bucket remains private.
         url = issue_hls_url(request, response, media_file.s3_key_processed,
                             **managed_hls_identity(current_user, asset.project_id, db=db))
+    elif current_user.jrc_managed is True and asset.asset_type == AssetType.video:
+        # A ready legacy version without a preview must not turn playback into
+        # a raw download, even on an instance using presigned S3 read URLs.
+        raise HTTPException(409, "Video preview is unavailable")
     else:
         url = generate_presigned_get_url(media_file.s3_key_processed or media_file.s3_key_raw, **media_expiry)
 
@@ -477,6 +474,8 @@ def list_download_options(
     current_user: User = Depends(get_current_user),
 ):
     """The files a version can be downloaded as: the original, then each transcode."""
+    if current_user.jrc_managed is True:
+        raise HTTPException(403, "Download videos through JR Content")
     asset, media_file = _ready_media_file(db, asset_id, version_id, current_user)
     choices = download_choices(
         asset.asset_type, media_file,

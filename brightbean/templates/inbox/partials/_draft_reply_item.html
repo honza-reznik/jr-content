@@ -20,7 +20,7 @@
                 hx-target="#inbox-detail-panel"
                 hx-swap="innerHTML"
                 class="inline-flex items-center gap-1 px-3 py-1 text-[11px] font-semibold text-white rounded-full transition-all"
-                style="background: var(--primary); box-shadow: var(--shadow-primary);">
+                style="background: var(--primary);color:var(--accent-text); box-shadow: var(--shadow-primary);">
             {% if draft.status == 'failed' %}Retry send{% else %}Send{% endif %}
         </button>
         <button hx-post="{% url 'inbox:discard_reply_draft' workspace_id=workspace.id reply_id=draft.id %}"

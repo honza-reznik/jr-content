@@ -17,6 +17,13 @@ urlpatterns = [
     path("workspace/<uuid:workspace_id>/board/<uuid:post_id>/move/", views.move, name="move"),
     path("workspace/<uuid:workspace_id>/content/<uuid:post_id>/", views.content_detail, name="content_detail"),
     path("workspace/<uuid:workspace_id>/content/<uuid:post_id>/rename/", views.rename, name="rename"),
+    # P2-B08: channel tags and automatic caption saving without a page load.
+    path("workspace/<uuid:workspace_id>/content/<uuid:post_id>/channels/", views.channels, name="channels"),
+    path(
+        "workspace/<uuid:workspace_id>/content/<uuid:post_id>/captions/<uuid:platform_post_id>/autosave/",
+        views.caption_autosave,
+        name="caption_autosave",
+    ),
     path(
         "workspace/<uuid:workspace_id>/content/<uuid:post_id>/shotlist/",
         views.shotlist_action,

@@ -43,7 +43,7 @@ class FreeFrameClient:
     @staticmethod
     def _validate(path, method, result):
         try:
-            if path.startswith("/jrc-sync/"):
+            if path.startswith(("/jrc-sync/accounts/", "/jrc-sync/projects/")):
                 uuid.UUID(result["id"])
                 if path.startswith("/jrc-sync/projects/"):
                     uuid.UUID(result["service_user_id"])

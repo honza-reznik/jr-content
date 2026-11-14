@@ -29,7 +29,17 @@ async function submit(form) {
     if (!response.ok || response.redirected) throw new Error(data.error || "Could not save. Check your access and try again.");
     return data;
 }
-const status = document.querySelector("[data-detail-status]");
+const statusLine = document.querySelector("[data-detail-status]");
+let statusTimer;
+// A status message describes the last save, not the page: it goes away after a few seconds and
+// when another tab is opened (N-K20-p026rg1-03).
+function setStatus(text) {
+    clearTimeout(statusTimer);
+    if (!statusLine) return;
+    statusLine.textContent = text;
+    if (text) statusTimer = setTimeout(() => setStatus(""), 6000);
+}
+document.addEventListener("jrc:panel-unload", () => setStatus(""));
 const rename = document.querySelector("[data-inline-rename]");
 if (rename) {
     const start = document.querySelector("[data-rename-start]");
@@ -48,9 +58,9 @@ if (rename) {
         pending = true; input.readOnly = true;
         try {
             const data = await submit(rename);
-            saved = data.title; start.textContent = saved; close(); status.textContent = data.message;
+            saved = data.title; start.textContent = saved; close(); setStatus(data.message);
             document.title = `${saved} · ${rename.dataset.workspaceName}`;
-        } catch (error) { status.textContent = error.message; }
+        } catch (error) { setStatus(error.message); }
         finally { pending = false; input.readOnly = false; }
     }
     rename.addEventListener("submit", event => { event.preventDefault(); save(); });
@@ -64,8 +74,8 @@ if (category) category.addEventListener("change", async () => {
     const select = category.elements.category;
     const request = submit(category);
     select.disabled = true;
-    try { const data = await request; select.dataset.saved = data.category; status.textContent = "Category saved."; }
-    catch (error) { select.value = select.dataset.saved; status.textContent = error.message; }
+    try { const data = await request; select.dataset.saved = data.category; setStatus("Category saved."); }
+    catch (error) { select.value = select.dataset.saved; setStatus(error.message); }
     finally { select.disabled = false; }
 });
 const proposal = document.querySelector("[data-proposal-form]");
@@ -80,8 +90,8 @@ if (proposal) {
         try {
             const data = await request;
             proposal.elements.proposed_publish_at.value = data.proposed_publish_at;
-            status.textContent = data.proposed_publish_at ? "Proposed date saved." : "Proposed date cleared.";
-        } catch (error) { status.textContent = error.message; }
+            setStatus(data.proposed_publish_at ? "Proposed date saved." : "Proposed date cleared.");
+        } catch (error) { setStatus(error.message); }
         finally {
             delete proposal.dataset.saving;
             controls.forEach(control => { control.disabled = false; });
@@ -97,8 +107,10 @@ document.addEventListener("click", event => {
     if (!button) return;
     const text = button.hasAttribute("data-copy-shotlist")
         ? [...document.querySelectorAll(".shotlist-row")].map(row => {
-            const text = row.querySelector("[data-shotlist-copy-text]").textContent;
-            const note = row.querySelector(".shotlist-note")?.textContent;
+            // P2-B08: editors see the text in fields (edited in place), readers as plain text.
+            const read = element => (element ? ("value" in element ? element.value : element.textContent) : "");
+            const text = read(row.querySelector("[data-shotlist-copy-text]"));
+            const note = read(row.querySelector(".shotlist-note")).trim();
             return text + (note ? " — " + note : "");
         }).join("\n")
         : document.getElementById(button.dataset.copyTarget).value;

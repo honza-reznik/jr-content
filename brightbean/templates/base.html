@@ -7,10 +7,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}JR Content{% endblock %}</title>
+    <title>{% block title %}{% block page_title %}JR Content{% endblock %}{% endblock %}</title>
     <link rel="icon" type="image/svg+xml" href="{% static 'img/jrc-logo.svg' %}">
     <link rel="stylesheet" href="{% static 'css/dist/styles.css' %}">
     <link rel="stylesheet" href="{% static 'vendor/flatpickr/flatpickr.min.css' %}">
+    {% if request.workspace %}<style nonce="{{ request.csp_nonce }}">
+        :root {
+            --primary: {{ request.workspace.accent_color }};
+            --primary-hover: color-mix(in srgb, {{ request.workspace.accent_color }}, black 14%);
+            --primary-soft: color-mix(in srgb, {{ request.workspace.accent_color }}, white 94%);
+            --primary-muted: color-mix(in srgb, {{ request.workspace.accent_color }}, white 76%);
+            --primary-ring: color-mix(in srgb, {{ request.workspace.accent_color }}, white 66%);
+            --brand-500: {{ request.workspace.accent_color }};
+            --brand-600: color-mix(in srgb, {{ request.workspace.accent_color }}, black 14%);
+            --brand-700: {{ request.workspace.accent_link_color }};
+            --primary-text: {{ request.workspace.accent_link_color }};
+            --accent-text: {{ request.workspace.accent_text_color }};
+        }
+        :focus-visible { outline-color: var(--primary-text); }
+    </style>{% endif %}
     <script nonce="{{ request.csp_nonce }}">
         // Set sidebar state class on <html> before first paint to prevent flash
         if (localStorage.getItem('sidebarCollapsed') === 'true') {
@@ -190,7 +205,7 @@
         .idea-selected-tags .idea-tag-chip {
             display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: 9999px;
             font-size: 0.6875rem; font-weight: 600;
-            background: var(--primary-soft, #FFF7ED); color: var(--primary, #C2410C); border: 1px solid var(--primary-muted, #FED7AA);
+            background: var(--primary-soft, #FFF7ED); color: var(--primary-text); border: 1px solid var(--primary-muted, #FED7AA);
         }
         .idea-selected-tags .idea-tag-chip button {
             display: flex; align-items: center; justify-content: center;
@@ -326,14 +341,14 @@
                     {% if current_ws.icon %}
                     <img src="{{ current_ws.icon.url }}" alt="" class="sidebar-logo-mark flex-shrink-0 object-cover">
                     {% else %}
-                    <div class="sidebar-logo-mark flex-shrink-0" style="background:{{ current_ws.accent_color }};color:white">{{ current_ws.name|make_list|first|upper }}</div>
+                    <div class="sidebar-logo-mark flex-shrink-0" style="background:{{ current_ws.accent_color }};color:{{ current_ws.accent_text_color }}">{{ current_ws.name|make_list|first|upper }}</div>
                     {% endif %}
                     <span class="flex-1 font-bold text-[0.9375rem] tracking-tight text-stone-900 truncate" x-show="!sidebarCollapsed" x-cloak>{{ current_ws.name }}</span>
                     {% elif sidebar_workspaces %}
                     {% if sidebar_workspaces.0.icon %}
                     <img src="{{ sidebar_workspaces.0.icon.url }}" alt="" class="sidebar-logo-mark flex-shrink-0 object-cover">
                     {% else %}
-                    <div class="sidebar-logo-mark flex-shrink-0" style="background:{{ sidebar_workspaces.0.accent_color }};color:white">{{ sidebar_workspaces.0.name|make_list|first|upper }}</div>
+                    <div class="sidebar-logo-mark flex-shrink-0" style="background:{{ sidebar_workspaces.0.accent_color }};color:{{ sidebar_workspaces.0.accent_text_color }}">{{ sidebar_workspaces.0.name|make_list|first|upper }}</div>
                     {% endif %}
                     <span class="flex-1 font-bold text-[0.9375rem] tracking-tight text-stone-900 truncate" x-show="!sidebarCollapsed" x-cloak>{{ sidebar_workspaces.0.name }}</span>
                     {% else %}
@@ -360,7 +375,7 @@
                         <img src="{{ ws.icon.url }}" alt="" class="w-7 h-7 rounded-md object-cover flex-shrink-0">
                         {% else %}
                         <div class="w-7 h-7 rounded-md flex items-center justify-center text-white text-[11px] font-bold flex-shrink-0"
-                             style="background: {{ ws.accent_color }};">
+                             style="background: {{ ws.accent_color }};color:{{ ws.accent_text_color }}">
                             {{ ws.name|make_list|first|upper }}
                         </div>
                         {% endif %}
@@ -490,7 +505,7 @@
                                                         @click="createSelectedGroup = '{{ col.id }}'; createGroupDropdownOpen = false"
                                                         :class="createSelectedGroup === '{{ col.id }}' && 'font-semibold'">
                                                     <span>{{ col.label }}</span>
-                                                    <svg x-show="createSelectedGroup === '{{ col.id }}'" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" class="ml-auto" style="color: var(--primary);"><polyline points="20 6 9 17 4 12"/></svg>
+                                                    <svg x-show="createSelectedGroup === '{{ col.id }}'" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" class="ml-auto" style="color: var(--primary-text);"><polyline points="20 6 9 17 4 12"/></svg>
                                                 </button>
                                                 {% endfor %}
                                             </div>
@@ -501,7 +516,7 @@
                                             <button type="button" class="idea-pill-btn" @click="createTagDropdownOpen = !createTagDropdownOpen; createGroupDropdownOpen = false; if(createTagDropdownOpen) $nextTick(() => $refs.sidebarCreateTagSearchInput.focus())">
                                                 <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
                                                 <span>Tags</span>
-                                                <span x-show="createSelectedTags.length" class="inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-bold text-white" style="background: var(--primary);" x-text="createSelectedTags.length"></span>
+                                                <span x-show="createSelectedTags.length" class="inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-bold text-white" style="background: var(--primary);color:var(--accent-text);" x-text="createSelectedTags.length"></span>
                                                 <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
                                             </button>
                                             <div x-show="createTagDropdownOpen" x-cloak x-transition class="idea-pill-dropdown">
@@ -526,7 +541,7 @@
                                                 <template x-if="createTagSearch.trim() && !filteredCreateTags.includes(createTagSearch.trim())">
                                                     <div class="border-t" style="border-color: var(--border); margin-top: 2px; padding-top: 2px;">
                                                         <button type="button" @click="persistAndToggleCreateTag(createTagSearch.trim())"
-                                                                style="color: var(--primary);">
+                                                                style="color: var(--primary-text);">
                                                             <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
                                                             Create "<span x-text="createTagSearch.trim()"></span>"
                                                         </button>
@@ -588,7 +603,7 @@
                                             <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
                                             <span x-show="!createMediaAssets.length">Drag &amp; drop</span>
                                             <span x-show="createMediaAssets.length">Add another file</span>
-                                            <span>or <strong style="color: var(--primary); cursor: pointer;">select a file</strong></span>
+                                            <span>or <strong style="color: var(--primary-text); cursor: pointer;">select a file</strong></span>
                                         </div>
                                     </div>
                                 </div>
@@ -658,7 +673,7 @@
                                 <button type="button"
                                         @click="createTagFromModal()"
                                         class="px-4 py-2 text-sm font-semibold text-white rounded-lg transition-colors"
-                                        style="background: var(--primary);"
+                                        style="background: var(--primary);color:var(--accent-text);"
                                         :class="newTagName.trim() ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'">
                                     Create
                                 </button>
@@ -743,7 +758,8 @@
                     </a>{% endif %}
                 </div>
                 {% for channel in sidebar_channels %}
-                <a href="{% if jrc_app_name and can_manage_workspace %}{% url 'jrc_channels:profile' workspace_id=request.workspace.id %}{% elif jrc_app_name %}{% url 'calendar:calendar' workspace_id=request.workspace.id %}{% else %}{% url 'social_accounts:list' workspace_id=request.workspace.id %}{% endif %}" class="sidebar-nav-item" title="{% if channel.platform == 'youtube' %}YouTube · {% endif %}{{ channel.account_name|default:channel.account_handle }} · {{ channel.queued_post_count|default:0 }} upcoming post{{ channel.queued_post_count|default:0|pluralize }}">
+                <div class="sidebar-nav-item group" style="padding-right:4px" title="{% if channel.platform == 'youtube' %}YouTube · {% endif %}{{ channel.account_name|default:channel.account_handle }} · {{ channel.queued_post_count|default:0 }} upcoming post{{ channel.queued_post_count|default:0|pluralize }}">
+                <a href="{% if jrc_app_name %}{% url 'jrc_production:board' %}?client={{ request.workspace.id }}&amp;channel={{ channel.id }}{% else %}{% url 'social_accounts:list' workspace_id=request.workspace.id %}{% endif %}" class="flex items-center gap-[9px] min-w-0 flex-1" aria-label="View {{ channel.account_name|default:channel.account_handle }} content">
                     <div class="relative flex-shrink-0">
                         {% if channel.avatar_url %}
                         <img src="{{ channel.avatar_url }}" alt="" class="w-7 h-7 rounded-full object-cover">
@@ -762,6 +778,10 @@
                     {% else %}<span class="sidebar-nav-label truncate">{{ channel.account_name|default:channel.account_handle }}</span>{% endif %}
                     <span class="sidebar-badge">{{ channel.queued_post_count|default:0 }}</span>
                 </a>
+                {% if jrc_app_name and can_manage_workspace %}<a href="{% url 'jrc_channels:profile' workspace_id=request.workspace.id %}#title-{{ channel.id }}" class="flex-shrink-0 w-8 h-8 max-lg:w-11 max-lg:h-11 inline-flex items-center justify-center rounded-md text-stone-400 hover:text-stone-700 hover:bg-stone-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1" title="Manage {{ channel.account_name|default:channel.account_handle }}" aria-label="Manage {{ channel.account_name|default:channel.account_handle }} channel">
+                    <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.32 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                </a>{% endif %}
+                </div>
                 {% endfor %}
                 {% endif %}
 
@@ -895,12 +915,12 @@
                     <form method="post" action="{% url 'organizations:switch' %}" class="px-4 pb-3">
                         {% csrf_token %}
                         <label for="organization-switch" class="block text-sm font-semibold mb-1">Organization</label>
-                        <select id="organization-switch" name="organization_id" class="w-full border rounded-lg p-2">
+                        <select id="organization-switch" name="organization_id" class="w-full min-h-11 border border-stone-300 rounded-lg px-3 py-2 text-sm text-stone-800 bg-white focus:outline-none focus:ring-2 focus:ring-[var(--primary-ring)] focus:border-[var(--primary)]">
                             {% for membership in organization_memberships %}
                             <option value="{{ membership.organization_id }}" {% if membership.organization_id == request.org.id %}selected{% endif %}>{{ membership.organization.name }}</option>
                             {% endfor %}
                         </select>
-                        <button type="submit" class="mt-2 px-3 py-1 border rounded-lg text-sm">Switch organization</button>
+                        <button type="submit" class="mt-2 w-full min-h-11 px-4 py-2 rounded-lg text-sm font-semibold text-white transition-colors" style="background:var(--primary);color:var(--accent-text)">Switch organization</button>
                     </form>
                     {% endif %}
                     {% if can_manage_organization %}
@@ -914,6 +934,14 @@
                     </div>
 
                     {% endif %}
+                    <div class="border-t border-stone-100">
+                        <a href="{% url 'notifications:preferences' %}"
+                           class="flex items-center gap-3 px-4 py-2.5 text-sm text-stone-700 hover:bg-black/[0.04] transition-colors">
+                            <svg class="w-4 h-4 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg>
+                            Notification preferences
+                        </a>
+                    </div>
+
                     <div class="border-t border-stone-100">
                         <!-- Settings -->
                         <a href="{% url 'accounts:settings' %}"
@@ -954,11 +982,11 @@
                     {% if current_ws.icon %}
                     <img src="{{ current_ws.icon.url }}" alt="" class="w-7 h-7 rounded-md object-cover" style="outline:2px solid {{ current_ws.accent_color }}">
                     {% else %}
-                    <div class="w-7 h-7 rounded-md flex items-center justify-center text-white text-[11px] font-bold" style="background: {{ current_ws.accent_color }};">{{ current_ws.name|make_list|first|upper }}</div>
+                    <div class="w-7 h-7 rounded-md flex items-center justify-center text-white text-[11px] font-bold" style="background: {{ current_ws.accent_color }};color:{{ current_ws.accent_text_color }}">{{ current_ws.name|make_list|first|upper }}</div>
                     {% endif %}
                     <span class="text-sm font-semibold text-stone-800 truncate max-w-[160px]">{{ current_ws.name }}</span>
                     {% else %}
-                    <div class="w-7 h-7 rounded-md flex items-center justify-center text-white text-[11px] font-bold" style="background: var(--primary);">P</div>
+                    <div class="w-7 h-7 rounded-md flex items-center justify-center text-white text-[11px] font-bold" style="background: var(--primary);color:var(--accent-text)">P</div>
                     <span class="text-sm font-semibold text-stone-800">JR Content</span>
                     {% endif %}
                     {% endwith %}

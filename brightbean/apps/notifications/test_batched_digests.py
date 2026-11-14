@@ -218,7 +218,7 @@ def test_two_users_get_their_own_digest(user, django_user_model):
 @pytest.mark.django_db
 def test_an_unbatched_event_still_sends_immediately(user):
     """Only the events in BATCHED_EMAIL_EVENTS are held back."""
-    notify(user, EventType.SOCIAL_ACCOUNT_DISCONNECTED, "TikTok disconnected")
+    notify(user, EventType.POST_CHANGES_REQUESTED, "Changes requested")
     run_email_queue()
     assert len(mail.outbox) == 1
 

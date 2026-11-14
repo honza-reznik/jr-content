@@ -27,6 +27,7 @@ import {
 import { cn, dateInputValue, endOfDayISO } from "@/lib/utils";
 import { withBasePath } from "@/lib/base-path";
 import { api } from "@/lib/api";
+import { useAuthStore } from "@/stores/auth-store";
 import { ShareLinkActivityPanel } from "@/components/projects/share-link-activity";
 import type { ShareLink, ShareLinkAppearance } from "@/types";
 
@@ -805,6 +806,7 @@ export function ShareLinkContent({
 // ─── ShareLinkSettingsPanel (RIGHT panel) ───────────────────────────────────
 
 export function ShareLinkSettingsPanel({ token }: ShareLinkSettingsPanelProps) {
+  const managed = useAuthStore((s) => s.user?.jrc_managed === true);
   const {
     shareLink,
     debouncedUpdate,
@@ -928,14 +930,16 @@ export function ShareLinkSettingsPanel({ token }: ShareLinkSettingsPanelProps) {
                   immediateUpdate({ permission: checked ? "comment" : "view" })
                 }
               />
-              <ToggleRow
-                label="Downloads"
-                description="Allow viewers to download files"
-                checked={shareLink.allow_download}
-                onCheckedChange={(checked) =>
-                  immediateUpdate({ allow_download: checked })
-                }
-              />
+              {!managed && (
+                <ToggleRow
+                  label="Downloads"
+                  description="Allow viewers to download files"
+                  checked={shareLink.allow_download}
+                  onCheckedChange={(checked) =>
+                    immediateUpdate({ allow_download: checked })
+                  }
+                />
+              )}
               <ToggleRow
                 label="Show all versions"
                 description="Display version history"

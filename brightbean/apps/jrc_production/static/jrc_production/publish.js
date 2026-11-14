@@ -1,5 +1,8 @@
 "use strict";
 
+// P2-B08: the tab can be opened again without a page load; the document listeners are added once.
+if (!window.jrcPublishReady) {
+window.jrcPublishReady = true;
 document.addEventListener("click", async (event) => {
     const button = event.target.closest("[data-copy-caption]");
     if (!button) return;
@@ -25,3 +28,4 @@ document.addEventListener("submit", (event) => {
         event.preventDefault();
     }
 });
+}

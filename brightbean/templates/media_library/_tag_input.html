@@ -9,7 +9,7 @@
   <div class="flex flex-wrap gap-1.5">
     <template x-for="(tag, i) in tags" :key="i">
       <span class="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-full"
-            style="background: var(--primary-soft, #FFF7ED); color: var(--brand-700, #C2410C);">
+            style="background: var(--primary-soft, #FFF7ED); color: var(--primary-text);">
         <span x-text="tag"></span>
         {% if is_shared_library and is_admin or not is_shared_library and not asset.is_shared %}
         <button @click="removeTag(i)" type="button" class="hover:opacity-70 transition-opacity">

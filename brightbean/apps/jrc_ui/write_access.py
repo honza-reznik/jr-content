@@ -97,7 +97,8 @@ _rules(
 # comment. They check action, author, draft owner, workflow stage and role.
 _rules(
     "jrc_production",
-    "create quick_idea move content_detail rename category proposed_date shotlist_action mark_published approval_decision",
+    "create quick_idea move content_detail rename category proposed_date shotlist_action mark_published approval_decision "
+    "channels caption_autosave",
     domain="service",
 )
 _rules("jrc_production", "board_actions", domain="content_batch")

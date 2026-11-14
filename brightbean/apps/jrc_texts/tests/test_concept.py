@@ -66,14 +66,23 @@ def send(http, post, action, kind="concept", **data):
     return http.post(url(post, kind), {"action": action, **data}, content_type="application/json")
 
 
-def draft_request(state, text):
-    return {"version": state["draft"]["id"], "revision": state["draft"]["revision"], "content": content(text)}
+_devices = iter(range(10_000))
 
 
-def save_concept(http, post, text):
-    latest = http.get(url(post)).json()["latest"]
-    state = send(http, post, "edit", base=latest).json()
-    return send(http, post, "save", **draft_request(state, text)).json()
+def save_concept(http, post, text, kind="concept"):
+    """P2-B08: an automatic save from a fresh device, so every call is a new saved version."""
+    state = http.get(url(post, kind)).json()
+    revision = next((v["revision"] for v in state["versions"] if v["id"] == state["latest"]), 0)
+    return send(
+        http,
+        post,
+        "autosave",
+        kind=kind,
+        base=state["latest"],
+        revision=revision,
+        device=f"concept-device-{next(_devices):05d}",
+        content=content(text),
+    ).json()
 
 
 # ---- AK1: versions like the script ------------------------------------------------------------
@@ -81,14 +90,8 @@ def save_concept(http, post, text):
 
 def test_concept_versions_are_separate_from_the_script(http, post):
     assert http.get(url(post)).json()["versions"] == []
-    state = send(http, post, "edit", base=None).json()
-    assert state["draft"]["own"] and len(state["versions"]) == 0
-    state = send(http, post, "autosave", **draft_request(state, "Hook: three plants")).json()
-    assert state["draft"]["revision"] == 1
-    # The draft is the author's only; the saved version list does not change on autosave.
-    assert len(state["versions"]) == 0
-    saved = send(http, post, "save", **draft_request(state, "Hook: three plants")).json()
-    assert saved["draft"] is None and saved["shown"]["number"] == 1
+    saved = save_concept(http, post, "Hook: three plants")
+    assert saved["shown"]["number"] == 1
     assert saved["shown"]["content"] == content("Hook: three plants")
     # The script stays untouched and empty.
     assert http.get(url(post, "script")).json()["versions"] == []
@@ -100,11 +103,6 @@ def test_concept_versions_are_separate_from_the_script(http, post):
     assert second["comparison"]["old"]["number"] == 1 and second["comparison"]["new"]["number"] == 2
     old = http.get(url(post), {"version": saved["latest"]}).json()
     assert old["shown"]["content"] == content("Hook: three plants")
-
-    # Discard keeps the saved versions.
-    state = send(http, post, "edit", base=second["latest"]).json()
-    discarded = send(http, post, "discard", **draft_request(state, "")).json()
-    assert discarded["draft"] is None and len(discarded["versions"]) == 2
 
 
 def test_saved_concept_versions_are_immutable(http, post):
@@ -127,17 +125,10 @@ def test_saved_concept_versions_are_immutable(http, post):
 
 def test_concept_conflicts_return_409(http, post):
     first = save_concept(http, post, "First")
-    second = save_concept(http, post, "Second")
-    # A stale base and a stale tab revision are both conflicts.
-    assert send(http, post, "edit", base=first["latest"]).status_code == 409
-    state = send(http, post, "edit", base=second["latest"]).json()
-    stale = draft_request(state, "Tab A")
-    assert send(http, post, "autosave", **stale).status_code == 200
-    assert send(http, post, "autosave", **stale).status_code == 409
-    # The concept draft can never be addressed through the script endpoint (or vice versa).
-    current = http.get(url(post)).json()["draft"]
-    other = {"version": current["id"], "revision": current["revision"], "content": content("x")}
-    assert send(http, post, "save", kind="script", **other).status_code == 409
+    # A concept version can never be addressed through the script endpoint (or vice versa).
+    data = {"base": first["latest"], "revision": 0, "device": "concept-device-x1", "content": content("x")}
+    assert send(http, post, "autosave", kind="script", **data).status_code == 409
+    assert send(http, post, "autosave", **{**data, "base": str(post.pk)}).status_code == 409
 
 
 def test_one_concept_per_post_and_never_on_a_channel_copy(workspace, user, post):
@@ -180,11 +171,10 @@ def test_tab_order_and_default_tab_until_a_script_exists(http, post):
     assert 'aria-selected="true" href="?tab=concept"' in page
     assert url(post) in page and "jrc_texts/dist/script.js" in page
     assert "Use as script draft" in page
-    # An empty script (created by Edit text) is not a script yet.
-    send(http, post, "edit", kind="script", base=None)
+    # An empty script is not a script yet.
+    services.create_document(post.pk, post.author, kind="script", markdown="")
     assert 'aria-selected="true" href="?tab=concept"' in http.get(detail(post)).content.decode()
-    state = http.get(url(post, "script")).json()
-    send(http, post, "save", kind="script", **draft_request(state, "Scene one"))
+    save_concept(http, post, "Scene one", kind="script")
     page = http.get(detail(post)).content.decode()
     assert 'aria-selected="true" href="?tab=script"' in page
     assert url(post, "script") in page and "Use as script draft" not in page
@@ -220,27 +210,13 @@ def test_use_as_script_draft_copies_the_latest_concept(http, post):
     assert http.get(url(post), {}).json()["shown"]["content"] == content("Idea three")
 
 
-def test_use_as_script_after_discarding_the_first_script_draft(http, post):
-    save_concept(http, post, "Saved idea")
-    state = send(http, post, "edit", kind="script", base=None).json()
-    send(http, post, "discard", kind="script", **draft_request(state, ""))
-    response = http.post(to_script_url(post))
-    assert response.status_code == 302
-    script = http.get(url(post, "script")).json()
-    assert script["shown"]["number"] == 1
-    assert script["shown"]["content"] == content("Saved idea")
-
-
-def test_use_as_script_draft_never_overwrites_an_open_script_draft(http, post, workspace):
+def test_use_as_script_draft_never_overwrites_a_draft_another_writer_holds(http, post, workspace, user):
+    """REST/MCP write through a short-lived draft; one that exists blocks the copy (nothing is overwritten)."""
     save_concept(http, post, "Concept text")
-    editor = member(workspace, "editor", "eddie")
-    other = login(editor)
-    state = send(other, post, "edit", kind="script", base=None).json()
-    assert state["draft"]["own"]
+    document = services.create_document(post.pk, user, kind="script", markdown="", initial_draft=True)
     response = http.post(to_script_url(post), follow=True)
     assert b"Someone is editing the script" in response.content
-    assert TextVersion.objects.filter(document__post=post, document__kind="script", state="final").count() == 0
-    assert TextVersion.objects.filter(document__post=post, document__kind="script", state="draft").count() == 1
+    assert TextVersion.objects.filter(document=document, state="final").count() == 0
 
 
 def test_use_as_script_draft_requires_a_text_editor(post, workspace, user):
@@ -276,21 +252,22 @@ def test_concept_permissions_match_the_script(post, workspace, user, role, own_p
     if own_post:
         Post.objects.filter(pk=post.pk).update(author=person)
     client = login(person)
-    # Every member reads saved versions, nobody sees another person's draft.
-    owner_state = send(login(user), post, "edit", base=http_latest(user, post)).json()
+    # Every member reads saved versions.
     state = client.get(url(post)).json()
     assert state["can_edit"] is can_write
     assert state["shown"]["content"] == content("Saved concept")
-    assert "content" not in state["draft"]
-    send(login(user), post, "discard", **draft_request(owner_state, ""))
-    response = send(client, post, "edit", base=state["latest"])
+    response = send(
+        client,
+        post,
+        "autosave",
+        base=state["latest"],
+        revision=0,
+        device="concept-device-perm",
+        content=content("Mine"),
+    )
     assert response.status_code == (200 if can_write else 403)
     script = client.get(url(post, "script")).json()
     assert script["can_edit"] is state["can_edit"]
-
-
-def http_latest(person, post):
-    return login(person).get(url(post)).json()["latest"]
 
 
 def test_concept_version_notifies_like_the_script(workspace, user):

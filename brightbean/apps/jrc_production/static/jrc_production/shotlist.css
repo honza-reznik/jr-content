@@ -48,3 +48,15 @@ span.shotlist-box[aria-checked="false"] { background: #fafaf9; }
   .shotlist-add { grid-template-columns: 1fr; }
   .shotlist-add .shotlist-primary { width: 100%; }
 }
+/* P2-B08: edit right in the text; the fields look like text until hovered or focused. */
+.shotlist-inline-form { margin: 0; }
+.shotlist-inline { display: block; box-sizing: border-box; width: 100%; min-width: 0; margin: 0; border: 1px solid transparent; border-radius: 6px; background: transparent; color: #1c1917; font: inherit; padding: 4px 6px; margin-left: -7px; resize: none; }
+.shotlist-inline:hover { border-color: #e7e5e4; background: #fff; }
+.shotlist-inline:focus { border-color: #f97316; outline: 2px solid #fed7aa; background: #fff; }
+.shotlist-inline-text { margin-top: 6px; font-size: 16px; line-height: 1.4; font-weight: 500; min-height: 36px; text-overflow: ellipsis; }
+.shotlist-inline-note { font-size: 14px; color: #57534e; line-height: 1.45; field-sizing: content; min-height: 30px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.shotlist-inline-note::placeholder { color: #a8a29e; }
+.shotlist-inline-form:not(:focus-within) .shotlist-inline-note:placeholder-shown:not(:hover) { color: transparent; }
+.is-done .shotlist-inline-text { color: #78716c; text-decoration: line-through; }
+.shotlist-save-status { margin: 2px 0 0; }
+.shotlist-danger-text { color: #b91c1c; border-color: #fecaca; }

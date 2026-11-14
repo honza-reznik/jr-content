@@ -41,8 +41,17 @@ def send(http, post, action, **data):
     return http.post(url(post), {"action": action, **data}, content_type="application/json")
 
 
-def draft_request(state, text="Updated outline"):
-    return {"version": state["draft"]["id"], "revision": state["draft"]["revision"], "content": content(text)}
+_devices = iter(range(10_000))
+
+
+def autosave(http, post, text, *, base="latest", revision=None, device=None):
+    """P2-B08: one automatic save; a fresh device (by default) always makes a new version."""
+    if base == "latest":
+        state = http.get(url(post)).json()
+        base = state["latest"]
+        revision = next((v["revision"] for v in state["versions"] if v["id"] == base), 0)
+    device = device or f"test-device-{next(_devices):05d}"
+    return send(http, post, "autosave", base=base, revision=revision or 0, device=device, content=content(text))
 
 
 def test_read_never_creates_document_and_detail_loads_local_bundle(http, post):
@@ -55,42 +64,27 @@ def test_read_never_creates_document_and_detail_loads_local_bundle(http, post):
     detail = http.get(reverse("jrc_production:content_detail", args=[post.workspace_id, post.pk]))
     assert b"jrc_texts/dist/script.js" in detail.content
     assert b"Script details will appear here" not in detail.content
-    assert b"Edit text" in detail.content
+    # P2-B08: no Edit or Save button; the text is edited in place and saves automatically.
+    assert b"Edit text" not in detail.content and b'id="script-status"' in detail.content
 
 
-def test_edit_autosave_resume_save_history_and_discard(http, post):
-    state = send(http, post, "edit", base=None).json()
-    assert state["draft"]["own"] and state["draft"]["number"] == 1
-    assert state["versions"] == [] and state["shown"] is None
-    state = send(http, post, "autosave", **draft_request(state)).json()
-    assert state["draft"]["revision"] == 1 and state["versions"] == []
-    assert http.get(url(post)).json()["draft"]["content"] == content("Updated outline")
-    saved = send(http, post, "save", **draft_request(state)).json()
-    assert saved["draft"] is None and len(saved["versions"]) == 1
-    assert saved["shown"]["number"] == 1
-    state = send(http, post, "edit", base=saved["latest"]).json()
-    second = send(http, post, "save", **draft_request(state, "Second version")).json()
+def test_autosave_history_and_reading_an_older_version(http, post):
+    saved = autosave(http, post, "Updated outline").json()
+    assert saved["saved"]["created"] and len(saved["versions"]) == 1
+    assert saved["shown"]["number"] == 1 and "draft" not in saved
+    second = autosave(http, post, "Second version").json()
     assert second["shown"]["number"] == 2
     old = http.get(url(post), {"version": saved["latest"]}).json()
     assert old["shown"]["content"] == saved["shown"]["content"]
     assert old["latest"] == second["latest"]
-    assert send(http, post, "edit", base=saved["latest"]).status_code == 409
-    state = send(http, post, "edit", base=second["latest"]).json()
-    state = send(http, post, "autosave", **draft_request(state, "Discard this")).json()
-    discarded = send(http, post, "discard", **draft_request(state)).json()
-    assert discarded["shown"]["content"] == second["shown"]["content"]
-    assert len(discarded["versions"]) == 2 and discarded["draft"] is None
+    # A base that is no saved version of this text is refused.
+    assert autosave(http, post, "x", base=str(post.pk), revision=0).status_code == 409
 
 
 def test_compare_defaults_to_last_two_versions_and_accepts_two_selected_versions(http, post):
-    first = send(http, post, "edit", base=None).json()
-    saved = send(http, post, "save", **draft_request(first, "First version")).json()
-    first_id = saved["latest"]
-    second = send(http, post, "edit", base=first_id).json()
-    saved = send(http, post, "save", **draft_request(second, "Second version")).json()
-    second_id = saved["latest"]
-    third = send(http, post, "edit", base=second_id).json()
-    saved = send(http, post, "save", **draft_request(third, "Third version")).json()
+    first_id = autosave(http, post, "First version").json()["latest"]
+    second_id = autosave(http, post, "Second version").json()["latest"]
+    saved = autosave(http, post, "Third version").json()
 
     default = http.get(url(post)).json()
     assert default["comparison"]["old"]["id"] == second_id
@@ -106,23 +100,16 @@ def test_compare_defaults_to_last_two_versions_and_accepts_two_selected_versions
     assert http.get(url(post), {"compare_old": first_id}).status_code == 400
 
 
-def test_noop_save_does_not_add_version(http, post):
-    state = send(http, post, "edit", base=None).json()
-    data = draft_request(state)
-    data["content"] = state["draft"]["content"]
-    result = send(http, post, "save", **data).json()
-    assert result["draft"] is None
+def test_noop_autosave_does_not_add_version(http, post):
+    autosave(http, post, "Same text")
+    result = autosave(http, post, "Same text").json()
+    assert result["saved"]["changed"] is False
     assert len(result["versions"]) == 1
 
 
-def test_comparison_is_read_only_and_rejects_drafts_and_other_posts(http, post, workspace):
-    state = send(http, post, "edit", base=None).json()
-    first = send(http, post, "save", **draft_request(state, "First version")).json()
-    first_id = first["latest"]
-    state = send(http, post, "edit", base=first_id).json()
-    saved = send(http, post, "save", **draft_request(state)).json()
-    draft = send(http, post, "edit", base=saved["latest"]).json()
-    draft = send(http, post, "autosave", **draft_request(draft, "PRIVATE DRAFT")).json()
+def test_comparison_is_read_only_and_rejects_other_posts(http, post, workspace):
+    first_id = autosave(http, post, "First version").json()["latest"]
+    saved = autosave(http, post, "Updated outline").json()
     reader = User.objects.create_user(
         email="compare-reader@example.invalid", name="Reader", tos_accepted_at=timezone.now()
     )
@@ -133,10 +120,7 @@ def test_comparison_is_read_only_and_rejects_drafts_and_other_posts(http, post, 
     response = http.get(url(post), query)
     assert response.status_code == 200
     assert response.json()["comparison"]["new"]["content"] == content("Updated outline")
-    assert "PRIVATE DRAFT" not in response.content.decode()
     assert TextVersion.objects.count() == count
-    query["compare_new"] = draft["draft"]["id"]
-    assert http.get(url(post), query).status_code == 404
     other = Post.objects.create(workspace=workspace, author=post.author, title="Other script")
     assert http.get(url(other), {"compare_old": first_id, "compare_new": first_id}).status_code == 404
     WorkspaceMembership.objects.filter(workspace=workspace, user=reader).delete()
@@ -144,11 +128,8 @@ def test_comparison_is_read_only_and_rejects_drafts_and_other_posts(http, post, 
 
 
 def test_comparison_size_limit_keeps_version_metadata_and_saved_text_readable(http, post):
-    state = send(http, post, "edit", base=None).json()
-    first = send(http, post, "save", **draft_request(state, "First version")).json()
-    first_id = first["latest"]
-    state = send(http, post, "edit", base=first_id).json()
-    saved = send(http, post, "save", **draft_request(state, "x" * 260_000)).json()
+    first_id = autosave(http, post, "First version").json()["latest"]
+    saved = autosave(http, post, "x" * 260_000).json()
     response = http.get(url(post), {"compare_old": first_id, "compare_new": saved["latest"]})
     assert response.status_code == 200
     result = response.json()
@@ -159,70 +140,57 @@ def test_comparison_size_limit_keeps_version_metadata_and_saved_text_readable(ht
     assert result["shown"]["content"] == content("x" * 260_000)
 
 
-@pytest.mark.parametrize("action", ["save", "autosave", "discard"])
-def test_two_tabs_cannot_overwrite_newer_revision(http, post, action):
-    state = send(http, post, "edit", base=None).json()
-    stale = draft_request(state, "Stale tab")
-    send(http, post, "autosave", **draft_request(state, "Newer tab"))
-    response = send(http, post, action, **stale)
-    assert response.status_code == 409
-    assert "another tab" in response.json()["error"]
-    assert TextVersion.objects.get(pk=state["draft"]["id"]).text == "Newer tab"
-    assert send(http, post, "edit", base=state["latest"]).status_code == 409
-
-
-@pytest.mark.parametrize("role", ["client", "viewer", "editor"])
-def test_other_reader_never_receives_private_draft(http, post, workspace, role):
-    state = send(http, post, "edit", base=None).json()
-    send(http, post, "autosave", **draft_request(state, "PRIVATE DRAFT"))
-    other = User.objects.create_user(
-        email=f"{role}@example.invalid", name="Other editor", tos_accepted_at=timezone.now()
-    )
+@pytest.mark.parametrize("role", ["client", "viewer"])
+def test_readers_cannot_autosave(http, post, workspace, role):
+    autosave(http, post, "Saved text")
+    other = User.objects.create_user(email=f"{role}@example.invalid", name="Reader", tos_accepted_at=timezone.now())
     WorkspaceMembership.objects.create(workspace=workspace, user=other, workspace_role=role)
     http.force_login(other)
-    response = http.get(url(post))
-    assert response.status_code == 200
-    assert "PRIVATE DRAFT" not in response.content.decode()
-    assert "content" not in response.json()["draft"]
-    assert response.json()["draft"]["owner"]
-    assert http.get(url(post), {"version": state["draft"]["id"]}).status_code == 404
-    assert send(http, post, "edit", base=state["latest"]).status_code == (409 if role == "editor" else 403)
-    for action in ("autosave", "save", "discard"):
-        assert send(http, post, action, **draft_request(state)).status_code == 403
+    assert http.get(url(post)).json()["can_edit"] is False
+    assert autosave(http, post, "Not allowed").status_code == 403
+    assert TextVersion.objects.filter(document__post=post).count() == 1
 
 
-@pytest.mark.parametrize("action", ["edit", "autosave", "save", "discard"])
-def test_revoked_write_permission_is_checked_for_every_request(http, post, workspace, user, action):
-    state = send(http, post, "edit", base=None).json()
+def test_revoked_write_permission_is_checked_for_every_request(http, post, workspace, user):
+    autosave(http, post, "Saved text")
     WorkspaceMembership.objects.filter(workspace=workspace, user=user).update(workspace_role="client")
-    data = {"base": state["latest"]} if action == "edit" else draft_request(state)
-    assert send(http, post, action, **data).status_code == 403
+    assert autosave(http, post, "Not any more").status_code == 403
     assert http.get(url(post)).json()["can_edit"] is False
 
 
 def test_nonmember_archived_workspace_anonymous_and_cross_post(http, post, workspace, user, organization):
-    state = send(http, post, "edit", base=None).json()
+    state = autosave(http, post, "Saved text").json()
     other = Post.objects.create(workspace=workspace, author=user, title="Another post")
-    assert send(http, other, "save", **draft_request(state)).status_code == 409
-    assert http.get(url(other), {"version": state["draft"]["id"]}).status_code == 404
+    assert autosave(http, other, "x", base=state["latest"], revision=0).status_code == 409
+    assert http.get(url(other), {"version": state["latest"]}).status_code == 404
     other_workspace = Workspace.objects.create(organization=organization, name="Other client")
     assert http.get(url(post).replace(str(workspace.pk), str(other_workspace.pk))).status_code == 404
     WorkspaceMembership.objects.create(workspace=other_workspace, user=user, workspace_role="owner")
     assert http.get(url(post).replace(str(workspace.pk), str(other_workspace.pk))).status_code == 404
     WorkspaceMembership.objects.filter(workspace=workspace, user=user).delete()
     assert http.get(url(post)).status_code == 404
-    assert send(http, post, "discard", **draft_request(state)).status_code == 404
+    assert autosave(http, post, "x", base=None).status_code == 404
     WorkspaceMembership.objects.create(workspace=workspace, user=user, workspace_role="owner")
     workspace.is_archived = True
     workspace.save(update_fields=["is_archived"])
     assert http.get(url(post)).status_code == 404
     http.logout()
     assert http.get(url(post)).status_code == 302
-    assert send(http, post, "edit", base=None).status_code == 302
+    assert autosave(http, post, "x", base=None).status_code == 302
 
 
 @pytest.mark.parametrize(
-    "body", ["{broken", "[]", "null", '{"action": []}', '{"action": "bad"}', "[" * 2000 + "]" * 2000]
+    "body",
+    [
+        "{broken",
+        "[]",
+        "null",
+        '{"action": []}',
+        '{"action": "bad"}',
+        '{"action": "edit"}',
+        '{"action": "autosave", "device": "test-device-1", "content": []}',
+        "[" * 2000 + "]" * 2000,
+    ],
 )
 def test_invalid_requests_are_rejected(http, post, body):
     assert http.post(url(post), body, content_type="application/json").status_code == 400
@@ -231,21 +199,22 @@ def test_invalid_requests_are_rejected(http, post, body):
 
 @pytest.mark.parametrize("revision", [None, -1, True, "0", 0.5])
 def test_invalid_revisions_are_rejected(http, post, revision):
-    state = send(http, post, "edit", base=None).json()
-    data = draft_request(state)
-    data["revision"] = revision
-    assert send(http, post, "save", **data).status_code == 400
+    state = autosave(http, post, "Saved text").json()
+    response = send(
+        http, post, "autosave", base=state["latest"], revision=revision, device="test-device-1", content=content("x")
+    )
+    assert response.status_code == 400
 
 
-def test_invalid_schema_and_oversize_keep_existing_draft(http, post):
-    state = send(http, post, "edit", base=None).json()
-    data = draft_request(state)
-    data["content"] = {"type": "doc", "content": [{"type": "unknownNode"}]}
-    assert send(http, post, "save", **data).status_code == 400
-    data["content"] = content("x" * 1_010_000)
-    assert send(http, post, "autosave", **data).status_code == 400
-    draft = TextVersion.objects.get(pk=state["draft"]["id"])
-    assert draft.revision == 0 and draft.state == "draft"
+def test_invalid_schema_and_oversize_keep_the_saved_text(http, post):
+    state = autosave(http, post, "Saved text").json()
+    data = {"base": state["latest"], "revision": 0, "device": "test-device-2"}
+    assert (
+        send(http, post, "autosave", **data, content={"type": "doc", "content": [{"type": "unknownNode"}]}).status_code
+        == 400
+    )
+    assert send(http, post, "autosave", **data, content=content("x" * 1_010_000)).status_code == 400
+    assert [v.text for v in TextVersion.objects.filter(document__post=post)] == ["Saved text"]
     assert http.get(url(post), {"version": "invalid"}).status_code == 400
     assert http.delete(url(post)).status_code == 405
 
@@ -253,7 +222,7 @@ def test_invalid_schema_and_oversize_keep_existing_draft(http, post):
 def test_csrf_is_required(post, user):
     secure = Client(enforce_csrf_checks=True)
     secure.force_login(user)
-    assert send(secure, post, "edit", base=None).status_code == 403
+    assert autosave(secure, post, "x", base=None).status_code == 403
     assert not TextDocument.objects.filter(post=post).exists()
 
 
@@ -264,56 +233,28 @@ def test_contributor_can_only_edit_their_own_post(http, post, workspace):
     WorkspaceMembership.objects.create(workspace=workspace, user=contributor, workspace_role="contributor")
     http.force_login(contributor)
     assert http.get(url(post)).json()["can_edit"] is False
-    assert send(http, post, "edit", base=None).status_code == 403
+    assert autosave(http, post, "x", base=None).status_code == 403
     own = Post.objects.create(workspace=workspace, author=contributor, title="Own script")
     assert http.get(url(own)).json()["can_edit"] is True
-    assert send(http, own, "edit", base=None).status_code == 200
-
-
-def test_orphan_recovery_is_offered_only_to_authorized_admin(http, post, workspace, user):
-    state = send(http, post, "edit", base=None).json()
-    editor = User.objects.create_user(email="editor@example.invalid", name="Editor", tos_accepted_at=timezone.now())
-    WorkspaceMembership.objects.create(workspace=workspace, user=editor, workspace_role="editor")
-    admin = User.objects.create_user(email="manager@example.invalid", name="Manager", tos_accepted_at=timezone.now())
-    WorkspaceMembership.objects.create(workspace=workspace, user=admin, workspace_role="manager")
-    http.force_login(admin)
-    assert http.get(url(post)).json()["draft"]["recoverable"] is False
-    WorkspaceMembership.objects.filter(workspace=workspace, user=user).delete()
-    http.force_login(editor)
-    assert http.get(url(post)).json()["draft"]["recoverable"] is False
-    http.force_login(admin)
-    assert http.get(url(post)).json()["draft"]["recoverable"] is True
-    result = send(http, post, "edit", base=state["latest"])
-    assert result.status_code == 200
-    assert result.json()["draft"]["own"]
-    assert result.json()["draft"]["id"] != state["draft"]["id"]
+    assert autosave(http, own, "Mine", base=None).status_code == 200
 
 
 @pytest.mark.django_db(transaction=True)
-def test_simultaneous_first_edit_creates_one_document_and_one_draft(post, user):
+def test_simultaneous_first_autosave_creates_one_document_and_two_versions(post, user):
     barrier = Barrier(2)
 
-    def edit():
+    def write(index):
         close_old_connections()
         try:
             http = Client()
             http.force_login(user)
             barrier.wait(timeout=10)
-            return send(http, post, "edit", base=None).status_code
+            return autosave(http, post, f"Tab {index}", base=None, device=f"test-device-race{index}").status_code
         finally:
             close_old_connections()
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        results = list(pool.map(lambda _: edit(), range(2)))
-    assert sorted(results) == [200, 409]
+        results = list(pool.map(write, range(2)))
+    assert results == [200, 200]
     assert TextDocument.objects.filter(post=post).count() == 1
-    assert TextVersion.objects.filter(document__post=post, state="draft").count() == 1
-
-
-def test_discard_first_draft_can_start_again_at_one(http, post):
-    state = send(http, post, "edit", base=None).json()
-    result = send(http, post, "discard", **draft_request(state)).json()
-    assert result["versions"] == [] and result["draft"] is None
-    state = send(http, post, "edit", base=None).json()
-    assert state["draft"]["number"] == 1
-    assert send(http, post, "save", **draft_request(state)).json()["shown"]["number"] == 1
+    assert sorted(TextVersion.objects.filter(document__post=post).values_list("number", flat=True)) == [1, 2]

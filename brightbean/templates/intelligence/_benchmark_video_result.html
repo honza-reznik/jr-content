@@ -38,7 +38,7 @@
                     </span>
                 </span>
             </div>
-            <div class="mt-1 text-6xl font-bold tabular-nums leading-none" style="color: var(--primary);">
+            <div class="mt-1 text-6xl font-bold tabular-nums leading-none" style="color: var(--primary-text);">
                 {{ video.engagement_percentiles.overall }}
             </div>
         </div>
@@ -98,7 +98,7 @@
                 <div class="text-xs font-medium text-stone-700">Views / sub</div>
                 <div>
                     <div class="h-1.5 rounded-full bg-stone-100 overflow-hidden">
-                        <div class="h-full rounded-full" style="width: {{ engp.view_to_sub_ratio|default:0 }}%; background: var(--primary);"></div>
+                        <div class="h-full rounded-full" style="width: {{ engp.view_to_sub_ratio|default:0 }}%; background: var(--primary);color:var(--accent-text);"></div>
                     </div>
                     <div class="flex justify-between mt-1 text-[11px] text-stone-500 tabular-nums">
                         <span>This video: <span class="text-stone-900 font-medium">{{ eng.view_to_sub_ratio|pretty_percent }}</span></span>
@@ -112,7 +112,7 @@
                 <div class="text-xs font-medium text-stone-700">Likes / view</div>
                 <div>
                     <div class="h-1.5 rounded-full bg-stone-100 overflow-hidden">
-                        <div class="h-full rounded-full" style="width: {{ engp.like_to_view_ratio|default:0 }}%; background: var(--primary);"></div>
+                        <div class="h-full rounded-full" style="width: {{ engp.like_to_view_ratio|default:0 }}%; background: var(--primary);color:var(--accent-text);"></div>
                     </div>
                     <div class="flex justify-between mt-1 text-[11px] text-stone-500 tabular-nums">
                         <span>This video: <span class="text-stone-900 font-medium">{{ eng.like_to_view_ratio|pretty_percent:2 }}</span></span>
@@ -126,7 +126,7 @@
                 <div class="text-xs font-medium text-stone-700">Comments / view</div>
                 <div>
                     <div class="h-1.5 rounded-full bg-stone-100 overflow-hidden">
-                        <div class="h-full rounded-full" style="width: {{ engp.comment_to_view_ratio|default:0 }}%; background: var(--primary);"></div>
+                        <div class="h-full rounded-full" style="width: {{ engp.comment_to_view_ratio|default:0 }}%; background: var(--primary);color:var(--accent-text);"></div>
                     </div>
                     <div class="flex justify-between mt-1 text-[11px] text-stone-500 tabular-nums">
                         <span>This video: <span class="text-stone-900 font-medium">{{ eng.comment_to_view_ratio|pretty_percent:2 }}</span></span>
@@ -228,7 +228,7 @@
             {% for ph in niche.title_patterns.common_niche_phrases|slice:":12" %}
             <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px]
                          {% if ph.used_by_channel %}font-medium{% else %}text-stone-700{% endif %}"
-                  style="{% if ph.used_by_channel %}background: var(--primary-soft); color: var(--primary); border: 1px solid var(--primary-muted);{% else %}background: #f5f5f4; border: 1px solid #e7e5e4;{% endif %}">
+                  style="{% if ph.used_by_channel %}background: var(--primary-soft); color: var(--primary-text); border: 1px solid var(--primary-muted);{% else %}background: #f5f5f4; border: 1px solid #e7e5e4;{% endif %}">
                 {% if ph.used_by_channel %}
                 <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                 {% endif %}

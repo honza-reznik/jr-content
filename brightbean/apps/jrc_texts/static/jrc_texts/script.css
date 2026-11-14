@@ -5,17 +5,21 @@
 .script-heading > div:first-child { flex: 1 1 15rem; min-width: 0; }
 #script-panel button { cursor: pointer; border: 1px solid #d6d3d1; border-radius: .5rem; padding: .55rem .8rem; font-size: .875rem; background: white; min-height: 44px; }
 #script-panel button:hover { background: #fafaf9; }
-#script-panel button:focus-visible, #script-panel .tiptap:focus-visible { outline: 2px solid #ea580c; outline-offset: 2px; }
+#script-panel button:focus-visible { outline: 2px solid #ea580c; outline-offset: 2px; }
 #script-panel button:disabled { opacity: .5; cursor: default; }
-#script-panel #script-edit, #script-panel #script-save { background: #c2410c; color: white; border-color: #c2410c; font-weight: 600; }
-#script-panel #script-message { margin-top: 1rem; font-size: .875rem; color: #57534e; min-height: 1.5rem; }
+#script-panel #script-message { margin: 0; font-size: .875rem; color: #57534e; min-height: 1.25rem; flex: 1 1 14rem; min-width: 0; }
 #script-panel #script-message.script-error { color: #b91c1c; }
-.script-recovery { margin: .5rem 0 1rem; }
-#script-panel #script-reload { border: 0; padding: .25rem 0; text-decoration: underline; color: #57534e; min-height: 36px; }
+/* P2-B08: status line of the automatic saving under the heading. */
+.script-statusbar { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem 1rem; margin: .75rem 0 1rem; }
+#script-panel #script-status { font-size: .8125rem; }
+#script-panel #script-reload { border: 0; padding: .25rem 0; text-decoration: underline; color: #57534e; min-height: 36px; background: transparent; }
+#script-editor .tiptap[contenteditable=true] { cursor: text; }
+.script-paper:hover:has(.tiptap[contenteditable=true]) { border-color: #d6d3d1; }
+.script-paper:focus-within { border-color: #fb923c; box-shadow: 0 0 0 3px #ffedd5; }
+#script-editor .tiptap p.is-editor-empty:first-child::before { content: attr(data-placeholder); color: #a8a29e; float: left; height: 0; pointer-events: none; }
 .script-lock { padding: .75rem 1rem; border: 1px solid #fed7aa; border-radius: .5rem; margin-top: 1rem; background: #fff7ed; font-size: .875rem; overflow-wrap: anywhere; }
 .script-layout { display: grid; grid-template-columns: minmax(0, 1fr) 13rem; gap: 1.5rem; }
 .script-paper { border: 1px solid #e7e5e4; border-radius: .75rem; min-width: 0; overflow: hidden; }
-.is-editing .script-paper { border-color: #fb923c; }
 #script-toolbar { display: flex; flex-wrap: wrap; gap: .25rem; padding: .5rem; border-bottom: 1px solid #e7e5e4; background: #fafaf9; }
 #script-panel #script-toolbar button { padding: .4rem .6rem; }
 #script-panel button[aria-pressed=true], #script-panel button[aria-current=true] { background: #fff7ed; border-color: #fdba74; color: #9a3412; }
