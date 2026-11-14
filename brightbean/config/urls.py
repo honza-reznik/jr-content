@@ -4,6 +4,7 @@ import posixpath
 import re
 from urllib.parse import urlsplit
 
+from allauth.account.decorators import secure_admin_login
 from django.conf import settings
 from django.contrib import admin
 from django.http import Http404
@@ -16,6 +17,10 @@ from apps.media_library.file_views import private_media
 from apps.oauth_server import views as oauth_views
 
 logger = logging.getLogger(__name__)
+
+# JR Content: upraveno 2026-11-14 (blok P2-B17), AGPL-3.0. The admin's own login form would sign
+# a staff member in without the two-factor step; send it through the app login instead.
+admin.site.login = secure_admin_login(admin.site.login)
 
 urlpatterns = [
     path("admin/", admin.site.urls),

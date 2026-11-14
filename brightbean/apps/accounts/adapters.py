@@ -88,6 +88,10 @@ class AccountAdapter(DefaultAccountAdapter):
     (``create_account_under_invitation``).
     """
 
+    def get_login_stages(self):
+        # JR Content P2-B17: second factor after every first factor, before the session exists.
+        return [*super().get_login_stages(), "apps.accounts.stages.TwoFactorStage"]
+
     def is_open_for_signup(self, request):
         if signup_allowed(request):
             return True

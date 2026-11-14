@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 
+from django.contrib import messages
 from django.db.models import F
 from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -51,6 +52,10 @@ def magic_link_entry(request, token):
         user, workspace, is_valid = consume_magic_link(token)
         if not is_valid:
             return redirect("client_portal:magic_link_expired")
+        # JR Content P2-B17: an emailed link must not replace the second factor.
+        if user.totp_enabled:
+            messages.error(request, "This account uses two-factor authentication. Log in with your password and code.")
+            return redirect("account_login")
         create_portal_session(request, user, workspace)
         return redirect("client_portal:dashboard")
 

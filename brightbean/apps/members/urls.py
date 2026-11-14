@@ -13,4 +13,6 @@ urlpatterns = [
     path("<uuid:membership_id>/role/", views.update_member_role, name="update_role"),
     path("<uuid:membership_id>/remove/", views.remove_member, name="remove"),
     path("<uuid:membership_id>/workspaces/", views.manage_workspaces, name="manage_workspaces"),
+    # JR Content P2-B17: owner resets a member's 2FA.
+    path("<uuid:membership_id>/two-factor/reset/", views.reset_member_two_factor, name="reset_two_factor"),
 ]
