@@ -69,7 +69,9 @@ def test_registered_workspace_writes_reject_missing_permission(workspace, user, 
     covered = []
     for key, path, callback in registered_app_urls():
         rule = WRITE_RULES.get(key)
-        if not rule or (method == "POST" and rule.domain in {"service", "connection_token", "organization"}):
+        if not rule or (
+            method == "POST" and rule.domain in {"service", "connection_token", "organization", "content_batch"}
+        ):
             continue  # Domain writers are exercised by the HTTP tests below and their own suites.
         kwargs = {}
         for converter, name in re.findall(r"<([^:>]+):([^>]+)>", path):
@@ -306,7 +308,7 @@ def test_role_denials_through_registered_http_urls(client, workspace, user, role
     client.force_login(user)
     for key, path, _callback in registered_app_urls():
         rule = WRITE_RULES.get(key)
-        if not rule or rule.domain in {"service", "connection_token"}:
+        if not rule or rule.domain in {"service", "connection_token", "content_batch"}:
             continue
         denied = role == "nonmember" or any(not permissions.get(p, False) for p in rule.permissions)
         denied |= rule.domain == "team_review" and role in ("client", "viewer")

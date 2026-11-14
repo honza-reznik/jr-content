@@ -1,0 +1,34 @@
+.board-card-tools { display:flex; align-items:center; gap:5px; position:relative; z-index:1; margin-bottom:4px; }
+.content-board-page button:disabled { opacity:.45; cursor:default; }
+.content-board-page[data-trash-page] { color:#292524; }
+.content-board-page[data-trash-page] > h1 { margin-bottom:10px; }
+.content-board-page[data-trash-page] > p { margin:12px 0; max-width:850px; line-height:1.5; }
+.content-board-page[data-trash-page] button { min-height:44px; border:1px solid #d6d3d1; border-radius:7px; background:white; padding:8px 14px; font-size:13px; font-weight:600; }
+.content-board-page[data-trash-page] > button { align-self:flex-start; }
+.content-board-page .board-card-tools button { min-height:28px; min-width:32px; padding:1px 7px; border:1px solid #d6d3d1; background:white; }
+.content-board-page .board-card-tools input { min-height:20px; width:20px; height:20px; margin:0; padding:0; }
+.board-card-tools [data-card-menu] { margin-left:auto; font-size:18px; }
+[data-drag-handle] { touch-action:none; cursor:grab; }
+.board-card.is-selected { border:2px solid #30584b; }
+.board-card.is-dragging { opacity:.5; }
+.board-column.is-drop-target { outline:3px solid #30584b; outline-offset:-3px; }
+.board-bulk { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin:10px 0; }
+#quick-search { width:100%; max-width:480px; }
+#board-results { background:#f3f7f5; border:1px solid #a8bfb5; padding:12px; border-radius:8px; margin:10px 0; max-height:220px; overflow:auto; overflow-wrap:anywhere; }
+#board-results ul { padding-left:20px; list-style:disc; }
+#card-action-menu { position:fixed; z-index:100; max-width:calc(100vw - 16px); max-height:65vh; overflow:auto; border:1px solid #a8a29e; border-radius:8px; padding:6px; background:white; box-shadow:0 6px 24px #0003; }
+#card-action-menu button, #card-action-menu a { display:block; width:100%; min-height:40px; text-align:left; border-radius:4px; padding:9px 12px; color:#292524; text-decoration:none; font-size:13px; }
+#card-action-menu button:hover, #card-action-menu a:hover { background:#f3f7f5; }
+#board-action-dialog { margin:auto; width:min(460px, calc(100vw - 24px)); max-height:90vh; overflow:auto; border:1px solid #d6d3d1; border-radius:12px; padding:20px; color:#292524; }
+#board-action-dialog::backdrop { background:#0005; }
+#board-action-dialog h2 { font-size:19px; font-weight:700; margin-bottom:8px; }
+#board-action-dialog p { margin:8px 0 12px; overflow-wrap:anywhere; }
+#board-action-dialog input, #board-action-dialog select, #board-action-dialog textarea { width:100%; border:1px solid #d6d3d1; border-radius:6px; padding:8px; margin-bottom:12px; }
+.board-dialog-buttons { display:flex; gap:8px; justify-content:flex-end; }
+.board-trash-list { list-style:none; padding:0; }
+.board-trash-list li { display:flex; align-items:center; flex-wrap:wrap; gap:8px; border:1px solid #d6d3d1; border-radius:8px; padding:12px; margin-bottom:8px; }
+.board-trash-title { flex:1 1 240px; min-width:0; overflow-wrap:anywhere; }
+.board-trash-title strong { display:block; }
+.content-board-page [hidden] { display:none !important; }
+.content-board-page button:focus-visible, #card-action-menu :focus-visible { outline:2px solid #30584b; outline-offset:2px; }
+@media(max-width:767px) { .content-board-page .board-card-tools button { min-height:40px; min-width:40px; } .board-bulk button { flex:1 1 130px; } }

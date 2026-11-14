@@ -419,7 +419,10 @@ def test_review_is_offered_and_accepted_only_where_the_mode_has_one(client, setu
         rest = api.get(f"/api/v1/posts/{post.pk}/stage", secure=True).json()
         assert ("review" in rest["available_moves"]) is has_review, status
     board = client.get(reverse("jrc_production:board"), {"client": workspace.pk}).content.decode()
-    assert ('<option value="review">' in board) is has_review
+    # The shared batch dialog lists targets independently of individual cards.
+    # Only each card's own move menu offers actions for this content and approval mode.
+    card_menus = "".join(re.findall(r'<select\b[^>]*\bname="stage"[^>]*>(.*?)</select>', board, re.S))
+    assert ('<option value="review">' in card_menus) is has_review
 
     # Composer buttons.
     post, _variant = _content(workspace, account, owner, "draft", "composer draft")

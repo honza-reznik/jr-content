@@ -32,7 +32,7 @@
                 {% if can_delete %}
                 <form id="content-delete" class="mt-2" method="post" action="{% url 'composer:post_delete' workspace_id=workspace.id post_id=post.id %}" data-title="{{ post.title|default:'Untitled content' }}">{% csrf_token %}
                     <input type="hidden" name="landing" value="board">
-                    <button type="submit" class="text-sm font-medium text-red-700 underline-offset-2 hover:underline">Delete content</button>
+                    <button type="submit" class="text-sm font-medium text-red-700 underline-offset-2 hover:underline">Move to Trash</button>
                     <p class="mt-1 text-sm text-red-700" role="alert" data-delete-error hidden></p>
                 </form>
                 {% endif %}
@@ -90,7 +90,7 @@
 const deleteForm = document.getElementById('content-delete');
 if (deleteForm) deleteForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  if (!window.confirm(`Delete “${deleteForm.dataset.title}”? Its texts, shotlist, videos and history are deleted too.`)) return;
+  if (!window.confirm(`Move “${deleteForm.dataset.title}” to Trash? Saved work is kept for restoration. Planned publications will be cancelled.`)) return;
   const error = deleteForm.querySelector('[data-delete-error]');
   const button = deleteForm.querySelector('button');
   button.disabled = true;

@@ -101,6 +101,7 @@ _rules(
     "channels caption_autosave",
     domain="service",
 )
+_rules("jrc_production", "board_actions", domain="content_batch")
 _rules(
     "jrc_production",
     "add_content_comment reply_to_content_comment resolve_content_comment",
@@ -224,6 +225,7 @@ READ_VIEWS = {
     "media_library_org:shared_asset_download",
     "media_library_org:shared_version_list",
     "jrc_production:board",
+    "jrc_production:trash",
     "jrc_production:new_content",
     "jrc_video:final_download",
     "jrc_video:version_download",
@@ -273,6 +275,11 @@ READ_VIEWS = {
 
 def enforce_write_rule(request, rule, kwargs):
     """Require the effective permission, then scope optional author checks."""
+    if rule.domain == "content_batch":
+        # Each id is resolved, scoped and authorized under its own transaction by board_actions.
+        if not request.user.is_authenticated or not request.user.is_active:
+            raise PermissionDenied("Sign in to change content.")
+        return
     if rule.domain == "connection_token":
         from apps.onboarding.models import ConnectionLink
 

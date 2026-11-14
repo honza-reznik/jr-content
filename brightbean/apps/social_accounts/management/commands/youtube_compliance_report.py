@@ -41,7 +41,7 @@ class Command(BaseCommand):
             "comments_due_for_deletion": comments.filter(
                 Q(api_refreshed_at__lte=expired) | Q(api_refreshed_at__isnull=True, created_at__lte=expired)
             ).count(),
-            "videos_retained": PlatformPost.objects.filter(social_account__in=accounts)
+            "videos_retained": PlatformPost.all_objects.filter(social_account__in=accounts)
             .exclude(platform_post_id="")
             .count(),
             "daily_snapshots_older_than_180_days": AccountInsightsSnapshot.objects.filter(

@@ -1,0 +1,14 @@
+{% extends "base.html" %}{% load static %}
+{% block title %}Trash · JR Content{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'jrc_production/board.css' %}">{% endblock %}
+{% block content %}
+<div class="content-board-page" data-board-actions="{% url 'jrc_production:board_actions' %}" data-trash-page>
+  <h1 class="text-2xl font-bold">Trash</h1><a class="underline" href="{% url 'jrc_production:board' %}">Content board</a>
+  <p>Content stays here until someone permanently deletes it. Restore keeps saved work but does not restart cancelled publications.</p>
+  {% csrf_token %}
+  {% if can_empty %}<button type="button" id="empty-trash" class="board-secondary">Empty trash</button><p>Only items you may delete will be removed.</p>{% endif %}
+  <section id="board-results" aria-live="polite" tabindex="-1" hidden></section>
+  <ul class="board-trash-list">{% for card in cards %}<li data-post="{{ card.post.id }}"><div class="board-trash-title"><strong>{{ card.post.title|default:"Untitled content" }}</strong><span>{{ card.post.workspace.name }} · {{ card.post.trashed_at|date:"M j, Y H:i" }}</span></div>{% if card.can_manage %}<button type="button" data-restore class="board-secondary">Restore</button><button type="button" data-purge class="board-secondary">Delete permanently</button>{% else %}<span>Ask someone with editing permissions to restore or delete this content.</span>{% endif %}</li>{% empty %}<li>Trash is empty.</li>{% endfor %}</ul>
+</div>
+{% endblock %}
+{% block extra_js %}<script src="{% static 'jrc_production/board.js' %}" nonce="{{ request.csp_nonce }}" defer></script>{% endblock %}
