@@ -93,6 +93,8 @@ class VideoVersion(models.Model):
     # Added by F5-B05 for the "continue upload" prompt (not in the ADR table).
     original_filename = models.CharField(max_length=255, blank=True)
     size_bytes = models.PositiveBigIntegerField(default=0)
+    transcript = models.FileField(upload_to="jrc_video_transcripts/", max_length=255, blank=True)
+    transcript_filename = models.CharField(max_length=200, blank=True)
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["video", "number"], name="jrc_video_version_number_uniq")]

@@ -2,10 +2,12 @@ from django.urls import path
 
 from . import upload_views as views
 from .comment_events import comment_event
+from .transcripts import transcript
 
 app_name = "jrc_video"
 _base = "workspace/<uuid:workspace_id>/content/<uuid:post_id>/video/"
 urlpatterns = [
+    path(_base + "versions/<uuid:version_id>/transcript/", transcript, name="transcript"),
     path("video/comment-events/", comment_event, name="comment_event"),
     path(_base + "start/", views.start, name="upload_start"),
     path(_base + "status/", views.status, name="upload_status"),
