@@ -141,9 +141,59 @@ def _next_available_slot(social_account, *, exclude_pp_ids=(), after=None):
     return None
 
 
+# JR Content: přidáno 2026-11-14 (blok P2-B14), AGPL-3.0. A channel may carry several outputs of one
+# content (YouTube · Video and YouTube · Shorts), but a queue entry names the content and the channel
+# only, so it cannot tell them apart. Queue operations on such content are refused instead of picking
+# one output, and an output never clears the queue entry of the content while the channel carries
+# another output of it.
+AMBIGUOUS_QUEUE_MESSAGE = (
+    "This content has more than one output on this channel (for example YouTube · Video and YouTube · Shorts), "
+    "and a posting queue cannot tell them apart. Plan each output by its own date instead (Publish → Set date)."
+)
+
+
+class AmbiguousOutputError(Exception):
+    """The content has several outputs on the queue's channel, so a queue operation cannot pick one."""
+
+    def __init__(self, message=AMBIGUOUS_QUEUE_MESSAGE):
+        super().__init__(message)
+
+
+def has_several_outputs(post, social_account_id):
+    """Whether the content carries more than one output on this channel (P2-B14)."""
+    from apps.composer.models import PlatformPost
+
+    return PlatformPost.objects.filter(post_id=post.pk, social_account_id=social_account_id).count() > 1
+
+
+def queue_entries_of(platform_post):
+    """The queue entries that belong to this output: its content's entries in its channel's queues.
+
+    None while the channel carries another output of the same content: the entry would be as much the
+    other output's, so publishing, unscheduling or moving one output must not clear or move it (P2-B14).
+    """
+    from apps.composer.models import PlatformPost
+
+    siblings = PlatformPost.objects.filter(
+        post_id=platform_post.post_id, social_account_id=platform_post.social_account_id
+    ).exclude(pk=platform_post.pk)
+    if siblings.exists():
+        return QueueEntry.objects.none()
+    return QueueEntry.objects.filter(
+        post_id=platform_post.post_id, queue__social_account_id=platform_post.social_account_id
+    )
+
+
 def _platform_post_for(post, social_account):
-    """The post's PlatformPost child on this channel (or ``None``)."""
-    return post.platform_posts.filter(social_account=social_account).first()
+    """The post's PlatformPost child on this channel (or ``None``).
+
+    JR Content (P2-B14): raises ``AmbiguousOutputError`` when the channel carries several outputs of
+    the post, rather than moving whichever comes first.
+    """
+    copies = list(post.platform_posts.filter(social_account=social_account)[:2])
+    if len(copies) > 1:
+        raise AmbiguousOutputError()
+    return copies[0] if copies else None
 
 
 def _is_protected(pp):
@@ -240,7 +290,10 @@ def prioritize(post, queue):
         # mis-place the post or double-book a slot another post really holds).
         movable = []  # (entry, pp, current_slot_dt)
         for e in queue.entries.exclude(post=post).select_related("post"):
-            p = _platform_post_for(e.post, queue.social_account)
+            try:
+                p = _platform_post_for(e.post, queue.social_account)
+            except AmbiguousOutputError:
+                continue  # JR Content (P2-B14): stays where it is, like a post the queue cannot move
             if p is None or _is_protected(p) or p.scheduled_at is None or p.scheduled_at <= now:
                 continue
             movable.append((e, p, p.scheduled_at))

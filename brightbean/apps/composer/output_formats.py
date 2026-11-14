@@ -128,3 +128,38 @@ class OutputFormatField(models.CharField):
             value = default_format(model_instance.social_account.platform)
             setattr(model_instance, self.attname, value)
         return value
+
+
+def output_reversal_blockers(platform_post_model):
+    """Why going back before outputs (migration ``composer.0025``) would lose data; empty when it would not.
+
+    ``platform_post_model`` is the historical ``PlatformPost`` of a migration. Going back restores the
+    old one-copy-per-channel rule and drops the format, which the forward migration later re-derives from
+    the upstream post type. That loses data when one channel carries several outputs of one content
+    (they cannot become one copy) or when an output's format is not the one re-derived (an Instagram
+    Story added as an output would come back as a Reel). Checked before anything is dropped (P2-B14).
+    """
+    from django.db.models import Count
+
+    several = (
+        platform_post_model._base_manager.values("post_id", "social_account_id")
+        .annotate(outputs=Count("id"))
+        .filter(outputs__gt=1)
+        .count()
+    )
+    rows = platform_post_model._base_manager.values_list(
+        "output_format", "platform_extra", "social_account__platform"
+    ).iterator(chunk_size=500)
+    changed = sum(
+        1
+        for output_format, extra, platform in rows
+        if output_format
+        and output_format
+        != format_from_post_type(platform, (extra if isinstance(extra, dict) else {}).get("post_type"))
+    )
+    blockers = []
+    if several:
+        blockers.append(f"{several} channel(s) carry more than one output of the same content")
+    if changed:
+        blockers.append(f"{changed} output(s) have a format the old schema cannot keep")
+    return blockers

@@ -5,11 +5,14 @@ Every existing copy becomes an output with its platform's default format, or the
 post type already described (``platform_extra["post_type"]``: a YouTube short, an Instagram story…).
 No row is created, deleted or merged, so videos, captions, thumbnails, approvals and publications stay
 attached exactly as before. The old one-copy-per-channel rule is replaced by one output per channel
-and format. Reversing is possible only while no channel carries two outputs of one content.
+and format. Reversing is refused, before anything is dropped, while it would lose data: a channel with
+two outputs of one content, or an output whose format the old schema cannot keep
+(``output_reversal_blockers``).
 """
 
 import apps.composer.output_formats
 from django.db import migrations, models
+from django.db.migrations.exceptions import IrreversibleError
 
 
 def fill_formats(apps, schema_editor):
@@ -29,6 +32,19 @@ def fill_formats(apps, schema_editor):
             batch = []
     if batch:
         PlatformPost._base_manager.bulk_update(batch, ["output_format"])
+
+
+def refuse_lossy_reversal(apps, schema_editor):
+    """Runs first when going back, so a refusal leaves the schema and the data as they are."""
+    from apps.composer.output_formats import output_reversal_blockers
+
+    blockers = output_reversal_blockers(apps.get_model("composer", "PlatformPost"))
+    if blockers:
+        raise IrreversibleError(
+            "Cannot go back before outputs (composer 0025) without losing data: "
+            + "; ".join(blockers)
+            + ". Remove the extra outputs or change them to their channel's default format first."
+        )
 
 
 class Migration(migrations.Migration):
@@ -60,4 +76,6 @@ class Migration(migrations.Migration):
                 fields=("post", "social_account", "output_format"), name="uniq_pp_post_account_format"
             ),
         ),
+        # Last, so it is the first step when going back (P2-B14 review).
+        migrations.RunPython(migrations.RunPython.noop, refuse_lossy_reversal),
     ]

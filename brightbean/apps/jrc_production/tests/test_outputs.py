@@ -350,7 +350,9 @@ def test_publication_dates_are_set_per_output(client, two_outputs, user, workspa
 def test_board_shows_the_content_once_with_its_formats(client, two_outputs, user, youtube):
     post, video, shorts = two_outputs
     client.force_login(user)
-    response = client.get(reverse("jrc_production:board"), {"client": str(post.workspace_id), "channel": str(youtube.pk)})
+    response = client.get(
+        reverse("jrc_production:board"), {"client": str(post.workspace_id), "channel": str(youtube.pk)}
+    )
     assert response.status_code == 200
     html = response.content.decode()
     assert html.count(f'data-post="{post.pk}"') == 1
@@ -465,3 +467,348 @@ def test_api_schema_carries_the_output_format(two_outputs):
     summary = PlatformPostSummary.from_platform_post(shorts)
     assert summary.output_format == "short_form"
     assert summary.output_label == "YouTube · Shorts"
+
+
+# ---------------------------------------------------------------------------
+# Fixes after the review (R1–R4)
+# ---------------------------------------------------------------------------
+
+
+def _composer_save(client, workspace, post, account, action, **extra):
+    when = timezone.localtime(timezone.now()) + timedelta(days=2)
+    data = {
+        "action": action,
+        "title": post.title,
+        "caption": post.caption,
+        "selected_accounts": str(account.pk),
+        "scheduled_date": when.strftime("%Y-%m-%d"),
+        "scheduled_time": when.strftime("%H:%M"),
+        **extra,
+    }
+    return client.post(f"/workspace/{workspace.pk}/compose/{post.pk}/save/", data, HTTP_HX_REQUEST="true")
+
+
+def _custom_with_two_outputs(workspace, user, first_status, second_status):
+    from apps.composer.models import Post
+
+    custom = create_manual_channel(workspace, "custom", "Forendors")
+    post = Post.objects.create(workspace=workspace, author=user, title="Two outputs", caption="Same caption")
+    first = PlatformPost.objects.create(
+        post=post, social_account=custom, output_format="long_form", status=first_status
+    )
+    second = PlatformPost.objects.create(post=post, social_account=custom, output_format="post", status=second_status)
+    return custom, post, first, second
+
+
+@pytest.mark.parametrize("action", ["schedule", "publish_now"])
+@pytest.mark.parametrize("cover", ["approved", "scheduled"])
+@pytest.mark.parametrize("draft_first", [True, False])
+def test_r1_composer_release_weighs_every_output_of_a_channel(client, workspace, user, action, cover, draft_first):
+    """An approved or planned output must not carry its unapproved sibling on the same channel out."""
+    workspace.approval_workflow_mode = "required_internal"
+    workspace.save(update_fields=["approval_workflow_mode"])
+    statuses = ("draft", cover) if draft_first else (cover, "draft")
+    custom, post, first, second = _custom_with_two_outputs(workspace, user, *statuses)
+    client.force_login(user)
+
+    response = _composer_save(client, workspace, post, custom, action)
+
+    assert response.status_code == 400
+    assert "schedule" in response.json()["errors"]
+    assert dict(post.platform_posts.values_list("output_format", "status")) == {
+        "long_form": statuses[0],
+        "post": statuses[1],
+    }
+
+
+def test_r1_composer_releases_two_approved_outputs_of_a_channel(client, workspace, user):
+    workspace.approval_workflow_mode = "required_internal"
+    workspace.save(update_fields=["approval_workflow_mode"])
+    custom, post, first, second = _custom_with_two_outputs(workspace, user, "approved", "approved")
+    client.force_login(user)
+
+    response = _composer_save(client, workspace, post, custom, "schedule")
+
+    assert response.status_code == 204, response.content
+    assert set(post.platform_posts.values_list("status", flat=True)) == {"scheduled"}
+
+
+# R2: going back with real migrations ----------------------------------------------------------
+
+
+def _migrate_back_and_restore(target):
+    from django.db import connection
+    from django.db.migrations.executor import MigrationExecutor
+
+    try:
+        MigrationExecutor(connection).migrate(target)
+    finally:
+        latest = MigrationExecutor(connection)
+        latest.migrate(latest.loader.graph.leaf_nodes())
+
+
+def _applied(app, name):
+    from django.db import connection
+    from django.db.migrations.recorder import MigrationRecorder
+
+    return (app, name) in MigrationRecorder(connection).applied_migrations()
+
+
+def _snapshot():
+    return (
+        sorted(PlatformPost.objects.values_list("pk", "social_account_id", "output_format", "status")),
+        sorted(ShotlistItem.objects.values_list("pk", "kind", "output_format", "text")),
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("case", ["two outputs on a channel", "shotlist split", "format the old schema loses"])
+def test_r2_going_back_is_refused_before_anything_is_dropped(workspace, user, youtube, instagram, case):
+    from django.db import connection
+    from django.db.migrations.exceptions import IrreversibleError
+    from django.db.migrations.executor import MigrationExecutor
+
+    if case == "two outputs on a channel":
+        post = create_content(workspace, "Video and Shorts", user, social_account_ids=[youtube.pk])
+        add_content_channel(post, youtube.pk, user, "short_form")
+        shotlist_services.add_item(post, user, "Wide shot")
+        shotlist_services.add_item(post, user, "Vertical hook", output_format="short_form")
+        reason = "more than one output"
+    elif case == "shotlist split":
+        post = create_content(workspace, "Video and Reel", user, social_account_ids=[youtube.pk, instagram.pk])
+        shotlist_services.add_item(post, user, "Wide shot")
+        shotlist_services.add_item(post, user, "Vertical hook", output_format="short_form")
+        reason = "shotlist item"
+    else:
+        post = create_content(workspace, "Story only", user)
+        add_content_channel(post, instagram.pk, user, "story")
+        reason = "format the old schema cannot keep"
+    before = _snapshot()
+
+    executor = MigrationExecutor(connection)
+    try:
+        with pytest.raises(IrreversibleError, match=reason):
+            executor.migrate([("composer", "0024_content_trash")])
+        # Refused at the first step back: nothing was unapplied, nothing dropped.
+        assert _applied("jrc_production", "0009_shotlist_output_format")
+        assert _applied("composer", "0025_platformpost_output_format")
+        assert _snapshot() == before
+    finally:
+        latest = MigrationExecutor(connection)
+        latest.migrate(latest.loader.graph.leaf_nodes())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_r2_going_back_and_forward_again_keeps_everything_when_nothing_would_be_lost(
+    workspace, user, youtube, instagram
+):
+    post = create_content(workspace, "One output per channel", user, social_account_ids=[youtube.pk, instagram.pk])
+    shotlist_services.add_item(post, user, "Wide shot")  # the first list (long form)
+    before = _snapshot()
+
+    _migrate_back_and_restore([("composer", "0024_content_trash")])
+
+    assert _snapshot() == before
+
+
+# R3: posting queues ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def queued_channel(workspace):
+    from datetime import time
+
+    from apps.calendar.models import PostingSlot, Queue
+
+    custom = create_manual_channel(workspace, "custom", "Forendors")
+    for day in range(7):
+        PostingSlot.objects.create(social_account=custom, day_of_week=day, time=time(9, 0))
+    return custom, Queue.objects.create(workspace=workspace, name="Forendors queue", social_account=custom)
+
+
+def _two_outputs_on(workspace, user, account, status="draft"):
+    from apps.composer.models import Post
+
+    post = Post.objects.create(workspace=workspace, author=user, title="Two outputs", caption="Same caption")
+    long_form = PlatformPost.objects.create(post=post, social_account=account, output_format="long_form", status=status)
+    short = PlatformPost.objects.create(post=post, social_account=account, output_format="post", status=status)
+    return post, long_form, short
+
+
+@pytest.mark.parametrize("priority", [False, True])
+def test_r3_queueing_content_with_two_outputs_on_the_channel_is_refused(workspace, user, queued_channel, priority):
+    from apps.calendar.models import QueueEntry
+    from apps.calendar.services import AmbiguousOutputError, add_to_queue
+
+    custom, queue = queued_channel
+    post, long_form, short = _two_outputs_on(workspace, user, custom)
+
+    with pytest.raises(AmbiguousOutputError, match="more than one output"):
+        add_to_queue(post, queue, priority=priority)
+
+    assert not QueueEntry.objects.exists()
+    assert set(post.platform_posts.values_list("scheduled_at", flat=True)) == {None}
+
+
+@pytest.mark.parametrize("action", ["add_to_queue", "add_to_queue_priority"])
+def test_r3_composer_refuses_to_queue_two_outputs_of_a_channel(client, workspace, user, queued_channel, action):
+    from apps.calendar.models import QueueEntry
+
+    custom, queue = queued_channel
+    post, long_form, short = _two_outputs_on(workspace, user, custom)
+    client.force_login(user)
+
+    response = _composer_save(client, workspace, post, custom, action)
+
+    assert response.status_code == 400
+    assert "cannot tell them apart" in response.json()["errors"]["queue"]
+    assert not QueueEntry.objects.exists()
+    assert set(post.platform_posts.values_list("status", "scheduled_at")) == {("draft", None)}
+
+
+def test_r3_a_queued_channel_does_not_take_a_second_output(workspace, user, queued_channel):
+    from django.core.exceptions import ValidationError
+
+    from apps.calendar.models import QueueEntry
+
+    custom, queue = queued_channel
+    post = create_content(workspace, "Queued", user, social_account_ids=[custom.pk])
+    entry = QueueEntry.objects.create(queue=queue, post=post, position=0)
+
+    with pytest.raises(ValidationError, match="posting queue"):
+        add_content_channel(post, custom.pk, user, "story")
+
+    assert post.platform_posts.count() == 1
+    assert QueueEntry.objects.filter(pk=entry.pk).exists()
+
+
+def _ambiguous_entry(workspace, user, queue):
+    from apps.calendar.models import QueueEntry
+
+    when = timezone.now() + timedelta(days=2)
+    post, long_form, short = _two_outputs_on(workspace, user, queue.social_account, status="scheduled")
+    PlatformPost.objects.filter(pk=long_form.pk).update(scheduled_at=when)
+    PlatformPost.objects.filter(pk=short.pk).update(scheduled_at=when + timedelta(days=1))
+    entry = QueueEntry.objects.create(queue=queue, post=post, position=0, assigned_slot_datetime=when)
+    return post, entry
+
+
+@pytest.mark.parametrize("endpoint", ["queue_entry_remove", "queue_entry_reslot", "queue_reorder"])
+def test_r3_queue_endpoints_refuse_an_entry_that_cannot_name_its_output(
+    client, workspace, user, queued_channel, endpoint
+):
+    from apps.calendar.models import QueueEntry
+
+    custom, queue = queued_channel
+    post, entry = _ambiguous_entry(workspace, user, queue)
+    before = _snapshot()
+    client.force_login(user)
+    if endpoint == "queue_reorder":
+        url = reverse("calendar:queue_reorder", args=[workspace.pk, queue.pk])
+        data = {"entry_ids": str(entry.pk)}
+    else:
+        url = reverse(f"calendar:{endpoint}", args=[workspace.pk, queue.pk, entry.pk])
+        data = {}
+
+    response = client.post(url, data, HTTP_HX_REQUEST="true")
+
+    assert response.status_code == 400
+    assert "more than one output" in response.json()["error"]
+    assert QueueEntry.objects.filter(pk=entry.pk).exists()
+    assert _snapshot() == before
+
+
+def test_r3_one_output_never_clears_the_queue_entry_its_sibling_may_hold(workspace, user, queued_channel):
+    from apps.calendar.models import QueueEntry
+    from apps.composer.services import transition_platform_post
+
+    custom, queue = queued_channel
+    post, entry = _ambiguous_entry(workspace, user, queue)
+    long_form = post.platform_posts.get(output_format="long_form")
+    short = post.platform_posts.get(output_format="post")
+
+    PublishEngine._drop_queue_entry(short)  # published
+    transition_platform_post(long_form, "draft")  # unscheduled
+
+    assert QueueEntry.objects.filter(pk=entry.pk).exists()
+    # A channel with one output of the content still frees its slot.
+    PlatformPost.objects.filter(pk=long_form.pk).delete()
+    short.refresh_from_db()
+    PublishEngine._drop_queue_entry(short)
+    assert not QueueEntry.objects.filter(pk=entry.pk).exists()
+
+
+def test_r3_prioritizing_leaves_an_ambiguous_neighbour_where_it_is(workspace, user, queued_channel):
+    from apps.calendar.services import prioritize
+
+    custom, queue = queued_channel
+    post, entry = _ambiguous_entry(workspace, user, queue)
+    times = dict(post.platform_posts.values_list("pk", "scheduled_at"))
+    other = create_content(workspace, "Single", user, social_account_ids=[custom.pk])
+
+    prioritize(other, queue)
+
+    assert dict(post.platform_posts.values_list("pk", "scheduled_at")) == times
+    assert other.platform_posts.get().scheduled_at is not None
+
+
+# R4: the format hint only where the provider publishes that type ------------------------------
+
+
+@pytest.mark.parametrize(
+    ("platform", "output_format", "media_type", "expected"),
+    [
+        ("facebook", "story", "image", PostType.IMAGE),
+        ("facebook", "story", "video", PostType.VIDEO),
+        ("facebook", "story", None, PostType.TEXT),
+        ("facebook", "short_form", "video", PostType.REEL),
+        ("instagram", "story", "image", PostType.STORY),
+        ("youtube", "short_form", "video", PostType.SHORT),
+    ],
+)
+def test_r4_format_hint_only_for_a_type_the_provider_publishes(platform, output_format, media_type, expected):
+    from providers import PROVIDER_REGISTRY
+
+    resolved = PublishEngine._resolve_post_type(
+        platform=platform,
+        platform_extra={},
+        media_count=1 if media_type else 0,
+        first_media_type=media_type,
+        output_format=output_format,
+        supported_post_types=PROVIDER_REGISTRY[platform]({}).supported_post_types,
+    )
+    assert resolved is expected
+
+
+def test_r4_facebook_story_goes_out_with_its_image_not_as_text():
+    from unittest.mock import patch
+
+    from apps.publisher.test_media_handling import _attachment, _dispatch_mocks
+    from providers.facebook import FacebookProvider
+
+    engine, platform_post, provider = _dispatch_mocks(
+        "facebook",
+        needs_local_media=False,
+        attachments=[_attachment("a1")],
+        supported=FacebookProvider({}).supported_post_types,
+    )
+    platform_post.output_format = "story"
+    with (
+        patch("apps.publisher.engine.get_provider", return_value=provider),
+        patch("apps.publisher.engine._resolve_publish_credentials", return_value={}),
+    ):
+        engine._dispatch_to_provider(platform_post)
+
+    _token, content = provider.publish_post.call_args.args
+    assert content.post_type is PostType.IMAGE
+    assert content.media_urls == ["https://cdn.example/a.jpg"]
+    # The real provider routes that to its photo endpoint, not to the text-or-link feed post.
+    real = FacebookProvider({})
+    content.extra["page_id"] = "page-1"
+    with (
+        patch.object(FacebookProvider, "_publish_photo", return_value="photo") as photo,
+        patch.object(FacebookProvider, "_publish_text_or_link") as text,
+    ):
+        assert real.publish_post("token", content) == "photo"
+    photo.assert_called_once()
+    text.assert_not_called()
