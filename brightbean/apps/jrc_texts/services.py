@@ -6,9 +6,12 @@ may discard an orphan, including when starting a new edit from a saved version.
 """
 
 import re
+from datetime import timedelta
+from typing import NamedTuple
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
+from django.db.models import Max
 from django.utils import timezone
 
 from apps.approvals.edits import return_edited_to_review, reviewed_content
@@ -397,6 +400,218 @@ def copy_concept_to_script(post_id, user, *, source="editor"):
     draft = edit(base.pk, user, source=source) if base else start_draft(script.pk, user, source=source)
     saved = save(draft.pk, user, expected_revision=0, content=concept.content)
     return saved, base is None or saved.pk != base.pk
+
+
+# P2-B08: automatic saving and its version rule (Honza's decision). The first edit of a field creates a
+# new version; further edits by the same person on the same device within 15 minutes of the last edit
+# write into that version, otherwise a new version starts; an edit without a change creates nothing.
+AMEND_WINDOW = timedelta(minutes=15)
+_DEVICE = re.compile(r"[A-Za-z0-9-]{8,64}")
+
+
+class AutosaveResult(NamedTuple):
+    """``version`` holds the text now (``None``: nothing saved yet); ``created`` a new version started;
+    ``changed`` anything was written; ``concurrent`` the newest version somebody saved after the one
+    the editor started from (the editor tells its person); ``returned`` the channel copies the change
+    sent back to review (captions, ``apps.approvals.edits``)."""
+
+    version: object
+    created: bool
+    changed: bool
+    concurrent: object
+    returned: list
+
+
+def clean_device(value):
+    if not isinstance(value, str) or not _DEVICE.fullmatch(value):
+        raise ValidationError("Reload the page to keep saving.")
+    return value
+
+
+def is_open_for(version, user, device, now=None):
+    """May ``user`` on ``device`` keep writing into ``version`` instead of starting a new one?
+
+    Only the newest saved version, by its author, from the device that wrote it, within 15 minutes of
+    its last edit. An approval decision on the content since the version started closes it, so the
+    text a reviewer decided on stays a version of its own.
+    """
+    from apps.approvals.models import ApprovalAction
+
+    now = now or timezone.now()
+    if (
+        version.state != TextVersion.State.FINAL
+        or version.created_by_id != user.pk
+        or not version.device
+        or version.device != device
+        or version.edited_at is None
+        or now - version.edited_at > AMEND_WINDOW
+    ):
+        return False
+    return not ApprovalAction.objects.filter(
+        post_id=version.document.post_id, created_at__gte=version.created_at
+    ).exists()
+
+
+def _autosave(document, user, *, content, text, base_version_id, revision, device, source):
+    """Write ``content`` by the version rule. The caller holds the content lock and has authorized."""
+    if source not in TextVersion.Source.values:
+        raise ValidationError("Choose a valid version source.")
+    finals = document.versions.filter(state=TextVersion.State.FINAL).select_related("document")
+    latest = finals.order_by("-number").first()
+    base = None
+    if base_version_id:
+        base = finals.filter(pk=base_version_id).first()
+        if base is None:
+            raise ConflictError("This text changed in another place. Reload the text.")
+    # Somebody else's version saved after the one this editor started from is never written over.
+    concurrent = latest if latest is not None and (base is None or latest.pk != base.pk) else None
+    if base is not None:
+        reference = base.content
+    else:
+        reference, _ = normalize_content(markdown="", plain=document.format == TextDocument.Format.PLAIN)
+    if content == reference:
+        return AutosaveResult(base, False, False, concurrent, [])
+    if latest is not None and latest.content == content and latest.created_by_id == user.pk and latest.device == device:
+        # A request repeated after a lost answer (same text, author and device as the newest version):
+        # that version already holds it, so nothing is written and nobody is told about a conflict.
+        return AutosaveResult(latest, False, False, None, [])
+    now = timezone.now()
+    if (
+        base is not None
+        and concurrent is None
+        and type(revision) is int
+        and base.revision == revision
+        and is_open_for(base, user, device, now)
+    ):
+        base.content, base.text = content, text
+        base.revision += 1
+        base.edited_at = base.finalized_at = now
+        base.save(update_fields=["content", "text", "revision", "edited_at", "finalized_at"])
+        return AutosaveResult(base, False, True, None, [])
+    # Numbers never collide with a draft another writer (REST, MCP) holds inside its transaction.
+    number = (document.versions.aggregate(number=Max("number"))["number"] or 0) + 1
+    version = TextVersion.objects.create(
+        document=document,
+        number=number,
+        state=TextVersion.State.FINAL,
+        content=content,
+        text=text,
+        based_on=base,
+        source=source,
+        created_by=user,
+        finalized_at=now,
+        edited_at=now,
+        device=device,
+    )
+    notify_text_version(version, user)
+    return AutosaveResult(version, True, True, concurrent, [])
+
+
+@transaction.atomic
+def autosave_text(post_id, user, *, kind, content, base_version_id, revision, device, source="editor"):
+    """Automatic saving of the Script and Concept editors (P2-B08); see ``AMEND_WINDOW``.
+
+    ``base_version_id`` is the saved version the editor shows and edits (``None`` before the first
+    version), ``revision`` its revision as the editor last saw it: another tab that wrote into the
+    version meanwhile makes this save a new version instead of overwriting that tab's text.
+    """
+    if kind not in (TextDocument.Kind.SCRIPT, TextDocument.Kind.CONCEPT):
+        raise ValidationError("Choose a valid text.")
+    post = Post.objects.select_for_update().select_related("workspace").get(pk=post_id)
+    _authorize(TextDocument(post=post), user, write=True)
+    device = clean_device(device)
+    content, text = normalize_content(content=content)
+    document = TextDocument.objects.filter(post=post, kind=kind).first()
+    if document is None:
+        if base_version_id:
+            raise ConflictError("This text changed in another place. Reload the text.")
+        empty, _ = normalize_content(markdown="")
+        if content == empty:
+            return AutosaveResult(None, False, False, None, [])
+        document = TextDocument(post=post, workspace=post.workspace, kind=kind, format=TextDocument.Format.RICH)
+        document.full_clean()
+        document.save()
+    return _autosave(
+        document,
+        user,
+        content=content,
+        text=text,
+        base_version_id=base_version_id,
+        revision=revision,
+        device=device,
+        source=source,
+    )
+
+
+@transaction.atomic
+def autosave_caption(post_id, platform_post_id, user, text, *, base_version_id, revision, device, source="editor"):
+    """Automatic saving of a channel caption (P2-B08): the version rule of ``autosave_text`` and the
+    rules of ``save_caption`` (limit, history starting from the copy's current caption, the copy's
+    caption follows the newest version, approval mode).
+
+    Every change, also one written into an open version, is checked against the approval mode:
+    a copy carrying an approval goes back to review whenever what it would publish changed.
+    """
+    post = Post.objects.select_for_update().select_related("workspace").get(pk=post_id)
+    _authorize(TextDocument(post=post), user, write=True)
+    device = clean_device(device)
+    if not isinstance(text, str):
+        raise ValidationError("Provide the caption text.")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    before = reviewed_content(post)
+    variant = (
+        PlatformPost.objects.select_for_update(of=("self",))
+        .select_related("social_account")
+        .get(pk=platform_post_id, post=post)
+    )
+    account = variant.social_account
+    if account.caption_wire_length(text) > account.char_limit:
+        raise ValidationError(f"Caption exceeds the {account.char_limit}-character limit.")
+    document = TextDocument.objects.filter(platform_post=variant, kind=TextDocument.Kind.CAPTION).first()
+    if document is None:
+        if base_version_id:
+            raise ConflictError("This caption changed in another place. Reload the text.")
+        current = variant.effective_caption or ""
+        if text.strip() == current.strip():
+            return AutosaveResult(None, False, False, None, [])
+        document = TextDocument(
+            post=post,
+            workspace=post.workspace,
+            kind=TextDocument.Kind.CAPTION,
+            platform_post=variant,
+            format=TextDocument.Format.PLAIN,
+        )
+        document.full_clean()
+        document.save()
+        if current.strip():
+            # The history starts from the caption the copy already had, as with ``save_caption``.
+            first = TextVersion.objects.create(
+                document=document,
+                number=1,
+                state=TextVersion.State.FINAL,
+                content={"text": current},
+                text=current,
+                source=source,
+                created_by=user,
+                finalized_at=timezone.now(),
+            )
+            base_version_id, revision = first.pk, first.revision
+    content, plain = normalize_content(content={"text": text}, plain=True)
+    result = _autosave(
+        document,
+        user,
+        content=content,
+        text=plain,
+        base_version_id=base_version_id,
+        revision=revision,
+        device=device,
+        source=source,
+    )
+    if not result.changed:
+        return result
+    variant.platform_specific_caption = result.version.text
+    variant.save(update_fields=["platform_specific_caption", "updated_at"])
+    return result._replace(returned=return_edited_to_review(post, before))
 
 
 def latest_saved_captions(platform_post_ids):

@@ -1,7 +1,6 @@
 {% load static %}
 {% comment %}P1-B08: the same editor serves the Script tab and the Concept tab (text_kind="concept").
 The element ids stay script-* because the built editor (dist/script.js) looks them up.{% endcomment %}
-<link rel="stylesheet" href="{% static 'jrc_texts/script.css' %}">
 {% if text_kind == "concept" %}
 <div id="script-panel" data-noun="concept" data-empty="No concept yet. Write down the idea: the angle, the hook and the key points." data-url="{% url 'jrc_texts:concept' workspace_id=workspace.id post_id=post.id %}">
 {% else %}
@@ -18,16 +17,14 @@ The element ids stay script-* because the built editor (dist/script.js) looks th
         {% endif %}
         <div class="script-actions">
             <button id="script-copy" type="button">Copy</button>
-            <button id="script-edit" type="button" hidden>Edit text</button>
-            <button id="script-resume" type="button" hidden>Resume editing</button>
-            <button id="script-save" type="button" hidden>Save</button>
-            <button id="script-discard" type="button" hidden>Discard</button>
+            <button id="script-latest" type="button" hidden>Back to latest</button>
         </div>
     </div>
-    <p id="script-lock" class="script-lock" hidden></p>
-    <p id="script-message" role="status" aria-live="polite">Loading…</p>
-    <div class="script-actions script-recovery">
-        <button id="script-retry" type="button" hidden>Retry draft save</button>
+    {# P2-B08: the text is edited in place and saves automatically (versions: same person, device, 15 minutes). #}
+    <p id="script-lock" class="script-lock" role="status" hidden></p>
+    <div class="script-statusbar">
+        <p id="script-message" role="status" aria-live="polite">Loading…</p>
+        <p id="script-status" class="jrc-save-status" role="status" aria-live="polite" data-save-status></p>
         <button id="script-reload" type="button">Reload {% if text_kind == "concept" %}concept{% else %}script{% endif %}</button>
     </div>
     <noscript><p>Enable JavaScript to read and edit the {% if text_kind == "concept" %}concept{% else %}script{% endif %}.</p></noscript>

@@ -69,8 +69,17 @@ def test_text_and_video_role_matrix(client, workspace, user, content, role, own)
     assert state["comparison"]["new"]["content"]
     selected = client.get(script, {"compare_old": state["versions"][1]["id"], "compare_new": state["latest"]})
     assert selected.status_code == 200
+    # P2-B08: the editor saves automatically (one "autosave" action, no drafts).
     assert client.post(
-        script, {"action": "edit", "base": state["latest"]}, content_type="application/json"
+        script,
+        {
+            "action": "autosave",
+            "base": state["latest"],
+            "revision": 0,
+            "device": "role-test-device",
+            "content": state["shown"]["content"],
+        },
+        content_type="application/json",
     ).status_code == (200 if can_write else 403)
     caption = client.post(
         detail,

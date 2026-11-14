@@ -34,8 +34,66 @@
     else root.prepend(alert);
   }
 
+  // P2-B08: each item's text and note are edited right in place and save automatically (autosave.js).
+  let inlineSavers = [];
+  async function saveInline(form) {
+    if (!form.elements.text.value.trim()) throw new Error('An item needs a text. Type one to save.');
+    let response;
+    try {
+      response = await fetch(form.getAttribute('action'), {
+        method: 'POST',
+        body: new FormData(form),
+        credentials: 'same-origin',
+        headers: { 'X-JRC-Shotlist-Autosave': '1', Accept: 'application/json' },
+      });
+    } catch (error) {
+      const failure = new Error('No connection.');
+      failure.retry = true;
+      throw failure;
+    }
+    const result = await response.json().catch(() => null);
+    if (response.redirected || !response.ok || !result) {
+      const failure = new Error((result && result.error) || 'The change could not be saved. Reload the page.');
+      failure.retry = response.status >= 500 || (!result && !response.redirected);
+      throw failure;
+    }
+    const row = form.closest('.shotlist-row');
+    const meta = row && row.querySelector('[data-shotlist-meta]');
+    if (result.meta && row) {
+      if (meta) meta.textContent = result.meta;
+      else {
+        const line = document.createElement('p');
+        line.className = 'shotlist-meta';
+        line.dataset.shotlistMeta = '';
+        line.textContent = result.meta;
+        form.after(line);
+      }
+    }
+    if (row) {
+      row.querySelectorAll('[data-shotlist-focus]').forEach((box) => box.setAttribute('aria-label', result.text));
+    }
+    return { message: 'Saved' };
+  }
+  function initInline() {
+    inlineSavers.forEach((saver) => saver.stop());
+    inlineSavers = [];
+    if (!window.jrcAutosave) return;
+    root.querySelectorAll('[data-shotlist-inline]').forEach((form) => {
+      const saver = window.jrcAutosave.create({
+        root: form,
+        status: form.querySelector('[data-save-status]'),
+        send: () => saveInline(form),
+      });
+      form.jrcSaver = saver;
+      form.addEventListener('input', () => saver.changed());
+      form.addEventListener('focusout', () => { if (saver.dirty()) saver.flush(); });
+      inlineSavers.push(saver);
+    });
+  }
+
   function showList(html) {
     root.innerHTML = html;
+    initInline();
     const progress = root.querySelector('[data-shotlist-progress]');
     if (status && progress) status.textContent = `Shotlist ${progress.textContent.trim()}`;
   }
@@ -68,6 +126,13 @@
     const form = event.target;
     if (!(form instanceof HTMLFormElement) || !root.contains(form)) return;
     event.preventDefault();
+    if (form.hasAttribute('data-shotlist-inline')) {
+      // Enter in an item's text: save it now instead of waiting.
+      if (form.jrcSaver) form.jrcSaver.flush();
+      return;
+    }
+    // Typed changes reach the server before the list is redrawn by another action.
+    await Promise.all(inlineSavers.map((saver) => saver.flush()));
     if (form.dataset.confirm && !window.confirm(form.dataset.confirm)) return;
     if (root.getAttribute('aria-busy') === 'true') return;
     const data = new FormData(form);
@@ -104,4 +169,5 @@
     showList(html);
     restoreFocus(action, item);
   });
+  initInline();
 })();

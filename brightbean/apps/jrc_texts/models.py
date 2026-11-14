@@ -84,6 +84,11 @@ class TextVersion(models.Model):
     draft_heartbeat_at = models.DateTimeField(null=True, blank=True)
     # Optimistic lock for autosave/save from two tabs sharing the same draft ID.
     revision = models.PositiveIntegerField(default=0)
+    # P2-B08: automatic saving. The browser that wrote the version (its own random ID) and the time of
+    # its last edit: the same person on the same device keeps writing into it for 15 minutes
+    # (``services.AMEND_WINDOW``); versions saved any other way have no device and stay closed.
+    device = models.CharField(max_length=64, blank=True, default="")
+    edited_at = models.DateTimeField(null=True, blank=True)
 
     @property
     def name(self):
