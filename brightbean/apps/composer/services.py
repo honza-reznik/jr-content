@@ -311,8 +311,11 @@ def create_post(
     return post
 
 
-def add_platform_post(post, account, *, status="draft", scheduled_at=None, override=None):
-    """Create one explicitly selected copy; never infer a client's other channels."""
+def add_platform_post(post, account, *, status="draft", scheduled_at=None, override=None, output_format=""):
+    """Create one explicitly selected copy; never infer a client's other channels.
+
+    JR Content (P2-B14): ``output_format`` picks the output's format; empty means the platform default.
+    """
     from apps.composer.models import PlatformPost
 
     if account.workspace_id != post.workspace_id:
@@ -321,12 +324,33 @@ def add_platform_post(post, account, *, status="draft", scheduled_at=None, overr
     return PlatformPost.objects.create(
         post=post,
         social_account=account,
+        output_format=output_format,
         status=status,
         scheduled_at=scheduled_at,
         platform_specific_title=override.get("title"),
         platform_specific_caption=override.get("caption"),
         platform_specific_first_comment=override.get("first_comment"),
     )
+
+
+# JR Content: přidáno 2026-11-14 (blok P2-B14), AGPL-3.0.
+def account_copy(post, account, defaults=None):
+    """``(copy, created)`` for upstream paths that know one copy per channel (old composer, CSV import).
+
+    A channel may now carry several outputs of one content (P2-B14), so ``get_or_create(post, account)``
+    would fail on the second one. These paths keep working on the channel's first output (formats in
+    display order) and create the platform's default output only when the channel has none.
+    """
+    from apps.composer.models import PlatformPost
+
+    from .output_formats import format_sort_key
+
+    existing = sorted(
+        PlatformPost.objects.filter(post=post, social_account=account), key=lambda pp: format_sort_key(pp.output_format)
+    )
+    if existing:
+        return existing[0], False
+    return PlatformPost.objects.create(post=post, social_account=account, **(defaults or {})), True
 
 
 def transition_platform_post(
@@ -448,6 +472,7 @@ def clone_post(post, *, author=None):
                     PlatformPost(
                         post=new_post,
                         social_account=pp.social_account,
+                        output_format=pp.output_format,  # JR Content (P2-B14): the copy keeps its format
                         status="draft",
                         platform_specific_title=pp.platform_specific_title,
                         platform_specific_caption=pp.platform_specific_caption,

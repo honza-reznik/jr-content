@@ -498,8 +498,9 @@ def test_channel_tags_add_and_remove_without_a_page_load(client, workspace, user
     added = client.post(
         channels_url(workspace, post), {"action": "add_channel", "channel": channel.pk, "tab": "caption"}
     )
-    assert added.status_code == 200 and added.json()["message"] == "Channel added."
-    assert "Remove channel Ella Instagram" in added.json()["html"]
+    # P2-B14: a tag is an output (channel + format); a bare channel adds its default format (Reel).
+    assert added.status_code == 200 and added.json()["message"] == "Output added."
+    assert "Remove output Instagram · Reel · Ella Instagram" in added.json()["html"]
     variant = post.platform_posts.get()
     removed = client.post(channels_url(workspace, post), {"action": "remove_channel", "platform_post": variant.pk})
     assert removed.status_code == 200 and "No channels" in removed.json()["html"]

@@ -878,6 +878,7 @@ class PublishEngine:
                 # demote every Instagram/Threads carousel to a single post.
                 media_count=usable_attachments,
                 first_media_type=first_media_type,
+                output_format=platform_post.output_format,
             )
 
             content = PublishContent(
@@ -953,12 +954,15 @@ class PublishEngine:
         platform_extra: dict,
         media_count: int,
         first_media_type: str | None,
+        output_format: str = "",
     ) -> PostType:
         """Derive the correct PostType from context.
 
         Priority:
         1. Explicit hint in platform_extra (validated against PostType enum,
            and against the media actually attached right now)
+        1b. JR Content (P2-B14): the output's format (YouTube Shorts → SHORT,
+           Instagram Story → STORY…), validated against the media the same way
         2. Platform defaults (Pinterest → PIN)
         3. Multi-media on carousel-capable platforms → CAROUSEL
         4. Fallback: video → VIDEO (REEL on Instagram), image → IMAGE, else → TEXT
@@ -978,6 +982,14 @@ class PublishEngine:
                 )
             else:
                 return PostType(hint)
+
+        # 1b. JR Content: přidáno 2026-11-14 (blok P2-B14), AGPL-3.0. Two outputs of one channel (a
+        # YouTube video and its Shorts) differ by format, so the format says which publishing path to take.
+        from apps.composer.output_formats import post_type_hint
+
+        format_hint = post_type_hint(platform, output_format)
+        if format_hint and PublishEngine._hint_matches_media(PostType(format_hint), media_count, first_media_type):
+            return PostType(format_hint)
 
         # 2. Platform defaults
         if platform == "pinterest":

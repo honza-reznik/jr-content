@@ -1,23 +1,24 @@
 {% comment %}P2-B08: the content's channels as tags; "+" adds, "×" removes, without a page load (channel-tags.js).
+P2-B14: each tag is an output (channel + format, e.g. YouTube · Shorts); one channel may carry several.
 Without JavaScript the same forms post to the detail page (action add_channel / remove_channel).{% endcomment %}
 <ul class="channel-tags" aria-labelledby="content-channels-label">
-    {% for platform_post in post.platform_posts.all %}
-    <li class="channel-tag">
-        <span class="channel-tag-name">{% include "jrc_channels/icon.html" with account=platform_post.social_account %} {{ platform_post.social_account.jrc_channel.display_name|default:platform_post.social_account.account_name }} <span class="channel-tag-status">· {{ platform_post.get_status_display }}</span></span>
+    {% for platform_post in content_outputs %}
+    <li class="channel-tag" data-output-label="{{ platform_post.output_title }}">
+        <span class="channel-tag-name">{% include "jrc_channels/icon.html" with account=platform_post.social_account %} {{ platform_post.social_account.jrc_channel.display_name|default:platform_post.social_account.account_name }} · <span class="channel-tag-format">{{ platform_post.format_name }}</span> <span class="channel-tag-status">· {{ platform_post.get_status_display }}</span></span>
         {% if can_manage_channels and not channels_locked %}
-        <form method="post" action="?tab={{ active_tab }}" data-channel-remove class="channel-tag-remove">{% csrf_token %}<input type="hidden" name="action" value="remove_channel"><input type="hidden" name="platform_post" value="{{ platform_post.id }}"><button type="submit" aria-label="Remove channel {{ platform_post.social_account.jrc_channel.display_name|default:platform_post.social_account.account_name }}" title="Remove channel">×</button></form>
+        <form method="post" action="?tab={{ active_tab }}" data-channel-remove class="channel-tag-remove">{% csrf_token %}<input type="hidden" name="action" value="remove_channel"><input type="hidden" name="platform_post" value="{{ platform_post.id }}"><button type="submit" aria-label="Remove output {{ platform_post.output_title }}" title="Remove output">×</button></form>
         {% endif %}
     </li>
     {% empty %}
     <li class="channel-tags-empty">No channels</li>
     {% endfor %}
-    {% if can_manage_channels and not channels_locked and addable_channels %}
+    {% if can_manage_channels and not channels_locked and addable_outputs %}
     <li class="channel-tag-add">
         <details data-channel-add>
-            <summary aria-label="Add channel" title="Add channel"><span aria-hidden="true">+</span></summary>
+            <summary aria-label="Add output" title="Add output (channel and format)"><span aria-hidden="true">+</span></summary>
             <form method="post" action="?tab={{ active_tab }}" class="channel-add-form">{% csrf_token %}<input type="hidden" name="action" value="add_channel">
-                <label for="add-channel" class="sr-only">Channel to add</label>
-                <select id="add-channel" name="channel">{% for account in addable_channels %}<option value="{{ account.id }}">{{ account.jrc_channel.display_name|default:account.account_name }}</option>{% endfor %}</select>
+                <label for="add-channel" class="sr-only">Output to add (channel and format)</label>
+                <select id="add-channel" name="channel">{% regroup addable_outputs by channel_name as groups %}{% for group in groups %}<optgroup label="{{ group.grouper }}">{% for option in group.list %}<option value="{{ option.value }}">{{ option.label }}</option>{% endfor %}</optgroup>{% endfor %}</select>
                 <button type="submit">Add</button>
             </form>
         </details>
@@ -26,5 +27,5 @@ Without JavaScript the same forms post to the detail page (action add_channel / 
 </ul>
 {% if channel_error %}<p role="alert" class="channel-tags-error" data-channel-error>{{ channel_error }}</p>{% else %}<p role="status" aria-live="polite" class="channel-tags-status" data-channel-status></p>{% endif %}
 {% if can_manage_channels and channels_locked %}<p class="channel-tags-hint">Move the content back to Editing to change its channels.</p>
-{% elif can_manage_channels and not addable_channels and not post.platform_posts.all %}<p class="channel-tags-hint">No enabled channels. Enable a channel in the client profile first.</p>
+{% elif can_manage_channels and not addable_outputs and not post.platform_posts.all %}<p class="channel-tags-hint">No enabled channels. Enable a channel in the client profile first.</p>
 {% elif not can_manage_channels and not post.platform_posts.all %}<p class="channel-tags-hint">Ask an editor to add a channel.</p>{% endif %}

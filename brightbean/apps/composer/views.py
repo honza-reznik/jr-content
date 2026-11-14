@@ -68,6 +68,7 @@ from .models import (
 )
 from .services import (
     ChannelRemovalError,
+    account_copy,
     channel_removal_blocker,
     children_are_locked,
     lock_copies,
@@ -329,11 +330,8 @@ def _sync_platform_posts(request, post, workspace, initial_status=None):
         defaults = {}
         if initial_status:
             defaults["status"] = initial_status
-        pp, _created = PlatformPost.objects.get_or_create(
-            post=post,
-            social_account=account,
-            defaults=defaults,
-        )
+        # JR Content (P2-B14): a channel may carry several outputs; this form edits its first one.
+        pp, _created = account_copy(post, account, defaults)
         title_key = f"override_title_{acc_id}"
         override_caption = request.POST.get(f"override_caption_{acc_id}", "").strip()
         override_comment = request.POST.get(f"override_comment_{acc_id}", "").strip()
@@ -1657,10 +1655,7 @@ def autosave(request, workspace_id, post_id=None):
     selected_ids = _parse_selected_account_ids(request.POST.get("selected_accounts", ""))
     _remove_deselected_platform_posts(request, post, selected_ids)
     for account in SocialAccount.objects.filter(pk__in=selected_ids, workspace=workspace):
-        PlatformPost.objects.get_or_create(
-            post=post,
-            social_account=account,
-        )
+        account_copy(post, account)  # JR Content (P2-B14): not get_or_create, a channel may have several outputs
 
     # Option A: an autosave that changed reviewed content of a copy carrying an
     # approval sends it back to review (a planned one out of the plan) so edited
@@ -2812,20 +2807,20 @@ def post_delete(request, workspace_id, post_id):
     lock_copies([post.pk])
 
     account_id = request.GET.get("account") or request.POST.get("account")
-    copies = (
-        [get_object_or_404(PlatformPost, post=post, social_account_id=account_id)]
-        if account_id
-        else list(post.platform_posts.all())
-    )
+    # JR Content (P2-B14): a channel may carry several outputs; ``?account=`` removes all of them.
+    copies = list(post.platform_posts.filter(social_account_id=account_id)) if account_id else []
+    if account_id and not copies:
+        raise Http404
+    if not account_id:
+        copies = list(post.platform_posts.all())
     # P1-B37: one deletion rule; planned content only by someone who may take it out of the plan.
     blocker = content_delete_blocker(getattr(request, "workspace_membership", None), post, copies)
     if blocker:
         return JsonResponse({"error": blocker}, status=403)
     if account_id:
-        pp = copies[0]
         try:
             with transaction.atomic():
-                remove_platform_posts(PlatformPost.objects.filter(pk=pp.pk, post=post))
+                remove_platform_posts(PlatformPost.objects.filter(pk__in=[pp.pk for pp in copies], post=post))
         except (ChannelRemovalError, RestrictedError):
             from django.urls import reverse
 
@@ -4035,9 +4030,7 @@ def _import_csv_row(request, workspace, row, mapping, may_go_out):
             status = initial_pp_status
             if status == "scheduled" and publish_blocker(acc, media_types=set()):
                 status = "draft"
-            _pp, created = PlatformPost.objects.get_or_create(
-                post=post, social_account=acc, defaults={"status": status, "scheduled_at": post.scheduled_at}
-            )
+            _pp, created = account_copy(post, acc, {"status": status, "scheduled_at": post.scheduled_at})
             if created and status != initial_pp_status:
                 drafted.append(acc.get_platform_display())
     return drafted

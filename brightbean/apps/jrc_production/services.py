@@ -207,7 +207,13 @@ def _lock_channel_content(post, user):
 
 
 @transaction.atomic
-def add_content_channel(post, account_id, user):
+def add_content_channel(post, account_id, user, output_format=""):
+    """Add one output (channel + format) to the content; the format defaults to the platform's first.
+
+    P2-B14: a channel may carry several outputs of one content, one per format (YouTube · Video and
+    YouTube · Shorts). Adding an output that already exists returns it instead of a duplicate.
+    """
+    from apps.composer import output_formats
     from apps.composer.services import add_platform_post
 
     post = _lock_channel_content(post, user)
@@ -219,12 +225,64 @@ def add_content_channel(post, account_id, user):
     )
     if channel is None:
         raise ValidationError("Choose an enabled channel of this client.")
-    existing = post.platform_posts.filter(social_account_id=account_id).first()
+    platform = channel.social_account.platform
+    output_format = output_format or output_formats.default_format(platform)
+    if not output_formats.is_allowed(platform, output_format):
+        raise ValidationError("Choose a format this channel offers.")
+    existing = post.platform_posts.filter(social_account_id=account_id, output_format=output_format).first()
     if existing:
         return existing
-    variant = add_platform_post(post, channel.social_account)
+    first_output = not post.platform_posts.exists()
+    variant = add_platform_post(post, channel.social_account, output_format=output_format)
+    if first_output:
+        # The shotlist written before the content had an output is the list of its first format, and
+        # stays with that format when more formats are added later (P2-B14).
+        from .models import ShotlistItem
+
+        ShotlistItem.objects.filter(post=post, kind=ShotlistItem.Kind.ITEM, output_format="").update(
+            output_format=output_format
+        )
     post.save(update_fields=["updated_at"])
     return variant
+
+
+def addable_outputs(post):
+    """Enabled channel + format pairs the content does not have yet, for the "+" of the output tags."""
+    from apps.composer import output_formats
+
+    taken = set(post.platform_posts.values_list("social_account_id", "output_format"))
+    options = []
+    channels = (
+        ChannelProfile.objects.filter(social_account__workspace=post.workspace, is_enabled=True)
+        .select_related("social_account")
+        .order_by("social_account__account_name", "social_account_id")
+    )
+    for channel in channels:
+        account = channel.social_account
+        for output_format, name in output_formats.formats_for(account.platform).items():
+            if (account.pk, output_format) in taken:
+                continue
+            platform_name = (
+                channel.display_name or account.account_name
+                if account.platform == "custom"
+                else account.get_platform_display()
+            )
+            options.append(
+                {
+                    "value": f"{account.pk}:{output_format}",
+                    "account": account,
+                    "output_format": output_format,
+                    "channel_name": channel.display_name or account.account_name,
+                    "label": f"{platform_name} · {name}",
+                }
+            )
+    return options
+
+
+def parse_output_choice(value):
+    """``"<account id>:<format>"`` from the output tag form; a bare account id means the default format."""
+    account_id, _, output_format = str(value or "").partition(":")
+    return account_id, output_format
 
 
 @transaction.atomic

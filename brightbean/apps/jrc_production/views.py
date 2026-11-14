@@ -26,6 +26,7 @@ from apps.approvals import comments as comment_services
 from apps.approvals.edits import review_return_hint, review_return_notice
 from apps.approvals.models import ApprovalAction, PostComment
 from apps.composer.models import PlatformPost, Post
+from apps.composer.output_formats import OutputFormat
 from apps.jrc_texts import services as text_services
 from apps.jrc_texts.editor_colors import TEXT_COLORS
 from apps.jrc_texts.models import TextDocument, TextVersion, TextVersionNameChange
@@ -56,6 +57,7 @@ from .models import (
 )
 from .services import (
     add_content_channel,
+    addable_outputs,
     available_moves,
     can_change_proposal,
     can_create_content,
@@ -69,6 +71,7 @@ from .services import (
     initial_stages,
     mark_published_manually,
     move_content,
+    parse_output_choice,
     pipeline_stage,
     publication_blocker,
     remove_content_channel,
@@ -137,7 +140,25 @@ def _board_card(post, membership, comment_count=0):
         "date": planned or post.proposed_publish_at,
         "date_label": "Planned" if planned else "Proposed",
         "comment_count": comment_count,
+        "channels": _card_channels(variants),
     }
+
+
+def _card_channels(variants):
+    """The board shows the content as a whole (P2-B14): each channel once, with its outputs' formats."""
+    channels = {}
+    for variant in sorted(variants, key=lambda item: item.output_sort_key):
+        account = variant.social_account
+        entry = channels.setdefault(
+            account.pk,
+            {
+                "account": account,
+                "name": getattr(getattr(account, "jrc_channel", None), "display_name", "") or account.account_name,
+                "formats": [],
+            },
+        )
+        entry["formats"].append(variant.format_name)
+    return list(channels.values())
 
 
 def _sort_cards(cards, *, newest_first=False):
@@ -193,7 +214,8 @@ def _board_context(request, *, selected_client=None):
     if channel == "none":
         posts = posts.filter(platform_posts__isnull=True)
     elif channel:
-        posts = posts.filter(platform_posts__social_account_id=channel)
+        # A subquery, not a join: one channel may carry several outputs of a content (P2-B14).
+        posts = posts.filter(pk__in=PlatformPost.objects.filter(social_account_id=channel).values("post_id"))
     posts = list(
         posts.select_related("workspace", "author", "jrc_production")
         # P1-B09: shotlist progress on the card ("3/7 done").
@@ -634,13 +656,27 @@ def _enabled_caption_accounts(post):
     ]
 
 
+def enabled_outputs(post):
+    """The content's outputs (channel + format) on enabled channels, by channel name and format (P2-B14).
+
+    The one list behind the Video, Caption, Publish and Approval tabs: each output is its own channel
+    copy with its own video, caption, thumbnail and date. Switched-off channels keep their stored work
+    but are not listed; a channel is never attached implicitly.
+    """
+    variants = [
+        variant
+        for variant in post.platform_posts.select_related("social_account__jrc_channel")
+        if variant.social_account.workspace_id == post.workspace_id
+        and getattr(getattr(variant.social_account, "jrc_channel", None), "is_enabled", True)
+    ]
+    return sorted(variants, key=lambda variant: variant.output_sort_key)
+
+
 def _caption_channels(post, submitted=None):
     channels = []
-    variants = {variant.social_account_id: variant for variant in post.platform_posts.select_related("social_account")}
-    for account in _enabled_caption_accounts(post):
-        variant = variants.get(account.pk)
-        # Accounts are already narrowed to copies explicitly attached to this content.
-        key = str(variant.pk) if variant else f"new:{account.pk}"
+    for variant in enabled_outputs(post):
+        account = variant.social_account
+        key = str(variant.pk)
         document = (
             TextDocument.objects.filter(platform_post=variant, kind=TextDocument.Kind.CAPTION).first()
             if variant
@@ -672,6 +708,7 @@ def _caption_channels(post, submitted=None):
                 "variant": variant,
                 "account": account,
                 "platform_label": account.get_platform_display(),
+                "label": variant.output_title,
                 "document": document,
                 "latest": latest,
                 "previous": previous,
@@ -693,8 +730,17 @@ def _caption_channels(post, submitted=None):
 
 
 def _create_missing_copy(post, account_id):
-    """Legacy caption/video forms may reference a copy, but never attach a new channel implicitly."""
-    variant = post.platform_posts.filter(social_account_id=account_id).first()
+    """Legacy caption/video forms may reference a copy, but never attach a new channel implicitly.
+
+    ``new:<account>`` keys predate outputs (P2-B14); they resolve to the channel's first output.
+    """
+    from apps.composer.output_formats import format_sort_key
+
+    variant = min(
+        post.platform_posts.filter(social_account_id=account_id),
+        key=lambda item: format_sort_key(item.output_format),
+        default=None,
+    )
     if variant is None:
         raise ValidationError("Add this channel to the content first.")
     return variant
@@ -754,8 +800,9 @@ def content_detail(request, workspace_id, post_id):
     elif request.method == "POST" and request.POST.get("action") in {"add_channel", "remove_channel"}:
         try:
             if request.POST["action"] == "add_channel":
-                account = get_object_or_404(SocialAccount, pk=request.POST.get("channel"), workspace=workspace)
-                add_content_channel(post, account.pk, request.user)
+                account_id, output_format = parse_output_choice(request.POST.get("channel"))
+                account = get_object_or_404(SocialAccount, pk=account_id, workspace=workspace)
+                add_content_channel(post, account.pk, request.user, output_format)
             else:
                 variant = get_object_or_404(PlatformPost, pk=request.POST.get("platform_post"), post=post)
                 remove_content_channel(post, variant.pk, request.user)
@@ -841,13 +888,13 @@ def content_detail(request, workspace_id, post_id):
         {
             "kind": "publication",
             "created_at": publication.published_at,
-            "label": f"Marked {publication.platform_post.social_account.get_platform_display()} as published",
+            "label": f"Marked {publication.platform_post.output_title} as published",
             "actor": publication.published_by,
             "note": publication.post_url,
             "can_view_note": True,
         }
         for publication in ManualPublication.objects.filter(platform_post__post=post).select_related(
-            "published_by", "platform_post__social_account"
+            "published_by", "platform_post__social_account__jrc_channel"
         )
     )
     history.extend(
@@ -884,26 +931,26 @@ def content_detail(request, workspace_id, post_id):
         {
             "kind": "video",
             "created_at": version.uploaded_at,
-            "label": f"Uploaded video v{version.number} · {version.video.platform_post.social_account.account_name}",
+            "label": f"Uploaded video v{version.number} · {version.video.platform_post.output_title}",
             "actor": version.uploaded_by,
             "note": "",
             "can_view_note": True,
         }
         for version in VideoVersion.objects.filter(video__platform_post__post=post)
         .exclude(status=VideoVersion.Status.UPLOADING)
-        .select_related("uploaded_by", "video__platform_post__social_account")
+        .select_related("uploaded_by", "video__platform_post__social_account__jrc_channel")
     )
     history.extend(
         {
             "kind": "video",
             "created_at": event.created_at,
-            "label": f"{event.get_action_display()} · v{event.version.number} · {event.version.video.platform_post.social_account.account_name}",
+            "label": f"{event.get_action_display()} · v{event.version.number} · {event.version.video.platform_post.output_title}",
             "actor": event.actor,
             "note": "",
             "can_view_note": True,
         }
         for event in VideoActivity.objects.filter(version__video__platform_post__post=post).select_related(
-            "actor", "version__video__platform_post__social_account"
+            "actor", "version__video__platform_post__social_account__jrc_channel"
         )
     )
     history.extend(
@@ -912,12 +959,7 @@ def content_detail(request, workspace_id, post_id):
             "created_at": version.finalized_at,
             "label": (
                 f"Saved {version.document.get_kind_display()} version {version.number}"
-                + (
-                    f" · {version.document.platform_post.social_account.get_platform_display()}"
-                    f" · {version.document.platform_post.social_account.account_name}"
-                    if version.document.platform_post_id
-                    else ""
-                )
+                + (f" · {version.document.platform_post.output_title}" if version.document.platform_post_id else "")
                 + (" · Empty text" if not version.text.strip() else "")
             ),
             "actor": version.created_by,
@@ -926,7 +968,7 @@ def content_detail(request, workspace_id, post_id):
         }
         for version in TextVersion.objects.filter(document__post=post, state=TextVersion.State.FINAL)
         .defer("content")
-        .select_related("created_by", "document__platform_post__social_account")
+        .select_related("created_by", "document__platform_post__social_account__jrc_channel")
     )
     history.extend(
         {
@@ -991,18 +1033,29 @@ def content_detail(request, workspace_id, post_id):
         approval_ctx = approval_context(
             post,
             membership,
-            _enabled_caption_accounts(post),
+            enabled_outputs(post),
             can_view_internal_notes=can_view_internal_notes,
         )
+    script_sections = []
+    if active_tab == "script":
+        # P2-B14: one script with a section per format of the content (shown when it has several).
+        from apps.composer.output_formats import format_sort_key
+
+        script_sections = [
+            OutputFormat(value).label
+            for value in sorted(set(post.platform_posts.values_list("output_format", flat=True)), key=format_sort_key)
+            if value in OutputFormat.values
+        ]
     shotlist_ctx = {}
     if active_tab == "shotlist":
-        shotlist_ctx = _shotlist_context(post, membership, focus=request.GET.get("focus", ""))
+        shotlist_ctx = _shotlist_context(
+            post, membership, focus=request.GET.get("focus", ""), output_format=request.GET.get("format", "")
+        )
     publish_channels = []
     can_publish = can_publish_directly(membership)
     if active_tab == "publish":
         from apps.jrc_video.models import VideoAsset, VideoVersion
 
-        variants = {item.social_account_id: item for item in post.platform_posts.select_related("social_account").all()}
         videos = {
             item.platform_post_id: item
             for item in VideoAsset.objects.filter(platform_post__post=post).select_related("final_version")
@@ -1010,10 +1063,8 @@ def content_detail(request, workspace_id, post_id):
         publications = {
             item.platform_post_id: item for item in ManualPublication.objects.filter(platform_post__post=post)
         }
-        for account in _enabled_caption_accounts(post):
-            variant = variants.get(account.pk)
-            if variant is None:
-                continue
+        for variant in enabled_outputs(post):
+            account = variant.social_account
             video = videos.get(variant.pk)
             publication = publications.get(variant.pk)
             document = TextDocument.objects.filter(platform_post=variant, kind=TextDocument.Kind.CAPTION).first()
@@ -1038,7 +1089,7 @@ def content_detail(request, workspace_id, post_id):
             publish_channels.append(
                 {
                     "variant": variant,
-                    "label": f"{account.get_platform_display()} · {account.account_name}",
+                    "label": variant.output_title,
                     "caption": caption,
                     "scheduled_at": scheduled_at,
                     "scheduled_label": (scheduled_at.strftime("%b %-d, %Y · %-I:%M %p %Z") if scheduled_at else ""),
@@ -1083,6 +1134,7 @@ def content_detail(request, workspace_id, post_id):
             "pipeline_stage": pipeline_stage(post),
             "active_tab": active_tab,
             "text_colors": TEXT_COLORS,
+            "script_sections": script_sections,
             "tabs": TABS,
             "history": history[:100],
             "empty_initial_text": TextVersion.objects.filter(
@@ -1129,10 +1181,9 @@ def _channel_tags_context(post, membership):
         "can_manage_channels": can_manage_channels(post, membership),
         # ``_lock_channel_content``: channels change only while every copy is still in Editing.
         "channels_locked": post.platform_posts.exclude(status=PlatformPost.Status.DRAFT).exists(),
-        "addable_channels": SocialAccount.objects.filter(workspace=post.workspace, jrc_channel__is_enabled=True)
-        .exclude(platform_posts__post=post)
-        .select_related("jrc_channel")
-        .order_by("account_name"),
+        # P2-B14: what "+" offers is an output (channel + format) the content does not have yet.
+        "addable_outputs": addable_outputs(post),
+        "content_outputs": sorted(post.platform_posts.all(), key=lambda variant: variant.output_sort_key),
     }
 
 
@@ -1165,24 +1216,25 @@ def channels(request, workspace_id, post_id):
     status, message = 200, ""
     try:
         if action == "add_channel":
-            account = SocialAccount.objects.filter(pk=request.POST.get("channel"), workspace=workspace).first()
+            account_id, output_format = parse_output_choice(request.POST.get("channel"))
+            account = SocialAccount.objects.filter(pk=account_id, workspace=workspace).first()
             if account is None:
                 raise ValidationError("Choose an enabled channel of this client.")
-            add_content_channel(post, account.pk, request.user)
-            message = "Channel added."
+            add_content_channel(post, account.pk, request.user, output_format)
+            message = "Output added."
         elif action == "remove_channel":
             variant = PlatformPost.objects.filter(pk=request.POST.get("platform_post"), post=post).first()
             if variant is None:
                 raise ValidationError("This channel is no longer part of the content. Reload the page.")
             remove_content_channel(post, variant.pk, request.user)
-            message = "Channel removed."
+            message = "Output removed."
         else:
             return HttpResponseBadRequest("Unknown action.")
     except ValidationError as exc:
         status, message = 400, " ".join(exc.messages)
     except PermissionDenied as exc:
         status, message = 403, str(exc) or "You cannot change channels for this content."
-    post = Post.objects.prefetch_related("platform_posts__social_account").get(pk=post.pk)
+    post = Post.objects.prefetch_related("platform_posts__social_account__jrc_channel").get(pk=post.pk)
     html = render_to_string(
         "jrc_production/_channel_tags.html",
         {
@@ -1284,12 +1336,24 @@ _SHOTLIST_HISTORY_LABELS = {
 }
 
 
-def _shotlist_context(post, membership, *, focus="", error="", new_text="", new_note=""):
+def _shotlist_context(post, membership, *, focus="", error="", new_text="", new_note="", output_format=""):
     # The automatic item must exist even for content created before P1-B09 outside the migration.
     shotlist_services.ensure_thumbnail_item(post)
-    items = shotlist_services.items_for(post)
+    # P2-B14: one list per format of the content; an unknown format opens the first list.
+    formats = shotlist_services.shotlist_formats(post)
+    try:
+        current = shotlist_services.clean_format(post, output_format, formats)
+    except ValidationError:
+        current = formats[0] if formats else ""
+    items = shotlist_services.items_for(post, current, formats=formats)
     done, total = shotlist_services.progress(items)
     return {
+        "shotlist_formats": [
+            {"value": value, "label": OutputFormat(value).label if value in OutputFormat.values else value}
+            for value in formats
+        ],
+        "shotlist_format": current,
+        "shotlist_format_label": OutputFormat(current).label if current in OutputFormat.values else "",
         "shotlist_items": items,
         "shotlist_done": done,
         "shotlist_total": total,
@@ -1319,6 +1383,7 @@ def shotlist_action(request, workspace_id, post_id):
     action = request.POST.get("action", "")
     item_id = request.POST.get("item", "")
     text, note = request.POST.get("text"), request.POST.get("note")
+    output_format = request.POST.get("output_format", "")
     focus, error, status = "", "", 200
     if action == "update" and request.headers.get("X-JRC-Shotlist-Autosave") == "1":
         # P2-B08: editing right in the text saves automatically and answers with JSON, so the list is
@@ -1344,7 +1409,7 @@ def shotlist_action(request, workspace_id, post_id):
         )
     try:
         if action == "add":
-            shotlist_services.add_item(post, request.user, text or "", note or "")
+            shotlist_services.add_item(post, request.user, text or "", note or "", output_format=output_format)
             focus = "add"
         elif action == "update":
             shotlist_services.update_item(post, item_id, request.user, text=text, note=note)
@@ -1372,6 +1437,7 @@ def shotlist_action(request, workspace_id, post_id):
             error=error,
             new_text=(text or "") if error and action == "add" else "",
             new_note=(note or "") if error and action == "add" else "",
+            output_format=output_format,
         )
         return render(
             request, "jrc_production/_shotlist.html", {**context, "workspace": workspace, "post": post}, status=status
@@ -1379,11 +1445,12 @@ def shotlist_action(request, workspace_id, post_id):
     if error:
         messages.error(request, error)
     url = reverse("jrc_production:content_detail", kwargs={"workspace_id": workspace.id, "post_id": post.id})
+    format_query = f"&format={output_format}" if output_format in OutputFormat.values else ""
     if focus == "add" and not error:
         # No fragment here: browsers skip autofocus when the URL targets an element.
-        return redirect(f"{url}?tab=shotlist&focus=add")
+        return redirect(f"{url}?tab=shotlist{format_query}&focus=add")
     anchor = f"#shotlist-{focus}" if focus and not error else "#shotlist"
-    return redirect(f"{url}?tab=shotlist{anchor}")
+    return redirect(f"{url}?tab=shotlist{format_query}{anchor}")
 
 
 @login_required

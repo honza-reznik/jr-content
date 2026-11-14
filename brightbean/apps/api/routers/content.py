@@ -307,6 +307,7 @@ class CaptionResponse(Schema):
     platform_post_id: uuid.UUID = Field(description="The channel copy of the content.")
     social_account_id: uuid.UUID
     platform: str
+    output_format: str = Field("", description="The output's format (long_form, short_form, story, post).")
     can_edit: bool
     char_limit: int
     char_count: int = Field(description="Length by the channel's own counting rules (emoji = 1, LinkedIn escapes).")
@@ -358,6 +359,7 @@ def _caption_response(post, variant, membership) -> CaptionResponse:
         platform_post_id=variant.pk,
         social_account_id=account.pk,
         platform=account.platform,
+        output_format=variant.output_format,
         can_edit=text_services.can_edit_text(post, membership),
         char_limit=account.char_limit,
         char_count=account.caption_wire_length(text),
@@ -638,9 +640,14 @@ def comment_add(request, post_id: uuid.UUID, payload: CommentWrite):
 
 class ChannelWrite(Schema):
     social_account_id: uuid.UUID = Field(description="Enabled client channel in the key's account allowlist.")
+    output_format: str = Field(
+        "",
+        description="Format of the new output (long_form, short_form, story, post); empty = the platform default. "
+        "One channel may carry one output per format.",
+    )
 
 
-@router.post("/{post_id}/channels", response=PostResponse, summary="Explicitly add a channel to draft content")
+@router.post("/{post_id}/channels", response=PostResponse, summary="Explicitly add an output (channel + format) to draft content")
 def channel_add(request, post_id: uuid.UUID, payload: ChannelWrite):
     enforce_http_rate_limits(request, is_write=True)
     _require_perm(request, "create_posts")
@@ -650,7 +657,7 @@ def channel_add(request, post_id: uuid.UUID, payload: ChannelWrite):
         if not can_manage_channels(post, _membership(request, post)):
             raise HttpError(403, "You cannot change channels for this content.")
         with _http_errors():
-            add_content_channel(post, account.pk, request.user)
+            add_content_channel(post, account.pk, request.user, payload.output_format)
         post.refresh_from_db()
         log_audit_entry(request, action="content.channel.add", target_id=post.id, status_code=200)
         return _post_to_response(request, post)

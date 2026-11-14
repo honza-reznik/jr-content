@@ -77,3 +77,8 @@
   .script-diff .d-block { flex-wrap: wrap; gap: .25rem; padding: .3rem; }
   .script-diff .d-text { flex: 1 1 calc(100% - 2rem); }
 }
+/* P2-B14: one script with a section per format of the content. */
+.script-sections { margin: 0 0 1rem; padding: .75rem 1rem; border: 1px dashed #d6d3d1; border-radius: .75rem; background: #fafaf9; }
+.script-sections-help { margin: 0 0 .5rem; font-size: .875rem; color: #57534e; }
+.script-sections-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+#script-panel .script-sections-actions button:disabled { opacity: .55; text-decoration: line-through; }

@@ -51,7 +51,7 @@ this fragment (``X-JRC-Tab: 1``) and content-tabs.js swaps it in and runs its sc
         {% elif active_tab == "video" %}
             {% include "jrc_video/_upload_tab.html" %}
         {% elif active_tab == "publish" %}
-            <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">Publish channels</h2><p class="mt-1 text-sm text-stone-500">Download the final video and the thumbnail, copy the saved caption, then record when you publish it manually.</p></div>
+            <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">Publish outputs</h2><p class="mt-1 text-sm text-stone-500">Each output (channel and format) is published on its own. Download the final video and the thumbnail, copy the saved caption, then record when you publish it manually.</p></div>
             <div class="space-y-4">
                 {% for item in publish_channels %}
                 <article class="rounded-xl border border-stone-200 p-4 sm:p-5" aria-labelledby="publish-channel-{{ forloop.counter }}">
@@ -97,17 +97,17 @@ this fragment (``X-JRC-Tab: 1``) and content-tabs.js swaps it in and runs its sc
                     </form>
                     {% elif item.missing %}<p class="mt-4 text-sm text-stone-500" data-publish-blocker>To mark this channel as published: {{ item.missing|join:" " }}</p>{% elif not item.can_publish %}<p class="mt-4 text-sm text-stone-500">Members with publishing rights can mark this channel as published.</p>{% endif %}
                 </article>
-                {% empty %}<div class="rounded-xl border border-dashed border-stone-300 px-4 py-10 text-center text-sm text-stone-500">No enabled channels for this content.</div>{% endfor %}
+                {% empty %}<div class="rounded-xl border border-dashed border-stone-300 px-4 py-10 text-center text-sm text-stone-500">No outputs on enabled channels for this content.</div>{% endfor %}
             </div>
         {% elif active_tab == "caption" %}
             <style>.jrc-caption-preview .preview-card{background:#fff;border:1px solid #e7e5e4;border-radius:14px;overflow:hidden}</style>
-            <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">Channel captions</h2><p class="mt-1 text-sm text-stone-500">Each enabled channel has its own plain text caption. Changes save automatically; every saved version is kept.</p></div>
+            <div class="mb-5"><h2 class="text-lg font-semibold text-stone-900">Captions</h2><p class="mt-1 text-sm text-stone-500">Each output (channel and format) has its own plain text caption. Changes save automatically; every saved version is kept.</p></div>
             {% if caption_error %}<p role="alert" class="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{{ caption_error }}</p>{% endif %}
             <div class="space-y-5">
                 {% for item in caption_channels %}
                 <article class="rounded-xl border border-stone-200 p-4 sm:p-5" aria-labelledby="caption-title-{{ forloop.counter }}" data-caption-channel{% if can_edit_captions and item.variant %} data-autosave-url="{% url 'jrc_production:caption_autosave' workspace_id=workspace.id post_id=post.id platform_post_id=item.variant.pk %}" data-base="{{ item.latest.pk|default:'' }}" data-revision="{{ item.latest.revision|default:0 }}"{% endif %}>
                     <div class="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
-                        <h3 id="caption-title-{{ forloop.counter }}" class="min-w-0 break-words font-semibold text-stone-900">{% include "jrc_channels/icon.html" with account=item.account %} {{ item.platform_label }} · {{ item.account.account_name }}</h3>
+                        <h3 id="caption-title-{{ forloop.counter }}" class="min-w-0 break-words font-semibold text-stone-900">{% include "jrc_channels/icon.html" with account=item.account %} {{ item.label }}</h3>
                         <p class="text-xs text-stone-500" data-caption-version>{% if item.latest %}<span data-version-label="{{ item.latest.pk }}">V{{ item.latest.number }}{% if item.latest.name %} – {{ item.latest.name }}{% endif %}</span> · {{ item.latest.created_by.display_name|default:"Former member" }} · {{ item.latest.finalized_at|date:"M j, Y · g:i A" }}{% else %}No saved version yet{% endif %}</p>
                     </div>
                     <form method="post" class="mt-3">

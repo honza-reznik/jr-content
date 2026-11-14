@@ -61,8 +61,8 @@ def notify_text_version(version, actor):
                 account = document.platform_post.social_account
                 event, tab = EventType.CONTENT_CAPTION_VERSION, "caption"
                 title = "New caption version"
-                body = (
-                    f"{who} saved version {version.number} of the {account.get_platform_display()} caption "
+                body = (  # P2-B14: the output ("YouTube · Shorts"), as one channel may carry several
+                    f"{who} saved version {version.number} of the {document.platform_post.output_label} caption "
                     f'({account.account_name}) for "{label}".'
                 )
             _send(post, version_audience(post, actor), event_type=event, title=title, body=body, tab=tab)
@@ -77,8 +77,8 @@ def notify_video_version(version):
             post = version.video.platform_post.post
             account = version.video.platform_post.social_account
             who = version.uploaded_by.display_name if version.uploaded_by else "Someone"
-            body = (
-                f"{who} uploaded video version {version.number} for {account.get_platform_display()} "
+            body = (  # P2-B14: the output ("YouTube · Shorts"), as one channel may carry several
+                f"{who} uploaded video version {version.number} for {version.video.platform_post.output_label} "
                 f'({account.account_name}); it is ready to watch in "{content_label(post)}".'
             )
             _send(

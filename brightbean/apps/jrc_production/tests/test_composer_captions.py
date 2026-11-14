@@ -580,8 +580,10 @@ def test_caption_card_shows_only_explicitly_attached_enabled_channels(client, wo
     by_account = {item["account"].pk: item for item in channels}
     assert set(by_account) == {instagram.pk}
     assert by_account[instagram.pk]["variant"] == variant
-    assert linkedin in response.context["addable_channels"]
-    assert hidden not in response.context["addable_channels"]
+    # P2-B14: "+" offers outputs (channel + format) of enabled channels only.
+    addable = {option["account"] for option in response.context["addable_outputs"]}
+    assert linkedin in addable
+    assert hidden not in addable
     assert response.content.decode().count('<textarea id="caption-') == 1
 
 

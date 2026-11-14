@@ -5,6 +5,9 @@ One set of rules for the Shotlist tab and the REST API. Every write locks the co
 re-checks the member's rights and records added / checked / unchecked / removed items in
 ``ShotlistChange`` for the History tab. Every content has one automatic "Thumbnail photo"
 item: it is a reminder for the shoot, checked off by hand, and cannot be deleted.
+
+P2-B14: each format of the content (long form, short form, story, post) has its own list. Items
+without a format (content without outputs, the thumbnail item) show in the first list.
 """
 
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -44,8 +47,41 @@ def ensure_thumbnail_item(post):
     return item
 
 
-def items_for(post):
-    return list(ShotlistItem.objects.filter(post_id=post.pk).select_related("updated_by"))
+def shotlist_formats(post):
+    """The formats with their own shotlist, in display order (P2-B14).
+
+    The formats of the content's outputs, plus any format that still has items (an output removed later
+    must not hide its list). Empty when the content has no outputs: then there is one list.
+    """
+    from apps.composer.output_formats import format_sort_key
+
+    formats = set(post.platform_posts.values_list("output_format", flat=True))
+    formats |= set(ShotlistItem.objects.filter(post_id=post.pk).exclude(output_format="").values_list("output_format", flat=True))
+    return sorted((value for value in formats if value), key=format_sort_key)
+
+
+def _list_of(item_format, formats):
+    """The list an item shows in: its format, or the first list for an empty format."""
+    return item_format or (formats[0] if formats else "")
+
+
+def items_for(post, output_format=None, *, formats=None):
+    """All items (``output_format=None``, e.g. progress on the board), or the items of one format's list."""
+    items = list(ShotlistItem.objects.filter(post_id=post.pk).select_related("updated_by"))
+    if output_format is None:
+        return items
+    formats = shotlist_formats(post) if formats is None else formats
+    return [item for item in items if _list_of(item.output_format, formats) == _list_of(output_format, formats)]
+
+
+def clean_format(post, output_format, formats=None):
+    """A format the content has a shotlist for, or the first list ("" when there are no formats)."""
+    formats = shotlist_formats(post) if formats is None else formats
+    if output_format and output_format in formats:
+        return output_format
+    if output_format:
+        raise ValidationError("Choose a format of this content.")
+    return formats[0] if formats else ""
 
 
 def progress(items):
@@ -93,9 +129,11 @@ def _log(post, item, action, user):
 
 
 @transaction.atomic
-def add_item(post, user, text, note="", *, membership=None):
+def add_item(post, user, text, note="", *, membership=None, output_format=""):
+    """Add to the end of one format's list; empty ``output_format`` means the first list (P2-B14)."""
     post = _lock(post, user, membership)
     text, note = _clean_text(text), _clean_note(note)
+    output_format = clean_format(post, output_format)
     ensure_thumbnail_item(post)
     existing = ShotlistItem.objects.filter(post_id=post.pk)
     if existing.count() >= MAX_ITEMS:
@@ -105,6 +143,7 @@ def add_item(post, user, text, note="", *, membership=None):
         post=post,
         text=text,
         note=note,
+        output_format=output_format,
         position=0 if last is None else last + 1,
         created_by=user,
         updated_by=user,
@@ -151,7 +190,13 @@ def move_item(post, item_id, user, *, index=None, offset=None, membership=None):
     """
     post = _lock(post, user, membership)
     item = _item(post, item_id)
-    ordered = list(ShotlistItem.objects.select_for_update().filter(post_id=post.pk))
+    # P2-B14: an item moves within its own format's list.
+    formats = shotlist_formats(post)
+    ordered = [
+        other
+        for other in ShotlistItem.objects.select_for_update().filter(post_id=post.pk)
+        if _list_of(other.output_format, formats) == _list_of(item.output_format, formats)
+    ]
     current = next(i for i, other in enumerate(ordered) if other.pk == item.pk)
     try:
         target = current + int(offset) if offset is not None else int(index)

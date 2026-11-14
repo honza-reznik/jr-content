@@ -14,7 +14,7 @@
         {% for pp in day.all_posts %}
         <a class="post-chip pipeline-stage-{{ pp.pipeline_stage }}" href="{% url 'jrc_production:content_detail' workspace_id=workspace.id post_id=pp.post_id %}?tab=publish">
             <time>{{ pp.effective_at|timezone:display_timezone|date:"H:i" }}</time>
-            <span class="calendar-agenda-title">{{ pp.post.title|default:pp.post.caption_snippet|default:"Untitled content" }}</span>
+            <span class="calendar-agenda-title"><span class="calendar-format-label">{{ pp.format_name }}</span> · {{ pp.post.title|default:pp.post.caption_snippet|default:"Untitled content" }}</span>
             <span class="calendar-stage-label">{{ pp.pipeline_stage_label }}</span>
         </a>
         {% endfor %}

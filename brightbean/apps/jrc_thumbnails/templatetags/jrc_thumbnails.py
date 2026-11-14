@@ -42,7 +42,7 @@ def channel_thumbnail(context, variant, mode="caption", label=""):
     return {
         "show": True,
         "mode": mode,
-        "label": label or f"{variant.social_account.get_platform_display()} · {variant.social_account.account_name}",
+        "label": label or variant.output_title,  # P2-B14: the output, e.g. "YouTube · Shorts · Ella"
         "variant": variant,
         "current": current,
         "current_url": (current.small_image or current.image).url if current else "",

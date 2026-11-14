@@ -79,6 +79,9 @@ class ShotlistItem(models.Model):
     note = models.TextField(blank=True, default="", max_length=1000)
     is_done = models.BooleanField(default=False)
     position = models.PositiveIntegerField(default=0)
+    # P2-B14: the format whose shotlist the item is on (long form, short form…); empty = the first list
+    # (content without outputs, and the automatic thumbnail item shared by all formats).
+    output_format = models.CharField(max_length=20, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
