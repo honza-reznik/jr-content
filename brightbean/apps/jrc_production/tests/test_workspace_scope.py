@@ -385,7 +385,7 @@ def test_overview_calendar_shows_all_clients_read_only(org_owner, org, posts, se
     html = client.get(CALENDAR, {"date": when.date().isoformat()}).content.decode()
     assert "Planned secret" in html and overview_url(post) in html and secret.accent_color in html
     assert "Secret client" in html and "Admin overview" in html
-    calendar = html.split('class="cross-calendar-main"', 1)[1]
+    calendar = html.split('class="cross-calendar-main"', 1)[1].split("</main>", 1)[0]
     assert f'href="{NEW}' not in calendar and 'class="cal-add-btn"' not in calendar
     # Client filter of the calendar ignores ids of other organizations.
     other = Workspace.objects.create(organization=Organization.objects.create(name="X"), name="X client")

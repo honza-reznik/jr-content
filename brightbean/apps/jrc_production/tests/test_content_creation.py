@@ -521,7 +521,7 @@ def test_organization_calendar_is_read_only(http, workspace, organization, user,
     OrgMembership.objects.get_or_create(organization=organization, user=user, defaults={"org_role": "owner"})
     response = http.get(reverse("organizations:cross_workspace_calendar"), {"view": view, "date": "2030-01-02"})
     assert response.status_code == 200
-    calendar = response.content.decode().split('class="cross-calendar-main"', 1)[1]
+    calendar = response.content.decode().split('class="cross-calendar-main"', 1)[1].split("</main>", 1)[0]
     assert "new/?client=" not in calendar and 'class="cal-add-btn"' not in calendar
 
 

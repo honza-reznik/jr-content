@@ -78,7 +78,9 @@ def test_compact_card_shows_only_useful_details(http, workspace, organization, u
     html = http.get(reverse(BOARD), {"client": workspace.pk}).content.decode()
     first, second = card_html(html, with_channel), card_html(html, without)
     # P2-B13: the board shows one client, so its cards never show the client name.
-    assert '<div class="board-grid">' in html and "board-grid show-clients" not in html and "Other client idea" not in html
+    assert (
+        '<div class="board-grid">' in html and "board-grid show-clients" not in html and "Other client idea" not in html
+    )
     assert f"background:{workspace.accent_color}" in first
     assert "Ella Instagram" in re.sub(r"<[^>]+>", "", first) and "No channel" not in first
     assert "board-channel board-channel-none" in second and ">No channel</span>" in second
