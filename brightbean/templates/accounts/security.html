@@ -18,9 +18,9 @@
   @media (min-width: 768px) { .tf-scan { display: flex; gap: 24px; align-items: flex-start; } }
   .tf-scan > * + * { margin-top: 16px; }
   @media (min-width: 768px) { .tf-scan > * + * { margin-top: 0; } }
-  .tf-btn-primary { background: #93a240; color: #fff; }
-  .tf-btn-primary:hover { background: #849139; }
-  .tf-btn-primary:focus-visible, .tf-btn:focus-visible { outline: 3px solid rgba(147, 162, 64, 0.45); outline-offset: 2px; }
+  .tf-btn-primary { background: var(--primary); color: #fff; }
+  .tf-btn-primary:hover { background: var(--primary-hover, var(--primary)); }
+  .tf-btn-primary:focus-visible, .tf-btn:focus-visible { outline: 3px solid color-mix(in srgb, var(--primary) 45%, transparent); outline-offset: 2px; }
 </style>
 <div class="max-w-2xl">
     <h2 class="text-xl font-semibold mb-2" style="color: var(--text-primary);">Security</h2>
@@ -44,7 +44,7 @@
                 such as Google Authenticator, Microsoft Authenticator or 1Password. Turning it on is optional.
             </p>
             {% if enabled and enabled_at %}
-            <p class="text-xs mt-2" style="color: var(--text-tertiary);">Turned on {{ enabled_at|date:"j M Y, H:i" }}.</p>
+            <p class="text-xs mt-2" style="color: var(--text-tertiary);">Turned on {{ enabled_at|date:"j M Y, H:i" }} UTC.</p>
             {% endif %}
         </div>
 
