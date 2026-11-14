@@ -193,7 +193,9 @@ def test_service_entrypoints_authorize_before_changing_data(client, user, data, 
         "platform_post_id": str(variant.pk),
     }
     response = client.post(reverse(f"jrc_production:{action}", args=args), payload)
-    expected = {302} if action == "mark_published" and role == "client" else {403, 404}
+    # An editor may request approval through Move; this must never approve the content.
+    redirects = (action == "mark_published" and role == "client") or (action == "move" and role == "editor")
+    expected = {302} if redirects else {403, 404}
     assert response.status_code in expected, (role, action, response.status_code)
     post.refresh_from_db()
     variant.refresh_from_db()

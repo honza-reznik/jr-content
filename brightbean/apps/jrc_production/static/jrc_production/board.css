@@ -19,7 +19,7 @@
 #card-action-menu { position:fixed; z-index:100; max-width:calc(100vw - 16px); max-height:65vh; overflow:auto; border:1px solid #a8a29e; border-radius:8px; padding:6px; background:white; box-shadow:0 6px 24px #0003; }
 #card-action-menu button, #card-action-menu a { display:block; width:100%; min-height:40px; text-align:left; border-radius:4px; padding:9px 12px; color:#292524; text-decoration:none; font-size:13px; }
 #card-action-menu button:hover, #card-action-menu a:hover { background:#f3f7f5; }
-#board-action-dialog { width:min(460px, calc(100vw - 24px)); max-height:90vh; overflow:auto; border:1px solid #d6d3d1; border-radius:12px; padding:20px; color:#292524; }
+#board-action-dialog { margin:auto; width:min(460px, calc(100vw - 24px)); max-height:90vh; overflow:auto; border:1px solid #d6d3d1; border-radius:12px; padding:20px; color:#292524; }
 #board-action-dialog::backdrop { background:#0005; }
 #board-action-dialog h2 { font-size:19px; font-weight:700; margin-bottom:8px; }
 #board-action-dialog p { margin:8px 0 12px; overflow-wrap:anywhere; }

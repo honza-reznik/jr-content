@@ -166,6 +166,7 @@ def test_batch_never_writes_foreign_workspace(content, workspace, organization, 
         {"action": "move", "items": []},
         {"action": "purge", "items": [{"id": "bad"}]},
         {"action": "move", "stage": "evil", "items": [{"id": str(uuid4())}]},
+        {"action": "move", "stage": "ready", "scheduled_at": [], "items": [{"id": str(uuid4())}]},
     ],
 )
 def test_batch_rejects_malformed_input(user, client, payload):
@@ -360,6 +361,62 @@ def test_search_reports_video_api_outage_without_hiding_local_matches(content, w
     assert "could not all be searched" in response.context["search_warning"]
 
 
+@pytest.mark.parametrize("status", [403, 404])
+def test_one_missing_video_does_not_stop_search_of_remaining_comments(content, workspace, user, client, status):
+    channel = create_manual_channel(workspace, "custom", "Second video search")
+    other = create_content(workspace, "Second video content", user, social_account_ids=[channel.pk])
+    for post in [content, other]:
+        VideoAsset.objects.create(platform_post=post.platform_posts.get(), ff_asset_id=uuid4())
+    client.force_login(user)
+    with patch(
+        "apps.jrc_production.search.FreeFrameUserClient.request",
+        side_effect=[FreeFrameError("Not accessible", status_code=status), [{"body": "Remaining video needle"}]],
+    ) as api:
+        response = client.get(reverse("jrc_production:board"), {"q": "Remaining video needle"})
+    assert api.call_count == 2
+    assert response.context["total"] == 1
+    assert response.context["search_warning"]
+
+
+@pytest.mark.parametrize("actor_role", ROLES)
+def test_private_draft_search_requires_current_edit_rights(content, workspace, user, client, actor_role):
+    from apps.jrc_texts.models import TextDocument, TextVersion
+
+    document = TextDocument.objects.create(post=content, workspace=workspace, kind="concept", format="plain")
+    TextVersion.objects.create(
+        document=document,
+        number=1,
+        state="draft",
+        draft_owner=user,
+        created_by=user,
+        content={"text": "Private draft needle"},
+        text="Private draft needle",
+    )
+    role(workspace, user, actor_role)
+    client.force_login(user)
+    response = client.get(reverse("jrc_production:board"), {"q": "Private draft needle"})
+    assert response.context["total"] == int(actor_role not in {"client", "viewer"})
+
+
+def test_search_never_reads_another_editors_draft(content, workspace, user, client):
+    from apps.accounts.models import User
+    from apps.jrc_texts.models import TextDocument, TextVersion
+
+    other = User.objects.create_user(email="draft-p2b09@example.invalid")
+    document = TextDocument.objects.create(post=content, workspace=workspace, kind="concept", format="plain")
+    TextVersion.objects.create(
+        document=document,
+        number=1,
+        state="draft",
+        draft_owner=other,
+        created_by=other,
+        content={"text": "Other editor private needle"},
+        text="Other editor private needle",
+    )
+    client.force_login(user)
+    assert client.get(reverse("jrc_production:board"), {"q": "Other editor private needle"}).context["total"] == 0
+
+
 def test_search_does_not_request_videos_of_foreign_or_trashed_content(content, workspace, organization, user, client):
     VideoAsset.objects.create(platform_post=content.platform_posts.get(), ff_asset_id=uuid4())
     trash_content(content, user)
@@ -391,6 +448,8 @@ def test_trash_hides_rest_mcp_and_publisher(content, workspace, user):
         status="scheduled", scheduled_at=timezone.now() - timedelta(days=1)
     )
     assert copy.pk not in {row.pk for row in PublishEngine()._get_due_platform_posts()}
+    # A publisher may already have loaded this group before the content went to Trash.
+    assert PublishEngine()._publish_post_group(content, [copy]) is False
 
 
 def test_purge_enqueues_remote_cleanup_only_after_commit(content, user, django_capture_on_commit_callbacks):

@@ -75,7 +75,7 @@ def batch(request):
         if action == "move" and stage not in PipelineStage.values:
             raise ValueError
         comment = data.get("comment", "")
-        if not isinstance(comment, str) or len(comment) > 5000:
+        if not isinstance(comment, str) or len(comment) > 5000 or not isinstance(data.get("scheduled_at", ""), str):
             raise ValueError
     except (ValueError, TypeError, KeyError, AttributeError):
         return JsonResponse({"error": "Choose 1–100 distinct items and a valid action."}, status=400)

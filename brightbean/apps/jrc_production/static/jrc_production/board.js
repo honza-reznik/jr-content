@@ -116,7 +116,8 @@
   const stage = document.getElementById('action-stage');
   let actionItems = [], actionKind = 'move';
   function actionFields() {
-    document.getElementById('action-comment-wrap').hidden = stage.value !== 'approved';
+    document.getElementById('action-comment-wrap').hidden = stage.value !== 'approved'
+      || (actionKind !== 'approve' && actionItems.every(card => card.dataset.canApprove !== '1'));
     document.getElementById('action-date-wrap').hidden = stage.value !== 'ready';
     document.getElementById('action-date').required = stage.value === 'ready';
     document.getElementById('board-action-hint').textContent = stage.value === 'approved'

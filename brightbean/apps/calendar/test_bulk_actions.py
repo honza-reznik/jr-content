@@ -255,7 +255,7 @@ class BulkPlatformActionDeleteTests(BulkActionBase):
         # its PublishLog records if deleted.
         self.assertTrue(PlatformPost.objects.filter(id=published.id).exists())
 
-    def test_caption_history_rejects_the_whole_batch_and_links_caption_tab(self):
+    def test_trash_preserves_caption_history_for_the_whole_batch(self):
         protected = self._pp("draft")
         ordinary = self._pp("draft")
         document = TextDocument.objects.create(
@@ -276,26 +276,26 @@ class BulkPlatformActionDeleteTests(BulkActionBase):
 
         response = self._bulk("delete", protected, ordinary)
 
-        self.assertEqual(response.status_code, 409)
-        payload = response.json()
-        self.assertIn("Nothing was deleted", payload["error"])
-        self.assertIn("bsky", payload["error"])
-        self.assertEqual(len(payload["links"]), 1)
-        self.assertIn("?tab=caption", payload["links"][0]["url"])
-        self.assertTrue(PlatformPost.objects.filter(id=protected.id).exists())
-        self.assertTrue(PlatformPost.objects.filter(id=ordinary.id).exists())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["count"], 2)
+        self.assertFalse(PlatformPost.objects.filter(id=protected.id).exists())
+        self.assertFalse(PlatformPost.objects.filter(id=ordinary.id).exists())
+        self.assertTrue(PlatformPost.all_objects.filter(id=protected.id).exists())
+        self.assertTrue(PlatformPost.all_objects.filter(id=ordinary.id).exists())
         self.assertTrue(TextVersion.objects.filter(document=document).exists())
 
-    def test_deleting_the_last_row_preserves_content_without_channels(self):
+    def test_trashing_the_last_row_preserves_content_and_channels(self):
         pp = self._pp("draft")
         post_id = pp.post_id
 
         self._bulk("delete", pp)
 
-        self.assertTrue(Post.objects.filter(id=post_id).exists())
+        self.assertFalse(Post.objects.filter(id=post_id).exists())
+        self.assertTrue(Post.all_objects.filter(id=post_id, trashed_at__isnull=False).exists())
+        self.assertTrue(PlatformPost.all_objects.filter(post_id=post_id).exists())
         self.assertFalse(PlatformPost.objects.filter(post_id=post_id).exists())
 
-    def test_post_with_a_surviving_sibling_is_kept_and_resynced(self):
+    def test_trash_of_one_row_cancels_all_sibling_schedules(self):
         soon = timezone.now() + timedelta(days=1)
         later = timezone.now() + timedelta(days=5)
         first = self._pp("scheduled", scheduled_at=soon)
@@ -303,9 +303,12 @@ class BulkPlatformActionDeleteTests(BulkActionBase):
 
         self._bulk("delete", first)
 
-        post = Post.objects.get(id=second.post_id)
-        # The parent aggregate follows the earliest surviving child.
-        self.assertEqual(post.scheduled_at, later)
+        post = Post.all_objects.get(id=second.post_id)
+        self.assertIsNotNone(post.trashed_at)
+        self.assertIsNone(post.scheduled_at)
+        for copy in PlatformPost.all_objects.filter(post=post):
+            self.assertEqual(copy.status, "draft")
+            self.assertIsNone(copy.scheduled_at)
 
 
 class BulkPlatformActionFailedRowTests(BulkActionBase):
@@ -397,7 +400,7 @@ class BulkPlatformActionQueueMirrorTests(BulkActionBase):
         entry.refresh_from_db()
         self.assertGreaterEqual(entry.assigned_slot_datetime, before)
 
-    def test_deleting_one_child_removes_only_that_channels_entry(self):
+    def test_trashing_content_removes_its_queue_entry(self):
         slot = timezone.now() + timedelta(days=3)
         pp, entry = self._queued(slot=slot)
         # A sibling on another channel keeps the parent Post alive, so the FK
@@ -406,7 +409,8 @@ class BulkPlatformActionQueueMirrorTests(BulkActionBase):
 
         self._bulk("delete", pp)
 
-        self.assertTrue(Post.objects.filter(id=pp.post_id).exists())
+        self.assertFalse(Post.objects.filter(id=pp.post_id).exists())
+        self.assertTrue(Post.all_objects.filter(id=pp.post_id).exists())
         self.assertFalse(QueueEntry.objects.filter(id=entry.id).exists())
 
 

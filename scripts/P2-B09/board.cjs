@@ -61,6 +61,27 @@ const note = name => { checks.push(name); console.log(name); };
     await menu(card('Drag idea')); await shot('context-menu');
     assert(await page.getByRole('menuitem', { name: 'Move to Script…', exact: true }).isVisible());
     await page.keyboard.press('Escape');
+    if (mobile) {
+      const title = card('Drag idea').locator('h3');
+      await title.scrollIntoViewIfNeeded();
+      const box = await title.boundingBox();
+      const cdp = await context.newCDPSession(page);
+      const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+      await page.waitForTimeout(650);
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      await cdp.detach();
+      assert(await page.locator('#card-action-menu').isVisible());
+      await shot('long-press-menu');
+      await page.keyboard.press('Escape');
+      note(`${width}: real touch long press opens the menu without following the card link`);
+    }
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await menu(card('Drag idea'));
+    await page.getByRole('menuitem', { name: 'Copy link', exact: true }).click();
+    await page.waitForFunction(() => document.getElementById('board-results').textContent.includes('Link copied.'));
+    assert.match(await page.evaluate(() => navigator.clipboard.readText()), new RegExp(seed.posts['Drag idea']));
+    note(`${width}: Copy link writes the actual content URL to the clipboard`);
     async function drag(item, target) {
       const header = page.locator(`.board-column[data-stage="${target}"] > h2`);
       if (!mobile) {
@@ -123,6 +144,11 @@ const note = name => { checks.push(name); console.log(name); };
     }
     await search(page, 'sapphire lighthouse', 1); await shot('full-search');
     await search(page, 'obsidian lantern', 1);
+    if (seed.video_comments) {
+      await search(page, 'onyx orchard reply', 1);
+      await search(page, 'coral meadow reply', 1);
+      note(`${width}: live FreeFrame API searches public and internal video replies for the team`);
+    }
     const client = await session('client');
     await client.page.goto(boardUrl, { waitUntil: 'networkidle' });
     for (const name of ['Client review one', 'Client review two']) await client.page.locator(`[data-post="${seed.posts[name]}"] .board-select`).check();
@@ -133,6 +159,12 @@ const note = name => { checks.push(name); console.log(name); };
     await shot('client-bulk-approval', client.page);
     await search(client.page, 'obsidian lantern', 0);
     await search(client.page, 'amber telescope', 1);
+    if (seed.video_comments) {
+      await search(client.page, 'onyx orchard reply', 0);
+      await search(client.page, 'coral meadow reply', 1);
+      await shot('video-comment-search-client', client.page);
+      note(`${width}: live FreeFrame API hides internal video comments from client search`);
+    }
     await noOverflow(client.page);
     note(`${width}: client bulk approval; public/private discussion search permissions`);
     await client.context.close();
@@ -141,6 +173,7 @@ const note = name => { checks.push(name); console.log(name); };
     const requestCard = editor.page.locator(`.board-card[data-post="${seed.posts['Approval request']}"]`);
     await menu(requestCard, editor.page);
     await editor.page.getByRole('menuitem', { name: 'Request approval…', exact: true }).click();
+    assert(await editor.page.locator('#action-comment-wrap').isHidden());
     await Promise.all([editor.page.waitForNavigation(), editor.page.locator('#board-action-form button[type=submit]').click()]);
     assert.match(await editor.page.locator('#board-results').innerText(), /Approval requested/);
     assert.equal(await editor.page.locator(`.board-card[data-post="${seed.posts['Approval request']}"]`).getAttribute('data-stage'), 'review');
@@ -169,9 +202,38 @@ const note = name => { checks.push(name); console.log(name); };
     await Promise.all([page.waitForNavigation(), page.locator('#empty-trash').click()]);
     assert.match(await page.locator('.board-trash-list').innerText(), /Trash is empty/);
     await shot('trash-empty');
+    await page.goto(boardUrl, { waitUntil: 'networkidle' });
+    await page.goto(new URL(await card('Bulk idea one').locator('.board-card-link').getAttribute('href'), base).href, { waitUntil: 'networkidle' });
+    await page.locator('#content-delete').getByRole('button', { name: 'Move to Trash', exact: true }).waitFor();
+    await noOverflow(); await shot('detail-trash');
+    await Promise.all([page.waitForNavigation(), page.locator('#content-delete button').click()]);
+    assert.equal(await card('Bulk idea one').count(), 0);
+    await page.goto(`${base}/board/trash/`, { waitUntil: 'networkidle' });
+    await Promise.all([page.waitForNavigation(), page.locator(`[data-post="${seed.posts['Bulk idea one']}"] [data-restore]`).click()]);
+    await page.goto(boardUrl, { waitUntil: 'networkidle' });
+    assert.equal(await card('Bulk idea one').count(), 1);
+    note(`${width}: detail deletion moves to Trash and restoration brings the content back`);
+    if (!mobile) {
+      await page.goto(boardUrl, { waitUntil: 'networkidle' });
+      const before = await page.locator('.board-card').count();
+      await page.locator('#idea-title').fill('Quick idea for live actions');
+      await page.locator('#quick-idea button[type=submit]').click();
+      const fresh = page.locator('.board-card').filter({ has: page.getByRole('heading', { name: 'Quick idea for live actions', exact: true }) });
+      await fresh.waitFor();
+      await shot('quick-idea-count');
+      assert.equal(await page.locator('.board-card').count(), before + 1);
+      assert.equal(Number(await page.locator('[data-stage="idea"] [data-stage-count]').textContent()), await page.locator('.board-card[data-stage="idea"]').count());
+      await fresh.locator('.board-select').check();
+      assert.equal(await page.locator('#selection-count').textContent(), '1 selected');
+      await menu(fresh);
+      await page.getByRole('menuitem', { name: 'Move to Script…', exact: true }).click();
+      await Promise.all([page.waitForNavigation(), page.locator('#board-action-form button[type=submit]').click()]);
+      assert.equal(await fresh.getAttribute('data-stage'), 'script');
+      note(`${width}: newly inserted quick idea has the correct count, selection and context actions`);
+    }
     assert.deepEqual(errors, []);
     await fs.writeFile(`ops/test-output/P2-B09/browser-${width}.json`, JSON.stringify({ checks, errors }, null, 2));
     note(`${width}: forbidden move stays in place; Empty trash; no JavaScript errors`);
     await context.close();
   } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
-})().catch(error => { console.error(error); process.exitCode = 1; });
+})().catch(error => { console.error(error); console.error('Page errors:', errors); process.exitCode = 1; });

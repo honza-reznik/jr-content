@@ -1534,7 +1534,8 @@ def bulk_platform_action(request, workspace_id):
                 for post_id in sorted(contents):
                     trash_content(contents[post_id], request.user)
         except (PermissionDenied, ValidationError) as exc:
-            return JsonResponse({"error": str(exc)}, status=403)
+            reason = " ".join(exc.messages) if isinstance(exc, ValidationError) else str(exc)
+            return JsonResponse({"error": f"Nothing was moved to Trash. {reason}"}, status=403)
         return JsonResponse(
             {"action": action, "count": len(eligible), "message": f"{len(contents)} content items moved to Trash."}
         )

@@ -470,7 +470,7 @@ def test_bulk_delete_of_planned_content_needs_the_planning_right(make, stranger,
     if role in PLANNERS:
         assert response.status_code == 200 and response.json()["count"] == 1 and not exists
     elif can_edit:
-        assert response.status_code == 403 and "nothing was deleted" in response.json()["error"]
+        assert response.status_code == 403 and "Nothing was moved to Trash" in response.json()["error"]
         assert exists
     else:
         assert exists  # another author's content, no edit right: untouched as before

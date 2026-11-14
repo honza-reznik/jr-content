@@ -200,7 +200,6 @@
     column.classList.remove('is-empty');
     // Keep the board order (P2-B03): undated cards in creation order, so the new idea is the last one.
     list.append(card);
-    document.dispatchEvent(new Event('board:changed'));
     const grid = document.querySelector('.board-grid');
     const shown = new Set([...grid.querySelectorAll('.board-card')].map(c => c.dataset.client));
     grid.classList.toggle('show-clients', shown.size > 1);
@@ -211,6 +210,7 @@
     const items = Number(total.dataset.boardTotal) + 1;
     total.dataset.boardTotal = String(items);
     total.textContent = `${items} item${items === 1 ? '' : 's'}`;
+    document.dispatchEvent(new Event('board:changed'));
   }
   form.addEventListener('submit', async (event) => {
     event.preventDefault();

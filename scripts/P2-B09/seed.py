@@ -48,6 +48,35 @@ with override_settings(JRC_FF_SYNC_ENABLED=False):
     Post.all_objects.filter(workspace=private).delete()
     Post.objects.create(workspace=private, title="Forbidden hidden title")
     payload = {"workspace": str(workspace.pk), "posts": posts, "sessions": sessions}
+    if os.environ.get("BOARD_VIDEO_SEARCH") == "1":
+        from apps.jrc_video.client import FreeFrameUserClient
+        from apps.jrc_video.models import VideoAsset, VideoProject
+        from apps.jrc_video.services import sync_workspace
+
+        sync_workspace(workspace.pk)
+        api = FreeFrameUserClient(users["owner"])
+        project = str(VideoProject.objects.get(workspace=workspace).ff_project_id)
+        assets = api.request("GET", f"/projects/{project}/assets?include_failed=true")
+        reusable = next((asset for asset in assets if asset["name"] == "P2-B09 fictional comment search" and asset["latest_version"]), None)
+        # An initialized local upload is enough for comment API tests; no video is downloaded.
+        upload = {"asset_id": reusable["id"], "version_id": reusable["latest_version"]["id"]} if reusable else api.request("POST", "/upload/initiate", {
+            "project_id": project,
+            "asset_name": "P2-B09 fictional comment search",
+            "original_filename": "fictional.mp4", "mime_type": "video/mp4", "file_size_bytes": 128,
+        })
+        VideoAsset.objects.create(platform_post=search.platform_posts.get(), ff_asset_id=upload["asset_id"])
+        existing = api.request("GET", f"/assets/{upload['asset_id']}/comments")
+        for visibility, body in [("public", "Video public coral meadow"), ("internal", "Video private onyx orchard")]:
+            if any(comment["body"] == body for comment in existing):
+                continue
+            parent = api.request("POST", f"/assets/{upload['asset_id']}/comments", {
+                "version_id": upload["version_id"], "body": body, "visibility": visibility,
+            })
+            api.request("POST", f"/assets/{upload['asset_id']}/comments", {
+                "version_id": upload["version_id"], "body": body + " reply", "visibility": visibility,
+                "parent_id": parent["id"],
+            })
+        payload["video_comments"] = True
     output = Path('/app/output/P2-B09/seed.json')
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(payload))
