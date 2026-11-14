@@ -81,4 +81,4 @@
 .script-sections { margin: 0 0 1rem; padding: .75rem 1rem; border: 1px dashed #d6d3d1; border-radius: .75rem; background: #fafaf9; }
 .script-sections-help { margin: 0 0 .5rem; font-size: .875rem; color: #57534e; }
 .script-sections-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
-#script-panel .script-sections-actions button:disabled { opacity: .55; text-decoration: line-through; }
+#script-panel .script-sections-actions button:disabled { opacity: 1; color: #047857; border-color: #a7f3d0; background: #ecfdf5; }

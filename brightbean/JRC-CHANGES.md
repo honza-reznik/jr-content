@@ -916,3 +916,23 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
 
 - Odhlášení před ukončením relace serverově volá FreeFrame `/auth/jrc-logout` jménem řízeného uživatele. Zneplatní jeho dosavadní video tokeny včetně HttpOnly přenosu HLS a smaže FF přihlašovací cookies. Při nedostupném FF ponechá přihlášení, vrátí 503 a nabídne opakování; účet bez videa další službu nepotřebuje.
 - Testy pokrývají CSRF, zneplatnění před odhlášením, výpadek s opakováním a účet bez videa. Živé průchody obou aplikací jsou v `scripts/P2-B02/`.
+
+### P2-B14 — výstupy (kanál + formát), shotlist a script po formátech
+
+- `PlatformPost.output_format` (`apps/composer/output_formats.py`): obecný formát `long_form`, `short_form`, `story`, `post`;
+  každá platforma má vlastní název (YouTube · Video / Shorts, Instagram · Reel / Story / Post). Unikátnost
+  `(post, social_account)` nahradila `(post, social_account, output_format)`, takže jeden kanál může mít v příspěvku víc
+  výstupů. Prázdný formát doplní pole při `save()` i `bulk_create()` výchozím formátem platformy (duplikát, opakování,
+  převod nápadu, API).
+- Migrace `composer.0025`: každá stávající kopie = výstup s výchozím formátem, nebo s formátem podle dosavadního
+  `platform_extra["post_type"]` (short/reel → short form, story → story…). Žádný řádek nevzniká ani nezaniká.
+  Zpětná migrace jde jen, dokud žádný kanál nemá dva výstupy jednoho obsahu. `jrc_production.0009`: položky shotlistu
+  dostanou formát (stávající seznam = první formát obsahu).
+- Publisher: formát výstupu je nápověda typu (`_resolve_post_type`, krok 1b) po výslovném `post_type`; kontrola médií platí stejně.
+- Starý editor a CSV import (`account_copy`) pracují s prvním výstupem kanálu místo `get_or_create`; mazání `?account=`
+  odebere všechny výstupy kanálu. API: `output_format`/`output_label` v `PlatformPostSummary`, `output_format` v přidání
+  kanálu, popiscích a shotlistu.
+- Detail, kalendář, fronta, schvalování, klientský portál, upozornění a názvy souborů náhledů ukazují výstup
+  („YouTube · Shorts · kanál“). Nástěnka ukazuje příspěvek jako celek (kanál jednou, se seznamem formátů).
+- Shotlist má podzáložky po formátech (`?format=`), script nabízí oddíl (nadpis) pro každý formát. Při nasazení znovu
+  sestavit editor z `apps/jrc_texts/editor/script.mjs` a shromáždit statické soubory. Živý průchod: `scripts/P2-B14/`.

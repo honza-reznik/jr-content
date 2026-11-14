@@ -81,6 +81,7 @@ function mount(panel) {
       const label = button.dataset.scriptSection
       const present = headings.has(label.toLowerCase())
       button.disabled = present
+      button.textContent = `${present ? '✓' : '+'} ${label}`
       button.setAttribute('aria-label', present ? `${label} section is in the script` : `Add a ${label} section at the end`)
     }
   }
@@ -312,8 +313,10 @@ function mount(panel) {
   if (sections) on(sections, 'click', event => {
     const button = event.target.closest('[data-script-section]')
     if (!button || button.disabled || !editable()) return
+    // An empty script becomes the section itself, without an empty line above it.
+    const where = editor.isEmpty ? { from: 0, to: editor.state.doc.content.size } : editor.state.doc.content.size
     editor.chain()
-      .insertContentAt(editor.state.doc.content.size, [
+      .insertContentAt(where, [
         { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: button.dataset.scriptSection }] },
         { type: 'paragraph' },
       ])

@@ -36,4 +36,5 @@
     .publish-list-filters { flex-wrap: wrap; overflow: visible; margin-left: 0; width: 100%; flex-shrink: 1; }
 }
 /* P2-B14: the output format in calendar chips ("Shorts · Title"). */
-.calendar-format-label { font-weight: 600; }
+.calendar-format-label { font-weight: 600; flex: none; }
+.post-chip > .calendar-format-label { max-width: 4.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
