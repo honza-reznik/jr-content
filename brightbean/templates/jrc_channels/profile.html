@@ -106,7 +106,7 @@
                 <p class="profile-help">PNG, JPG or WebP, up to 1 MB. SVG is not supported.</p>
                 <button class="profile-button" type="submit">Upload icon</button>
             </form>
-            {% if channel.profile.icon %}<form method="post" action="{% url 'jrc_channels:icon' workspace_id=workspace.id account_id=channel.account.pk %}" style="margin-top:8px">{% csrf_token %}<button class="profile-button" name="remove_icon" value="1">Use website icon</button></form>{% endif %}
+            {% if channel.profile.icon %}<form method="post" action="{% url 'jrc_channels:icon' workspace_id=workspace.id account_id=channel.account.pk %}" style="margin-top:8px">{% csrf_token %}<button class="profile-button" name="remove_icon" value="1">{% if channel.profile.favicon %}Use website icon{% else %}Use default icon{% endif %}</button></form>{% endif %}
             {% endif %}
             <details class="channel-editor" {% if channel.is_editing %}open{% endif %}>
                 <summary>Edit channel<span class="sr-only"> {{ channel.profile.display_name|default:channel.account.account_name }}</span></summary>

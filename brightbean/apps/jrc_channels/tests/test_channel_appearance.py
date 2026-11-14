@@ -272,12 +272,15 @@ def test_refresh_preserves_manual_icon_and_stale_result(owner, workspace, local_
     account = create_manual_channel(workspace, "custom", "Members", profile_url="https://example.invalid/")
     account.jrc_channel.icon = validated_favicon(png())
     account.jrc_channel.save()
+    profile_url = reverse("jrc_channels:profile", kwargs={"workspace_id": workspace.pk})
+    assert b"Use default icon" in owner.get(profile_url).content
     with patch("apps.jrc_channels.favicons.fetch_favicon", return_value=validated_favicon(png())):
         assert owner.post(url(workspace, account, "favicon")).status_code == 302
     account.refresh_from_db()
     profile = account.jrc_channel
     assert profile.favicon and profile.icon
     assert profile.effective_icon.name == profile.icon.name
+    assert b"Use website icon" in owner.get(profile_url).content
     owner.post(url(workspace, account, "icon"), {"remove_icon": "1"})
     account.refresh_from_db()
     assert account.jrc_channel.effective_icon.name == profile.favicon.name
@@ -426,3 +429,38 @@ def test_renaming_custom_channel_preserves_default_colour(owner, workspace):
     account.refresh_from_db()
     assert account.jrc_accent_color == original
     assert account.jrc_channel.color == original
+
+
+@override_settings(JRC_FEATURES=MVP_FEATURES)
+@pytest.mark.parametrize("view", ["month", "week", "day"])
+def test_organization_overview_event_uses_channel_colour(owner, workspace, user, view):
+    from html.parser import HTMLParser
+
+    from django.utils import timezone
+
+    class Events(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.styles = []
+
+        def handle_starttag(self, tag, attrs):
+            values = dict(attrs)
+            if tag == "a" and "cross-post-chip" in values.get("class", "").split():
+                self.styles.append(values.get("style", ""))
+
+    account = create_manual_channel(workspace, "instagram", "Overview colour")
+    profile = account.jrc_channel
+    profile.color = "#FFFF00"
+    profile.save()
+    post = create_content(workspace, "Overview colour", user, social_account_ids=[account.pk])
+    variant = post.platform_posts.get()
+    variant.status = "scheduled"
+    variant.scheduled_at = timezone.now()
+    variant.save()
+    # Navigate through the workspace, as the UI does, to select its organization.
+    assert owner.get(reverse("jrc_channels:profile", kwargs={"workspace_id": workspace.pk})).status_code == 200
+    response = owner.get(reverse("organizations:cross_workspace_calendar"), {"view": view})
+    assert response.status_code == 200
+    events = Events()
+    events.feed(response.content.decode())
+    assert events.styles == ["background:#FFFF00;color:#000000"]

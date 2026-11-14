@@ -107,11 +107,18 @@ fs.mkdirSync(out, {recursive:true});
         await chip.scrollIntoViewIfNeeded();
         await shot(`publish-${view}`);
       }
+      for(const view of ['month','week','day']) {
+        await goto(`/jrc/organizations/calendar/?view=${view}`);
+        const chip = page.locator('a.cross-post-chip').filter({has:page.locator('.pi-instagram')}).first();
+        await expectColour(chip);
+        await chip.scrollIntoViewIfNeeded();
+        await shot(`overview-${view}`);
+      }
       await goto(data.empty_profile);
       await page.getByRole('heading',{name:'No channels yet',exact:true}).waitFor();
       await shot('empty-settings');
       assert.deepEqual(errors, [], `${device}: page errors`);
-      console.log(`${device}: colour save/preview/validation, menu, board, detail, month/week/day/list, favicon/load/upload/remove/failure OK`);
+      console.log(`${device}: colour save/preview/validation, menu, board, detail, month/week/day/list, organization overview, favicon/load/upload/remove/failure OK`);
       await context.close();
     }
   } finally {await browser.close();proxy.close();}

@@ -8,6 +8,8 @@ from pathlib import Path
 
 assert os.environ["JRC_PROJECT"] == "jrc-p2b12"
 os.environ["NODE_OPTIONS"] = "--max-old-space-size=2048"
+# These disposable test databases do not need to fsync every transaction.
+os.environ["PGOPTIONS"] = "-c synchronous_commit=off"
 output = Path("output/p2b12-bb")
 output.mkdir(exist_ok=True)
 base = ["pytest", "-p", "no:cacheprovider", "-o", "addopts=", "--ds=config.settings.jrc_test"]
@@ -18,7 +20,7 @@ if sys.argv[1:] in (["collect"], ["all"]):
     groups = []
     paths, count = [], 0
     for path in sorted(files, key=lambda name: ("/jrc_" not in name, name)):
-        if paths and count + files[path] > 900:
+        if paths and count + files[path] > 650:
             groups.append({"paths": paths, "count": count})
             paths, count = [], 0
         paths.append(path)
@@ -37,7 +39,8 @@ else:
     number = int(sys.argv[1])
     group = json.loads((output / "manifest.json").read_text())[number - 1]
     print(f"Batch {number}: {group['count']} tests", flush=True)
+    database_options = ["--reuse-db"] + (["--create-db"] if number == 1 else [])
     with (output / f"batch-{number}.log").open("w") as log:
-        result = subprocess.run(base + ["--reuse-db", "-q", "--tb=short", *group["paths"]], stdout=log, stderr=subprocess.STDOUT, timeout=570)
+        result = subprocess.run(base + [*database_options, "-q", "--tb=short", *group["paths"]], stdout=log, stderr=subprocess.STDOUT, timeout=570)
     print((output / f"batch-{number}.log").read_text().splitlines()[-1], flush=True)
     raise SystemExit(result.returncode)
