@@ -1,9 +1,11 @@
 from django.urls import path
 
-from . import overview, views
+from . import board_actions, overview, views
 
 app_name = "jrc_production"
 urlpatterns = [
+    path("board/actions/", board_actions.batch, name="board_actions"),
+    path("board/trash/", views.trash, name="trash"),
     path(
         "workspace/<uuid:workspace_id>/content/<uuid:post_id>/proposed-date/", views.proposed_date, name="proposed_date"
     ),

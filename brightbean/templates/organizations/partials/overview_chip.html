@@ -1,7 +1,7 @@
 {% comment %}JR Content: přidáno 2026-11-14 (blok P2-B13), AGPL-3.0. Položka kalendáře admin přehledu: barva a název klienta,
 kanál a název obsahu; otevře souhrn obsahu jen ke čtení. Context: pp (PlatformPost).{% endcomment %}
 <a href="{% url 'jrc_production:overview_content' post_id=pp.post_id %}"
-   class="cross-post-chip status-{{ pp.status }}" style="border-left:3px solid {{ pp.post.workspace.accent_color }}"
+   class="cross-post-chip status-{{ pp.status }}" style="background:{{ pp.social_account.jrc_accent_color }};color:{{ pp.social_account.jrc_accent_text_color }};border-left:3px solid {{ pp.post.workspace.accent_color }}"
    title="{{ pp.post.workspace.name }}: {{ pp.post.title|default:pp.post.caption_snippet }} ({{ pp.get_status_display }})">
     <span class="ws-dot" style="background: {{ pp.post.workspace.accent_color }};"></span>
     <span class="sr-only">{{ pp.post.workspace.name }}:</span>

@@ -766,9 +766,10 @@
                     </a>{% endif %}
                 </div>
                 {% for channel in sidebar_channels %}
-                <div class="sidebar-nav-item group" style="padding-right:4px" title="{% if channel.platform == 'youtube' %}YouTube · {% endif %}{{ channel.account_name|default:channel.account_handle }} · {{ channel.queued_post_count|default:0 }} upcoming post{{ channel.queued_post_count|default:0|pluralize }}">
+                <div class="sidebar-nav-item group" style="padding-right:4px;{% if jrc_app_name %}border-left:3px solid {{ channel.jrc_accent_color }}{% endif %}" title="{% if channel.platform == 'youtube' %}YouTube · {% endif %}{{ channel.account_name|default:channel.account_handle }} · {{ channel.queued_post_count|default:0 }} upcoming post{{ channel.queued_post_count|default:0|pluralize }}">
                 <a href="{% if jrc_app_name %}{% url 'jrc_production:board' %}?client={{ request.workspace.id }}&amp;channel={{ channel.id }}{% else %}{% url 'social_accounts:list' workspace_id=request.workspace.id %}{% endif %}" class="flex items-center gap-[9px] min-w-0 flex-1" aria-label="View {{ channel.account_name|default:channel.account_handle }} content">
                     <div class="relative flex-shrink-0">
+                        {% if jrc_app_name %}<div class="w-7 h-7 rounded flex items-center justify-center" style="background:{{ channel.jrc_accent_color }};color:{{ channel.jrc_accent_text_color }};{% if channel.platform == 'youtube' %}min-width:52px{% endif %}">{% include "jrc_channels/icon.html" with account=channel %}</div>{% else %}
                         {% if channel.avatar_url %}
                         <img src="{{ channel.avatar_url }}" alt="" class="w-7 h-7 rounded-full object-cover">
                         {% else %}
@@ -777,6 +778,7 @@
                         {% if channel.platform != "youtube" %}<div class="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-white rounded-full flex items-center justify-center">
                             {% include "jrc_channels/icon.html" with account=channel %}
                         </div>{% endif %}
+                        {% endif %}
                     </div>
                     {% if channel.platform == "youtube" %}
                     <span class="sidebar-nav-label min-w-0 flex-1" style="line-height:1.35;">

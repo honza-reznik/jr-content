@@ -27,6 +27,7 @@ from apps.approvals.edits import review_return_hint, review_return_notice
 from apps.approvals.models import ApprovalAction, PostComment
 from apps.composer.models import PlatformPost, Post
 from apps.jrc_texts import services as text_services
+from apps.jrc_texts.editor_colors import TEXT_COLORS
 from apps.jrc_texts.models import TextDocument, TextVersion, TextVersionNameChange
 from apps.jrc_texts.services import ConflictError
 from apps.jrc_video.downloads import can_download_final, missing_for_publication
@@ -58,6 +59,7 @@ from .services import (
     available_moves,
     can_change_proposal,
     can_create_content,
+    can_decide,
     can_manage_channels,
     can_rename_content,
     change_category,
@@ -190,14 +192,24 @@ def _visible_comment_counts(posts, user):
 
 
 def _board_card(post, membership, comment_count=0):
+    from apps.members.permissions import can_decide_at_step
+
+    from .board_actions import can_request_approval
+
     stage = pipeline_stage(post)
     variants = post.platform_posts.all()
     planned = post.scheduled_at
     moves = available_moves(post, membership)
+    if PipelineStage.APPROVED not in moves and can_request_approval(post, membership):
+        moves.append(PipelineStage.APPROVED)
     return {
         "post": post,
         "stage": stage,
         "moves": [(value, PipelineStage(value).label) for value in moves],
+        "can_approve": can_decide(post, membership)
+        or (PipelineStage.REVIEW in moves and can_decide_at_step(membership, "pending_review")),
+        "can_trash": can_delete_content(membership, post, list(variants))
+        and not any(pp.status == "publishing" for pp in variants),
         # Ready needs a date; offered from Approved, and from a draft where approval is not required (P1-B27).
         "can_plan": PipelineStage.READY in moves,
         "client_review": any(pp.status == "pending_client" for pp in variants),
@@ -262,6 +274,12 @@ def _board_context(request):
         )
         .order_by("-updated_at", "id")
     )
+    query = request.GET.get("q", "").strip()[:200]
+    search_warning = ""
+    if query:
+        from .search import search_content
+
+        posts, search_warning = search_content(posts, request.user, query)
     comment_counts = _visible_comment_counts(posts, request.user)
     columns = {value: {"value": value, "label": label, "cards": []} for value, label in PipelineStage.choices}
     waiting = []
@@ -283,6 +301,8 @@ def _board_context(request):
         "selected_channel": channel,
         "channels": channels,
         "total": len(posts),
+        "search_query": query,
+        "search_warning": search_warning,
     }
 
 
@@ -294,6 +314,30 @@ def board(request):
     except ValidationError as exc:
         return HttpResponseBadRequest(" ".join(exc.messages))
     return render(request, "jrc_production/board.html", context)
+
+
+@login_required
+@require_GET
+def trash(request):
+    """Trash of the current workspace (P2-B09, P2-B13): one client, like the board."""
+    membership = current_membership(request)
+    cards = []
+    if membership is not None:
+        posts = Post.all_objects.filter(workspace_id=membership.workspace_id, trashed_at__isnull=False).select_related(
+            "workspace"
+        )
+        for post in posts.order_by("-trashed_at", "pk"):
+            copies = list(PlatformPost.all_objects.filter(post=post))
+            cards.append({"post": post, "can_manage": can_delete_content(membership, post, copies)})
+    return render(
+        request,
+        "jrc_production/trash.html",
+        {
+            "cards": cards,
+            "can_empty": any(card["can_manage"] for card in cards),
+            "workspace": membership.workspace if membership else None,
+        },
+    )
 
 
 def creation_options(membership):
@@ -531,19 +575,21 @@ def move(request, workspace_id, post_id):
                 scheduled_at = None
             if scheduled_at is not None and timezone.is_naive(scheduled_at):
                 scheduled_at = timezone.make_aware(scheduled_at, ZoneInfo(workspace.effective_timezone))
-        moved = move_content(
+        from .board_actions import board_move
+
+        moved, notice = board_move(
             post,
             request.POST.get("stage", ""),
             request.user,
             expected_stage=request.POST.get("expected_stage", ""),
             scheduled_at=scheduled_at,
+            comment=request.POST.get("comment", ""),
         )
     except (ValidationError, ValueError) as exc:
         error = " ".join(exc.messages) if isinstance(exc, ValidationError) else str(exc)
         messages.error(request, error)
     else:
-        label = PipelineStage(pipeline_stage(moved)).label
-        messages.success(request, f"Content moved to {label}.")
+        messages.success(request, notice)
     # Preserve only validated board filter values, never redirect to caller-supplied URLs.
     filters = {key: request.POST.get(key, "") for key in ("client", "channel")}
     return redirect(reverse("jrc_production:board") + "?" + urlencode(filters))
@@ -1104,6 +1150,7 @@ def content_detail(request, workspace_id, post_id):
             "post": post,
             "pipeline_stage": pipeline_stage(post),
             "active_tab": active_tab,
+            "text_colors": TEXT_COLORS,
             "tabs": TABS,
             "history": history[:100],
             "empty_initial_text": TextVersion.objects.filter(

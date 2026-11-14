@@ -35,7 +35,7 @@ podle fáze, filtr klienta, barva a název klienta na kartě. Jen ke čtení.{% 
   .ov-card h3 a::after { content:""; position:absolute; inset:0; border-radius:8px; }
   .ov-card h3 a:hover { text-decoration:underline; }
   .ov-meta { display:flex; flex-wrap:wrap; gap:4px 8px; font-size:11px; color:#78716c; }
-  .ov-channel { display:inline-flex; align-items:center; gap:4px; max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ov-channel { display:inline-flex; align-items:center; gap:4px; max-width:150px; padding:1px 6px; border-radius:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .ov-status { color:#9a3412; }
   .ov-mobile-stage { display:none; }
   @media (max-width:767px) {
@@ -80,7 +80,7 @@ podle fáze, filtr klienta, barva a název klienta na kartě. Jen ke čtení.{% 
           <div class="ov-client"><span class="ov-dot" style="background:{{ post.workspace.accent_color }}" aria-hidden="true"></span><span>{{ post.workspace.name }}</span></div>
           <h3><a href="{% url 'jrc_production:overview_content' post_id=post.id %}">{{ post.title|default:"Untitled content" }}</a></h3>
           <div class="ov-meta">
-            {% for variant in post.platform_posts.all %}<span class="ov-channel">{% include "jrc_channels/icon.html" with account=variant.social_account %} {{ variant.social_account.jrc_channel.display_name|default:variant.social_account.account_name }}</span>{% empty %}<span>No channel</span>{% endfor %}
+            {% for variant in post.platform_posts.all %}<span class="ov-channel" style="background:{{ variant.social_account.jrc_accent_color }};color:{{ variant.social_account.jrc_accent_text_color }}">{% include "jrc_channels/icon.html" with account=variant.social_account %} {{ variant.social_account.jrc_channel.display_name|default:variant.social_account.account_name }}</span>{% empty %}<span>No channel</span>{% endfor %}
             {% if card.date %}{% timezone post.workspace.effective_timezone %}<time datetime="{{ card.date|date:'c' }}" title="{{ card.date_label }} publication: {{ card.date|date:'M j, Y H:i T' }}">{% if card.date_label == "Proposed" %}Proposed {{ card.date|date:"M j" }}{% else %}{{ card.date|date:"M j, H:i" }}{% endif %}</time>{% endtimezone %}{% endif %}
             {% if post.shotlist_total %}<span>Shotlist {{ post.shotlist_done }}/{{ post.shotlist_total }}</span>{% endif %}
             {% if card.client_review %}<span class="ov-status">Awaiting client sign-off</span>{% endif %}

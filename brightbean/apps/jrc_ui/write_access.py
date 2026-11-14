@@ -101,6 +101,7 @@ _rules(
     "channels caption_autosave",
     domain="service",
 )
+_rules("jrc_production", "board_actions", domain="content_batch")
 _rules(
     "jrc_production",
     "add_content_comment reply_to_content_comment resolve_content_comment",
@@ -108,7 +109,7 @@ _rules(
     comment=True,
 )
 _rules("jrc_texts", "script concept concept_to_script version_name", domain="service")
-_rules("jrc_video", "upload_start upload_part upload_complete upload_abort video_final", domain="service")
+_rules("jrc_video", "upload_start upload_part upload_complete upload_abort video_final transcript", domain="service")
 _rules("jrc_thumbnails", "upload", domain="service")
 
 # Organization-scoped writes on global URLs (no workspace in the path). The target
@@ -164,6 +165,8 @@ DELEGATED_WRITES = {
     "jrc_channels:profile": "workspace owner/manager; P1-B23",
     "jrc_channels:color": "workspace owner/manager; P1-B23",
     "jrc_channels:icon": "workspace owner/manager; P1-B23",
+    "jrc_channels:channel_color": "workspace owner/manager and manage_social_accounts; P2-B12",
+    "jrc_channels:favicon": "workspace owner/manager and manage_social_accounts; P2-B12",
     "jrc_channels:edit": "workspace owner/manager; P1-B23",
     "jrc_channels:toggle": "workspace owner/manager; P1-B23",
     "apps.jrc_video.views.video_logout": "CSRF protected logout",
@@ -224,6 +227,7 @@ READ_VIEWS = {
     "media_library_org:shared_asset_download",
     "media_library_org:shared_version_list",
     "jrc_production:board",
+    "jrc_production:trash",
     "jrc_production:new_content",
     "jrc_production:overview_board",
     "jrc_production:overview_content",
@@ -275,6 +279,11 @@ READ_VIEWS = {
 
 def enforce_write_rule(request, rule, kwargs):
     """Require the effective permission, then scope optional author checks."""
+    if rule.domain == "content_batch":
+        # Each id is resolved, scoped and authorized under its own transaction by board_actions.
+        if not request.user.is_authenticated or not request.user.is_active:
+            raise PermissionDenied("Sign in to change content.")
+        return
     if rule.domain == "connection_token":
         from apps.onboarding.models import ConnectionLink
 

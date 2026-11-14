@@ -209,22 +209,25 @@ def test_composer_deletion_leads_to_the_board_of_that_client_with_a_message(make
     url = reverse("composer:post_delete", args=[workspace.pk, post.pk])
     response = client.post(url, {"landing": "board"}, HTTP_HX_REQUEST="true")
     assert response.status_code == 204
-    assert response["X-JRC-Message"] == "Content deleted."
+    assert response["X-JRC-Message"] == "Content moved to Trash. You can restore it from the content board."
     assert response["X-JRC-Redirect"] == reverse("jrc_production:board") + f"?client={workspace.pk}"
     assert not Post.objects.filter(pk=post.pk).exists()
     board = client.get(response["X-JRC-Redirect"]).content.decode()
-    assert "Content deleted." in board
-    assert "Content deleted." not in client.get(response["X-JRC-Redirect"]).content.decode()  # shown once
+    assert "Content moved to Trash. You can restore it from the content board." in board
+    assert (
+        "Content moved to Trash. You can restore it from the content board."
+        not in client.get(response["X-JRC-Redirect"]).content.decode()
+    )  # shown once
 
 
 def test_deletion_from_a_list_stays_in_place_and_flashes_nothing(make):
     workspace, post, _, _, client = make()
     response = client.post(reverse("composer:post_delete", args=[workspace.pk, post.pk]))
     assert response.status_code == 204
-    assert response["X-JRC-Message"] == "Content deleted."
+    assert response["X-JRC-Message"] == "Content moved to Trash. You can restore it from the content board."
     assert "X-JRC-Redirect" not in response
     board = client.get(reverse("jrc_production:board")).content.decode()
-    assert "Content deleted." not in board
+    assert "Content moved to Trash. You can restore it from the content board." not in board
 
 
 def test_channel_removal_says_so_and_never_leaves_the_page(make):
@@ -251,7 +254,7 @@ def test_calendar_bulk_delete_names_the_result(make):
     url = reverse("calendar:bulk_platform_action", args=[workspace.pk])
     response = client.post(url, {"action": "delete", "platform_post_ids": [str(copy.pk)]})
     assert response.status_code == 200
-    assert response.json()["message"] == "Channel removed."
+    assert response.json()["message"] == "1 content items moved to Trash."
 
 
 def test_detail_delete_button_uses_the_server_landing(make):

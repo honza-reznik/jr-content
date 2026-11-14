@@ -192,11 +192,12 @@ def test_foreign_workspace_and_anonymous(client, owner, workspace, organization)
     assert client.post(url(other, "icon", account), {"icon": image()}).status_code == 302
 
 
-def test_private_icon_checks_membership_on_each_read(owner, workspace, user, organization, monkeypatch):
+@pytest.mark.parametrize("field", ["icon", "favicon"])
+def test_private_icon_checks_membership_on_each_read(owner, workspace, user, organization, monkeypatch, field):
     account = create_manual_channel(workspace, "custom", "Forendors")
     key = f"jrc_channel_icons/{account.pk}/test.png"
     profile = account.jrc_channel
-    profile.icon = key
+    setattr(profile, field, key)
     profile.save()
     storage = Mock()
     storage.head_object.return_value = {"ContentLength": 3}

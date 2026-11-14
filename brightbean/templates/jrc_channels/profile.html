@@ -54,27 +54,9 @@
     <p class="profile-note">Plan content here, then publish it yourself. Channels do not sign in to social networks or publish automatically.</p>
     <section class="channel-card" aria-labelledby="colour-title">
         <h2 id="colour-title">Workspace colour</h2>
-        <p><span data-colour-preview style="display:inline-block;width:14px;height:14px;border-radius:50%;background:{{ workspace.accent_color }}" aria-hidden="true"></span> Current colour: <span data-colour-value>{{ workspace.accent_color }}</span></p>
         {% if can_change_color %}
-        <form method="post" action="{% url 'jrc_channels:color' workspace_id=workspace.id %}">
-            {% csrf_token %}
-            <div style="display:flex;flex-wrap:wrap;gap:8px;margin:16px 0" role="group" aria-label="Colour palette">
-            {% for hex,name in color_palette %}<button type="submit" name="color" value="{{ hex }}" aria-label="Use {{ name }}" aria-pressed="{% if hex == workspace.accent_color %}true{% else %}false{% endif %}" style="min-width:44px;min-height:44px;border-radius:8px;background:{{ hex }};color:white;padding:8px;border:2px solid {% if hex == workspace.accent_color %}#1c1917{% else %}transparent{% endif %}">{{ name }}</button>{% endfor %}
-            </div>
-        </form>
-        <form method="post" action="{% url 'jrc_channels:color' workspace_id=workspace.id %}">
-            {% csrf_token %}
-            <div class="profile-fields"><div class="profile-field">
-                {{ color_form.color.label_tag }}
-                <div style="display:flex;gap:10px;align-items:center">
-                    <input type="color" value="{{ workspace.accent_color }}" aria-label="Choose workspace colour" data-colour-picker style="width:56px;height:44px;padding:3px;border:1px solid #a8a29e;border-radius:8px;background:var(--surface-0)">
-                    {{ color_form.color }}
-                </div>
-                <div role="alert">{{ color_form.color.errors }}</div>
-                <p class="profile-help">Choose any colour. Text automatically uses black or white for at least 4.5:1 contrast.</p>
-            </div></div>
-            <button class="profile-button primary" type="submit">Save colour</button>
-        </form>
+        {% url 'jrc_channels:color' workspace_id=workspace.id as workspace_colour_url %}
+        {% include "jrc_channels/color_picker.html" with action=workspace_colour_url form=color_form current_color=workspace.accent_color text_color=workspace.accent_text_color preview_label="Workspace" %}
         {% endif %}
     </section>
     <section aria-labelledby="channels-title">
@@ -84,7 +66,7 @@
         </div>
         {% if not can_manage_channels %}<p style="font-size:14px;margin-bottom:16px">You can view these channels. Ask a workspace owner or manager to make changes.</p>{% endif %}
         {% for channel in channels %}
-        <article class="channel-card" aria-labelledby="title-{{ channel.account.pk }}" data-channel="{{ channel.account.platform }}">
+        <article class="channel-card" aria-labelledby="title-{{ channel.account.pk }}" data-channel="{{ channel.account.platform }}" style="border-left:4px solid {{ channel.account.jrc_accent_color }}">
             <div class="channel-top">
                 <div style="min-width:0">
                     <div class="channel-type">{% if channel.account.platform == 'custom' %}Custom channel{% else %}{{ channel.account.get_platform_display }}{% endif %}</div>
@@ -105,7 +87,17 @@
                 </form>
                 {% if channel.profile.is_enabled %}<p class="profile-help">Available when creating posts.</p>{% endif %}
             </div>
+            <details class="channel-editor" {% if channel.color_editing %}open{% endif %}>
+                <summary>Channel colour<span class="sr-only"> {{ channel.profile }}</span></summary>
+                {% url 'jrc_channels:channel_color' workspace_id=workspace.id account_id=channel.account.pk as channel_colour_url %}
+                {% include "jrc_channels/color_picker.html" with action=channel_colour_url form=channel.color_form current_color=channel.account.jrc_accent_color text_color=channel.account.jrc_accent_text_color preview_label=channel.profile.display_name|default:channel.account.account_name %}
+            </details>
             {% if channel.account.platform == 'custom' %}
+            <form method="post" action="{% url 'jrc_channels:favicon' workspace_id=workspace.id account_id=channel.account.pk %}" style="margin-top:16px">
+                {% csrf_token %}
+                <button class="profile-button" type="submit" {% if not channel.profile.profile_url %}disabled{% endif %}>Refresh website icon</button>
+                <p class="profile-help">Uses the website from the profile link. An uploaded image takes priority.</p>
+            </form>
             <form method="post" enctype="multipart/form-data" action="{% url 'jrc_channels:icon' workspace_id=workspace.id account_id=channel.account.pk %}" style="margin-top:16px" data-channel-icon-form>
                 {% csrf_token %}
                 <label for="icon-{{ channel.account.pk }}">Channel icon</label>
@@ -114,7 +106,7 @@
                 <p class="profile-help">PNG, JPG or WebP, up to 1 MB. SVG is not supported.</p>
                 <button class="profile-button" type="submit">Upload icon</button>
             </form>
-            {% if channel.profile.icon %}<form method="post" action="{% url 'jrc_channels:icon' workspace_id=workspace.id account_id=channel.account.pk %}" style="margin-top:8px">{% csrf_token %}<button class="profile-button" name="remove_icon" value="1">Use default icon</button></form>{% endif %}
+            {% if channel.profile.icon %}<form method="post" action="{% url 'jrc_channels:icon' workspace_id=workspace.id account_id=channel.account.pk %}" style="margin-top:8px">{% csrf_token %}<button class="profile-button" name="remove_icon" value="1">{% if channel.profile.favicon %}Use website icon{% else %}Use default icon{% endif %}</button></form>{% endif %}
             {% endif %}
             <details class="channel-editor" {% if channel.is_editing %}open{% endif %}>
                 <summary>Edit channel<span class="sr-only"> {{ channel.profile.display_name|default:channel.account.account_name }}</span></summary>
@@ -151,18 +143,26 @@
 {% block extra_js %}<script src="{% static 'jrc_channels/icon-upload.js' %}" nonce="{{ request.csp_nonce }}"></script>
 <script nonce="{{ request.csp_nonce }}">
 document.addEventListener('DOMContentLoaded', function () {
-    const picker = document.querySelector('[data-colour-picker]');
-    const hex = document.querySelector('#id_color');
-    const preview = document.querySelector('[data-colour-preview]');
-    const value = document.querySelector('[data-colour-value]');
-    if (!picker || !hex) return;
-    picker.addEventListener('input', function () { hex.value = picker.value.toUpperCase(); hex.dispatchEvent(new Event('input', {bubbles: true})); });
-    hex.addEventListener('input', function () {
-        if (/^#[0-9a-f]{6}$/i.test(hex.value)) {
-            picker.value = hex.value;
-            preview.style.backgroundColor = hex.value;
-            value.textContent = hex.value.toUpperCase();
-        }
+    function luminance(hex) {
+        const c = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255).map(v => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+        return c[0] * .2126 + c[1] * .7152 + c[2] * .0722;
+    }
+    document.querySelectorAll('[data-colour-control]').forEach(control => {
+        const picker = control.querySelector('[data-colour-picker]');
+        const hex = control.querySelector('input[name="color"]');
+        const preview = control.querySelector('[data-colour-preview]');
+        const value = control.querySelector('[data-colour-value]');
+        if (!picker || !hex) return;
+        picker.addEventListener('input', function () { hex.value = picker.value.toUpperCase(); hex.dispatchEvent(new Event('input', {bubbles: true})); });
+        hex.addEventListener('input', function () {
+            if (/^#[0-9a-f]{6}$/i.test(hex.value)) {
+                picker.value = hex.value;
+                preview.style.backgroundColor = hex.value;
+                const l = luminance(hex.value);
+                preview.style.color = (1.05 / (l + .05)) >= ((l + .05) / .05) ? '#FFFFFF' : '#000000';
+                value.textContent = hex.value.toUpperCase();
+            }
+        });
     });
 });
 </script>{% endblock %}

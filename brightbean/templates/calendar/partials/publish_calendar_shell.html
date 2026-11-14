@@ -109,13 +109,10 @@ Toolbar: nav arrows + period + Today + view dropdown | right: filter dropdowns.
         {% endif %}
     </div>
 
-    <!-- MVP production-stage legend -->
-    <div class="px-3 sm:px-4 lg:px-6 pt-4 lg:pt-6">
+    <!-- Channel colours; production stages remain written on each event. -->
+    <div class="px-3 sm:px-4 lg:px-6 pt-4 lg:pt-6" aria-label="Channel colours">
         <div class="flex flex-wrap items-center justify-end gap-x-1.5 gap-y-2 text-[11px]">
-            <span class="pipeline-stage-idea rounded px-2 py-1">Idea</span><span class="pipeline-stage-script rounded px-2 py-1">Script</span>
-            <span class="pipeline-stage-shooting rounded px-2 py-1">Shooting</span><span class="pipeline-stage-editing rounded px-2 py-1">Editing</span>
-            <span class="pipeline-stage-review rounded px-2 py-1">Review</span><span class="pipeline-stage-approved rounded px-2 py-1">Approved</span>
-            <span class="pipeline-stage-ready rounded px-2 py-1">Ready to publish</span><span class="pipeline-stage-published rounded px-2 py-1">Published (manually)</span>
+            {% for account in social_accounts %}<span class="rounded px-2 py-1" style="background:{{ account.jrc_accent_color }};color:{{ account.jrc_accent_text_color }}">{% include "jrc_channels/icon.html" with account=account %} {{ account.jrc_channel.display_name|default:account.account_name }}</span>{% endfor %}
         </div>
     </div>
 </div>

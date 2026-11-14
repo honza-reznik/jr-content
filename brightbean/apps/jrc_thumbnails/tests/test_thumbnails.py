@@ -471,8 +471,8 @@ def test_screens_include_current_and_complete_history(client, post, variant, use
         assert f'href="{current.image.url}"'.encode() in content
         assert f'href="{thumbnail.image.url}"'.encode() in content
     approval = client.get(detail(post), {"tab": "approval"}).content
-    assert b"Thumbnail for Instagram" in approval
-    assert b"version 23" in approval
+    assert b"data-thumbnail-image" not in approval
+    assert b"Thumbnail for Instagram" not in approval
     assert b"data-thumbnail-form" not in approval
 
 

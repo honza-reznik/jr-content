@@ -19,7 +19,7 @@ from .youtube_compliance import (
 def remove_youtube_copies(sender, instance, **kwargs):
     if instance.platform == "youtube":
         delete_notification_copies(instance.inbox_messages.all())
-        delete_video_notification_copies(instance.platform_posts.all())
+        delete_video_notification_copies(PlatformPost.all_objects.filter(social_account=instance))
         delete_version_payload_copies(instance)
         invalidate_pending_jobs(instance)
         queue_revocation(instance)
@@ -28,7 +28,7 @@ def remove_youtube_copies(sender, instance, **kwargs):
 @receiver(pre_delete, sender=PlatformPost)
 def remove_youtube_video_notification_copies(sender, instance, **kwargs):
     if instance.social_account.platform == "youtube":
-        delete_video_notification_copies(PlatformPost.objects.filter(pk=instance.pk))
+        delete_video_notification_copies(PlatformPost.all_objects.filter(pk=instance.pk))
 
 
 @receiver(pre_delete, sender=settings.AUTH_USER_MODEL)

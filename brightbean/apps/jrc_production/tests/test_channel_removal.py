@@ -17,7 +17,7 @@ from apps.jrc_video.models import VideoAsset, VideoVersion
 from .test_composer_captions import _composer_autosave, _composer_save
 
 pytestmark = pytest.mark.django_db
-ENDPOINTS = ["save", "autosave", "autosave_fallback", "composer_delete", "calendar_delete", "detail"]
+ENDPOINTS = ["save", "autosave", "autosave_fallback", "composer_delete", "detail"]
 
 
 def remove_via(client, post, variant, endpoint):
@@ -28,11 +28,6 @@ def remove_via(client, post, variant, endpoint):
     if endpoint == "composer_delete":
         return client.post(
             reverse("composer:post_delete", args=[post.workspace_id, post.pk]) + f"?account={variant.social_account_id}"
-        )
-    if endpoint == "calendar_delete":
-        return client.post(
-            reverse("calendar:bulk_platform_action", args=[post.workspace_id]),
-            {"action": "delete", "platform_post_ids": list(post.platform_posts.values_list("pk", flat=True))},
         )
     return client.post(
         reverse("jrc_production:content_detail", args=[post.workspace_id, post.pk]),
@@ -73,7 +68,7 @@ def test_all_channel_removal_paths_protect_saved_work(client, workspace, user, e
 
     response = remove_via(client, post, variant, endpoint)
 
-    if endpoint in {"save", "composer_delete", "calendar_delete"}:
+    if endpoint in {"save", "composer_delete"}:
         assert response.status_code == 409, response.content
     else:
         assert response.status_code == 200, response.content
@@ -117,7 +112,8 @@ def test_removing_last_empty_channel_preserves_content_and_its_history(client, w
     assert list(StageChange.objects.filter(post=post).values()) == changes
 
 
-def test_explicit_whole_content_delete_remains_separate(client, workspace, user):
+@pytest.mark.parametrize("endpoint", ["detail", "calendar"])
+def test_explicit_whole_content_trash_preserves_channel_work(client, workspace, user, endpoint):
     account = create_manual_channel(workspace, "instagram", "IG")
     post = create_content(workspace, "Explicit deletion", user, social_account_ids=[account.pk])
     variant = post.platform_posts.get()
@@ -125,7 +121,17 @@ def test_explicit_whole_content_delete_remains_separate(client, workspace, user)
     video = VideoAsset.objects.create(platform_post=variant, ff_asset_id=uuid.uuid4())
     client.force_login(user)
     # No account means the explicit whole-content action, including its history.
-    response = client.post(reverse("composer:post_delete", args=[workspace.pk, post.pk]))
-    assert response.status_code == 204
+    if endpoint == "calendar":
+        response = client.post(
+            reverse("calendar:bulk_platform_action", args=[workspace.pk]),
+            {"action": "delete", "platform_post_ids": [variant.pk]},
+        )
+        assert response.status_code == 200
+    else:
+        response = client.post(reverse("composer:post_delete", args=[workspace.pk, post.pk]))
+        assert response.status_code == 204
     assert not Post.objects.filter(pk=post.pk).exists()
-    assert not VideoAsset.objects.filter(pk=video.pk).exists()
+    assert Post.all_objects.get(pk=post.pk).trashed_at is not None
+    assert PlatformPost.all_objects.filter(pk=variant.pk).exists()
+    assert variant.jrc_texts.get().versions.exists()
+    assert VideoAsset.objects.filter(pk=video.pk).exists()

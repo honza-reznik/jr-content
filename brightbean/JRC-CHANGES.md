@@ -1,5 +1,28 @@
 # Úpravy JR Content
 
+## 2026-11-14 — P2-B12
+
+- Kanály mají vlastní HEX barvu, výchozí podle platformy, u ostatních stabilně z palety. Sdílený výpočet s workspace volí černý/bílý text s kontrastem nejméně 4,5:1. Barvy se zobrazují v menu, na nástěnce, ve štítcích detailu, v Publish (včetně mobilního kalendáře a legendy) i v přehledu.
+- V nastavení kanálu je stejný color picker jako u workspace; nové zápisy procházejí centrální bránou oprávnění i kontrolou owner/manager + manage_social_accounts.
+- Custom kanál má samostatnou faviconu z odkazu na profil; vlastní nahraná ikona má přednost. Změna odkazu smaže starou faviconu a zařadí jeden pokus na pozadí, ruční obnova je v nastavení. Zobrazení favicony používá stejnou kontrolu členství jako nahrané ikony.
+- Faviconu stahuje omezená služba jrc-favicon-relay (stávající obraz jrc-smtp-relay s vlastním vstupním příkazem, 128 MiB, bez tajemství, pouze dva read-only soubory), aplikace i worker zůstávají jen v interní síti. Hlídá veřejné IP včetně všech DNS odpovědí, připojuje se přímo na prověřenou adresu, kontroluje přesměrování, TLS ověřuje hostname. Jen HTTP(S) na portech 80/443; HTML do 256 KiB, obrázek do 1 MiB, socket 2 s, celý oddělený proces včetně DNS nejvýš 8 s. Před uložením se raster ověří a znovu zapíše jako PNG do 128 × 128 (vstup nejvýš 4 miliony pixelů); SVG nepřijímáme.
+
+## 2026-11-14 — P2-B09
+
+- Nástěnka: přetažení myší a dotykovým úchytem, menu pravým tlačítkem / podržením / tlačítkem,
+  výběr včetně Shift a dávkové přesuny, schválení (i klientem) a přesun do koše. Každý obsah se
+  ověřuje samostatně stejnými pravidly `move_content`; schválení nepřeskakuje klientský krok.
+- Koš (`Post.trashed_at`, migrace `composer.0024`): celé obsahy smazané z detailu a kalendáře
+  se uchovají se všemi verzemi. Výchozí správci dotazů Post/PlatformPost je skryjí i z REST/MCP
+  a publikace; obnova neobnovuje zrušené plány. Odebrání samotného kanálu dál chrání uloženou práci.
+- Trvalé vymazání jen explicitně z koše: vzdálené video se odstraní po potvrzení databázové
+  transakce. `VideoDeletionRequest` (`jrc_production.0008`) uchová nevyřízené odstranění pro
+  opakování přes `jrc_sync_freeframe --pending`. FreeFrame uplatní vlastní lhůtu úklidu smazaných
+  souborů; jeho obnova samotného videa neobnoví odstraněný JRC obsah. Databázové a S3 zálohy uchovávají také koš.
+- Rychlý filtr názvů v prohlížeči, rozšířené hledání v textech, shotlistu, popiscích, Discussion
+  a video komentářích přes FreeFrame API pod identitou uživatele. Soukromé rozepsané texty se
+  hledají jen jejich vlastníkovi s aktuálním právem upravovat; klient nevidí interní komentáře.
+
 ## 2026-11-14 — P2-B18
 
 - Stažení verze i finálního videa po kontrole oprávnění streamuje přes servisní účet FreeFrame. Každý nový požadavek včetně rozsahu bajtů znovu prochází pravidlem JRC; prohlížeč nedostává obecný odkaz na originál. Chybějící originál má dál vysvětlené potvrzení MP4, které vede zpět na stejný autorizovaný endpoint.
@@ -896,6 +919,13 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
   preview, počítadlo znaků zůstává. Comments se v detailu jmenuje Discussion; staré odkazy se dál otevřou.
 - Migrace: `jrc_production.0006`, `jrc_production.0007`, `jrc_texts.0005`. Při nasazení znovu sestavit editor z
   `apps/jrc_texts/editor/script.mjs` a shromáždit statické soubory. Ověřovací skripty: `scripts/P2-B04/` v kořeni repozitáře.
+## 2026-11-14 — P2-B10
+
+- Video verze tvoří jeden sloupec rozbalovacích řádků; poslední verze se otevře automaticky. Přehrávač se načte jen pro otevřenou verzi aktivního kanálu; zavření a změna kanálu zastaví přehrávání. Obnova stavů zachová otevřený řádek i přehrávač.
+- Každá `VideoVersion` má soukromý SRT přepis (migrace `jrc_video.0008`): nahrání/náhrada/smazání podle `can_upload`, čtení podle členství umožňujícího zobrazit verzi. Limit 1 MiB, UTF-8 a kontrola struktury/časů. Náhled je prostý text; titulky se do přehrávače nevkládají. Staré objekty se mažou po potvrzení transakce i při odstranění obsahu.
+- Parser přijímá i více prázdných řádků mezi titulky; prázdný blok nezpůsobí chybu serveru. Regresní ověření zachovává původní bajty souboru i text náhledu.
+- Ověření: `apps/jrc_video/tests/test_transcripts.py` a `scripts/P2-B10/`; při nasazení migrace a collectstatic, bez změn FreeFrame/editoru a jejich sestavení.
+
 ## 2026-11-13 — P2-B02
 
 - Odhlášení před ukončením relace serverově volá FreeFrame `/auth/jrc-logout` jménem řízeného uživatele. Zneplatní jeho dosavadní video tokeny včetně HttpOnly přenosu HLS a smaže FF přihlašovací cookies. Při nedostupném FF ponechá přihlášení, vrátí 503 a nabídne opakování; účet bez videa další službu nepotřebuje.

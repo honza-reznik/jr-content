@@ -12,11 +12,11 @@ changed and whether the approval mode sends the edited copies back to review
 
 "Reviewed content" is what goes out and what a reviewer approves: per channel copy its effective
 title, caption and first comment (its own text, or the base text it falls back to), its final video
-version and its current (newest) thumbnail, and the tags and media (order and alt text) all copies
-share. So a copy goes back to review exactly when what it would publish changed; a base caption edit
-leaves a copy with its own caption alone. Production texts that never go out (script, concept, shot
-list), team-only notes and the provider settings of automatic channels (``platform_extra``, see
-P1-B37 section 4) are not reviewed content.
+version, and the tags and media (order and alt text) all copies share. So a copy goes back to review
+exactly when what it would publish changed; a base caption edit leaves a copy with its own caption
+alone. Production texts that never go out (script, concept, shot list), thumbnails, team-only notes
+and the provider settings of automatic channels (``platform_extra``, see P1-B37 section 4) are not
+reviewed content.
 
 The return happens from every state that carries the approval and has not gone out yet
 (``PlatformPost.REVIEW_RETURN_STATUSES``): approved, waiting for the client, planned, on hold, failed.
@@ -27,7 +27,6 @@ kept on the content as its proposed date when nothing else of it stays planned).
 from dataclasses import dataclass
 
 from django.apps import apps as django_apps
-from django.db.models import Max
 from django.utils import timezone
 
 from apps.members.permissions import edit_returns_to_review, is_planned
@@ -56,16 +55,6 @@ def _final_videos(post):
     return dict(rows)
 
 
-def _current_thumbnails(post):
-    """``{copy id: number of the newest thumbnail}``; the newest version is the channel's thumbnail (P1-B10)."""
-    if not django_apps.is_installed("apps.jrc_thumbnails"):
-        return {}
-    from apps.jrc_thumbnails.models import ChannelThumbnail
-
-    rows = ChannelThumbnail.objects.filter(post_id=post.pk).values("platform_post_id").annotate(number=Max("number"))
-    return {row["platform_post_id"]: row["number"] for row in rows}
-
-
 def reviewed_content(post):
     """Snapshot of the reviewed content of ``post`` (base fields from the instance, the rest from the database).
 
@@ -79,14 +68,13 @@ def reviewed_content(post):
     lock_copies([post.pk])
     own_fields = [own for own, _ in COPY_FIELDS]
     videos = _final_videos(post)
-    thumbnails = _current_thumbnails(post)
     copies = {}
     for pk, *own in PlatformPost.objects.filter(post_id=post.pk).values_list("pk", *own_fields):
         texts = tuple(
             value if value is not None else getattr(post, base)
             for value, (_, base) in zip(own, COPY_FIELDS, strict=True)
         )
-        copies[pk] = (*texts, videos.get(pk), thumbnails.get(pk))
+        copies[pk] = (*texts, videos.get(pk))
     media = tuple(
         PostMedia.objects.filter(post_id=post.pk).order_by("position", "id").values_list("media_asset_id", "alt_text")
     )

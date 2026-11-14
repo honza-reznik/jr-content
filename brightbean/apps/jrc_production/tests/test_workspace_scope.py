@@ -345,6 +345,59 @@ def test_a_user_without_clients_sees_an_empty_board(org):
     assert "You do not have access to any clients yet." in response.content.decode()
 
 
+# ---- P2-B09 × P2-B13: search, trash and bulk actions of the board stay in the current workspace -
+
+
+TRASH = reverse("jrc_production:trash")
+
+
+def test_board_keeps_search_trash_and_bulk_actions_without_a_client_filter(editor, posts):
+    html = login(editor).get(BOARD).content.decode()
+    assert 'id="full-search"' in html and 'id="quick-search"' in html and f'href="{TRASH}"' in html
+    assert "data-bulk-move" in html and 'id="card-action-menu"' in html
+    assert 'id="filter-client"' not in html and "All clients" not in html
+
+
+def test_search_finds_content_of_the_current_workspace_only(editor, posts, bruno):
+    # The words are in both clients' titles the editor may read; only the current client's card shows.
+    Post.objects.filter(pk=posts["bruno"].pk).update(title="Bruno studio tour")
+    client = login(editor)
+    response = client.get(BOARD, {"q": "studio tour"})
+    html = response.content.decode()
+    assert response.status_code == 200 and response.context["total"] == 1
+    assert "Ella studio tour" in html and "Bruno studio tour" not in html
+    # A client link with a search shows the other client's match, and that client becomes current.
+    response = client.get(BOARD, {"client": bruno.id, "q": "studio tour"})
+    html = response.content.decode()
+    assert response.context["total"] == 1 and "Bruno studio tour" in html and "Ella studio tour" not in html
+    # Content of a client the editor is not a member of is never searched.
+    assert client.get(BOARD, {"q": "Secret launch"}).context["total"] == 0
+
+
+def test_trash_lists_the_current_workspace_only(editor, posts, ella, bruno):
+    from apps.jrc_production.trash import trash_content
+
+    owner = User.objects.get(email="owner-content@example.invalid")
+    for post in posts.values():
+        trash_content(post, owner)
+    client = login(editor)
+    html = client.get(TRASH).content.decode()
+    assert "Ella studio tour" in html and "Bruno bakery reel" not in html and "Secret launch teaser" not in html
+    # Switching the client (here via the board link, as the menu does) switches the trash too.
+    assert client.get(BOARD, {"client": bruno.id}).status_code == 200
+    html = client.get(TRASH).content.decode()
+    assert "Bruno bakery reel" in html and "Ella studio tour" not in html and "Secret launch teaser" not in html
+
+
+def test_trash_of_a_user_without_clients_is_empty(org, posts):
+    from apps.jrc_production.trash import trash_content
+
+    trash_content(posts["ella"], User.objects.get(email="owner-content@example.invalid"))
+    lonely = member(make_user("lonely-trash@example.invalid"), org)
+    response = login(lonely).get(TRASH)
+    assert response.status_code == 200 and "Trash is empty." in response.content.decode()
+
+
 # ---- AK2: new content goes to the current workspace only --------------------------------------
 
 

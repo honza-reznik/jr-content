@@ -301,12 +301,10 @@ def test_two_stage_flow_requires_client_and_internal_roles(post, workspace, user
     "role,stage,initial",
     [
         ("viewer", "script", "idea"),
-        ("contributor", "approved", "review"),
         ("client", "ready", "approved"),
         ("editor", "ready", "approved"),
         ("owner", "published", "approved"),
         ("owner", "ready", "idea"),
-        ("owner", "approved", "idea"),
     ],
 )
 def test_forbidden_move_is_atomic_in_service_and_http(post, workspace, user, http, role, stage, initial):
@@ -327,6 +325,22 @@ def test_forbidden_move_is_atomic_in_service_and_http(post, workspace, user, htt
     assert response.status_code == 403
     assert list(post.platform_posts.values_list("status", flat=True)) == before
     assert StageChange.objects.count() == count
+
+
+@pytest.mark.parametrize("role,initial,expected", [("contributor", "review", "review"), ("owner", "idea", "approved")])
+def test_http_approved_target_requests_or_decides_through_review(post, workspace, user, http, role, initial, expected):
+    if initial == "review":
+        review(post, user)
+    set_role(workspace, user, role)
+    response = http.post(move_url(post), {"stage": "approved", "expected_stage": initial}, follow=True)
+    assert response.status_code == 200
+    assert pipeline_stage(Post.objects.get(pk=post.pk)) == expected
+    assert ApprovalAction.objects.filter(post=post, action="submitted").count() == 1
+    assert ApprovalAction.objects.filter(post=post, action="approved").count() == int(role == "owner")
+    if role == "contributor":
+        # Already waiting in Review: the drag changes nothing and says so (P2-B09 review N4).
+        assert b"Nothing changed" in response.content
+        assert b"Approval requested" not in response.content
 
 
 def test_client_can_move_only_own_production(post, workspace, user):

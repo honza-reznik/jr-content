@@ -50,7 +50,7 @@ def _authorized(user, key, workspace=None):
         from apps.jrc_channels.models import ChannelProfile
 
         if ChannelProfile.objects.filter(
-            icon=key, social_account__workspace_id__in=workspaces.values("workspace_id")
+            Q(icon=key) | Q(favicon=key), social_account__workspace_id__in=workspaces.values("workspace_id")
         ).exists():
             return
         raise Http404

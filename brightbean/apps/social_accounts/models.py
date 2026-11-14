@@ -564,6 +564,18 @@ class SocialAccount(models.Model):
         }
         return icons.get(self.platform, self.platform[:2])
 
+    @property
+    def jrc_accent_color(self):
+        from apps.jrc_channels.colors import channel_accent
+
+        return channel_accent(self)
+
+    @property
+    def jrc_accent_text_color(self):
+        from apps.workspaces.colors import accent_text_color
+
+        return accent_text_color(self.jrc_accent_color)
+
 
 class MastodonAppRegistration(models.Model):
     """Stores per-instance OAuth app registrations for Mastodon federation."""
