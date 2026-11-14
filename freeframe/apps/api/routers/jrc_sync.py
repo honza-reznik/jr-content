@@ -5,7 +5,7 @@ import uuid
 import unicodedata
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import AfterValidator, BaseModel, Field
 from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
@@ -24,9 +24,45 @@ NAMESPACE = uuid.UUID("29c4ee9e-ab19-48c4-bb44-2fc77109b234")
 
 def require_sync_user(current_user: User = Depends(get_current_user)):
     email = os.environ.get("JRC_FF_SYNC_EMAIL", "")
-    if not email or not current_user.is_superadmin or current_user.email.lower() != email.lower():
+    if (not email or not current_user.is_superadmin or current_user.jrc_managed is True
+            or current_user.email.lower() != email.lower()):
         raise HTTPException(status_code=403, detail="JR Content service account required")
     return current_user
+
+
+def _download_file(db, service_user, asset_id, version_id):
+    from .assets import _ready_media_file
+    from ..models.asset import AssetType
+    from ..services.downloads import managed_video_download, download_filename
+
+    asset, media = _ready_media_file(db, asset_id, version_id, service_user)
+    if asset.asset_type != AssetType.video:
+        raise HTTPException(404, "Video not found")
+    choice, note = managed_video_download(asset, media)
+    filename = media.original_filename if choice.id == "original" else download_filename(asset, media, choice)
+    return choice.s3_key, filename, note
+
+
+@router.get("/assets/{asset_id}/download-info")
+def download_info(
+    asset_id: uuid.UUID, version_id: uuid.UUID,
+    db: Session = Depends(get_db), service_user: User = Depends(require_sync_user),
+):
+    """Only Brightbean may select a file after checking its download policy."""
+    _, filename, note = _download_file(db, service_user, asset_id, version_id)
+    return {"filename": filename, "download_note": note}
+
+
+@router.get("/assets/{asset_id}/download")
+def download_video(
+    asset_id: uuid.UUID, version_id: uuid.UUID, actor_id: uuid.UUID, request: Request,
+    db: Session = Depends(get_db), service_user: User = Depends(require_sync_user),
+):
+    from .files import stream_file
+
+    key, filename, _ = _download_file(db, service_user, asset_id, version_id)
+    # The trusted caller supplies the real actor so all transports share the same budget.
+    return stream_file(key, request, filename, f"user:{actor_id}")
 
 
 def remote_id(kind, source_id):

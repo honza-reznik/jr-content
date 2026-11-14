@@ -51,7 +51,10 @@ def test_each_object_checks_membership_on_every_request(client, live_project, st
     ctx.db.flush()
     url = "/files/" + key
     response = client.get(url, headers=ctx.headers)
-    assert response.status_code == 200
+    assert response.status_code == (403 if kind in ("raw", "download", "processed") else 200)
+    if kind in ("raw", "download", "processed"):
+        storage[0].get_object.assert_not_called()
+        return
     assert response.content == b"0123456789"
     assert response.headers["cache-control"] == "private, no-store"
     assert client.get(url).status_code in (401, 403)
@@ -81,6 +84,8 @@ def test_client_cannot_read_internal_attachment(client, live_project, storage, p
 
 
 def test_range_and_download_filename(client, live_project, storage):
+    live_project.user.jrc_managed = False
+    live_project.db.flush()
     response = client.get("/files/" + live_project.media.s3_key_raw,
                           params={"filename": "Ella-final.mp4"}, headers=dict(live_project.headers, Range="bytes=2-5"))
     assert response.status_code == 206
@@ -121,6 +126,15 @@ def test_identity_and_branding_files_require_session_and_live_access(client, liv
         assert client.get("/files/" + key, headers=ctx.headers).status_code == 404
 
 
+def plain_freeframe(ctx):
+    """These tests exercise the share file-context machinery through the download operation,
+    which a plain FreeFrame instance keeps. JR Content accounts and projects never get it
+    (tests/test_jrc_share_download_gate.py)."""
+    ctx.project.jrc_managed = False
+    ctx.user.jrc_managed = False
+    ctx.db.flush()
+
+
 @pytest.fixture
 def share_gateway(monkeypatch):
     cache = {}
@@ -153,6 +167,7 @@ def test_issued_file_url_rechecks_share_and_membership(client, live_project, sto
     from urllib.parse import urlsplit, parse_qs, urlencode
     from .test_jrc_live_membership import _link
     ctx = live_project
+    plain_freeframe(ctx)
     link = _link(ctx, "asset")
     response = client.get(f"/share/{link.token}/stream/{ctx.asset.id}?download=true", headers=ctx.headers)
     assert response.status_code == 200, response.text
@@ -205,6 +220,8 @@ def test_issued_file_url_rechecks_share_and_membership(client, live_project, sto
 
 
 def test_head_releases_storage_and_capacity(client, live_project, storage):
+    live_project.user.jrc_managed = False
+    live_project.db.flush()
     response = client.head("/files/" + live_project.media.s3_key_raw, headers=live_project.headers)
     assert response.status_code == 200 and response.content == b""
     assert response.headers["content-length"] == "10"
@@ -216,6 +233,7 @@ def test_head_releases_storage_and_capacity(client, live_project, storage):
 def test_share_comment_attachment_and_reply_keep_server_context(client, live_project, storage, share_gateway, change):
     from .test_jrc_live_membership import _link
     ctx = live_project
+    plain_freeframe(ctx)
     link = _link(ctx, "asset")
     parent = Comment(asset_id=ctx.asset.id, version_id=ctx.version.id, author_id=ctx.user.id,
                      body="shared", visibility="public")
@@ -271,6 +289,7 @@ def test_context_cannot_change_key_operation_or_user(client, live_project, stora
     from apps.api.models.project import ProjectMember
     from apps.api.services.auth_service import create_access_token
     ctx = live_project
+    plain_freeframe(ctx)
     link = _link(ctx, "asset")
     issued = client.get(f"/share/{link.token}/stream/{ctx.asset.id}?download=true", headers=ctx.headers).json()["url"]
     url = gateway_path(issued)
@@ -281,7 +300,7 @@ def test_context_cannot_change_key_operation_or_user(client, live_project, stora
     assert response.status_code == 200
     assert "changed" not in response.headers["content-disposition"]
     assert client.get(url + "/" + ctx.media.s3_key_raw, headers=ctx.headers).status_code == 404
-    other = User(email=f"{uuid.uuid4().hex}@example.com", name="Other", jrc_managed=True,
+    other = User(email=f"{uuid.uuid4().hex}@example.com", name="Other", jrc_managed=False,
                  token_version=1, status=UserStatus.active)
     ctx.db.add(other)
     ctx.db.flush()
@@ -289,14 +308,18 @@ def test_context_cannot_change_key_operation_or_user(client, live_project, stora
     ctx.db.flush()
     headers = {"Authorization": "Bearer " + create_access_token(str(other.id), token_version=1)}
     assert client.get(url, headers=headers).status_code == 404
-    # Ordinary member rights remain independent of the share context.
-    assert client.get("/files/" + ctx.media.s3_key_raw, headers=headers).status_code == 200
+    # A managed member cannot strip the share context to reach raw bytes.
+    ctx.project.jrc_managed = True
+    other.jrc_managed = True
+    ctx.db.flush()
+    assert client.get("/files/" + ctx.media.s3_key_raw, headers=headers).status_code == 403
 
 
 @pytest.mark.parametrize("failure,expected", [("expired", 404), ("unavailable", 503)])
 def test_context_without_server_record_fails_before_storage(client, live_project, storage, share_gateway, monkeypatch, failure, expected):
     from .test_jrc_live_membership import _link
     ctx = live_project
+    plain_freeframe(ctx)
     link = _link(ctx, "asset")
     issued = client.get(f"/share/{link.token}/stream/{ctx.asset.id}?download=true", headers=ctx.headers).json()["url"]
     if failure == "expired":
@@ -334,6 +357,8 @@ def test_long_attachment_name_comes_from_database(client, live_project, storage,
 
 @pytest.mark.parametrize("value", ["bytes=0-1,4-5", "bytes=", "other", "bytes=-"])
 def test_invalid_range_never_opens_storage(client, live_project, storage, value):
+    live_project.user.jrc_managed = False
+    live_project.db.flush()
     response = client.get("/files/" + live_project.media.s3_key_raw,
                           headers=dict(live_project.headers, Range=value))
     assert response.status_code == 416

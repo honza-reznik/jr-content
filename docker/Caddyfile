@@ -85,7 +85,7 @@
 	}
 	redir {$JRC_BASE_PATH}/video-api {$JRC_BASE_PATH}/video-api/ 308
 	handle_path {$JRC_BASE_PATH}/video-api/* {
-		@private path /admin /admin/* /docs /docs/* /redoc /openapi.json /setup /setup/*
+		@private path /admin /admin/* /docs /docs/* /redoc /openapi.json /setup /setup/* /jrc-sync /jrc-sync/*
 		# Next middleware čte pouze boolean, nemůže založit správce.
 		@setupStatus path /setup/status
 		handle @setupStatus {

@@ -27,9 +27,11 @@ from .limits import TransferUnavailableError, acquire
 from .s3 import client_and_bucket
 
 CHUNK_BYTES = 64 * 1024
-# P2-B05: a transfer (a 4 GB original included) has no total time limit. It is cut when one piece
-# is not read from storage and taken by the client within this many seconds (slower than ~2 KiB/s).
+# A piece must be read and accepted within the idle limit. Independent rate windows
+# prevent a trickle from holding a slot forever; 4 GiB still fits at ~0.53 Mbit/s (~18.2 h).
 IDLE_SECONDS = 30
+RATE_WINDOW_SECONDS = 300
+MIN_BYTES_PER_SECOND = 64 * 1024
 
 
 def _authorized(user, key, workspace=None):
@@ -99,8 +101,14 @@ def _stream(read, close, release, *, status=200, content_type=None, headers=None
 
     def chunks():
         try:
-            moved = time.monotonic()
+            moved = window_started = time.monotonic()
+            delivered = 0
             while True:
+                elapsed = time.monotonic() - window_started
+                if elapsed >= RATE_WINDOW_SECONDS:
+                    if delivered < elapsed * MIN_BYTES_PER_SECOND:
+                        raise RuntimeError("File transfer too slow")
+                    window_started, delivered = time.monotonic(), 0
                 chunk = read(CHUNK_BYTES)
                 # Measured from handing over the previous piece: covers the client taking it and this read.
                 if time.monotonic() - moved > IDLE_SECONDS:
@@ -111,6 +119,7 @@ def _stream(read, close, release, *, status=200, content_type=None, headers=None
                     renew()
                 moved = time.monotonic()
                 yield chunk
+                delivered += len(chunk)
         finally:
             close()
             release()
@@ -205,7 +214,16 @@ def stored_file(request, key, *, workspace=None):
 def _video_file(request, key):
     if not VideoAccount.objects.filter(user=request.user).exists():
         raise Http404
-    api = FreeFrameUserClient(request.user)
+    return proxy_video_file(
+        request,
+        FreeFrameUserClient(request.user),
+        "/files/" + quote(key, safe="/"),
+        params={k: request.GET[k] for k in ("filename", "share") if k in request.GET},
+    )
+
+
+def proxy_video_file(request, api, path, *, params=None):
+    """Fixed internal API transport. The caller authorizes the path before streaming."""
     upstream = None
     try:
         for renew in (False, True):
@@ -216,8 +234,8 @@ def _video_file(request, key):
             # Fixed internal host, exact key; cookies never leave the application.
             upstream = requests.request(
                 request.method,
-                api.base_url + "/files/" + quote(key, safe="/"),
-                params={k: request.GET[k] for k in ("filename", "share") if k in request.GET},
+                api.base_url + path,
+                params=params,
                 headers=headers,
                 stream=True,
                 timeout=(3, 5),

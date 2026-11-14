@@ -1,13 +1,12 @@
 """JSON endpoints behind the "Upload version" button (F5-B05). Session login + CSRF on every call."""
 
 import json
-from urllib.parse import parse_qs, urlencode, urlsplit
+from urllib.parse import urlencode
 
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
-from django.http import Http404, HttpResponse, HttpResponseRedirect, JsonResponse
+from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
-from django.urls import reverse
 from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_GET, require_POST
@@ -182,30 +181,32 @@ def version_download(request, workspace_id, post_id, version_id):
 
 
 def _video_download(request, asset_id, version_id):
+    from apps.jrc_storage.views import proxy_video_file
+
+    from .client import FreeFrameClient, FreeFrameError
+    from .models import VideoAccount
+
+    api = FreeFrameClient()
+    path = f"/jrc-sync/assets/{asset_id}"
     try:
-        stream_query = urlencode(
-            {
-                "version_id": version_id,
-                "download": "true",
-            }
-        )
-        result = uploads._call(
-            request.user,
-            "GET",
-            f"/assets/{asset_id}/stream?{stream_query}",
-        )
-        signed_url = result.get("url") if isinstance(result, dict) else None
-        expected = request.build_absolute_uri(reverse("jrc_private_file", kwargs={"path": "video/"}))
-        if not isinstance(signed_url, str) or not signed_url.startswith(expected):
-            raise UploadError("The video service returned an unexpected address.", 502)
-        if set(parse_qs(urlsplit(signed_url).query)) - {"filename", "share"}:
-            raise UploadError("The video service returned an unexpected address.", 502)
-    except UploadError as exc:
-        return HttpResponse("Video download is unavailable.", status=exc.status, content_type="text/plain")
-    if result.get("download_note"):
-        response = render(request, "jrc_video/download_fallback.html", {"download_url": signed_url})
+        result = api.request("GET", f"{path}/download-info?{urlencode({'version_id': version_id})}")
+        if not isinstance(result, dict) or not isinstance(result.get("filename"), str):
+            raise FreeFrameError("Invalid download response")
+    except FreeFrameError:
+        return HttpResponse("Video download is unavailable.", status=503, content_type="text/plain")
+    # The confirmation link returns here: access is checked again, never a generic raw-file URL.
+    if result.get("download_note") and request.GET.get("converted") != "1":
+        response = render(request, "jrc_video/download_fallback.html", {"download_url": request.path + "?converted=1"})
     else:
-        response = HttpResponseRedirect(signed_url)
+        account = VideoAccount.objects.filter(user=request.user).first()
+        if account is None:
+            raise Http404
+        response = proxy_video_file(
+            request,
+            api,
+            f"{path}/download",
+            params={"version_id": str(version_id), "actor_id": str(account.ff_user_id)},
+        )
     response["Cache-Control"] = "no-store"
     response["Referrer-Policy"] = "no-referrer"
     return response

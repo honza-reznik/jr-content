@@ -28,6 +28,7 @@ import { cn, copyToClipboard, dateInputValue, endOfDayISO } from '@/lib/utils'
 import { withBasePath } from '@/lib/base-path'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth-store'
 import type { AssetResponse, Folder, ShareLink, ShareLinkAppearance } from '@/types'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -305,6 +306,7 @@ interface ConfigurePhaseProps {
 }
 
 function ConfigurePhase({ defaultTitle, onBack, onCreate, creating, createdUrl, onClose }: ConfigurePhaseProps) {
+  const managed = useAuthStore((s) => s.user?.jrc_managed === true)
   const [title, setTitle] = React.useState(defaultTitle)
   // Comments on, downloads off, matching ShareLinkCreate on the API. Both have to
   // move together or a link created through the API keeps the old behaviour while
@@ -398,7 +400,8 @@ function ConfigurePhase({ defaultTitle, onBack, onCreate, creating, createdUrl, 
             </Switch.Root>
           </div>
 
-          {/* Allow downloads */}
+          {/* Allow downloads: JR Content downloads go through the JR Content rule only. */}
+          {!managed && (
           <div className="flex items-center justify-between py-2.5">
             <div className="flex items-center gap-2.5">
               <Download className="h-4 w-4 text-text-tertiary" />
@@ -412,6 +415,7 @@ function ConfigurePhase({ defaultTitle, onBack, onCreate, creating, createdUrl, 
               <Switch.Thumb className="block w-4 h-4 rounded-full bg-white shadow transition-transform translate-x-0.5 data-[state=checked]:translate-x-[18px]" />
             </Switch.Root>
           </div>
+          )}
 
           {/* Passphrase */}
           <div className="space-y-2">
@@ -647,6 +651,7 @@ interface LinkCreatedPhaseProps {
 }
 
 function LinkCreatedPhase({ result, allResults, onSelectResult, onDone, onAdvancedSettings }: LinkCreatedPhaseProps) {
+  const managed = useAuthStore((s) => s.user?.jrc_managed === true)
   const [title, setTitle] = React.useState(result.title)
   const [editingTitle, setEditingTitle] = React.useState(false)
   const [savingTitle, setSavingTitle] = React.useState(false)
@@ -918,7 +923,8 @@ function LinkCreatedPhase({ result, allResults, onSelectResult, onDone, onAdvanc
                 </Switch.Root>
               </div>
 
-              {/* Allow downloads */}
+              {/* Allow downloads: JR Content downloads go through the JR Content rule only. */}
+              {!managed && (
               <div className="flex items-center justify-between py-2.5">
                 <div className="flex items-center gap-2.5">
                   <Download className="h-4 w-4 text-text-tertiary" />
@@ -932,6 +938,7 @@ function LinkCreatedPhase({ result, allResults, onSelectResult, onDone, onAdvanc
                   <Switch.Thumb className="block w-4 h-4 rounded-full bg-white shadow transition-transform translate-x-0.5 data-[state=checked]:translate-x-[18px]" />
                 </Switch.Root>
               </div>
+              )}
 
               {/* Passphrase */}
               <div className="space-y-2">
