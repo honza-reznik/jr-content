@@ -95,14 +95,14 @@ def test_approval_card_escapes_script_and_caption_once(content, user, client_use
     html = browser.get(detail(content, "approval")).content.decode()
 
     assert_single_escape(html)
-    assert f"Script {ONCE}\n\nSecond {ONCE}</div>" in html
+    assert f"Script {ONCE}\n\nSecond {ONCE}</div>" not in html
     assert f"Caption {ONCE}" in html
 
 
 @pytest.mark.parametrize(
     "tab, expected",
     [
-        ("approval", ["Script ", "Caption "]),
+        ("approval", ["Caption "]),
         ("caption", ["Caption "]),
         ("shotlist", ["Shot ", "Note "]),
         ("comments", ["Comment "]),

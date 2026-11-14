@@ -170,6 +170,7 @@ def test_tab_order_and_default_tab_until_a_script_exists(http, post):
     # A new content (also a quick idea) opens on the Concept.
     assert 'aria-selected="true" href="?tab=concept"' in page
     assert url(post) in page and "jrc_texts/dist/script.js" in page
+    assert 'data-text-color="#0369a1"' in page
     assert "Use as script draft" in page
     # An empty script is not a script yet.
     services.create_document(post.pk, post.author, kind="script", markdown="")

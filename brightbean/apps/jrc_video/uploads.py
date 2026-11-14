@@ -208,7 +208,7 @@ def start_upload(user, workspace, post, membership, *, channel, filename, size, 
 
     with transaction.atomic():
         # One upload start per channel at a time; held across the FreeFrame calls on purpose.
-        locked = PlatformPost.objects.select_for_update().get(pk=variant.pk)
+        locked = PlatformPost.objects.select_for_update(of=("self",)).get(pk=variant.pk)
         if VideoVersion.objects.filter(
             video__platform_post=locked, uploaded_by=user, status=VideoVersion.Status.UPLOADING
         ).exists():

@@ -77,10 +77,15 @@ def test_the_guard_sees_the_known_deletion_paths():
     deleters = find_deleters()
     for key in (
         "composer/views.py:post_delete",
-        "calendar/views.py:bulk_platform_action",
+        "jrc_production/trash.py:manage_trash",
         "jrc_production/services.py:remove_content_channel",
     ):
         assert key in deleters, key
+
+    # Calendar deletion is reversible and must use the same authorization service as the board.
+    tree = next(tree for rel, tree in _source_files() if rel == "calendar/views.py")
+    functions = dict(_functions(tree))
+    assert _calls(functions["bulk_platform_action"], "trash_content")
 
 
 def test_deselection_helper_is_only_called_after_the_rule():

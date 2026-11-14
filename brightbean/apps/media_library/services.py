@@ -885,14 +885,14 @@ def _json_referenced_asset_ids_python():
 
     referenced = set()
 
-    for pp in PlatformPost.objects.exclude(platform_extra=None).only("platform_extra"):
+    for pp in PlatformPost.all_objects.exclude(platform_extra=None).only("platform_extra"):
         extra = pp.platform_extra or {}
         if extra.get("thumbnail_asset_id"):
             referenced.add(_to_uuid(extra["thumbnail_asset_id"]))
         if extra.get("cover_image_asset_id"):
             referenced.add(_to_uuid(extra["cover_image_asset_id"]))
 
-    for pp in PlatformPost.objects.exclude(platform_specific_media=None).only("platform_specific_media"):
+    for pp in PlatformPost.all_objects.exclude(platform_specific_media=None).only("platform_specific_media"):
         if isinstance(pp.platform_specific_media, list):
             for val in pp.platform_specific_media:
                 referenced.add(_to_uuid(val))

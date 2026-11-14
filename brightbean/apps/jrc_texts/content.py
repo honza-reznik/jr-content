@@ -25,7 +25,7 @@ def normalize_content(*, content=None, markdown=None, plain=False):
         return {"text": text}, text
     try:
         result = subprocess.run(
-            ["node", "/opt/jrc-texts/bridge.mjs"],
+            ["node", "--max-old-space-size=2048", "/opt/jrc-texts/bridge.mjs"],
             input=encoded,
             text=True,
             capture_output=True,

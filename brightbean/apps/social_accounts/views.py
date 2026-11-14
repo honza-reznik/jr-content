@@ -950,14 +950,14 @@ def disconnect(request, workspace_id, account_id):
     from apps.composer.models import PlatformPost, Post
 
     orphan_post_ids = list(
-        PlatformPost.objects.filter(social_account=account)
+        PlatformPost.all_objects.filter(social_account=account)
         .values("post_id")
         .annotate(total_platforms=Count("post__platform_posts"))
         .filter(total_platforms=1)
         .values_list("post_id", flat=True)
     )
     if orphan_post_ids:
-        Post.objects.filter(id__in=orphan_post_ids).delete()
+        Post.all_objects.filter(id__in=orphan_post_ids).delete()
 
     account_name = account.account_name or account.account_handle
     account.delete()

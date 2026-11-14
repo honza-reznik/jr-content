@@ -6,6 +6,21 @@
 - V nastavení kanálu je stejný color picker jako u workspace; nové zápisy procházejí centrální bránou oprávnění i kontrolou owner/manager + manage_social_accounts.
 - Custom kanál má samostatnou faviconu z odkazu na profil; vlastní nahraná ikona má přednost. Změna odkazu smaže starou faviconu a zařadí jeden pokus na pozadí, ruční obnova je v nastavení. Zobrazení favicony používá stejnou kontrolu členství jako nahrané ikony.
 - Faviconu stahuje omezená služba jrc-favicon-relay (python:3.12-slim, 128 MiB, bez tajemství, pouze dva read-only soubory), aplikace i worker zůstávají jen v interní síti. Hlídá veřejné IP včetně všech DNS odpovědí, připojuje se přímo na prověřenou adresu, kontroluje přesměrování, TLS ověřuje hostname. Jen HTTP(S) na portech 80/443; HTML do 256 KiB, obrázek do 1 MiB, socket 2 s, celý oddělený proces včetně DNS nejvýš 8 s. Před uložením se raster ověří a znovu zapíše jako PNG do 128 × 128 (vstup nejvýš 4 miliony pixelů); SVG nepřijímáme.
+## 2026-11-14 — P2-B09
+
+- Nástěnka: přetažení myší a dotykovým úchytem, menu pravým tlačítkem / podržením / tlačítkem,
+  výběr včetně Shift a dávkové přesuny, schválení (i klientem) a přesun do koše. Každý obsah se
+  ověřuje samostatně stejnými pravidly `move_content`; schválení nepřeskakuje klientský krok.
+- Koš (`Post.trashed_at`, migrace `composer.0024`): celé obsahy smazané z detailu a kalendáře
+  se uchovají se všemi verzemi. Výchozí správci dotazů Post/PlatformPost je skryjí i z REST/MCP
+  a publikace; obnova neobnovuje zrušené plány. Odebrání samotného kanálu dál chrání uloženou práci.
+- Trvalé vymazání jen explicitně z koše: vzdálené video se odstraní po potvrzení databázové
+  transakce. `VideoDeletionRequest` (`jrc_production.0008`) uchová nevyřízené odstranění pro
+  opakování přes `jrc_sync_freeframe --pending`. FreeFrame uplatní vlastní lhůtu úklidu smazaných
+  souborů; jeho obnova samotného videa neobnoví odstraněný JRC obsah. Databázové a S3 zálohy uchovávají také koš.
+- Rychlý filtr názvů v prohlížeči, rozšířené hledání v textech, shotlistu, popiscích, Discussion
+  a video komentářích přes FreeFrame API pod identitou uživatele. Soukromé rozepsané texty se
+  hledají jen jejich vlastníkovi s aktuálním právem upravovat; klient nevidí interní komentáře.
 
 ## 2026-11-14 — P2-B18
 

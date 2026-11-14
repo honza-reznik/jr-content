@@ -367,7 +367,7 @@ def request_content_changes(post, user, comment, *, expected_stage):
 
 
 @transaction.atomic
-def move_content(post, stage, user, *, expected_stage, scheduled_at=None):
+def move_content(post, stage, user, *, expected_stage, scheduled_at=None, comment=""):
     """Serialize changes, authorize the actor and delegate editorial decisions to Brightbean."""
     post = Post.objects.select_for_update(of=("self",)).select_related("workspace").get(pk=post.pk)
     membership = content_membership(post.workspace, user)
@@ -398,7 +398,10 @@ def move_content(post, stage, user, *, expected_stage, scheduled_at=None):
     elif stage == PipelineStage.REVIEW:
         approvals.submit_for_review(post, user, post.workspace)
     elif stage == PipelineStage.APPROVED:
-        approvals.approve_post(post, user, post.workspace)
+        comment = (comment or "").strip()
+        if len(comment) > 5000:
+            raise ValidationError("Keep the approval comment under 5,000 characters.")
+        approvals.approve_post(post, user, post.workspace, comment=comment)
     elif stage == PipelineStage.READY:
         if scheduled_at is None or timezone.is_naive(scheduled_at) or scheduled_at <= timezone.now():
             raise ValidationError("Choose a future publication date and time.")

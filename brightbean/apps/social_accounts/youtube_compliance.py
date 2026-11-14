@@ -188,7 +188,7 @@ def _delete_expired(account, now):
     )
     delete_comments(comments)
     stale_videos = (
-        PlatformPost.objects.filter(social_account=account)
+        PlatformPost.all_objects.filter(social_account=account)
         .exclude(platform_post_id="")
         .annotate(last_statistics_retrieval=Max("analytics_snapshots__captured_at"))
         .filter(
@@ -211,14 +211,16 @@ def _delete_expired(account, now):
         )
     # Upload responses are not authored composer settings. Drop unused copies
     # rather than pretending a statistics refresh refreshed their metadata.
-    for post in PlatformPost.objects.filter(social_account=account):
+    for post in PlatformPost.all_objects.filter(social_account=account):
         extra = authored_youtube_settings(post.platform_extra)
         if extra != post.platform_extra:
-            PlatformPost.objects.filter(pk=post.pk).update(platform_extra=extra)
+            PlatformPost.all_objects.filter(pk=post.pk).update(platform_extra=extra)
     delete_version_payload_copies(account)
     PublishLog.objects.filter(platform_post__social_account=account, created_at__lte=cutoff).delete()
     Notification.objects.filter(
-        data__platform_post_id__in=[str(pk) for pk in account.platform_posts.values_list("pk", flat=True)],
+        data__platform_post_id__in=[
+            str(pk) for pk in PlatformPost.all_objects.filter(social_account=account).values_list("pk", flat=True)
+        ],
         created_at__lte=cutoff,
     ).delete()
     history_start = now.astimezone(ZoneInfo("America/Los_Angeles")).date() - timedelta(days=HISTORY_DAYS)
@@ -301,7 +303,7 @@ def check_connection(account, *, provider=None, now=None, enforce=True):
             )
         # No publication-date cutoff: lifetime copies for old videos must be verified.
         posts = list(
-            PlatformPost.objects.filter(social_account=account)
+            PlatformPost.all_objects.filter(social_account=account)
             .exclude(platform_post_id="")
             .select_related("social_account")
         )
@@ -339,7 +341,7 @@ def check_connection(account, *, provider=None, now=None, enforce=True):
                             )
                             post.delete()
                     else:
-                        PlatformPost.objects.filter(pk=post.pk).update(youtube_video_checked_at=now)
+                        PlatformPost.all_objects.filter(pk=post.pk).update(youtube_video_checked_at=now)
                         _write_post_metrics_snapshot(
                             post,
                             metrics[post.platform_post_id],
