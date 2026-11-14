@@ -267,7 +267,8 @@ def test_detail_delete_button_uses_the_server_landing(make):
 
 
 def _foreign_board(client):
-    return reverse("jrc_production:board") + f"?client={uuid.uuid4()}"
+    # P2-B13: a foreign client is now missing (404); a channel of no client is still a 400 with a reason.
+    return reverse("jrc_production:board") + f"?channel={uuid.uuid4()}"
 
 
 def test_dashboard_with_a_foreign_client_is_a_layout_page_with_the_reason(make):
@@ -276,7 +277,7 @@ def test_dashboard_with_a_foreign_client_is_a_layout_page_with_the_reason(make):
     body = response.content.decode()
     assert response.status_code == 400
     assert 'data-rejected-page="400"' in body
-    assert "Choose a client you have access to." in body
+    assert "Choose a channel of this client." in body
     assert "<html" in body.lower()
     assert reverse("jrc_production:board") in body  # the way back
 
@@ -286,7 +287,7 @@ def test_fragment_and_script_requests_keep_the_plain_answer(make):
     url = _foreign_board(client)
     plain = client.get(url)
     assert plain.status_code == 400
-    assert plain.content == b"Choose a client you have access to."
+    assert plain.content == b"Choose a channel of this client."
     assert client.get(url, HTTP_ACCEPT="text/html", HTTP_HX_REQUEST="true").content == plain.content
     assert client.get(url, HTTP_ACCEPT="text/html", HTTP_X_REQUESTED_WITH="XMLHttpRequest").content == plain.content
     assert client.get(url, HTTP_ACCEPT="text/html", HTTP_SEC_FETCH_DEST="iframe").content == plain.content

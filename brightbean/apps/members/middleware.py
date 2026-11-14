@@ -123,6 +123,41 @@ class RBACMiddleware:
                 if last_membership and last_membership.workspace.organization_id == selected.organization_id:
                     request.workspace = last_membership.workspace
                     request.workspace_membership = last_membership
+                else:
+                    # P2-B13: one workspace is always current. Without a usable last
+                    # workspace in this organization it is the first one the menu lists
+                    # (``member_workspaces`` orders by name), so the board, New idea and
+                    # the switcher's heading all mean the same client.
+                    first = (
+                        WorkspaceMembership.objects.filter(
+                            user=request.user,
+                            workspace__organization=selected.organization,
+                            workspace__is_archived=False,
+                        )
+                        .select_related("workspace__organization", "custom_role")
+                        .order_by("workspace__name", "workspace_id")
+                        .first()
+                    )
+                    if first is not None:
+                        request.workspace = first.workspace
+                        request.workspace_membership = first
+            elif request.workspace is None:
+                # P2-B13: a legacy workspace-only member without a last workspace
+                # works in the first workspace listed, as in the branch above.
+                first = (
+                    WorkspaceMembership.objects.filter(
+                        user=request.user,
+                        workspace__is_archived=False,
+                        workspace__organization__deleted_at__isnull=True,
+                    )
+                    .select_related("workspace__organization", "custom_role")
+                    .order_by("workspace__name", "workspace_id")
+                    .first()
+                )
+                if first is not None:
+                    request.org = first.workspace.organization
+                    request.workspace = first.workspace
+                    request.workspace_membership = first
 
         response = self.get_response(request)
         navigated = request.navigated_workspace_membership

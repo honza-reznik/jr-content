@@ -10,7 +10,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.db.models import Count, Prefetch, Q
-from django.http import Http404, HttpResponseBadRequest, JsonResponse
+from django.http import Http404, HttpResponse, HttpResponseBadRequest, JsonResponse, QueryDict
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
 from django.urls import reverse
@@ -75,8 +75,6 @@ from .services import (
     set_publication_date,
 )
 
-BOARD_CLIENT_KEY = "jrc_board_client"
-IDEA_CLIENT_KEY = "jrc_board_idea_client"
 BOARD_QUERY_KEY = "jrc_board_query"
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
@@ -89,10 +87,84 @@ def _memberships(user):
     )
 
 
+def current_membership(request):
+    """The membership in the current workspace, the client the menu shows (P2-B13).
+
+    One workspace = one client: the board, New idea, New content and the quick idea read and
+    write only here. ``RBACMiddleware`` resolves it (the workspace of the address, else the last
+    one opened, else the first one listed); None when the user works in no client.
+    """
+    membership = getattr(request, "workspace_membership", None)
+    if membership is None or membership.workspace.is_archived:
+        return None
+    return membership
+
+
+def open_workspace(request, workspace_id):
+    """Make ``workspace_id`` current, as choosing it in the menu does (P2-B13).
+
+    Global pages (the board, New content) accept ``?client=<workspace>`` from older links and from
+    links that name the client they belong to. A workspace the user is not a member of is
+    reported as missing. The choice is stored by ``RBACMiddleware`` once the page was shown.
+    """
+    if not _UUID_RE.match(str(workspace_id)):
+        raise Http404
+    current = current_membership(request)
+    if current is not None and str(current.workspace_id) == str(workspace_id):
+        return current
+    membership = (
+        WorkspaceMembership.objects.filter(
+            user=request.user,
+            workspace_id=workspace_id,
+            workspace__is_archived=False,
+            workspace__organization__deleted_at__isnull=True,
+        )
+        .select_related("workspace__organization", "custom_role")
+        .first()
+    )
+    if membership is None:
+        raise Http404
+    request.workspace = membership.workspace
+    request.workspace_membership = membership
+    request.org = membership.workspace.organization
+    request.org_membership = next(
+        (m for m in getattr(request, "organization_memberships", []) if m.organization_id == request.org.id), None
+    )
+    request.navigated_workspace_membership = membership
+    return membership
+
+
+def _refuse_other_workspace(request, membership):
+    """Writes go to the current workspace only (P2-B13, AK2); return the refusal or None.
+
+    The form names the workspace it was shown for. If the menu switched to another client in the
+    meantime (another tab), nothing is created rather than content landing at the wrong client.
+    """
+    current = current_membership(request)
+    if current is not None and current.workspace_id == membership.workspace_id:
+        return None
+    name = current.workspace.name if current else "no client"
+    return (
+        f"This form was opened for {membership.workspace.name}, but the current client is now {name}. "
+        "Nothing was saved. Reload the page to continue."
+    )
+
+
 def _board_url(request):
-    """The content board with the filters it was last shown with (P2-B03)."""
-    query = request.session.get(BOARD_QUERY_KEY, "")
-    return reverse("jrc_production:board") + (f"?{query}" if query else "")
+    """The board of the page's client, with the channel filter it was last shown with (P2-B03, P2-B13).
+
+    The page's workspace may differ from the board shown last (a notification opened another
+    client's content): the link then returns to that client's board, without the old filter.
+    """
+    board = reverse("jrc_production:board")
+    current = current_membership(request)
+    if current is None:
+        return board
+    params = {"client": str(current.workspace_id)}
+    last = QueryDict(request.session.get(BOARD_QUERY_KEY, ""))
+    if last.get("client") == params["client"] and last.get("channel"):
+        params["channel"] = last["channel"]
+    return f"{board}?{urlencode(params)}"
 
 
 def _visible_comment_counts(posts, user):
@@ -146,34 +218,23 @@ def _sort_cards(cards, *, newest_first=False):
     return dated + [card for card in cards if not card["date"]]
 
 
-def _board_context(request, *, selected_client=None):
-    memberships = _memberships(request.user)
-    by_workspace = {str(m.workspace_id): m for m in memberships}
-    if selected_client is not None:
-        selected = str(selected_client)
-    elif "client" in request.GET or "channel" in request.GET:
-        selected = request.GET.get("client", "")
-    else:
-        # No explicit filter: reopen the board on the client chosen last in this session.
-        selected = request.session.get(BOARD_CLIENT_KEY, "")
-        if selected not in by_workspace:
-            selected = ""
+def _board_context(request):
+    """The board of the current workspace (P2-B13): one client, no client filter."""
+    client = request.GET.get("client", "")
+    membership = open_workspace(request, client) if client else current_membership(request)
+    by_workspace = {str(membership.workspace_id): membership} if membership else {}
+    selected = str(membership.workspace_id) if membership else ""
     channel = request.GET.get("channel", "")
     workspace_ids = list(by_workspace)
-    if selected:
-        if selected not in by_workspace:
-            raise ValidationError("Choose a client you have access to.")
-        workspace_ids = [selected]
     channels = list(
         SocialAccount.objects.filter(workspace_id__in=workspace_ids, jrc_channel__isnull=False)
         .select_related("workspace", "jrc_channel")
         .order_by("workspace__name", "account_name")
     )
     if channel and channel != "none" and channel not in {str(c.pk) for c in channels}:
-        raise ValidationError("Choose a channel for the selected client.")
-    if request.session.get(BOARD_CLIENT_KEY, "") != selected:
-        request.session[BOARD_CLIENT_KEY] = selected
-    # P2-B03: "Content board" on the detail returns to the board as it was last shown.
+        raise ValidationError("Choose a channel of this client.")
+    # P2-B03: "Content board" on the detail returns to the board as it was last shown; the client
+    # in it makes that board current again when the detail belonged to another one.
     board_query = urlencode({"client": selected, "channel": channel})
     if request.session.get(BOARD_QUERY_KEY) != board_query:
         request.session[BOARD_QUERY_KEY] = board_query
@@ -205,24 +266,14 @@ def _board_context(request, *, selected_client=None):
         columns[card["stage"]]["cards"].append(card)
     for column in columns.values():
         column["cards"] = _sort_cards(column["cards"], newest_first=column["value"] == PipelineStage.PUBLISHED)
-    creatable = [m.workspace for m in memberships if can_create_content(m)]
-    creatable_ids = {str(client.id) for client in creatable}
-    idea_client = selected if selected in creatable_ids else request.session.get(IDEA_CLIENT_KEY, "")
-    if idea_client not in creatable_ids:
-        idea_client = str(creatable[0].id) if creatable else ""
     return {
         "columns": list(columns.values()),
         "waiting_for_you": waiting,
-        "clients": [m.workspace for m in memberships],
-        "creatable_clients": creatable,
-        "creatable_ids": creatable_ids,
+        "workspace": membership.workspace if membership else None,
+        "can_create": bool(membership and can_create_content(membership)),
+        # The board's own workspace; the move form sends it back so the board reopens on it.
         "selected_client": selected,
         "selected_channel": channel,
-        # Client names only help when the cards on screen belong to more than one client.
-        "show_client": len({post.workspace_id for post in posts}) > 1,
-        "idea_client": idea_client,
-        # P2-B03: the New idea window creates for the client the board shows; "" = all clients (choose).
-        "new_content_client": selected,
         "channels": channels,
         "total": len(posts),
     }
@@ -238,34 +289,26 @@ def board(request):
     return render(request, "jrc_production/board.html", context)
 
 
-def creation_options(user, *, client=""):
-    """What ``user`` may create content for (P2-B03): the New idea window and the New content page.
+def creation_options(membership):
+    """What may be created in the current workspace (P2-B03, P2-B13): New idea and New content.
 
-    One entry per client the user may create content for, with its enabled channels and the stages
-    new content may start in (``initial_stages``). ``fixed`` is the client the content goes to when
-    ``client`` names one of them, or when there is only one; otherwise the form offers the choice.
+    ``membership`` is the one in the current workspace (``current_membership``). New content always
+    goes there, so there is never a client to choose: ``fixed`` is that client with its enabled
+    channels and the stages new content may start in (``initial_stages``), or None when the user
+    may not create content in it. ``clients`` keeps the list form the templates test.
     """
-    memberships = [m for m in _memberships(user) if can_create_content(m)]
-    accounts = {}
-    for account in (
-        SocialAccount.objects.filter(
-            workspace_id__in=[m.workspace_id for m in memberships], jrc_channel__is_enabled=True
-        )
-        .select_related("jrc_channel")
-        .order_by("account_name", "id")
-    ):
-        accounts.setdefault(account.workspace_id, []).append(account)
-    clients = [
-        {
-            "workspace": m.workspace,
-            "channels": accounts.get(m.workspace_id, []),
-            "stages": [(value, PipelineStage(value).label) for value in initial_stages(m)],
-        }
-        for m in memberships
-    ]
-    by_id = {str(entry["workspace"].id): entry for entry in clients}
-    fixed = by_id.get(str(client)) or (clients[0] if len(clients) == 1 else None)
-    return {"clients": clients, "fixed": fixed}
+    if membership is None or not can_create_content(membership):
+        return {"clients": [], "fixed": None}
+    entry = {
+        "workspace": membership.workspace,
+        "channels": list(
+            SocialAccount.objects.filter(workspace_id=membership.workspace_id, jrc_channel__is_enabled=True)
+            .select_related("jrc_channel")
+            .order_by("account_name", "id")
+        ),
+        "stages": [(value, PipelineStage(value).label) for value in initial_stages(membership)],
+    }
+    return {"clients": [entry], "fixed": entry}
 
 
 def _slot_publish_at(date, time):
@@ -316,8 +359,8 @@ def created_message(post, detail_url):
     )
 
 
-def _new_content_page(request, *, client="", values=None, error="", status=200):
-    options = creation_options(request.user, client=client)
+def _new_content_page(request, *, values=None, error="", status=200):
+    options = creation_options(current_membership(request))
     if not options["clients"]:
         raise PermissionDenied("You cannot create content.")
     values = values or {}
@@ -331,8 +374,6 @@ def _new_content_page(request, *, client="", values=None, error="", status=200):
             "chosen_channels": [str(value) for value in chosen],
             "error": error,
             "board_url": _board_url(request),
-            # The New idea window and + New create for the client this page shows ("" = the page asks).
-            "new_content_client": str(options["fixed"]["workspace"].id) if options["fixed"] else "",
         },
         status=status,
     )
@@ -351,7 +392,10 @@ def new_content(request):
         "stage": stage if stage in PipelineStage.values else "",
         "channels": [account] if _UUID_RE.match(account) else [],
     }
-    return _new_content_page(request, client=request.GET.get("client", ""), values=values)
+    if request.GET.get("client"):
+        # Links from a client's calendar name it; the page then opens in that client (P2-B13).
+        open_workspace(request, request.GET["client"])
+    return _new_content_page(request, values=values)
 
 
 @login_required
@@ -366,6 +410,12 @@ def create(request):
     workspace = membership.workspace
     from_page = request.POST.get("origin") == "page"
     in_place = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+    refused = _refuse_other_workspace(request, membership)
+    if refused:
+        if in_place:
+            return HttpResponse(refused, status=409, content_type="text/plain; charset=utf-8")
+        messages.error(request, refused)
+        return redirect(reverse("jrc_production:new_content") if from_page else reverse("jrc_production:board"))
     values = {
         "title": request.POST.get("title", ""),
         "description": request.POST.get("description", ""),
@@ -386,7 +436,7 @@ def create(request):
     except ValidationError as exc:
         error = " ".join(exc.messages)
         if from_page:
-            return _new_content_page(request, client=workspace.id, values=values, error=error, status=400)
+            return _new_content_page(request, values=values, error=error, status=400)
         if in_place:
             return HttpResponseBadRequest(error, content_type="text/plain; charset=utf-8")
         messages.error(request, error)
@@ -412,6 +462,12 @@ def quick_idea(request):
     if membership is None:
         raise Http404
     in_place = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+    refused = _refuse_other_workspace(request, membership)
+    if refused:
+        if in_place:
+            return HttpResponse(refused, status=409, content_type="text/plain; charset=utf-8")
+        messages.error(request, refused)
+        return redirect(reverse("jrc_production:board"))
     board_client = request.POST.get("board_client", "")
     board_client = board_client if board_client in memberships else ""
     board_channel = request.POST.get("board_channel", "")
@@ -424,7 +480,6 @@ def quick_idea(request):
             return HttpResponseBadRequest(error, content_type="text/plain; charset=utf-8")
         messages.error(request, error)
         return redirect(reverse("jrc_production:board") + "?" + urlencode({"client": board_client}))
-    request.session[IDEA_CLIENT_KEY] = str(membership.workspace_id)
     if not in_place:
         detail_url = reverse(
             "jrc_production:content_detail", kwargs={"workspace_id": membership.workspace_id, "post_id": post.id}

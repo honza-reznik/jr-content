@@ -7,6 +7,9 @@
   .board-heading { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
   .board-heading h1 { font-size:24px; font-weight:700; letter-spacing:-.6px; margin:0; }
   .board-muted { color:#78716c; }
+  .board-workspace { display:inline-flex; align-items:center; gap:6px; min-width:0; max-width:40ch; font-size:14px; font-weight:600; color:#44403c; }
+  .board-workspace i { flex:none; width:10px; height:10px; border-radius:50%; }
+  .board-workspace span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .board-count { white-space:nowrap; background:#f5f5f4; border-radius:20px; padding:5px 10px; font-size:12px; color:#57534e; }
   .board-sr { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
   .content-board-page label { display:block; font-size:12px; font-weight:600; margin-bottom:6px; }
@@ -97,16 +100,16 @@
 {% endblock %}
 {% block content %}
 <div class="content-board-page">
-  <header class="board-heading"><h1>Content board</h1><span class="board-count" data-board-total="{{ total }}">{{ total }} item{{ total|pluralize }}</span>
-    {% if creatable_clients %}<div class="board-create">
+  <header class="board-heading"><h1>Content board</h1>{% if workspace %}<span class="board-workspace" title="{{ workspace.name }} — switch the client in the menu"><i aria-hidden="true" style="background:{{ workspace.accent_color }}"></i><span>{{ workspace.name }}</span></span>{% endif %}<span class="board-count" data-board-total="{{ total }}">{{ total }} item{{ total|pluralize }}</span>
+    {% if can_create %}<div class="board-create">
       <button type="button" class="board-secondary" data-open-new-idea>+ New idea</button>
-      <a class="board-primary" href="{% url 'jrc_production:new_content' %}{% if selected_client in creatable_ids %}?client={{ selected_client }}{% endif %}" data-new-content-link>+ New content</a>
+      <a class="board-primary" href="{% url 'jrc_production:new_content' %}" data-new-content-link>+ New content</a>
     </div>{% endif %}
   </header>
-  {% if creatable_clients %}
+  {% if can_create %}
   <form id="quick-idea" class="quick-idea" method="post" action="{% url 'jrc_production:quick_idea' %}" aria-label="Quick idea">{% csrf_token %}
     <input type="hidden" name="board_client" value="{{ selected_client }}"><input type="hidden" name="board_channel" value="{{ selected_channel }}">
-    {% if creatable_clients|length > 1 %}<label class="board-sr" for="idea-client">Client of the idea</label><select id="idea-client" name="workspace" required>{% for client in creatable_clients %}<option value="{{ client.id }}" {% if idea_client == client.id|stringformat:"s" %}selected{% endif %}>{{ client.name }}</option>{% endfor %}</select>{% else %}<input type="hidden" name="workspace" value="{{ creatable_clients.0.id }}" data-client-name="{{ creatable_clients.0.name }}">{% endif %}
+    <input type="hidden" name="workspace" value="{{ workspace.id }}">
     <label class="board-sr" for="idea-title">New idea</label><input id="idea-title" name="title" placeholder="Idea…" maxlength="255" autocomplete="off" enterkeyhint="send" required>
     <button class="board-primary" type="submit">Add</button>
     <p class="quick-idea-status" role="status" aria-live="polite"></p>
@@ -114,9 +117,8 @@
   {% endif %}
   <div class="board-tools">
     <form method="get" class="board-toolbar" aria-label="Filter content">
-      <div class="board-filter"><label for="filter-client">Client</label><select id="filter-client" name="client"><option value="">All clients</option>{% for client in clients %}<option value="{{ client.id }}" {% if selected_client == client.id|stringformat:"s" %}selected{% endif %}>{{ client.name }}</option>{% endfor %}</select></div>
-      <div class="board-filter"><label for="filter-channel">Channel</label><select id="filter-channel" name="channel"><option value="">All channels</option><option value="none" {% if selected_channel == "none" %}selected{% endif %}>No channel</option>{% for channel in channels %}<option value="{{ channel.id }}" {% if selected_channel == channel.id|stringformat:"s" %}selected{% endif %}>{{ channel.workspace.name }} · {{ channel.jrc_channel.display_name|default:channel.account_name }}</option>{% endfor %}</select></div>
-      <button class="board-secondary" type="submit">Apply filters</button><a class="board-reset" href="{% url 'jrc_production:board' %}?client=">Clear</a>
+      <div class="board-filter"><label for="filter-channel">Channel</label><select id="filter-channel" name="channel"><option value="">All channels</option><option value="none" {% if selected_channel == "none" %}selected{% endif %}>No channel</option>{% for channel in channels %}<option value="{{ channel.id }}" {% if selected_channel == channel.id|stringformat:"s" %}selected{% endif %}>{{ channel.jrc_channel.display_name|default:channel.account_name }}</option>{% endfor %}</select></div>
+      <button class="board-secondary" type="submit">Apply filters</button><a class="board-reset" href="{% url 'jrc_production:board' %}">Clear</a>
     </form>
   </div>
   {% if waiting_for_you %}
@@ -124,15 +126,15 @@
     <h2>Waiting for you <span class="stage-count">({{ waiting_for_you|length }})</span></h2>
     <ul>
       {% for post in waiting_for_you %}
-      <li><span class="board-client">{{ post.workspace.name }}</span><br><strong>{{ post.title|default:"Untitled content" }}</strong><br>
+      <li><strong>{{ post.title|default:"Untitled content" }}</strong><br>
         <a href="{% url 'jrc_production:content_detail' workspace_id=post.workspace_id post_id=post.id %}?tab=approval">Review and decide</a></li>
       {% endfor %}
     </ul>
   </section>
   {% endif %}
-  <p class="board-help">Click a card to open it. “Move…” changes its stage; approval and planning follow your permissions. Dates use each client’s time zone.</p>
+  <p class="board-help">Click a card to open it. “Move…” changes its stage; approval and planning follow your permissions. Dates use the client’s time zone{% if workspace %} ({{ workspace.effective_timezone }}){% endif %}.</p>
   <div class="mobile-stage"><label for="mobile-stage">Show stage</label><select id="mobile-stage"><option value="">All stages</option>{% for column in columns %}<option value="{{ column.value }}" data-label="{{ column.label }}">{{ column.label }} ({{ column.cards|length }})</option>{% endfor %}</select></div>
-  <div class="board-grid{% if show_client %} show-clients{% endif %}">
+  <div class="board-grid">
   {% for column in columns %}
     <section class="board-column{% if not column.cards %} is-empty{% endif %}" data-stage="{{ column.value }}" aria-label="{{ column.label }}"><h2>{{ column.label }} <span class="stage-count" data-stage-count>{{ column.cards|length }}</span></h2>
       <div class="board-cards">
@@ -141,7 +143,7 @@
     </section>
   {% endfor %}
   </div>
-  {% if not clients %}<p class="board-help">You do not have access to any clients yet. Ask your administrator to add you.</p>{% endif %}
+  {% if not workspace %}<p class="board-help">You do not have access to any clients yet. Ask your administrator to add you.</p>{% endif %}
 </div>
 {% endblock %}
 {% block extra_js %}
@@ -168,10 +170,6 @@
     element.textContent = String(count);
     return count;
   }
-  function clientName() {
-    const field = form.elements.workspace;
-    return field.tagName === 'SELECT' ? field.selectedOptions[0].textContent : field.dataset.clientName;
-  }
   function addCard(html) {
     const column = document.querySelector('.board-column[data-stage="idea"]');
     const list = column.querySelector('.board-cards');
@@ -182,9 +180,6 @@
     column.classList.remove('is-empty');
     // Keep the board order (P2-B03): undated cards in creation order, so the new idea is the last one.
     list.append(card);
-    const grid = document.querySelector('.board-grid');
-    const shown = new Set([...grid.querySelectorAll('.board-card')].map(c => c.dataset.client));
-    grid.classList.toggle('show-clients', shown.size > 1);
     const count = increment(column.querySelector('[data-stage-count]'));
     const option = document.querySelector('#mobile-stage option[value="idea"]');
     if (option) option.textContent = `${option.dataset.label} (${count})`;
@@ -216,8 +211,8 @@
         addCard(html);
         report(`Saved to Idea: ${title}.`, false, link);
       } else {
-        // Saved, but the active filters hide it (another client or a channel filter).
-        report(`Saved to ${clientName()} (hidden by the current filter): ${title}.`, false, link);
+        // Saved, but the channel filter hides it (a new idea has no channel).
+        report(`Saved to Idea (hidden by the channel filter): ${title}.`, false, link);
       }
     } catch (error) {
       if (!input.value) input.value = title;
@@ -232,9 +227,6 @@
     const grid = document.querySelector('.board-grid');
     if (stageSelect.value) grid.dataset.mobileStage = stageSelect.value;
     else delete grid.dataset.mobileStage;
-  });
-  document.getElementById('filter-client').addEventListener('change', () => {
-    document.getElementById('filter-channel').value = '';
   });
 </script>
 {% endblock %}

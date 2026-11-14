@@ -150,6 +150,7 @@ def test_board_filters_and_scope(http, workspace, organization, user, post):
     hidden = Workspace.objects.create(organization=organization, name="Secret client")
     Post.objects.create(workspace=hidden, title="Secret idea")
     url = reverse("jrc_production:board")
+    # P2-B13: one client at a time; without a last workspace the first one listed ("Other client").
     response = http.get(url)
     assert response.status_code == 200
     assert [c["value"] for c in response.context["columns"]] == [
@@ -162,22 +163,22 @@ def test_board_filters_and_scope(http, workspace, organization, user, post):
         "ready",
         "published",
     ]
-    assert response.context["total"] == 2
+    assert response.context["total"] == 1
+    assert str(other_post.pk).encode() in response.content
     assert b"Secret" not in response.content
+    # ?client= switches the current workspace (members only) and the board stays on it.
     response = http.get(url, {"client": workspace.pk})
     assert response.context["total"] == 1
     assert b"Other public idea" not in response.content
-    response = http.get(url, {"channel": custom.pk})
+    assert http.get(url).context["workspace"] == workspace
+    response = http.get(url, {"client": other.pk, "channel": custom.pk})
     assert response.context["total"] == 1
     assert str(other_post.pk).encode() in response.content
     assert str(post.pk).encode() not in response.content
-    for filters in (
-        {"client": hidden.pk},
-        {"client": "invalid"},
-        {"channel": "invalid"},
-        {"client": workspace.pk, "channel": custom.pk},
-    ):
+    for filters in ({"channel": "invalid"}, {"client": workspace.pk, "channel": custom.pk}):
         assert http.get(url, filters).status_code == 400
+    for filters in ({"client": hidden.pk}, {"client": "invalid"}):
+        assert http.get(url, filters).status_code == 404
 
 
 def test_board_empty_client_and_viewer_permissions(http, workspace, user):
@@ -187,7 +188,7 @@ def test_board_empty_client_and_viewer_permissions(http, workspace, user):
     response = http.get(reverse("jrc_production:board"))
     assert response.status_code == 200
     assert response.context["total"] == 0
-    assert not response.context["creatable_clients"]
+    assert not response.context["can_create"]
     assert b"Add to Idea" not in response.content
 
 
@@ -203,6 +204,8 @@ def test_creation_error_preserves_selected_client_and_title(http, workspace, org
     # P2-B03: the New content page shows the error with the filled values and the chosen client fixed.
     other = Workspace.objects.create(organization=organization, name="Another client")
     WorkspaceMembership.objects.create(workspace=other, user=user, workspace_role="owner")
+    user.last_workspace_id = workspace.pk  # P2-B13: content is created in the current workspace only
+    user.save(update_fields=["last_workspace_id"])
     response = http.post(
         reverse("jrc_production:create"),
         {"workspace": workspace.pk, "title": "Keep my title", "channels": ["invalid"], "origin": "page"},

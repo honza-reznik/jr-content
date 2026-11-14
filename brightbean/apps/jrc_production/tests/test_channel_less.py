@@ -274,10 +274,18 @@ def test_filtered_board_can_create_for_another_client(client, workspace, user, o
     page = client.get(reverse("jrc_production:board"), {"client": workspace.pk})
     assert page.status_code == 200
     assert {c.pk for c in page.context["channels"]} == {first.pk}
-    # P2-B03: the New idea window of the board for all clients offers each creatable client's enabled channels.
-    page = client.get(reverse("jrc_production:board"), {"client": ""})
+    # P2-B13: the New idea window offers the enabled channels of the current client only.
     form = page.content.decode().split('<dialog id="jrc-new-idea"', 1)[1].split("</dialog>", 1)[0]
-    assert str(first.pk) in form and str(second.pk) in form
+    assert str(first.pk) in form and str(second.pk) not in form
+    response = client.post(
+        reverse("jrc_production:create"),
+        {"workspace": other.pk, "title": "Created for another client", "channels": [second.pk]},
+    )
+    assert response.status_code == 302 and not Post.objects.filter(title="Created for another client").exists()
+    # After switching to the other client its window offers its enabled channels and creates there.
+    page = client.get(reverse("jrc_production:board"), {"client": other.pk})
+    form = page.content.decode().split('<dialog id="jrc-new-idea"', 1)[1].split("</dialog>", 1)[0]
+    assert str(second.pk) in form and str(first.pk) not in form
     assert str(hidden.pk) not in form and str(disabled.pk) not in form and str(readonly.pk) not in form
     response = client.post(
         reverse("jrc_production:create"),

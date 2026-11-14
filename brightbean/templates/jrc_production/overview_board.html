@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% comment %}JR Content: přidáno 2026-11-14 (blok P2-B13), AGPL-3.0. Nástěnka admin přehledu: obsah všech klientů organizace
+podle fáze, filtr klienta, barva a název klienta na kartě. Jen ke čtení.{% endcomment %}
+{% load tz %}
+{% block title %}Admin overview · JR Content{% endblock %}
+{% block page_header %}{% include "jrc_production/_overview_header.html" %}{% endblock %}
+{% block extra_head %}
+<style>
+  .ov-page { color:#292524; font-size:14px; min-width:0; display:flex; flex-direction:column; flex:1 0 auto; }
+  .ov-tools { display:flex; flex-wrap:wrap; align-items:flex-end; gap:10px 14px; margin-bottom:10px; }
+  .ov-filter { display:flex; flex-direction:column; gap:4px; min-width:0; width:min(320px, 100%); }
+  .ov-filter label { font-size:12px; font-weight:600; color:#57534e; }
+  .ov-filter select { width:100%; min-height:40px; border:1px solid #d6d3d1; border-radius:8px; padding:7px 10px; background:white; color:#292524; font-size:14px; }
+  .ov-filter select:focus, .ov-button:focus-visible, .ov-reset:focus-visible, .ov-card a:focus-visible { outline:2px solid #f97316; outline-offset:1px; }
+  .ov-button { min-height:40px; padding:7px 14px; border:1px solid #d6d3d1; border-radius:8px; background:white; font-size:13px; font-weight:600; color:#44403c; }
+  .ov-button:hover { background:#f5f5f4; }
+  .ov-reset { min-height:40px; display:inline-flex; align-items:center; font-size:13px; color:#57534e; text-decoration:underline; }
+  .ov-count { white-space:nowrap; background:#f5f5f4; border-radius:20px; padding:5px 10px; font-size:12px; color:#57534e; align-self:center; }
+  .ov-legend { display:flex; flex-wrap:wrap; gap:6px 14px; margin:0 0 12px; padding:0; list-style:none; font-size:12px; color:#57534e; }
+  .ov-legend li { display:inline-flex; align-items:center; gap:6px; min-width:0; max-width:100%; }
+  .ov-legend span:last-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ov-dot { flex:none; display:inline-block; width:10px; height:10px; border-radius:50%; }
+  .ov-grid { display:grid; grid-template-columns:repeat(8, minmax(210px, 1fr)); gap:10px; overflow-x:auto; padding-bottom:8px; flex:1 0 auto; align-items:start; }
+  .ov-column { background:#fafaf9; border:1px solid #e7e5e4; border-radius:10px; padding:8px; min-width:0; }
+  .ov-column h2 { display:flex; justify-content:space-between; gap:6px; margin:2px 4px 8px; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; color:#57534e; }
+  .ov-column h2 span { font-weight:600; color:#a8a29e; }
+  .ov-cards { display:flex; flex-direction:column; gap:7px; }
+  .ov-empty { margin:4px; font-size:12px; color:#a8a29e; }
+  .ov-card { position:relative; background:white; border:1px solid #e7e5e4; border-left-width:4px; border-radius:8px; padding:8px 10px; min-width:0; }
+  .ov-card:hover { border-color:#d6d3d1; box-shadow:0 1px 3px #0000000f; }
+  .ov-client { display:flex; align-items:center; gap:6px; font-size:11px; font-weight:600; color:#57534e; min-width:0; }
+  .ov-client span:last-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ov-card h3 { margin:4px 0 6px; font-size:14px; font-weight:600; line-height:1.3; overflow-wrap:anywhere; }
+  .ov-card h3 a { color:#1c1917; text-decoration:none; }
+  .ov-card h3 a::after { content:""; position:absolute; inset:0; border-radius:8px; }
+  .ov-card h3 a:hover { text-decoration:underline; }
+  .ov-meta { display:flex; flex-wrap:wrap; gap:4px 8px; font-size:11px; color:#78716c; }
+  .ov-channel { display:inline-flex; align-items:center; gap:4px; max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ov-status { color:#9a3412; }
+  .ov-mobile-stage { display:none; }
+  @media (max-width:767px) {
+    .ov-filter select { font-size:16px; }
+    .ov-mobile-stage { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; }
+    .ov-mobile-stage label { font-size:12px; font-weight:600; color:#57534e; }
+    .ov-mobile-stage select { min-height:42px; border:1px solid #d6d3d1; border-radius:8px; padding:7px 10px; background:white; font-size:16px; }
+    .ov-grid { grid-template-columns:1fr; overflow-x:visible; }
+    .ov-grid[data-mobile-stage] .ov-column { display:none; }
+    .ov-grid[data-mobile-stage] .ov-column.is-shown { display:block; }
+    .ov-column.is-empty { display:none; }
+    .ov-grid[data-mobile-stage] .ov-column.is-empty.is-shown { display:block; }
+    .ov-card h3 { font-size:15px; }
+    .ov-client, .ov-meta { font-size:12px; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+<div class="ov-page">
+  <form method="get" class="ov-tools" aria-label="Filter the admin overview">
+    <div class="ov-filter"><label for="overview-client">Client</label>
+      <select id="overview-client" name="client"><option value="">All clients</option>{% for workspace in workspaces %}<option value="{{ workspace.id }}" {% if selected_client == workspace.id|stringformat:"s" %}selected{% endif %}>{{ workspace.name }}</option>{% endfor %}</select></div>
+    <button class="ov-button" type="submit">Apply</button>
+    {% if selected_client %}<a class="ov-reset" href="{% url 'jrc_production:overview_board' %}">Show all clients</a>{% endif %}
+    <span class="ov-count">{{ total }} item{{ total|pluralize }}</span>
+  </form>
+  {% if workspaces %}
+  <ul class="ov-legend" aria-label="Clients">
+    {% for workspace in workspaces %}<li><span class="ov-dot" style="background:{{ workspace.accent_color }}" aria-hidden="true"></span><span>{{ workspace.name }}</span></li>{% endfor %}
+  </ul>
+  {% else %}
+  <p class="ov-empty">This organization has no active clients yet.</p>
+  {% endif %}
+  <div class="ov-mobile-stage"><label for="overview-stage">Show stage</label><select id="overview-stage"><option value="">All stages</option>{% for column in columns %}<option value="{{ column.value }}">{{ column.label }} ({{ column.cards|length }})</option>{% endfor %}</select></div>
+  <div class="ov-grid">
+  {% for column in columns %}
+    <section class="ov-column{% if not column.cards %} is-empty{% endif %}" data-stage="{{ column.value }}" aria-label="{{ column.label }}">
+      <h2>{{ column.label }} <span>{{ column.cards|length }}</span></h2>
+      <div class="ov-cards">
+      {% for card in column.cards %}{% with post=card.post %}
+        <article class="ov-card" style="border-left-color:{{ post.workspace.accent_color }}" data-client="{{ post.workspace_id }}">
+          <div class="ov-client"><span class="ov-dot" style="background:{{ post.workspace.accent_color }}" aria-hidden="true"></span><span>{{ post.workspace.name }}</span></div>
+          <h3><a href="{% url 'jrc_production:overview_content' post_id=post.id %}">{{ post.title|default:"Untitled content" }}</a></h3>
+          <div class="ov-meta">
+            {% for variant in post.platform_posts.all %}<span class="ov-channel">{% include "jrc_channels/icon.html" with account=variant.social_account %} {{ variant.social_account.jrc_channel.display_name|default:variant.social_account.account_name }}</span>{% empty %}<span>No channel</span>{% endfor %}
+            {% if card.date %}{% timezone post.workspace.effective_timezone %}<time datetime="{{ card.date|date:'c' }}" title="{{ card.date_label }} publication: {{ card.date|date:'M j, Y H:i T' }}">{% if card.date_label == "Proposed" %}Proposed {{ card.date|date:"M j" }}{% else %}{{ card.date|date:"M j, H:i" }}{% endif %}</time>{% endtimezone %}{% endif %}
+            {% if post.shotlist_total %}<span>Shotlist {{ post.shotlist_done }}/{{ post.shotlist_total }}</span>{% endif %}
+            {% if card.client_review %}<span class="ov-status">Awaiting client sign-off</span>{% endif %}
+          </div>
+        </article>
+      {% endwith %}{% empty %}<p class="ov-empty">Empty</p>{% endfor %}
+      </div>
+    </section>
+  {% endfor %}
+  </div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script nonce="{{ request.csp_nonce }}">
+(() => {
+  const select = document.getElementById('overview-stage');
+  const grid = document.querySelector('.ov-grid');
+  select.addEventListener('change', () => {
+    if (select.value) grid.dataset.mobileStage = select.value; else delete grid.dataset.mobileStage;
+    grid.querySelectorAll('.ov-column').forEach(column => column.classList.toggle('is-shown', column.dataset.stage === select.value));
+  });
+})();
+</script>
+{% endblock %}
