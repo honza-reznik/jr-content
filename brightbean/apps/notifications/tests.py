@@ -4,8 +4,7 @@ from unittest.mock import Mock, patch
 import pytest
 from django.utils import timezone
 
-from apps.notifications.engine import notify
-from apps.notifications.engine import APPROVAL_DAILY_EVENTS, DEFAULT_CHANNELS, _digest_heading
+from apps.notifications.engine import APPROVAL_DAILY_EVENTS, DEFAULT_CHANNELS, _digest_heading, notify
 from apps.notifications.models import (
     Channel,
     DeliveryStatus,
@@ -53,7 +52,7 @@ class TestNotifyEngine:
             EventType.APPROVAL_REMINDER,
             EventType.APPROVAL_STALLED,
         }
-        assert APPROVAL_DAILY_EVENTS == {EventType.APPROVAL_REMINDER, EventType.APPROVAL_STALLED}
+        assert {EventType.APPROVAL_REMINDER, EventType.APPROVAL_STALLED} == APPROVAL_DAILY_EVENTS
         assert _digest_heading("__approval_daily__", 2) == "Approval summary"
 
     def test_approval_reminders_queue_for_daily_summary(self, user):
