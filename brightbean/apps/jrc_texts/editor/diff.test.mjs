@@ -34,7 +34,9 @@ test('text color changes are visible in version comparisons', () => {
   const result = compareDocs(oldDoc, newDoc)
   assert.match(result.html, /style="color:#0369a1"/)
   assert.match(result.html, /<del>Keep this<\/del>/)
-  assert.match(result.html, /<ins><span style="color:#0369a1">Keep this<\/span><\/ins>/)
+  // The diff colours word by word; every inserted word must carry the colour and together read "Keep this".
+  const inserted = result.html.match(/<ins>(.*?)<\/ins>/)[1]
+  assert.equal(inserted.replace(/<span style="color:#0369a1">([^<]*)<\/span>/g, '$1'), 'Keep this')
 })
 
 test('adding and removing a blockquote are visibly labeled', () => {
