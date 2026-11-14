@@ -135,16 +135,16 @@ class RBACMiddleware:
             and default_membership is not None
             and request.workspace_membership is default_membership
             and response.status_code < 400
+            and user.last_workspace_id != default_membership.workspace_id
         ):
             # The default workspace was used without being named: remember it (R2), also
             # when the page redirects (entry to the app), but not after an error (R5).
             # ``update`` instead of ``save``: the view may have deleted the account
             # (account deletion logs out and redirects); then nothing is written.
-            if user.last_workspace_id != default_membership.workspace_id:
-                get_user_model().objects.filter(pk=user.pk).update(last_workspace_id=default_membership.workspace_id)
-                user.last_workspace_id = default_membership.workspace_id
-                if request.org is not None and getattr(request.user, "is_authenticated", False):
-                    request.session["active_organization_id"] = str(request.org.id)
+            get_user_model().objects.filter(pk=user.pk).update(last_workspace_id=default_membership.workspace_id)
+            user.last_workspace_id = default_membership.workspace_id
+            if request.org is not None and getattr(request.user, "is_authenticated", False):
+                request.session["active_organization_id"] = str(request.org.id)
         if navigated is not None and 200 <= response.status_code < 300:
             # The workspace page was actually shown: it becomes the current
             # workspace and its organization the active one. A refused or
