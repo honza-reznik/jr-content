@@ -57,6 +57,11 @@ function mount(panel) {
         button.setAttribute('aria-pressed', String(command === 'h2'
           ? editor.isActive('heading', { level: 2 }) : editor.isActive(command)))
       }
+      for (const button of $('toolbar').querySelectorAll('[data-text-color]')) {
+        button.setAttribute('aria-pressed', String(editor.isActive('textColor', { color: button.dataset.textColor })))
+      }
+      const clearColor = $('toolbar').querySelector('[data-text-color-clear]')
+      if (clearColor) clearColor.setAttribute('aria-pressed', String(!editor.isActive('textColor')))
     },
   })
 
@@ -273,10 +278,15 @@ function mount(panel) {
     bulletList: chain => chain.toggleBulletList(), orderedList: chain => chain.toggleOrderedList(),
     taskList: chain => chain.toggleTaskList(), undo: chain => chain.undo(), redo: chain => chain.redo(),
   }
-  on($('toolbar'), 'mousedown', event => event.preventDefault())
+  on($('toolbar'), 'mousedown', event => {
+    if (event.target.closest('button')) event.preventDefault()
+  })
   on($('toolbar'), 'click', event => {
     const button = event.target.closest('[data-command]')
     if (button && editable()) commands[button.dataset.command](editor.chain().focus()).run()
+    const color = event.target.closest('[data-text-color]')
+    if (color && editable()) editor.chain().focus().setMark('textColor', { color: color.dataset.textColor }).run()
+    if (event.target.closest('[data-text-color-clear]') && editable()) editor.chain().focus().unsetMark('textColor').run()
   })
   // "Use as script draft" leaves the page: the concept reaches the server first.
   const toScript = panel.querySelector('.script-to-script')

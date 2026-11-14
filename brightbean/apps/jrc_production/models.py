@@ -162,3 +162,11 @@ class ContentProposalChange(models.Model):
     new_at = models.DateTimeField(null=True, blank=True)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class VideoDeletionRequest(models.Model):
+    """Remote cleanup survives permanently deleting the content and its local video mapping."""
+
+    ff_asset_id = models.UUIDField(primary_key=True)
+    requested_at = models.DateTimeField(auto_now_add=True)
+    last_error = models.CharField(max_length=255, blank=True)

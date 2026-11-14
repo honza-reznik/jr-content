@@ -104,8 +104,9 @@ function inlineTokens(node, isCode) {
     if (child.type === 'text') {
       const marks = markNames(child.marks)
       const link = (child.marks || []).find((m) => m.type === 'link')
+      const color = (child.marks || []).find((m) => m.type === 'textColor')?.attrs?.color ?? null
       const parts = isCode ? child.text.split(/(\n)/) : child.text.split(/(\s+|[.,;:!?()„“"])/)
-      for (const part of parts) if (part) tokens.push({ t: part, marks, href: link?.attrs?.href ?? null })
+      for (const part of parts) if (part) tokens.push({ t: part, marks, href: link?.attrs?.href ?? null, color })
     } else if (child.type === 'hardBreak') {
       tokens.push({ t: '\n', marks: [] })
     }
@@ -113,7 +114,7 @@ function inlineTokens(node, isCode) {
   return tokens
 }
 
-const tokenKey = (tok) => tok.t + '\u0000' + tok.marks.join(',') + '\u0000' + (tok.href || '')
+const tokenKey = (tok) => tok.t + '\u0000' + tok.marks.join(',') + '\u0000' + (tok.href || '') + '\u0000' + (tok.color || '')
 
 function blockAttrKey(b) {
   return [b.type, b.level, b.depth, b.quote, b.marker?.list ?? '', b.marker?.checked ?? ''].join('|')
@@ -271,6 +272,9 @@ function renderTokens(tokens) {
       for (const m of tok.marks) {
         const tag = Object.hasOwn(MARK_TAGS, m) ? MARK_TAGS[m] : null
         if (tag) html = `<${tag}>${html}</${tag}>`
+      }
+      if (['#b91c1c', '#c2410c', '#a16207', '#15803d', '#0f766e', '#0369a1', '#4338ca', '#7e22ce'].includes(tok.color)) {
+        html = `<span style="color:${tok.color}">${html}</span>`
       }
       if (tok.marks.includes('link') && safeHref(tok.href)) html = `<a href="${esc(tok.href)}" rel="noreferrer">${html}</a>`
       return html

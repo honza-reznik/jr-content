@@ -32,8 +32,8 @@ Expects context: workspace, csrf_token.
                     <div class="w-12 h-12 mx-auto rounded-full bg-red-50 flex items-center justify-center mb-4">
                         <svg class="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                     </div>
-                    <h3 class="text-base font-semibold text-stone-900 mb-1">Delete post?</h3>
-                    <p class="text-sm text-stone-500 mb-6">This action cannot be undone. The post and all associated data will be permanently removed.</p>
+                    <h3 class="text-base font-semibold text-stone-900 mb-1">Move content to Trash?</h3>
+                    <p class="text-sm text-stone-500 mb-6">This moves the whole content to Trash, not just this channel: every channel of it, including the other channels' posts. You can restore it from Trash on the content board; planned publications are cancelled and restored posts come back as drafts.</p>
                 </div>
                 <div class="flex gap-3">
                     <button @click="showDeleteModal = false"
@@ -43,8 +43,7 @@ Expects context: workspace, csrf_token.
                     <button :disabled="deleting"
                             @click="
                                 deleting = true;
-                                const acctParam = deleteAccountId ? '?account=' + deleteAccountId : '';
-                                fetch(`{% url 'composer:post_delete' workspace_id=workspace.id post_id='00000000-0000-0000-0000-000000000000' %}`.replace('00000000-0000-0000-0000-000000000000', deletePostId) + acctParam, {
+                                fetch(`{% url 'composer:post_delete' workspace_id=workspace.id post_id='00000000-0000-0000-0000-000000000000' %}`.replace('00000000-0000-0000-0000-000000000000', deletePostId), {
                                     method: 'POST',
                                     headers: { 'X-CSRFToken': '{{ csrf_token }}' }
                                 }).then(resp => {
@@ -53,14 +52,14 @@ Expects context: workspace, csrf_token.
                                         bbSuccessToast(resp.headers.get('X-JRC-Message') || 'Deleted.');
                                         window.dispatchEvent(new CustomEvent('post-deleted'));
                                     } else {
-                                        bbFailureToast(resp, 'Could not delete this channel.');
+                                        bbFailureToast(resp, 'Could not move this content to Trash.');
                                     }
                                     deleting = false;
                                 }).catch(() => { deleting = false; });
                             "
                             :class="deleting && 'opacity-50 cursor-not-allowed'"
                             class="flex-1 px-4 py-2 text-sm font-semibold text-white bg-red-500 rounded-full hover:bg-red-600 transition-colors cursor-pointer">
-                        <span x-text="deleting ? 'Deleting...' : 'Delete'"></span>
+                        <span x-text="deleting ? 'Moving...' : 'Move to Trash'"></span>
                     </button>
                 </div>
             </div>

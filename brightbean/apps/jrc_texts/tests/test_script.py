@@ -66,6 +66,8 @@ def test_read_never_creates_document_and_detail_loads_local_bundle(http, post):
     assert b"Script details will appear here" not in detail.content
     # P2-B08: no Edit or Save button; the text is edited in place and saves automatically.
     assert b"Edit text" not in detail.content and b'id="script-status"' in detail.content
+    for color in (b"#b91c1c", b"#c2410c", b"#a16207", b"#15803d", b"#0f766e", b"#0369a1", b"#4338ca", b"#7e22ce"):
+        assert color in detail.content
 
 
 def test_autosave_history_and_reading_an_older_version(http, post):
@@ -125,6 +127,46 @@ def test_comparison_is_read_only_and_rejects_other_posts(http, post, workspace):
     assert http.get(url(other), {"compare_old": first_id, "compare_new": first_id}).status_code == 404
     WorkspaceMembership.objects.filter(workspace=workspace, user=reader).delete()
     assert http.get(url(post), query).status_code == 404
+
+
+def test_client_reads_color_marks_but_cannot_write(http, post, workspace):
+    saved = send(
+        http,
+        post,
+        "autosave",
+        base=None,
+        revision=0,
+        device="color-test",
+        content={
+            "type": "doc",
+            "content": [
+                {
+                    "type": "paragraph",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Blue",
+                            "marks": [{"type": "textColor", "attrs": {"color": "#0369a1"}}],
+                        }
+                    ],
+                }
+            ],
+        },
+    ).json()
+    client_user = User.objects.create_user(
+        email="color-reader@example.invalid", name="Color reader", tos_accepted_at=timezone.now()
+    )
+    WorkspaceMembership.objects.create(workspace=workspace, user=client_user, workspace_role="client")
+    http.force_login(client_user)
+    reading = http.get(url(post))
+    assert reading.status_code == 200 and reading.json()["can_edit"] is False
+    assert reading.json()["shown"]["content"]["content"][0]["content"][0]["marks"][0]["attrs"]["color"] == "#0369a1"
+    assert (
+        send(
+            http, post, "autosave", base=saved["latest"], revision=0, device="client-color", content=content("Changed")
+        ).status_code
+        == 403
+    )
 
 
 def test_comparison_size_limit_keeps_version_metadata_and_saved_text_readable(http, post):

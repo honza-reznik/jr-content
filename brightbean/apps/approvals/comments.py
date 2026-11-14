@@ -23,6 +23,8 @@ MAX_ATTACHMENT_SIZE = 5 * 1024 * 1024  # 5MB
 
 def can_view_comment(comment, user):
     """Require access to both the comment and every enclosing thread."""
+    if comment.post.trashed_at is not None:
+        return False
     workspace = comment.post.workspace
     membership = WorkspaceMembership.objects.filter(user=user, workspace=workspace).first()
     if membership is None or not user.is_active or workspace.is_archived:

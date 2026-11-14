@@ -35,6 +35,8 @@ The element ids stay script-* because the built editor (dist/script.js) looks th
                 <button type="button" data-command="h2" aria-label="Heading">Heading</button>
                 <button type="button" data-command="bold" aria-label="Bold"><strong>B</strong></button>
                 <button type="button" data-command="italic" aria-label="Italic"><em>I</em></button>
+                {% for color in text_colors %}<button type="button" data-text-color="{{ color }}" aria-label="Text color {{ color }}" title="Text color {{ color }}" class="script-color-choice" style="--script-color: {{ color }}"><span aria-hidden="true">A</span></button>{% endfor %}
+                <button type="button" data-text-color-clear aria-label="Remove text color" title="Remove text color">A̸</button>
                 <button type="button" data-command="bulletList" aria-label="Bullet list">• List</button>
                 <button type="button" data-command="orderedList" aria-label="Numbered list">1. List</button>
                 <button type="button" data-command="taskList" aria-label="Checklist">☑ Tasks</button>

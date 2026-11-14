@@ -1,5 +1,21 @@
 # Úpravy JR Content
 
+## 2026-11-14 — P2-B09
+
+- Nástěnka: přetažení myší a dotykovým úchytem, menu pravým tlačítkem / podržením / tlačítkem,
+  výběr včetně Shift a dávkové přesuny, schválení (i klientem) a přesun do koše. Každý obsah se
+  ověřuje samostatně stejnými pravidly `move_content`; schválení nepřeskakuje klientský krok.
+- Koš (`Post.trashed_at`, migrace `composer.0024`): celé obsahy smazané z detailu a kalendáře
+  se uchovají se všemi verzemi. Výchozí správci dotazů Post/PlatformPost je skryjí i z REST/MCP
+  a publikace; obnova neobnovuje zrušené plány. Odebrání samotného kanálu dál chrání uloženou práci.
+- Trvalé vymazání jen explicitně z koše: vzdálené video se odstraní po potvrzení databázové
+  transakce. `VideoDeletionRequest` (`jrc_production.0008`) uchová nevyřízené odstranění pro
+  opakování přes `jrc_sync_freeframe --pending`. FreeFrame uplatní vlastní lhůtu úklidu smazaných
+  souborů; jeho obnova samotného videa neobnoví odstraněný JRC obsah. Databázové a S3 zálohy uchovávají také koš.
+- Rychlý filtr názvů v prohlížeči, rozšířené hledání v textech, shotlistu, popiscích, Discussion
+  a video komentářích přes FreeFrame API pod identitou uživatele. Soukromé rozepsané texty se
+  hledají jen jejich vlastníkovi s aktuálním právem upravovat; klient nevidí interní komentáře.
+
 ## 2026-11-14 — P2-B18
 
 - Stažení verze i finálního videa po kontrole oprávnění streamuje přes servisní účet FreeFrame. Každý nový požadavek včetně rozsahu bajtů znovu prochází pravidlem JRC; prohlížeč nedostává obecný odkaz na originál. Chybějící originál má dál vysvětlené potvrzení MP4, které vede zpět na stejný autorizovaný endpoint.
