@@ -138,9 +138,12 @@ def _text_editor(request, workspace_id, post_id, kind):
         if not isinstance(data.get("content"), dict):
             raise ValidationError("Provide the editor content.")
         # Never resolve a caller-supplied version outside this post or text kind.
-        if base is not None and not TextVersion.objects.filter(
-            pk=base, document__post=post, document__kind=kind, state="final"
-        ).exists():
+        if (
+            base is not None
+            and not TextVersion.objects.filter(
+                pk=base, document__post=post, document__kind=kind, state="final"
+            ).exists()
+        ):
             raise services.ConflictError(f"This {kind} changed in another place. Reload the text.")
         result = services.autosave_text(
             post.pk,

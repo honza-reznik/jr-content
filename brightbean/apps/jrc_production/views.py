@@ -15,10 +15,10 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.cache import add_never_cache_headers, patch_vary_headers
 from django.utils.dateformat import format as date_format
 from django.utils.dateparse import parse_datetime
 from django.utils.html import format_html
-from django.utils.cache import add_never_cache_headers, patch_vary_headers
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
@@ -1175,9 +1175,12 @@ def caption_autosave(request, workspace_id, post_id, platform_post_id):
     try:
         data = _json_body(request)
         base = data.get("base") or None
-        if base is not None and not TextVersion.objects.filter(
-            pk=base, document__platform_post=variant, document__kind=TextDocument.Kind.CAPTION, state="final"
-        ).exists():
+        if (
+            base is not None
+            and not TextVersion.objects.filter(
+                pk=base, document__platform_post=variant, document__kind=TextDocument.Kind.CAPTION, state="final"
+            ).exists()
+        ):
             raise ConflictError("This caption changed in another place. Reload the text.")
         result = text_services.autosave_caption(
             post.pk,
@@ -1195,7 +1198,9 @@ def caption_autosave(request, workspace_id, post_id, platform_post_id):
     except (TypeError, ValueError):
         return JsonResponse({"error": "Send a valid JSON object."}, status=400)
     post = Post.objects.select_related("workspace").get(pk=post.pk)
-    item = next((item for item in _caption_channels(post) if item["variant"] and item["variant"].pk == variant.pk), None)
+    item = next(
+        (item for item in _caption_channels(post) if item["variant"] and item["variant"].pk == variant.pk), None
+    )
     version, concurrent = result.version, result.concurrent
     return JsonResponse(
         {
