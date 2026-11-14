@@ -66,11 +66,12 @@ class Settings(BaseSettings):
     hls_max_segment_bytes: int = Field(32 * 1024**2, ge=1)
     hls_s3_connect_timeout_seconds: float = Field(3, gt=0)
     hls_s3_read_timeout_seconds: float = Field(5, gt=0)
-    # A file transfer (download of an original up to 4 GB) has no total time
-    # limit: it is cut when one 64 KiB piece is not read from storage and taken
-    # by the client within this many seconds (P2-B05). A client slower than
-    # about 2 KiB/s is dropped; its capacity lease is kept while data flows.
+    # Files have an idle limit per piece and a minimum average rate in independent
+    # windows. Defaults allow a 4 GiB download at ~0.53 Mbit/s (~18.2 hours), while
+    # a trickle cannot keep renewing a lease indefinitely (P2-B18).
     file_stream_idle_seconds: float = Field(30, gt=0)
+    file_stream_rate_window_seconds: float = Field(300, gt=0)
+    file_stream_min_bytes_per_second: int = Field(64 * 1024, gt=0)
     # How long a capacity lease outlives its last renewal, so a crashed worker
     # cannot hold a slot for ever. Kept equal to Brightbean's lease (369 s with
     # the read and connect timeouts), which shares the same Redis keys.

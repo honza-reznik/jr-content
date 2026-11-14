@@ -158,6 +158,12 @@ describe.each(['grid', 'list'] as const)('AssetGrid right-click (%s view)', (lay
     expect(h.onAssetDownload).toHaveBeenCalledWith(assets[1], 'transcode')
   })
 
+  it('has no Download entry when the page passes no download action (JR Content accounts)', async () => {
+    renderGrid({ onAssetDownload: undefined, onBulkDownload: undefined, loadAssetDownloadOptions: undefined })
+    fireEvent.contextMenu(screen.getByText('Clip 2'))
+    expect(await menuItems()).toEqual(ASSET_ITEMS.filter((i) => i !== 'Download'))
+  })
+
   it('leaves out the entries that have no action, as on /assets', async () => {
     render(<AssetGrid assets={assets} projectId="" />)
     fireEvent.contextMenu(screen.getByText('Clip 1'))

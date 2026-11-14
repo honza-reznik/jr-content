@@ -9,13 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - JR Content video downloads serve the original upload with its filename, with an explained MP4 fallback for missing originals. Review playback starts at up to 720p; higher resolutions require a manual selection. New CPU 720p conversions use a 1.5 Mbps video ceiling. Comment visibility uses “Team only” and “Team and client”.
-- JR Content: file downloads through the `/files` gateway have no total time limit. A transfer is cut only when one 64 KiB piece is not read from storage and taken by the client within `FILE_STREAM_IDLE_SECONDS` (30 s); its capacity lease is renewed while data flows. JR Content accounts download a version only through JR Content, which decides who may; the fallback note is shown in the page instead of a browser dialog.
+- JR Content: dlouhé stažení obnovuje rezervaci kapacity jen při průběžném přenosu; vedle 30s limitu nečinnosti musí v samostatných 300s oknech dosahovat alespoň 64 KiB/s. Přenos 4 GiB na pomalé lince tak může trvat přibližně 18,2 hodiny.
+- JR Content: sdílené odkazy účtů JR Content a odkazy spravovaných projektů nevydávají soubory ke stažení (stažení a nabídka možností 403, starší video bez HLS 409 místo surového souboru); nové i upravené odkazy mají stahování vždy vypnuté a web přepínač nenabízí.
 
 ### Added
 - JR Content: přihlášení do videa jednorázovou vstupenkou z Brightbean, ochrana proti podstrčení cizího přihlášení a společné odhlášení.
 - JR Content: časový štítek nad obrazem videa, synchronizovaný s vykresleným snímkem; FPS ze souboru a celá obrazovka se štítkem i na telefonu.
 
 ### Fixed
+- JR Content P2-B18: spravované účty nemohou stahovat přes členské API ani přímé adresy originálů a MP4; starší video bez HLS nevydá originál ani jako náhradu přehrávání; web skrývá jednotlivé a hromadné stažení. Brightbean stahuje vybranou verzi interní servisní cestou až po ověření vlastních oprávnění. Sdílené odkazy zachovávají vlastní pravidla.
 - JR Content P2-B01: servisní přihlášení po anonymizaci testovací kopie přijímá syntakticky platné adresy `.invalid`; validace v hlavním projektu zůstává původní.
 - JR Content P2-B02: přihlašovací stránky videa vedou na přihlášení aplikace s bezpečným návratem; místní přihlašovací API neprozrazuje existenci účtů a zachovává interní servisní přihlášení.
 - JR Content P2-B02: odhlášení aplikace zneplatní dosavadní video tokeny včetně přenosu HLS; při nedostupném video serveru lze odhlášení bezpečně zopakovat.

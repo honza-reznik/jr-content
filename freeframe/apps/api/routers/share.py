@@ -89,6 +89,27 @@ def _get_project_id_from_link(db: Session, link: ShareLink) -> uuid.UUID:
     raise HTTPException(status_code=400, detail="Invalid share link")
 
 
+def _project_is_jrc_managed(db: Session, project_id) -> bool:
+    return db.query(Project.jrc_managed).filter(Project.id == project_id).scalar() is True
+
+
+def _share_is_jrc_managed(db: Session, link: ShareLink, user: Optional[User] = None) -> bool:
+    """Shares of JR Content projects (and sessions of JR Content accounts) follow the
+    JR Content download rule, which is applied only by Brightbean: no file leaves here."""
+    if user is not None and user.jrc_managed is True:
+        return True
+    return _project_is_jrc_managed(db, _get_project_id_from_link(db, link))
+
+
+def _download_allowed_for_new_link(db: Session, project_id, requested: bool) -> bool:
+    return bool(requested) and not _project_is_jrc_managed(db, project_id)
+
+
+def _refuse_managed_download(db: Session, link: ShareLink, user: Optional[User]) -> None:
+    if _share_is_jrc_managed(db, link, user):
+        raise HTTPException(status_code=403, detail="Download videos through JR Content")
+
+
 def _share_file_url(link, user, session, key, **kwargs):
     from ..config import settings
     if settings.s3_public_path:
@@ -235,7 +256,7 @@ def create_share_link(
         password_encrypted=password_encrypted,
         permission=body.permission,
         visibility=body.visibility,
-        allow_download=body.allow_download,
+        allow_download=_download_allowed_for_new_link(db, asset.project_id, body.allow_download),
         show_versions=body.show_versions,
         show_watermark=body.show_watermark,
         appearance=body.appearance.model_dump(),
@@ -314,7 +335,9 @@ def _build_share_validate_response(
                                                **managed_hls_identity(current_user, asset.project_id, db=db))
                 else:
                     stream_url = _share_file_url(link, current_user, session_id, media_file.s3_key_processed, **media_expiry)
-            elif media_file.s3_key_raw:
+            elif media_file.s3_key_raw and not (
+                asset.asset_type == AssetType.video and _share_is_jrc_managed(db, link, current_user)
+            ):
                 stream_url = _share_file_url(link, current_user, session_id, media_file.s3_key_raw, **media_expiry)
 
         asset_data = {
@@ -355,7 +378,7 @@ def _build_share_validate_response(
         description=link.description,
         permission=link.permission,
         visibility=link.visibility,
-        allow_download=link.allow_download,
+        allow_download=bool(link.allow_download) and not _share_is_jrc_managed(db, link, current_user),
         show_versions=link.show_versions,
         show_watermark=link.show_watermark,
         appearance=link.appearance,
@@ -539,6 +562,9 @@ def update_share_link(
     if "appearance" in updates and updates["appearance"] is not None:
         updates["appearance"] = body.appearance.model_dump()
 
+    if "allow_download" in updates and not _download_allowed_for_new_link(db, project_id, updates["allow_download"]):
+        updates["allow_download"] = False
+
     for key, value in updates.items():
         setattr(link, key, value)
 
@@ -595,7 +621,7 @@ def create_folder_share_link(
         password_encrypted=password_encrypted,
         permission=body.permission,
         visibility=body.visibility,
-        allow_download=body.allow_download,
+        allow_download=_download_allowed_for_new_link(db, folder.project_id, body.allow_download),
         show_versions=body.show_versions,
         show_watermark=body.show_watermark,
         appearance=body.appearance.model_dump(),
@@ -640,7 +666,7 @@ def create_project_share_link(
         password_encrypted=password_encrypted,
         permission=body.permission,
         visibility=body.visibility,
-        allow_download=body.allow_download,
+        allow_download=_download_allowed_for_new_link(db, project_id, body.allow_download),
         show_versions=body.show_versions,
         show_watermark=body.show_watermark,
         appearance=body.appearance.model_dump(),
@@ -1262,7 +1288,7 @@ def create_multi_share_link(
         is_enabled=True,
         permission=body.permission,
         visibility=body.visibility,
-        allow_download=body.allow_download,
+        allow_download=_download_allowed_for_new_link(db, project_id, body.allow_download),
         show_versions=body.show_versions,
         show_watermark=body.show_watermark,
         password_hash=password_hash,
@@ -1537,6 +1563,7 @@ def list_share_download_options(
     link = validate_share_link_with_session(db, token, share_session=share_session, current_user=current_user)
     if not link.allow_download:
         raise HTTPException(status_code=403, detail="Downloads are not allowed for this share link")
+    _refuse_managed_download(db, link, current_user)
     asset = _get_asset(db, asset_id)
     validate_asset_in_share(db, link, asset)
     media_file = _share_media_file(db, link, asset, version_id)
@@ -1578,6 +1605,8 @@ def get_share_stream_url(
     # Enforce allow_download when explicit download is requested
     if download and not link.allow_download:
         raise HTTPException(status_code=403, detail="Downloads are not allowed for this share link")
+    if download:
+        _refuse_managed_download(db, link, current_user)
 
     asset = _get_asset(db, asset_id)
 
@@ -1609,6 +1638,9 @@ def get_share_stream_url(
         url = issue_hls_url(request, response, media_file.s3_key_processed,
                             **share_hls_identity(link, asset, media_file, current_user, share_session),
                             **managed_hls_identity(current_user, asset.project_id, db=db))
+    elif asset.asset_type == AssetType.video and _share_is_jrc_managed(db, link, current_user):
+        # A ready legacy version without a preview must not turn playback into a raw file.
+        raise HTTPException(status_code=409, detail="Video preview is unavailable")
     else:
         url = _share_file_url(link, current_user, share_session, media_file.s3_key_processed or media_file.s3_key_raw, **media_expiry)
 

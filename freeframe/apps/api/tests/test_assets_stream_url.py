@@ -127,56 +127,64 @@ def test_image_stream_still_returns_presigned(
 @patch("apps.api.routers.assets.generate_presigned_get_url")
 @patch("apps.api.services.downloads.head_object_size")
 @patch("apps.api.routers.assets.require_asset_access")
-def test_managed_video_downloads_original_with_upload_name(access, head, presign, client, mock_db, auth_headers, test_user):
+def test_managed_video_downloads_original_with_upload_name(access, head, presign, client, mock_db, auth_headers, test_user, monkeypatch):
     from apps.api.models.asset import AssetType
-    test_user.jrc_managed = True
+    test_user.jrc_managed = False
+    test_user.is_superadmin = True
+    monkeypatch.setenv("JRC_FF_SYNC_EMAIL", test_user.email)
     asset, version, media = _setup_video_asset(mock_db, AssetType.video)
     media.original_filename = "Žlutý klip.MOV"
     media.s3_key_raw = "raw/project/original.mov"
     media.s3_key_download = "processed/project/download.mp4"
     head.return_value = 123
     presign.return_value = "/files/video/raw/project/original.mov?filename=clip.MOV"
-    response = client.get(f"/assets/{asset.id}/stream?download=true&version_id={version.id}", headers=auth_headers)
+    response = client.get(f"/jrc-sync/assets/{asset.id}/download-info?version_id={version.id}", headers=auth_headers)
     assert response.status_code == 200, response.text
     assert response.json()["download_note"] is None
-    assert presign.call_args.args == (media.s3_key_raw,)
-    assert presign.call_args.kwargs["download_filename"] == media.original_filename
+    assert response.json()["filename"] == media.original_filename
+    presign.assert_not_called()
     access.assert_called_once()
 
 
 @patch("apps.api.routers.assets.generate_presigned_get_url")
 @patch("apps.api.services.downloads.head_object_size")
 @patch("apps.api.routers.assets.require_asset_access")
-def test_managed_missing_original_falls_back_with_note(access, head, presign, client, mock_db, auth_headers, test_user):
+def test_managed_missing_original_falls_back_with_note(access, head, presign, client, mock_db, auth_headers, test_user, monkeypatch):
     from apps.api.models.asset import AssetType
-    test_user.jrc_managed = True
-    asset, _, media = _setup_video_asset(mock_db, AssetType.video)
+    test_user.jrc_managed = False
+    test_user.is_superadmin = True
+    monkeypatch.setenv("JRC_FF_SYNC_EMAIL", test_user.email)
+    asset, version, media = _setup_video_asset(mock_db, AssetType.video)
     media.s3_key_download = "processed/project/download.mp4"
     head.side_effect = [None, 456]
     presign.return_value = "/files/video/processed/project/download.mp4?filename=demo.mp4"
-    response = client.get(f"/assets/{asset.id}/stream?download=true", headers=auth_headers)
+    response = client.get(f"/jrc-sync/assets/{asset.id}/download-info?version_id={version.id}", headers=auth_headers)
     assert response.status_code == 200, response.text
     assert "original upload is unavailable" in response.json()["download_note"]
-    assert presign.call_args.args == (media.s3_key_download,)
-    assert presign.call_args.kwargs["download_filename"].endswith(".mp4")
+    assert response.json()["filename"].endswith(".mp4")
+    presign.assert_not_called()
 
 
 @patch("apps.api.services.downloads.head_object_size", return_value=None)
 @patch("apps.api.routers.assets.require_asset_access")
-def test_managed_missing_all_downloads_returns_404(access, head, client, mock_db, auth_headers, test_user):
+def test_managed_missing_all_downloads_returns_404(access, head, client, mock_db, auth_headers, test_user, monkeypatch):
     from apps.api.models.asset import AssetType
-    test_user.jrc_managed = True
-    asset, _, media = _setup_video_asset(mock_db, AssetType.video)
+    test_user.jrc_managed = False
+    test_user.is_superadmin = True
+    monkeypatch.setenv("JRC_FF_SYNC_EMAIL", test_user.email)
+    asset, version, media = _setup_video_asset(mock_db, AssetType.video)
     media.s3_key_download = "processed/project/download.mp4"
-    response = client.get(f"/assets/{asset.id}/stream?download=true", headers=auth_headers)
+    response = client.get(f"/jrc-sync/assets/{asset.id}/download-info?version_id={version.id}", headers=auth_headers)
     assert response.status_code == 404
 
 
 @patch("apps.api.services.downloads.head_object_size", side_effect=RuntimeError("storage unavailable"))
 @patch("apps.api.routers.assets.require_asset_access")
-def test_managed_storage_failure_does_not_silently_fallback(access, head, client, mock_db, auth_headers, test_user):
+def test_managed_storage_failure_does_not_silently_fallback(access, head, client, mock_db, auth_headers, test_user, monkeypatch):
     from apps.api.models.asset import AssetType
-    test_user.jrc_managed = True
-    asset, _, _ = _setup_video_asset(mock_db, AssetType.video)
-    response = client.get(f"/assets/{asset.id}/stream?download=true", headers=auth_headers)
+    test_user.jrc_managed = False
+    test_user.is_superadmin = True
+    monkeypatch.setenv("JRC_FF_SYNC_EMAIL", test_user.email)
+    asset, version, _ = _setup_video_asset(mock_db, AssetType.video)
+    response = client.get(f"/jrc-sync/assets/{asset.id}/download-info?version_id={version.id}", headers=auth_headers)
     assert response.status_code == 500

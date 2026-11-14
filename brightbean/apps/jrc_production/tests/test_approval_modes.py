@@ -22,6 +22,7 @@ from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
+from django.http import HttpResponse
 from django.test import Client, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -33,7 +34,7 @@ from apps.composer.services import create_post, require_release_allowed, transit
 from apps.jrc_channels.services import create_manual_channel
 from apps.jrc_production.models import ManualPublication
 from apps.jrc_production.services import available_moves
-from apps.jrc_video.models import VideoAsset, VideoVersion
+from apps.jrc_video.models import VideoAccount, VideoAsset, VideoVersion
 from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.workspaces.models import Workspace
 
@@ -68,6 +69,8 @@ def setup(organization):
             actor = User.objects.create_user(email=f"{role}-{mode}@example.invalid", tos_accepted_at=timezone.now())
             OrgMembership.objects.create(user=actor, organization=organization, org_role="member")
             WorkspaceMembership.objects.create(user=actor, workspace=workspace, workspace_role=role)
+
+        VideoAccount.objects.create(user=actor, ff_user_id=uuid.uuid4(), synced_at=timezone.now())
 
         def content(name, status, *, caption="Ready caption", video=False):
             post = Post.objects.create(workspace=workspace, author=owner, title=name, caption=caption)
@@ -144,16 +147,16 @@ def test_mode_role_action_matrix(client, setup, mode, role):
             "jrc_video:final_download",
             kwargs={"workspace_id": workspace.pk, "post_id": post.pk, "platform_post_id": variant.pk},
         )
-        signed = "http://testserver/files/video/raw/file.mp4?filename=final.mp4"
         with (
             override_settings(JRC_S3_PUBLIC_ORIGIN="http://127.0.0.1:14133"),
-            patch("apps.jrc_video.uploads._call", return_value={"url": signed}) as call,
+            patch("apps.jrc_video.client.FreeFrameClient.request", return_value={"filename": "final.mp4"}) as call,
+            patch("apps.jrc_storage.views.proxy_video_file", return_value=HttpResponse(b"video")),
         ):
             response = client.get(url)
         if role not in PUBLISHERS:
             assert response.status_code == 403, ("download", state)
         else:
-            assert response.status_code == (302 if goes_out else 404), ("download", state)
+            assert response.status_code == (200 if goes_out else 404), ("download", state)
         assert call.called is (role in PUBLISHERS and goes_out), ("download", state)
 
 

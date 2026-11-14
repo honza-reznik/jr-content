@@ -41,6 +41,7 @@ import { CommentPanel } from "@/components/review/comment-panel";
 import { UploadZone } from "@/components/upload/upload-zone";
 import { useFileDropRegion } from "@/components/projects/use-file-drop-region";
 import { useUploadStore } from "@/stores/upload-store";
+import { canDownloadFiles } from "@/lib/download-access";
 import { useAuthStore } from "@/stores/auth-store";
 import { useViewStore } from "@/stores/view-store";
 import { useBreadcrumbStore } from "@/stores/breadcrumb-store";
@@ -133,6 +134,7 @@ export default function ProjectDetailPage() {
 
   const startUpload = useUploadStore((s) => s.startUpload);
   const { user } = useAuthStore();
+  const canDownload = canDownloadFiles(user);
 
   const {
     tree,
@@ -800,11 +802,11 @@ export default function ProjectDetailPage() {
                 setShareDialogResult(null);
                 setShareDialogOpen(true);
               }}
-              onAssetDownload={async (asset, rendition) => {
+              onAssetDownload={canDownload ? async (asset, rendition) => {
                 try {
                   showDownloadNote(await downloadAsset(asset.id, rendition));
                 } catch {}
-              }}
+              } : undefined}
               loadAssetDownloadOptions={(asset) => fetchAssetDownloadOptions(asset.id)}
               onAssetRename={(asset) => setAssetToRename(asset as AssetResponse)}
               onAssetDelete={(asset) => setAssetToDelete(asset as AssetResponse)}
@@ -817,7 +819,7 @@ export default function ProjectDetailPage() {
               onBulkDelete={(assetIds, folderIds) => {
                 setPendingBulkDelete({ assetIds, folderIds });
               }}
-              onBulkDownload={async (assetIds, folderIds) => {
+              onBulkDownload={canDownload ? async (assetIds, folderIds) => {
                 // No choice per asset here. The instance setting decides, for
                 // members too: originals when an admin allows them outside a
                 // project, transcodes otherwise -- the same rule as Download
@@ -845,7 +847,7 @@ export default function ProjectDetailPage() {
                     }
                   } catch {}
                 }
-              }}
+              } : undefined}
               actions={
                 <>
                   {canManageMembers && (
@@ -1178,7 +1180,7 @@ export default function ProjectDetailPage() {
                       >
                         <LinkIcon className="h-3.5 w-3.5" /> Share
                       </Button>
-                      <DownloadMenu
+                      {canDownload && <DownloadMenu
                         load={() => fetchAssetDownloadOptions(selectedAsset.id)}
                         onPick={async (rendition) => {
                           try {
@@ -1192,7 +1194,7 @@ export default function ProjectDetailPage() {
                           <Download className="h-3.5 w-3.5" /> Download
                           <ChevronDown className="h-3 w-3 opacity-60" />
                         </Button>
-                      </DownloadMenu>
+                      </DownloadMenu>}
                     </div>
                   </div>
                 )

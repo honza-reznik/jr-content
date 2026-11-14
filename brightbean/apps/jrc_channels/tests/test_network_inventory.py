@@ -33,7 +33,8 @@ ALLOWED_HTTP = Counter(
         ("jrc_video/client.py", "FreeFrameClient._send", "requests.request"): 1,
         # P1-B03: bounded file streaming from the same internal FreeFrame host;
         # only an authenticated header, no browser cookies, proxy or redirects.
-        ("jrc_storage/views.py", "_video_file", "requests.request"): 1,
+        # P2-B18: shared transport for member files and authorized service downloads.
+        ("jrc_storage/views.py", "proxy_video_file", "requests.request"): 1,
     }
 )
 

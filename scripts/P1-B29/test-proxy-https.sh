@@ -24,7 +24,7 @@ U=http://127.0.0.1:$port/jrc/api/v1/me/
 A="Authorization: Bearer $T"
 mcp() { code -X POST -H "$A" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' "$@" -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' http://127.0.0.1:$port/jrc/api/v1/mcp/; }
 forbidden() { # zakázané cesty musí vracet 404 i přes nové handle bloky (pořadí direktiv Caddy)
-  for path in /jrc/admin /jrc/admin/ /jrc/admin/login/ /jrc/video-api/docs /jrc/video-api/openapi.json /jrc/video-api/admin/ /jrc/video-api/setup/ /jrc/video/setup / /nic; do
+  for path in /jrc/admin /jrc/admin/ /jrc/admin/login/ /jrc/video-api/docs /jrc/video-api/openapi.json /jrc/video-api/admin/ /jrc/video-api/setup/ /jrc/video-api/jrc-sync/accounts/x /jrc/video-api/jrc-sync/assets/x/download /jrc/video/setup / /nic; do
     expect "zakázáno $path" 404 "$(code http://127.0.0.1:$port$path)"
     expect "zakázáno $path s klíčem i https hlavičkou" 404 "$(code -H "$A" -H 'X-Forwarded-Proto: https' http://127.0.0.1:$port$path)"
   done
