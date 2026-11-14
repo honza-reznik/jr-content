@@ -20,6 +20,7 @@ import { canPostInternalComments } from '@/lib/comment-visibility'
 // ApprovalBar removed for now
 import { VersionSwitcher } from '@/components/review/version-switcher'
 import { ShareDialog } from '@/components/review/share-dialog'
+import { canEditAssets } from '@/lib/asset-permissions'
 import { CompareOverlay } from '@/components/review/compare/compare-overlay'
 import { useReviewStore } from '@/stores/review-store'
 import { useAuthStore } from '@/stores/auth-store'
@@ -179,6 +180,8 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   const currentMember = members?.find((m) => m.user_id === user?.id)
   const currentRole = currentMember?.role ?? 'viewer'
   const canComment = currentRole !== 'viewer'
+  // New Version and Share need owner or editor; the API refuses them for a client (reviewer) and a viewer.
+  const canEdit = canEditAssets(currentRole)
   // JR Content: a client (reviewer) comments in public only; internal comments are the team's (F7-B02).
   // The API enforces the same rule, this only keeps the switch out of the client's way.
   const canPostInternal = canPostInternalComments(user?.jrc_managed, currentRole)
@@ -678,15 +681,17 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
               Compare
             </button>
           )}
-          <button
-            onClick={() => versionFileInputRef.current?.click()}
-            className="inline-flex items-center gap-1.5 rounded-md px-2.5 h-8 text-xs font-medium border border-border text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
-            title="Upload new version"
-          >
-            <Upload className="h-3.5 w-3.5" />
-            New Version
-          </button>
-          <ShareDialog assetId={asset.id} assetName={asset.name} projectId={projectId} asset={asset} />
+          {canEdit && (
+            <button
+              onClick={() => versionFileInputRef.current?.click()}
+              className="inline-flex items-center gap-1.5 rounded-md px-2.5 h-8 text-xs font-medium border border-border text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+              title="Upload new version"
+            >
+              <Upload className="h-3.5 w-3.5" />
+              New Version
+            </button>
+          )}
+          {canEdit && <ShareDialog assetId={asset.id} assetName={asset.name} projectId={projectId} asset={asset} />}
           <button
             // When the sheet is the comment surface, this button drives the
             // sheet. Toggling `sidebarOpen` there would do nothing visible,

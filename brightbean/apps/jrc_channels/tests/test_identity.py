@@ -324,3 +324,45 @@ def test_channel_gear_has_44px_touch_target_on_small_screens(owner, user, worksp
     html = owner.get(reverse("calendar:calendar", kwargs={"workspace_id": workspace.pk})).content.decode()
     gear = next(chunk for chunk in html.split("<a ") if 'aria-label="Manage Forendors channel"' in chunk)
     assert "max-lg:w-11" in gear and "max-lg:h-11" in gear
+
+
+# --- P2-B19 (N-K20-p026rg1-01): the sidebar "New" button and the active menu item on light accents --------
+
+
+@pytest.mark.parametrize("colour", ["#FFE600", "#FFFFFF", "#FFFF00", "#1D4ED8"])
+def test_new_button_and_active_menu_item_are_readable(owner, workspace, colour):
+    import re
+    from pathlib import Path
+
+    from apps.workspaces.colors import SIDEBAR_SURFACE, _mix, accent_link_color, accent_text_color, contrast_ratio
+
+    workspace.primary_color = colour
+    workspace.save()
+    html = owner.get(reverse("calendar:calendar", kwargs={"workspace_id": workspace.pk})).content.decode()
+    # The page renders the button with the shared class and the variables it relies on.
+    assert 'class="btn-brand ' in html
+    assert f"--accent-text: {accent_text_color(colour)};" in html
+    assert f"--primary-text: {accent_link_color(colour)};" in html
+    # Button: accent text on the accent, also when hovered (hover darkens the accent by 14 %).
+    assert contrast_ratio(colour, accent_text_color(colour)) >= 4.5
+    # Active menu item: link colour on the soft tint, on the hovered tint and on the sidebar surface.
+    link = accent_link_color(colour)
+    for surface in (
+        _mix(colour, "#FFFFFF", 0.94),
+        _mix(_mix(colour, "#FFFFFF", 0.94), "#000000", 0.04),
+        SIDEBAR_SURFACE,
+    ):
+        assert contrast_ratio(link, surface) >= 4.5
+
+    # The rules themselves: colour only from the variables, and never animated.
+    css = (Path(__file__).resolve().parents[3] / "theme/static_src/src/styles.css").read_text()
+
+    def block(selector):
+        return re.search(re.escape(selector) + r" \{([^}]*)\}", css).group(1)
+
+    assert "color: var(--accent-text);" in block(".btn-brand")
+    assert "color: var(--primary-text);" in block(".sidebar-nav-item.active")
+    for selector in (".btn-brand", ".sidebar-nav-item"):
+        transition = next(line for line in block(selector).splitlines() if "transition:" in line)
+        assert "all " not in transition
+    assert " color " not in block(".btn-brand").split("transition:")[1].split(";")[0]
