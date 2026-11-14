@@ -461,6 +461,54 @@ class TestRateLimit:
         assert twofactor.verify(user, code_at(secret, clock.now)) is twofactor.Result.TOTP
 
 
+class TestUnicodeAndSecrecy:
+    @pytest.mark.parametrize("code", ["１２３４５６", "١٢٣٤٥٦", "१२३४५६", "12３４56", "²³⁴⁵⁶¹"])
+    def test_non_ascii_digits_are_just_invalid(self, user, clock, code):
+        secret, _ = enable_2fa(user, clock)
+        assert twofactor.matching_counter(secret, code) is None
+        assert twofactor.verify(user, code) is twofactor.Result.INVALID
+        key = f"jrc2fa:fail:{user.pk}:{15 * 60}"
+        assert cache.get(key) == 1
+
+    @pytest.mark.parametrize("code", ["１２３４５６", "١٢٣٤٥٦"])
+    def test_setup_with_non_ascii_digits_is_just_invalid(self, user, clock, code):
+        twofactor.pending_secret(user)
+        assert twofactor.confirm_setup(user, code)[0] is twofactor.Result.INVALID
+        assert cache.get(f"jrc2fa:fail:{user.pk}:{15 * 60}") == 1
+
+    def test_login_step_with_fullwidth_digits_is_not_a_500(self, client, user, clock):
+        enable_2fa(user, clock)
+        login_password(client, user.email)
+        response = client.post(reverse("accounts:two_factor_login"), {"code": "１２３４５６"})
+        assert response.status_code == 200
+        assert b"not valid" in response.content
+
+    def test_sensitive_values_are_hidden_from_debug_reports(self, client, user, clock, settings, monkeypatch):
+        secret, _ = enable_2fa(user, clock)
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("boom")
+
+        # Fails inside matching_counter, where the secret and the decoded key are locals.
+        monkeypatch.setattr(twofactor, "hotp", boom)
+        settings.DEBUG = True
+        client.raise_request_exception = False
+        login_password(client, user.email)
+        response = client.post(reverse("accounts:two_factor_login"), {"code": "135790"})
+        assert response.status_code == 500
+        text = response.content.decode()
+        assert "RuntimeError" in text
+        assert "135790" not in text
+        assert secret not in text
+
+        client.force_login(user)
+        user.refresh_from_db()
+        response = client.post(reverse("accounts:security"), {"action": "regenerate", "code": "246801"})
+        assert response.status_code == 500
+        assert "246801" not in response.content.decode()
+        assert secret not in response.content.decode()
+
+
 # -- password reset --------------------------------------------------------------------
 
 
@@ -533,6 +581,27 @@ class TestOtherEntrances:
         assert response["Location"].startswith(reverse("account_login"))
         response = client.post("/admin/login/", {"username": user.email, "password": PASSWORD})
         assert response.status_code == 302 and not is_logged_in(client)
+
+    def test_admin_login_cannot_switch_account_without_code(self, client, user, clock):
+        """Staff A signed in; POSTing B's password to the admin login must not sign B in."""
+        user.is_staff = True
+        user.save()
+        other = User.objects.create_user(
+            email="b@example.com", password=PASSWORD, tos_accepted_at=timezone.now(), is_staff=True
+        )
+        enable_2fa(other, clock)
+        client.force_login(user)
+        for url in ("/admin/login/", "/admin/login/?next=/admin/login/"):
+            response = client.post(url, {"username": other.email, "password": PASSWORD, "next": "/admin/"})
+            assert response.status_code == 302
+            assert client.session["_auth_user_id"] == str(user.pk)
+            assert response["Location"] != url
+        assert client.get("/admin/login/").status_code == 302
+        assert client.session["_auth_user_id"] == str(user.pk)
+        # Non-staff accounts are refused outright.
+        user.is_staff = False
+        user.save()
+        assert client.post("/admin/login/", {"username": other.email, "password": PASSWORD}).status_code == 403
 
     def test_magic_link_does_not_replace_the_code(self, client, user, clock):
         from apps.client_portal.models import MagicLinkToken

@@ -19,6 +19,9 @@ environ.Env.read_env(BASE_DIR / ".env", overwrite=False)
 
 SECRET_KEY = env("SECRET_KEY")
 DEBUG = env("DEBUG")
+
+# JR Content (P2-B17): the markers @sensitive_variables / @sensitive_post_parameters must work in DEBUG too.
+DEFAULT_EXCEPTION_REPORTER_FILTER = "config.debug.AlwaysCleansingFilter"
 ALLOWED_HOSTS = env("ALLOWED_HOSTS")
 APP_URL = env("APP_URL")
 

@@ -35,6 +35,7 @@ from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
 from django.utils.crypto import salted_hmac
+from django.views.decorators.debug import sensitive_variables
 
 from apps.accounts.models import TwoFactorEvent, User
 
@@ -78,11 +79,13 @@ def generate_secret() -> str:
     return base64.b32encode(secrets.token_bytes(20)).decode("ascii").rstrip("=")
 
 
+@sensitive_variables()
 def _secret_bytes(secret: str) -> bytes:
     cleaned = secret.replace(" ", "").upper()
     return base64.b32decode(cleaned + "=" * (-len(cleaned) % 8))
 
 
+@sensitive_variables()
 def hotp(key: bytes, counter: int, digits: int = DIGITS, digest=hashlib.sha1) -> str:
     mac = hmac.new(key, struct.pack(">Q", counter), digest).digest()
     offset = mac[-1] & 0x0F
@@ -90,18 +93,22 @@ def hotp(key: bytes, counter: int, digits: int = DIGITS, digest=hashlib.sha1) ->
     return str(value % 10**digits).zfill(digits)
 
 
+@sensitive_variables()
 def totp(key: bytes, at: float, digits: int = DIGITS, digest=hashlib.sha1, period: int = PERIOD) -> str:
     return hotp(key, int(at) // period, digits, digest)
 
 
 def normalize_code(code: str) -> str:
-    return "".join(ch for ch in (code or "") if ch.isalnum()).lower()
+    # ASCII only: str.isdigit()/isalnum() also accept other scripts' digits (e.g. fullwidth),
+    # which hmac.compare_digest() rejects with a TypeError.
+    return "".join(ch for ch in (code or "") if ch.isascii() and ch.isalnum()).lower()
 
 
+@sensitive_variables()
 def matching_counter(secret: str, code: str, now: float | None = None) -> int | None:
     """Time step whose code equals ``code`` within ±TOLERANCE steps, else None."""
     code = normalize_code(code)
-    if len(code) != DIGITS or not code.isdigit():
+    if len(code) != DIGITS or not (code.isascii() and code.isdigit()):
         return None
     key = _secret_bytes(secret)
     current = int(time.time() if now is None else now) // PERIOD
@@ -113,6 +120,7 @@ def matching_counter(secret: str, code: str, now: float | None = None) -> int | 
     return found
 
 
+@sensitive_variables()
 def otpauth_uri(user, secret: str) -> str:
     label = quote(f"{ISSUER}:{user.email}")
     params = urlencode({"secret": secret, "issuer": ISSUER}, quote_via=quote)
@@ -132,6 +140,7 @@ def _generate_recovery_code() -> str:
     return f"{raw[:half]}-{raw[half:]}"
 
 
+@sensitive_variables()
 def hash_recovery_code(user, code: str) -> str:
     return salted_hmac(
         "jrc.accounts.twofactor.recovery", f"{user.pk}:{normalize_code(code)}", algorithm="sha256"
@@ -214,6 +223,7 @@ def _refresh(user, row) -> None:
         setattr(user, field, getattr(row, field))
 
 
+@sensitive_variables()
 def pending_secret(user, *, regenerate: bool = False) -> str:
     """Secret for a setup in progress; created on first use and kept until confirmed or cancelled."""
     with transaction.atomic():
@@ -238,12 +248,15 @@ def cancel_setup(user) -> None:
         _refresh(user, row)
 
 
+@sensitive_variables()
 def confirm_setup(user, code: str, request=None) -> tuple[Result, list[str]]:
     """Turn 2FA on if ``code`` matches the pending secret; returns the new recovery codes."""
-    if is_locked(user):
-        return Result.LOCKED, []
     with transaction.atomic():
         row = _locked_row(user)
+        # The budget check and the counting of a failed attempt both happen under the row lock,
+        # so parallel requests cannot all pass the check before any of them is counted.
+        if is_locked(user):
+            return Result.LOCKED, []
         if row.totp_enabled or not row.totp_secret:
             return Result.INVALID, []
         counter = matching_counter(row.totp_secret, code)
@@ -268,25 +281,27 @@ def confirm_setup(user, code: str, request=None) -> tuple[Result, list[str]]:
             _refresh(user, row)
             clear_failures(user)
             return Result.TOTP, codes
-    register_failure(user, request)
+        register_failure(user, request)
     return result, []
 
 
+@sensitive_variables()
 def verify(user, code: str, request=None, *, allow_recovery: bool = True) -> Result:
     """Check a second-factor code for ``user`` (login step and sensitive changes).
 
     A matching app code is consumed (``totp_last_counter``); a matching
     recovery code is removed. Any failure counts against the budget.
     """
-    if is_locked(user):
-        return Result.LOCKED
     normalized = normalize_code(code)
     result = Result.INVALID
     with transaction.atomic():
         row = _locked_row(user)
+        # Check and count under the row lock (see confirm_setup).
+        if is_locked(user):
+            return Result.LOCKED
         if not row.totp_enabled or not row.totp_secret:
             return Result.INVALID
-        if len(normalized) == DIGITS and normalized.isdigit():
+        if len(normalized) == DIGITS and normalized.isascii() and normalized.isdigit():
             counter = matching_counter(row.totp_secret, normalized)
             if counter is not None:
                 if row.totp_last_counter is not None and counter <= row.totp_last_counter:
@@ -306,10 +321,10 @@ def verify(user, code: str, request=None, *, allow_recovery: bool = True) -> Res
                 log_event(row, Action.RECOVERY_CODE_USED, actor=row, request=request)
                 result = Result.RECOVERY_CODE
         _refresh(user, row)
-    if result.ok:
-        clear_failures(user)
-    else:
-        register_failure(user, request)
+        if result.ok:
+            clear_failures(user)
+        else:
+            register_failure(user, request)
     return result
 
 

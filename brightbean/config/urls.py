@@ -4,10 +4,14 @@ import posixpath
 import re
 from urllib.parse import urlsplit
 
-from allauth.account.decorators import secure_admin_login
+from allauth.account.utils import get_next_redirect_url
+from allauth.core.internal import httpkit
 from django.conf import settings
 from django.contrib import admin
-from django.http import Http404
+from django.contrib.auth import REDIRECT_FIELD_NAME
+from django.core.exceptions import PermissionDenied
+from django.http import Http404, HttpResponseRedirect
+from django.shortcuts import resolve_url
 from django.urls import include, path, re_path
 from django.views.static import serve
 
@@ -18,9 +22,27 @@ from apps.oauth_server import views as oauth_views
 
 logger = logging.getLogger(__name__)
 
-# JR Content: upraveno 2026-11-14 (blok P2-B17), AGPL-3.0. The admin's own login form would sign
-# a staff member in without the two-factor step; send it through the app login instead.
-admin.site.login = secure_admin_login(admin.site.login)
+
+# JR Content: upraveno 2026-11-14 (blok P2-B17), AGPL-3.0. The admin's own login form signs a user in
+# without the two-factor step, and (allauth's secure_admin_login lets a signed-in staff member through
+# to it) it would even switch accounts with just a password. So it never runs: every request to the
+# admin login URL, GET or POST, is sent to the app login, which includes the 2FA step.
+def _admin_login_via_app(request, *args, **kwargs):
+    if request.user.is_authenticated:
+        if not (request.user.is_staff and request.user.is_active):
+            raise PermissionDenied()
+        # Already signed in with 2FA done: nothing to log in; go on to where they were heading.
+        target = get_next_redirect_url(request)
+        if not target or urlsplit(target).path == request.path:
+            target = resolve_url("admin:index")
+        return HttpResponseRedirect(target)
+    next_url = get_next_redirect_url(request) or resolve_url("admin:index")
+    return HttpResponseRedirect(
+        httpkit.add_query_params(resolve_url(settings.LOGIN_URL), {REDIRECT_FIELD_NAME: next_url})
+    )
+
+
+admin.site.login = _admin_login_via_app
 
 urlpatterns = [
     path("admin/", admin.site.urls),

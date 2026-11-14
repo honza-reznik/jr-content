@@ -8,6 +8,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import redirect, render
 from django.views.decorators.cache import never_cache
+from django.views.decorators.debug import sensitive_post_parameters, sensitive_variables
 from django.views.decorators.http import require_http_methods
 
 from apps.accounts import twofactor
@@ -22,6 +23,7 @@ def _no_store(response):
     return response
 
 
+@sensitive_post_parameters("code", "password")
 @never_cache
 @require_http_methods(["GET", "POST"])
 def two_factor_login(request):
@@ -65,6 +67,7 @@ def two_factor_login(request):
     )
 
 
+@sensitive_variables()
 def _password_ok(request, user):
     """Re-check the account password for a security change; wrong ones count as failures."""
     if not user.has_usable_password():
@@ -75,6 +78,7 @@ def _password_ok(request, user):
     return False
 
 
+@sensitive_variables()
 def _codes_page(request, codes, *, heading):
     text = "JR Content recovery codes\n" + request.user.email + "\n\n" + "\n".join(codes) + "\n"
     return _no_store(
@@ -91,9 +95,11 @@ def _codes_page(request, codes, *, heading):
     )
 
 
+@sensitive_post_parameters("code", "password")
 @never_cache
 @login_required
 @require_http_methods(["GET", "POST"])
+@sensitive_variables()
 def security_settings(request):
     user = request.user
     errors = {}
