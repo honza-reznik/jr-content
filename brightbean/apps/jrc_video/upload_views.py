@@ -49,7 +49,8 @@ def _json(handler):
 
     def run(request, *args, **kwargs):
         try:
-            return JsonResponse(handler(request, *args, **kwargs))
+            result = handler(request, *args, **kwargs)
+            return result if isinstance(result, HttpResponse) else JsonResponse(result)
         except UploadError as exc:
             return JsonResponse({"error": str(exc)}, status=exc.status)
 

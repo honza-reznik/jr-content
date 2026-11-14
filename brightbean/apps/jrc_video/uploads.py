@@ -596,6 +596,7 @@ def _version_row(version, user, percent=None):
         "status_label": _label(version, percent),
         "progress": percent if version.status == VideoVersion.Status.PROCESSING else None,
         "filename": version.original_filename,
+        "transcript_filename": version.transcript_filename if version.transcript else "",
         "size_bytes": version.size_bytes,
         "uploaded_at": timezone.localtime(version.uploaded_at).strftime("%b %-d, %Y · %H:%M"),
         "uploaded_by": (

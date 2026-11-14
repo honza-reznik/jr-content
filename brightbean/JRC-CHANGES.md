@@ -896,6 +896,12 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
   preview, počítadlo znaků zůstává. Comments se v detailu jmenuje Discussion; staré odkazy se dál otevřou.
 - Migrace: `jrc_production.0006`, `jrc_production.0007`, `jrc_texts.0005`. Při nasazení znovu sestavit editor z
   `apps/jrc_texts/editor/script.mjs` a shromáždit statické soubory. Ověřovací skripty: `scripts/P2-B04/` v kořeni repozitáře.
+## 2026-11-14 — P2-B10
+
+- Video verze tvoří jeden sloupec rozbalovacích řádků; poslední verze se otevře automaticky. Přehrávač se načte jen pro otevřenou verzi aktivního kanálu; zavření a změna kanálu zastaví přehrávání. Obnova stavů zachová otevřený řádek i přehrávač.
+- Každá `VideoVersion` má soukromý SRT přepis (migrace `jrc_video.0008`): nahrání/náhrada/smazání podle `can_upload`, čtení podle členství umožňujícího zobrazit verzi. Limit 1 MiB, UTF-8 a kontrola struktury/časů. Náhled je prostý text; titulky se do přehrávače nevkládají. Staré objekty se mažou po potvrzení transakce i při odstranění obsahu.
+- Ověření: `apps/jrc_video/tests/test_transcripts.py` a `scripts/P2-B10/`; při nasazení migrace a collectstatic, bez změn FreeFrame/editoru a jejich sestavení.
+
 ## 2026-11-13 — P2-B02
 
 - Odhlášení před ukončením relace serverově volá FreeFrame `/auth/jrc-logout` jménem řízeného uživatele. Zneplatní jeho dosavadní video tokeny včetně HttpOnly přenosu HLS a smaže FF přihlašovací cookies. Při nedostupném FF ponechá přihlášení, vrátí 503 a nabídne opakování; účet bez videa další službu nepotřebuje.

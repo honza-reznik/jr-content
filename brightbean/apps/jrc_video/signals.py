@@ -9,8 +9,17 @@ from apps.organizations.models import Organization
 from apps.workspaces.models import Workspace
 
 from .client import FreeFrameClient
-from .models import VideoAccount, VideoAccountRevocation, VideoProject
+from .models import VideoAccount, VideoAccountRevocation, VideoProject, VideoVersion
 from .services import queue_account, queue_workspace, try_revoke_account
+
+
+@receiver(post_delete, sender=VideoVersion)
+def transcript_deleted(sender, instance, using, **kwargs):
+    if instance.transcript:
+        from .transcripts import delete_file
+
+        storage, name = instance.transcript.storage, instance.transcript.name
+        transaction.on_commit(lambda: delete_file(storage, name), using=using)
 
 
 @receiver(pre_save, sender=WorkspaceMembership)
