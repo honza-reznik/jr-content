@@ -41,3 +41,22 @@ def validated_icon(upload):
     except (UnidentifiedImageError, Image.DecompressionBombError, OSError, SyntaxError, ValueError):
         raise ValidationError(ERROR) from None
     return ContentFile(output.getvalue(), name="icon.png")
+
+
+def validated_favicon(body):
+    """Remote raster formats include ICO; metadata never reaches storage."""
+    if not body or len(body) > MAX_BYTES:
+        raise ValidationError(ERROR)
+    try:
+        with Image.open(BytesIO(body)) as image:
+            if image.format not in {*FORMATS, "ICO", "GIF"} or image.width * image.height > MAX_PIXELS:
+                raise ValidationError(ERROR)
+            image.load()
+            image.thumbnail((128, 128))
+            clean = Image.new("RGBA", image.size)
+            clean.paste(image.convert("RGBA"))
+            output = BytesIO()
+            clean.save(output, format="PNG")
+    except (UnidentifiedImageError, Image.DecompressionBombError, OSError, SyntaxError, ValueError):
+        raise ValidationError("The website did not provide a supported image.") from None
+    return ContentFile(output.getvalue(), name="favicon.png")

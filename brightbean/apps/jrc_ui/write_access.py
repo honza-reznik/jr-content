@@ -164,6 +164,8 @@ DELEGATED_WRITES = {
     "jrc_channels:profile": "workspace owner/manager; P1-B23",
     "jrc_channels:color": "workspace owner/manager; P1-B23",
     "jrc_channels:icon": "workspace owner/manager; P1-B23",
+    "jrc_channels:channel_color": "workspace owner/manager and manage_social_accounts; P2-B12",
+    "jrc_channels:favicon": "workspace owner/manager and manage_social_accounts; P2-B12",
     "jrc_channels:edit": "workspace owner/manager; P1-B23",
     "jrc_channels:toggle": "workspace owner/manager; P1-B23",
     "apps.jrc_video.views.video_logout": "CSRF protected logout",

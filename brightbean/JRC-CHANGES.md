@@ -1,5 +1,12 @@
 # Úpravy JR Content
 
+## 2026-11-14 — P2-B12
+
+- Kanály mají vlastní HEX barvu, výchozí podle platformy, u ostatních stabilně z palety. Sdílený výpočet s workspace volí černý/bílý text s kontrastem nejméně 4,5:1. Barvy se zobrazují v menu, na nástěnce, ve štítcích detailu, v Publish (včetně mobilního kalendáře a legendy) i v přehledu.
+- V nastavení kanálu je stejný color picker jako u workspace; nové zápisy procházejí centrální bránou oprávnění i kontrolou owner/manager + manage_social_accounts.
+- Custom kanál má samostatnou faviconu z odkazu na profil; vlastní nahraná ikona má přednost. Změna odkazu smaže starou faviconu a zařadí jeden pokus na pozadí, ruční obnova je v nastavení. Zobrazení favicony používá stejnou kontrolu členství jako nahrané ikony.
+- Faviconu stahuje omezená služba jrc-favicon-relay (python:3.12-slim, 128 MiB, bez tajemství, pouze dva read-only soubory), aplikace i worker zůstávají jen v interní síti. Hlídá veřejné IP včetně všech DNS odpovědí, připojuje se přímo na prověřenou adresu, kontroluje přesměrování, TLS ověřuje hostname. Jen HTTP(S) na portech 80/443; HTML do 256 KiB, obrázek do 1 MiB, socket 2 s, celý oddělený proces včetně DNS nejvýš 8 s. Před uložením se raster ověří a znovu zapíše jako PNG do 128 × 128 (vstup nejvýš 4 miliony pixelů); SVG nepřijímáme.
+
 ## 2026-11-14 — P2-B18
 
 - Stažení verze i finálního videa po kontrole oprávnění streamuje přes servisní účet FreeFrame. Každý nový požadavek včetně rozsahu bajtů znovu prochází pravidlem JRC; prohlížeč nedostává obecný odkaz na originál. Chybějící originál má dál vysvětlené potvrzení MP4, které vede zpět na stejný autorizovaný endpoint.

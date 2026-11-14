@@ -387,7 +387,7 @@ def _get_calendar_slot_occurrences(workspace, request, display_tz, visible_dates
     if channels:
         slots = slots.filter(social_account_id__in=channels)
 
-    slots = slots.select_related("social_account").order_by(
+    slots = slots.select_related("social_account", "social_account__jrc_channel").order_by(
         "time",
         "social_account__platform",
         "social_account__account_name",
@@ -658,7 +658,7 @@ def _get_tab_context(request, workspace, tab: str) -> dict:
     if tab == "queue":
         platform_posts = (
             PlatformPost.objects.filter(post__workspace_id=workspace.id, status="scheduled")
-            .select_related("post__author", "social_account")
+            .select_related("post__author", "social_account", "social_account__jrc_channel")
             .prefetch_related("post__media_attachments__media_asset")
             .annotate(effective_at=Coalesce("scheduled_at", "post__scheduled_at"))
             .order_by("effective_at", "-post__created_at")
@@ -669,7 +669,7 @@ def _get_tab_context(request, workspace, tab: str) -> dict:
     if tab == "drafts":
         platform_posts = (
             PlatformPost.objects.filter(post__workspace_id=workspace.id, status="draft")
-            .select_related("post__author", "social_account")
+            .select_related("post__author", "social_account", "social_account__jrc_channel")
             .prefetch_related("post__media_attachments__media_asset")
             .order_by("-post__updated_at")
         )
@@ -686,7 +686,7 @@ def _get_tab_context(request, workspace, tab: str) -> dict:
                 post__workspace_id=workspace.id,
                 status__in=["published", "failed"],
             )
-            .select_related("post__author", "social_account")
+            .select_related("post__author", "social_account", "social_account__jrc_channel")
             .prefetch_related("post__media_attachments__media_asset")
             .order_by("-post__scheduled_at", "-post__created_at")
         )
@@ -811,6 +811,7 @@ def calendar_view(request, workspace_id):
             connection_status=SocialAccount.ConnectionStatus.CONNECTED,
         )
         .filter(jrc_channel__is_enabled=True)
+        .select_related("jrc_channel")
         .order_by("platform")
     )
 

@@ -21,7 +21,7 @@ Context: day_slots, target_date, default_workspace.
             {% endif %}
             {% for pp in hour_posts %}
             <a href="{% url 'jrc_production:content_detail' workspace_id=pp.post.workspace_id post_id=pp.post_id %}?tab=publish"
-               class="cross-post-chip status-{{ pp.status }}"
+               class="cross-post-chip status-{{ pp.status }}" style="background:{{ pp.social_account.jrc_accent_color }};color:{{ pp.social_account.jrc_accent_text_color }}"
                title="{{ pp.post.workspace.name }}: {{ pp.post.caption_snippet }}">
                 <span class="ws-dot" style="background: {{ pp.post.workspace.accent_color }};"></span>
                 <span class="w-4 h-4 rounded flex items-center justify-center pi-{{ pp.social_account.platform }} flex-shrink-0 text-white">
