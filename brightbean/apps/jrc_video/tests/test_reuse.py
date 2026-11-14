@@ -311,8 +311,8 @@ def test_video_tab_feed_offers_the_action_and_names_the_source(client, ff, works
     page = client.get(
         reverse("jrc_production:content_detail", args=[workspace.id, world["post"].pk]), {"tab": "video"}
     ).content.decode()
-    assert "Use for another output…" in page and "data-video-reuse-dialog" in page
-    assert "Keep comments?" in page and "Same file as v2 · YouTube · Video · Ella YouTube · comments kept" in page
+    # The version rows are drawn by video-tab.js from the feed above; the page carries the dialog.
+    assert "data-video-reuse-dialog" in page and "Keep comments?" in page
 
 
 @pytest.mark.parametrize("role", ["client", "viewer"])
@@ -328,7 +328,7 @@ def test_client_and_viewer_do_not_see_the_action(client, ff, workspace, user, wo
     page = client.get(
         reverse("jrc_production:content_detail", args=[workspace.id, world["post"].pk]), {"tab": "video"}
     ).content.decode()
-    assert "Use for another output…" not in page and "data-video-reuse-dialog" not in page
+    assert "data-video-reuse-dialog" not in page
 
 
 def test_single_output_has_no_action(client, ff, workspace, user):

@@ -51,6 +51,13 @@ def _authorize_attachment(db, user, attachment, accept):
     return asset, None, attachment.original_filename, comment.version_id
 
 
+def _more_telling(current, new):
+    """Of two refusals, the one that says more: 403 (you may not) over 404 (nothing here for you)."""
+    if current is None or (current.status_code == 404 and new.status_code != 404):
+        return new
+    return current
+
+
 def authorize_file(db, user, key, *, share_context=False, accept=None):
     """Resolve an exact stored key, never a directory grant. Unknown uploads deny.
 
@@ -64,7 +71,7 @@ def authorize_file(db, user, key, *, share_context=False, accept=None):
         try:
             return _authorize_attachment(db, user, attachment, accept)
         except HTTPException as exc:
-            denied = exc
+            denied = _more_telling(denied, exc)
     if attachments:
         raise denied
 
@@ -88,7 +95,7 @@ def authorize_file(db, user, key, *, share_context=False, accept=None):
                 accept(asset, media.version_id)
             return asset, media, None, media.version_id
         except HTTPException as exc:
-            denied = exc
+            denied = _more_telling(denied, exc)
     if rows:
         raise denied
 

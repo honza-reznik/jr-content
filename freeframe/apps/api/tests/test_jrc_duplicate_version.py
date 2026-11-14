@@ -267,6 +267,8 @@ def test_purging_one_branch_keeps_the_files_of_the_other(world, monkeypatch):
     assert deleted == []  # the Shorts version still names every object
     assert db.query(AssetVersion).filter(AssetVersion.id == world["source"].id).count() == 0
     ct._purge_asset(db, result["asset_id"], ct.PurgeCounts())
+    assert deleted == []  # nothing leaves storage before the transaction commits
+    db.commit()
     assert sorted(deleted) == sorted(keys)  # the last row takes the objects with it
 
 
@@ -277,6 +279,7 @@ def test_purging_the_copy_first_also_keeps_the_source(world, monkeypatch):
     ct._purge_version(db, result["version_id"], ct.PurgeCounts())
     assert deleted == []
     ct._purge_version(db, world["source"].id, ct.PurgeCounts())
+    db.commit()
     assert len(deleted) == 4
 
 
@@ -316,9 +319,11 @@ def test_shared_comment_attachment_survives_deleting_one_copy(world, thread, mon
     removed = []
     monkeypatch.setattr(comments_module.s3_service, "delete_object", lambda k: removed.append(k))
     comments_module.delete_attachment(copy.id, attachment.id, db=db, current_user=world["team"])
+    db.commit()
     assert removed == []  # the second copy still shows the file
     assert db.query(CommentAttachment).filter(CommentAttachment.s3_key == key).count() == 1
     ct._purge_comment(db, _copied(world, second["version_id"])["Cut the intro"].id, ct.PurgeCounts())
+    db.commit()
     assert key in deleted  # the last row takes the file
 
 
@@ -366,4 +371,24 @@ def test_shared_file_is_served_through_any_row_the_caller_may_use(world):
     assert asset.id == result["asset_id"] and version_id == result["version_id"]
     with pytest.raises(HTTPException) as exc:
         authorize_file(db, world["outsider"], thumb)
+    assert exc.value.status_code == 404
+
+
+def test_refusal_names_the_most_telling_reason_whatever_the_row_order(world):
+    """A managed member who may not download gets 403, not the 404 of a row they cannot see."""
+    db = world["db"]
+    elsewhere = world["version"](world["asset"]("Elsewhere", proj=world["other_project"]), 1)
+    raw = _media(db, world["source"].id).s3_key_raw
+    row = _media(db, elsewhere.id)
+    row.s3_key_raw = raw  # same object, a project the outsider belongs to
+    db.flush()
+    with pytest.raises(HTTPException) as exc:
+        authorize_file(db, world["outsider"], raw)
+    assert exc.value.status_code == 403
+    # Someone who belongs to neither project still gets the plain 404.
+    stranger = User(email=f"s-{uuid.uuid4()}@t.local", name="s", jrc_managed=True)
+    db.add(stranger)
+    db.flush()
+    with pytest.raises(HTTPException) as exc:
+        authorize_file(db, stranger, raw)
     assert exc.value.status_code == 404

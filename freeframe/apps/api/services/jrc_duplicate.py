@@ -62,7 +62,10 @@ def duplicate_version(
         raise HTTPException(400, "Only a video version can be used for another output")
     if source.processing_status != ProcessingStatus.ready:
         raise HTTPException(409, "Only a converted version can be used for another output")
-    media = db.query(MediaFile).filter(MediaFile.version_id == source.id).all()
+    # FOR SHARE on the source's media rows too: a purge of another branch locks every row naming
+    # the same objects (cleanup_tasks.lock_media_key) before it deletes them, so it either finishes
+    # first (then the source row is gone and this 409s) or waits for this copy and sees its row.
+    media = db.query(MediaFile).filter(MediaFile.version_id == source.id).with_for_update(read=True).all()
     if len(media) != 1 or not media[0].s3_key_processed:
         raise HTTPException(409, "Only a converted version can be used for another output")
 
