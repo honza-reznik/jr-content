@@ -5,10 +5,12 @@ Only the owner and the admins of the organization see it, also for workspaces th
 member of. It only reads: no moves, no creating, no comments. A card opens a read-only summary of
 the content here; members of its workspace get a link to the regular detail as well.
 
-Why reading everything is not an escalation: an organization owner or admin may add themselves to
-any workspace of the organization (Settings → Workspaces / Team Members), so the overview shows
-nothing they could not already open. Working on content still needs that membership, because every
-write and the regular detail check the workspace role.
+What the summary shows follows the rule of the regular detail (``can_see_internal_notes``): whoever is a
+member of the workspace sees what their workspace role sees, so a client or viewer never gets the
+"Team only" comments. Without membership the organization owner sees everything (an owner may add
+themselves to any workspace), while an organization admin sees only what a client sees, because
+an admin has no such right and would otherwise read more here than in the detail.
+Working on content still needs the membership, because every write checks the workspace role.
 """
 
 from django.contrib.auth.decorators import login_required
@@ -49,6 +51,20 @@ def overview_organization(request):
 def overview_workspaces(organization):
     """All active clients of the organization, membership or not."""
     return Workspace.objects.filter(organization=organization, is_archived=False).order_by("name", "id")
+
+
+def can_see_internal_notes(user, organization_membership, workspace_membership):
+    """May this person read "Team only" comments of a workspace in the overview?
+
+    A workspace member follows the workspace role (client and viewer do not). A non-member
+    follows the organization role: the owner sees all, an admin only what a client sees.
+    """
+    if workspace_membership is not None:
+        return workspace_membership.workspace_role not in (
+            WorkspaceMembership.WorkspaceRole.CLIENT,
+            WorkspaceMembership.WorkspaceRole.VIEWER,
+        )
+    return bool(organization_membership is not None and organization_membership.org_role == OrgMembership.OrgRole.OWNER)
 
 
 def _member_workspace_ids(user, workspace_ids):
@@ -148,15 +164,17 @@ def overview_content(request, post_id):
         captions.append(
             {"variant": variant, "latest": latest, "text": latest.text if latest else variant.effective_caption}
         )
-    comments = list(
-        PostComment.objects.filter(post=post, deleted_at__isnull=True).select_related("author").order_by("created_at")
-    )
+    membership = WorkspaceMembership.objects.filter(user=request.user, workspace=workspace).first()
+    comment_qs = PostComment.objects.filter(post=post, deleted_at__isnull=True)
+    if not can_see_internal_notes(request.user, request.org_membership, membership):
+        comment_qs = comment_qs.filter(visibility=PostComment.Visibility.EXTERNAL)
+    comments = list(comment_qs.select_related("author").order_by("created_at"))
     replies = {}
     for comment in comments:
         if comment.parent_comment_id:
             replies.setdefault(comment.parent_comment_id, []).append(comment)
     threads = [{"comment": c, "replies": replies.get(c.pk, [])} for c in comments if not c.parent_comment_id]
-    is_member = WorkspaceMembership.objects.filter(user=request.user, workspace=workspace).exists()
+    is_member = membership is not None
     return render(
         request,
         "jrc_production/overview_content.html",

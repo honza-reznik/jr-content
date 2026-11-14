@@ -281,7 +281,7 @@ def test_filtered_board_can_create_for_another_client(client, workspace, user, o
         reverse("jrc_production:create"),
         {"workspace": other.pk, "title": "Created for another client", "channels": [second.pk]},
     )
-    assert response.status_code == 302 and not Post.objects.filter(title="Created for another client").exists()
+    assert response.status_code == 409 and not Post.objects.filter(title="Created for another client").exists()
     # After switching to the other client its window offers its enabled channels and creates there.
     page = client.get(reverse("jrc_production:board"), {"client": other.pk})
     form = page.content.decode().split('<dialog id="jrc-new-idea"', 1)[1].split("</dialog>", 1)[0]

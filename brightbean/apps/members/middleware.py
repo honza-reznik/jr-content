@@ -6,6 +6,7 @@ from django.core.exceptions import PermissionDenied
 from django.http import Http404
 
 from .models import OrgMembership, WorkspaceMembership
+from .services import default_workspace_membership
 
 # A write on a URL without a workspace or organization in it must name its
 # target organization itself: the session's active organization is shared by
@@ -75,6 +76,7 @@ class RBACMiddleware:
         request.organization_memberships = []
         request.org_target_bound = False
         request.navigated_workspace_membership = None
+        default_membership = None
 
         if request.path_info.startswith(CONTEXT_FREE_PATH_PREFIXES):
             return self.get_response(request)
@@ -125,42 +127,36 @@ class RBACMiddleware:
                     request.workspace_membership = last_membership
                 else:
                     # P2-B13: one workspace is always current. Without a usable last
-                    # workspace in this organization it is the first one the menu lists
-                    # (``member_workspaces`` orders by name), so the board, New idea and
-                    # the switcher's heading all mean the same client.
-                    first = (
-                        WorkspaceMembership.objects.filter(
-                            user=request.user,
-                            workspace__organization=selected.organization,
-                            workspace__is_archived=False,
-                        )
-                        .select_related("workspace__organization", "custom_role")
-                        .order_by("workspace__name", "workspace_id")
-                        .first()
-                    )
+                    # workspace in this organization it is the one MCP and OAuth would
+                    # pick too (``default_workspace_membership``), and it is stored once
+                    # the page was shown, so the web and MCP work in the same client.
+                    first = default_workspace_membership(request.user, selected.organization)
                     if first is not None:
                         request.workspace = first.workspace
                         request.workspace_membership = first
+                        default_membership = first
             elif request.workspace is None:
                 # P2-B13: a legacy workspace-only member without a last workspace
-                # works in the first workspace listed, as in the branch above.
-                first = (
-                    WorkspaceMembership.objects.filter(
-                        user=request.user,
-                        workspace__is_archived=False,
-                        workspace__organization__deleted_at__isnull=True,
-                    )
-                    .select_related("workspace__organization", "custom_role")
-                    .order_by("workspace__name", "workspace_id")
-                    .first()
-                )
+                # works in the same default workspace.
+                first = default_workspace_membership(request.user)
                 if first is not None:
                     request.org = first.workspace.organization
                     request.workspace = first.workspace
                     request.workspace_membership = first
+                    default_membership = first
 
         response = self.get_response(request)
         navigated = request.navigated_workspace_membership
+        if (
+            navigated is None
+            and default_membership is not None
+            and request.workspace_membership is default_membership
+            and 200 <= response.status_code < 300
+            and request.user.last_workspace_id != default_membership.workspace_id
+        ):
+            # The default workspace was used without being named: remember it (R2).
+            request.user.last_workspace_id = default_membership.workspace_id
+            request.user.save(update_fields=["last_workspace_id"])
         if navigated is not None and 200 <= response.status_code < 300:
             # The workspace page was actually shown: it becomes the current
             # workspace and its organization the active one. A refused or

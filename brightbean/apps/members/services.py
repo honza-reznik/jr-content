@@ -40,6 +40,32 @@ def member_workspaces(user, organization):
     ).order_by("name", "id")
 
 
+def default_workspace_membership(user, organization=None):
+    """The workspace a person works in when nothing names one (P2-B13, review R2).
+
+    The one rule for the web (``RBACMiddleware``), the REST API's OAuth callers and MCP: the
+    ``last_workspace_id`` of the user while it is a usable membership (not archived, organization
+    not deleted, inside ``organization`` when one is given), otherwise the earliest-joined usable
+    membership. Returns the ``WorkspaceMembership`` or None. Callers that serve a page store the
+    result in ``last_workspace_id`` so the web and MCP keep working in the same client.
+    """
+    if user is None or not getattr(user, "is_authenticated", False):
+        return None
+    base = WorkspaceMembership.objects.select_related("workspace__organization", "custom_role").filter(
+        user=user,
+        workspace__is_archived=False,
+        workspace__organization__deleted_at__isnull=True,
+    )
+    if organization is not None:
+        base = base.filter(workspace__organization=organization)
+    last_id = getattr(user, "last_workspace_id", None)
+    if last_id:
+        current = base.filter(workspace_id=last_id).first()
+        if current is not None:
+            return current
+    return base.order_by("added_at", "workspace_id").first()
+
+
 # Role hierarchies (must match decorators.py).
 ORG_ROLE_LEVEL = {
     OrgMembership.OrgRole.OWNER: 3,

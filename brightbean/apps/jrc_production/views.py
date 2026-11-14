@@ -92,7 +92,7 @@ def current_membership(request):
 
     One workspace = one client: the board, New idea, New content and the quick idea read and
     write only here. ``RBACMiddleware`` resolves it (the workspace of the address, else the last
-    one opened, else the first one listed); None when the user works in no client.
+    one opened, else the earliest joined, the rule MCP uses too); None when the user works in no client.
     """
     membership = getattr(request, "workspace_membership", None)
     if membership is None or membership.workspace.is_archived:
@@ -148,6 +148,13 @@ def _refuse_other_workspace(request, membership):
         f"This form was opened for {membership.workspace.name}, but the current client is now {name}. "
         "Nothing was saved. Reload the page to continue."
     )
+
+
+def _refusal_response(request, refused, reload_url):
+    """409 for a refused write, for fetch calls (plain text) and ordinary form posts (a page with the notice)."""
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return HttpResponse(refused, status=409, content_type="text/plain; charset=utf-8")
+    return render(request, "jrc_production/refused.html", {"message": refused, "reload_url": reload_url}, status=409)
 
 
 def _board_url(request):
@@ -412,10 +419,9 @@ def create(request):
     in_place = request.headers.get("X-Requested-With") == "XMLHttpRequest"
     refused = _refuse_other_workspace(request, membership)
     if refused:
-        if in_place:
-            return HttpResponse(refused, status=409, content_type="text/plain; charset=utf-8")
-        messages.error(request, refused)
-        return redirect(reverse("jrc_production:new_content") if from_page else reverse("jrc_production:board"))
+        return _refusal_response(
+            request, refused, reverse("jrc_production:new_content") if from_page else reverse("jrc_production:board")
+        )
     values = {
         "title": request.POST.get("title", ""),
         "description": request.POST.get("description", ""),
@@ -464,10 +470,7 @@ def quick_idea(request):
     in_place = request.headers.get("X-Requested-With") == "XMLHttpRequest"
     refused = _refuse_other_workspace(request, membership)
     if refused:
-        if in_place:
-            return HttpResponse(refused, status=409, content_type="text/plain; charset=utf-8")
-        messages.error(request, refused)
-        return redirect(reverse("jrc_production:board"))
+        return _refusal_response(request, refused, reverse("jrc_production:board"))
     board_client = request.POST.get("board_client", "")
     board_client = board_client if board_client in memberships else ""
     board_channel = request.POST.get("board_channel", "")

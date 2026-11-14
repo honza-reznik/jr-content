@@ -150,7 +150,7 @@ def test_board_filters_and_scope(http, workspace, organization, user, post):
     hidden = Workspace.objects.create(organization=organization, name="Secret client")
     Post.objects.create(workspace=hidden, title="Secret idea")
     url = reverse("jrc_production:board")
-    # P2-B13: one client at a time; without a last workspace the first one listed ("Other client").
+    # P2-B13: one client at a time; without a last workspace the the earliest joined one (the first workspace).
     response = http.get(url)
     assert response.status_code == 200
     assert [c["value"] for c in response.context["columns"]] == [
@@ -164,7 +164,8 @@ def test_board_filters_and_scope(http, workspace, organization, user, post):
         "published",
     ]
     assert response.context["total"] == 1
-    assert str(other_post.pk).encode() in response.content
+    assert str(post.pk).encode() in response.content
+    assert str(other_post.pk).encode() not in response.content
     assert b"Secret" not in response.content
     # ?client= switches the current workspace (members only) and the board stays on it.
     response = http.get(url, {"client": workspace.pk})

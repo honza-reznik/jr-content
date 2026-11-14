@@ -167,13 +167,75 @@ def test_content_of_a_client_without_membership_is_refused_and_nothing_switches(
     assert editor.last_workspace_id == ella.id
 
 
-def test_without_a_last_workspace_the_first_listed_client_is_current(editor, posts, bruno):
+def test_without_a_last_workspace_the_earliest_joined_client_is_current_and_stored(editor, posts, ella):
     editor.last_workspace_id = None
     editor.save(update_fields=["last_workspace_id"])
-    # "Bruno" sorts before "Ella", as in the menu.
+    # Ella was joined first ("Bruno" sorts first in the menu, but the shared rule is the earliest membership).
     response = login(editor).get(BOARD)
-    assert response.context["workspace"] == bruno
-    assert "Bruno bakery reel" in response.content.decode()
+    assert response.context["workspace"] == ella
+    assert "Ella studio tour" in response.content.decode()
+    editor.refresh_from_db()
+    assert editor.last_workspace_id == ella.id
+
+
+def test_web_and_oauth_mcp_use_the_same_default_workspace(editor, posts, ella, bruno):
+    """R2: the board and the OAuth/MCP caller never work in different clients, also before anything was opened."""
+    from apps.api.auth import _resolve_active_membership
+    from apps.members.services import default_workspace_membership
+
+    editor.last_workspace_id = None
+    editor.save(update_fields=["last_workspace_id"])
+    # One shared function: the same answer for the rule itself and for the OAuth resolver.
+    assert default_workspace_membership(editor).workspace_id == ella.id
+    assert _resolve_active_membership(editor).workspace_id == ella.id
+    # Opening the board stores the default, so a later MCP call (which only reads last_workspace_id) agrees.
+    page = login(editor).get(BOARD)
+    assert page.context["workspace"] == ella
+    editor.refresh_from_db()
+    assert editor.last_workspace_id == ella.id
+    assert _resolve_active_membership(editor).workspace_id == page.context["workspace"].id
+    # A later switch in the menu moves both.
+    login(editor).get(BOARD, {"client": bruno.id})
+    editor.refresh_from_db()
+    assert _resolve_active_membership(editor).workspace_id == bruno.id
+
+
+def test_unusable_last_workspace_falls_back_to_the_earliest_membership(editor, posts, ella, bruno):
+    from apps.api.auth import _resolve_active_membership
+
+    bruno.is_archived = True
+    bruno.save(update_fields=["is_archived"])
+    editor.last_workspace_id = bruno.id
+    editor.save(update_fields=["last_workspace_id"])
+    response = login(editor).get(BOARD)
+    assert response.context["workspace"] == ella
+    editor.refresh_from_db()
+    assert editor.last_workspace_id == ella.id
+    assert _resolve_active_membership(editor).workspace_id == ella.id
+
+
+def test_mcp_oauth_request_works_in_the_workspace_the_web_showed(editor, posts, ella):
+    """R2 end to end: a bearer OAuth token authenticates into the workspace the board just showed."""
+    from datetime import timedelta as delta
+
+    from oauth2_provider.models import Application, get_access_token_model
+
+    from apps.api.auth import _resolve_oauth_actor
+
+    editor.last_workspace_id = None
+    editor.save(update_fields=["last_workspace_id"])
+    login(editor).get(BOARD)
+    app = Application.objects.create(
+        name="mcp",
+        client_type="public",
+        authorization_grant_type="authorization-code",
+        redirect_uris="http://localhost/cb",
+    )
+    token = get_access_token_model().objects.create(
+        user=editor, application=app, token="tok-b13-r2", scope="mcp", expires=timezone.now() + delta(hours=1)
+    )
+    actor = _resolve_oauth_actor(token.token)
+    assert actor is not None and actor.workspace_id == ella.id
 
 
 def test_a_user_without_clients_sees_an_empty_board(org):
@@ -218,7 +280,9 @@ def test_create_for_another_member_workspace_is_refused(editor, bruno, origin):
     assert response.status_code == 409
     assert "Nothing was saved" in response.content.decode()
     response = client.post(CREATE, {"workspace": bruno.id, "title": "Wrong place", "origin": origin})
-    assert response.status_code == 302
+    # R3: an ordinary form post is refused with 409 as well, with the notice on the page.
+    assert response.status_code == 409
+    assert "Nothing was saved" in response.content.decode() and "Reload the page" in response.content.decode()
     assert not Post.objects.filter(title="Wrong place").exists()
 
 
@@ -232,6 +296,9 @@ def test_quick_idea_only_in_the_current_workspace(editor, ella, bruno, secret):
     client = login(editor)
     assert client.post(IDEA, {"workspace": ella.id, "title": "Quick one"}, **XHR).status_code == 201
     assert client.post(IDEA, {"workspace": bruno.id, "title": "Quick two"}, **XHR).status_code == 409
+    plain = client.post(IDEA, {"workspace": bruno.id, "title": "Quick plain"})
+    assert plain.status_code == 409 and "Nothing was saved" in plain.content.decode()
+    assert not Post.objects.filter(title__in=["Quick two", "Quick plain"]).exists()
     assert client.post(IDEA, {"workspace": secret.id, "title": "Quick three"}, **XHR).status_code == 404
     assert list(Post.objects.filter(title__startswith="Quick").values_list("title", "workspace")) == [
         ("Quick one", ella.id)
@@ -347,16 +414,21 @@ def test_overview_is_read_only(org_owner, posts):
         assert client.post(url, {"title": "x"}).status_code in (403, 405)
 
 
-def test_admin_reads_content_of_a_client_without_membership(org_admin, posts, secret):
-    post = posts["secret"]
+def _notes(post):
     PostComment.objects.create(post=post, author=post.author, body="TEAM ONLY NOTE", visibility="internal")
     PostComment.objects.create(post=post, author=post.author, body="CLIENT VISIBLE NOTE", visibility="external")
+
+
+def test_admin_reads_content_of_a_client_without_membership(org_admin, posts, secret):
+    post = posts["secret"]
+    _notes(post)
     client = login(org_admin)
     response = client.get(overview_url(post))
     html = response.content.decode()
     assert response.status_code == 200
     assert "Secret launch teaser" in html and "Secret client" in html
-    assert "TEAM ONLY NOTE" in html and "CLIENT VISIBLE NOTE" in html and "Team only" in html
+    # R1: without membership an organization admin sees what a client sees, not the Team only notes.
+    assert "CLIENT VISIBLE NOTE" in html and "TEAM ONLY NOTE" not in html
     assert "You are not a member of this client" in html and detail_url(post) not in html
     assert "<form" not in html.split('class="ovc"', 1)[1].split("</main>", 1)[0]
     # The regular detail and every write still need the membership.
@@ -368,6 +440,38 @@ def test_admin_reads_content_of_a_client_without_membership(org_admin, posts, se
     # Reading the overview never makes a client current.
     org_admin.refresh_from_db()
     assert org_admin.last_workspace_id != secret.id
+
+
+def test_org_owner_without_membership_sees_team_only_notes(org_owner, posts):
+    _notes(posts["secret"])
+    html = login(org_owner).get(overview_url(posts["secret"])).content.decode()
+    assert "TEAM ONLY NOTE" in html and "CLIENT VISIBLE NOTE" in html
+
+
+@pytest.mark.parametrize(
+    ("org_role", "ws_role", "sees_internal"),
+    [
+        ("owner", "client", False),
+        ("owner", "viewer", False),
+        ("admin", "client", False),
+        ("admin", "viewer", False),
+        ("admin", "manager", True),
+        ("admin", "editor", True),
+        ("owner", "manager", True),
+    ],
+)
+def test_overview_follows_the_workspace_role_for_members(org, posts, ella, org_role, ws_role, sees_internal):
+    """R1: a member sees what the workspace role sees, whatever the organization role is."""
+    _notes(posts["ella"])
+    person = member(make_user(f"{org_role}-{ws_role}@example.invalid"), org, ella, org_role=org_role, role=ws_role)
+    overview = login(person).get(overview_url(posts["ella"])).content.decode()
+    assert "CLIENT VISIBLE NOTE" in overview
+    assert ("TEAM ONLY NOTE" in overview) is sees_internal
+    # The regular detail's comment selector gives the same answer.
+    from apps.approvals.comments import get_comments_for_post
+
+    shown = [c.body for c in get_comments_for_post(posts["ella"], person)]
+    assert ("TEAM ONLY NOTE" in shown) is sees_internal
 
 
 def test_admin_member_gets_a_link_to_the_regular_detail(org_admin, posts):
