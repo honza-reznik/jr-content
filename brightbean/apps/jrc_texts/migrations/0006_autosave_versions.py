@@ -104,12 +104,23 @@ $$;
 """
 
 
+def _is_empty_document(content):
+    """An empty document holds only empty paragraphs; an image or a divider has no text but is content."""
+    if not content:
+        return True
+    nodes = content.get("content") if isinstance(content, dict) else None
+    return all(
+        isinstance(node, dict) and node.get("type") == "paragraph" and not node.get("content")
+        for node in nodes or []
+    ) and set(content) <= {"type", "content"}
+
+
 def drafts_to_versions(apps, schema_editor):
     """Keep what was typed in the old editor's drafts as saved versions."""
     TextVersion = apps.get_model("jrc_texts", "TextVersion")
     for draft in TextVersion.objects.filter(state="draft").select_related("based_on").order_by("created_at"):
         base = draft.based_on
-        unchanged = draft.content == base.content if base is not None else not (draft.text or "").strip()
+        unchanged = draft.content == base.content if base is not None else _is_empty_document(draft.content)
         if unchanged:
             draft.delete()
             continue

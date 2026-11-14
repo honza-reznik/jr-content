@@ -471,6 +471,10 @@ def _autosave(document, user, *, content, text, base_version_id, revision, devic
         reference, _ = normalize_content(markdown="", plain=document.format == TextDocument.Format.PLAIN)
     if content == reference:
         return AutosaveResult(base, False, False, concurrent, [])
+    if latest is not None and latest.content == content and latest.created_by_id == user.pk and latest.device == device:
+        # A request repeated after a lost answer (same text, author and device as the newest version):
+        # that version already holds it, so nothing is written and nobody is told about a conflict.
+        return AutosaveResult(latest, False, False, None, [])
     now = timezone.now()
     if (
         base is not None
@@ -568,7 +572,7 @@ def autosave_caption(post_id, platform_post_id, user, text, *, base_version_id, 
         if base_version_id:
             raise ConflictError("This caption changed in another place. Reload the text.")
         current = variant.effective_caption or ""
-        if text == current:
+        if text.strip() == current.strip():
             return AutosaveResult(None, False, False, None, [])
         document = TextDocument(
             post=post,

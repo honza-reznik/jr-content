@@ -156,6 +156,45 @@ def test_a_stale_tab_never_overwrites_the_text_another_tab_wrote(post, user):
     assert tab_a.version.number == 1
 
 
+def test_a_repeated_request_after_a_lost_answer_creates_nothing_and_reports_no_conflict(post, user):
+    first = save(post, user, "Lost answer")
+    # The first answer never arrived: the browser repeats the request with what it knew (no version yet).
+    repeat = save(post, user, "Lost answer")
+    assert repeat.version.pk == first.version.pk
+    assert not repeat.created and not repeat.changed and repeat.concurrent is None
+    # The second request was written into the open version and its answer was lost: the repeat carries
+    # the old revision, yet the newest version already holds the text.
+    second = save(post, user, "Lost answer, more", base=first.version.pk, revision=first.version.revision)
+    repeat = save(post, user, "Lost answer, more", base=first.version.pk, revision=first.version.revision)
+    assert repeat.version.pk == second.version.pk
+    assert not repeat.created and not repeat.changed and repeat.concurrent is None
+    assert [v.text for v in finals(post)] == ["Lost answer, more"]
+
+
+def test_the_same_text_from_another_person_is_still_reported_as_concurrent(post, user, editor):
+    first = save(post, user, "Same text")
+    other = save(post, editor, "Same text", device=OTHER_DEVICE)
+    assert other.created and other.concurrent.pk == first.version.pk
+
+
+def test_a_repeated_caption_request_creates_nothing(post, variant, user):
+    first = caption(post, variant, user, "Lost caption")
+    repeat = caption(post, variant, user, "Lost caption")
+    assert repeat.version.pk == first.version.pk and not repeat.changed and repeat.concurrent is None
+    second = caption(post, variant, user, "Lost caption 2", base=first.version.pk, revision=first.version.revision)
+    repeat = caption(post, variant, user, "Lost caption 2", base=first.version.pk, revision=first.version.revision)
+    assert repeat.version.pk == second.version.pk and not repeat.changed and repeat.concurrent is None
+    assert [v.text for v in finals(post, "caption")] == ["Lost caption 2"]
+
+
+def test_a_caption_differing_only_in_whitespace_from_the_copy_creates_no_version(post, variant, user):
+    PlatformPost.objects.filter(pk=variant.pk).update(platform_specific_caption="Imported caption")
+    variant.refresh_from_db()
+    result = caption(post, variant, user, "Imported caption \n")
+    assert result.version is None and not result.changed
+    assert not finals(post, "caption")
+
+
 def test_an_edit_without_a_change_creates_no_version(post, user):
     assert save(post, user, "").version is None
     assert not TextDocument.objects.filter(post=post, kind="concept").exists()
@@ -359,6 +398,17 @@ def test_old_editor_drafts_become_saved_versions(post, user):
     assert not TextVersion.objects.filter(state="draft").exists()
     # An empty first draft held nothing: it is removed, not saved.
     assert not script_document.versions.exists()
+
+
+def test_an_old_draft_without_predecessor_is_kept_when_it_has_content_but_no_text(post, user):
+    image_only = {"type": "doc", "content": [{"type": "horizontalRule"}]}
+    script_document = text_services.create_document(post.pk, user, kind="script", markdown="", initial_draft=True)
+    draft = script_document.versions.get()
+    TextVersion.objects.filter(pk=draft.pk).update(content=image_only, text="")
+    module = importlib.import_module("apps.jrc_texts.migrations.0006_autosave_versions")
+    module.drafts_to_versions(django_apps, None)
+    kept = script_document.versions.get()
+    assert kept.state == "final" and kept.content == image_only
 
 
 # ----- tabs as fragments (AK1) -----
