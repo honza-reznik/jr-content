@@ -100,6 +100,8 @@ class VideoVersion(models.Model):
     copied_from_label = models.CharField(max_length=300, blank=True)
     # None: comments not kept; a number: how many FreeFrame comments were copied.
     comments_copied = models.PositiveIntegerField(null=True, blank=True)
+    transcript = models.FileField(upload_to="jrc_video_transcripts/", max_length=255, blank=True)
+    transcript_filename = models.CharField(max_length=200, blank=True)
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["video", "number"], name="jrc_video_version_number_uniq")]

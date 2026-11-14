@@ -5,7 +5,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("jrc_video", "0007_videosessionrevocation"),
+        ("jrc_video", "0008_videoversion_transcript"),
     ]
 
     operations = [

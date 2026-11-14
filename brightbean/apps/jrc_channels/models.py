@@ -1,5 +1,7 @@
 from django.db import models
 
+from apps.common.validators import validate_hex_color
+
 from .icons import icon_path
 
 
@@ -19,8 +21,14 @@ class ChannelProfile(models.Model):
     is_enabled = models.BooleanField(default=True)
     profile_url = models.URLField(max_length=2000, blank=True, default="")
     icon = models.ImageField(upload_to=icon_path, blank=True)
+    favicon = models.ImageField(upload_to=icon_path, blank=True)
+    color = models.CharField(max_length=7, blank=True, default="", validators=[validate_hex_color])
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return self.display_name or self.social_account.get_platform_display()
+
+    @property
+    def effective_icon(self):
+        return self.icon or self.favicon

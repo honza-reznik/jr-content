@@ -17,6 +17,7 @@
   // Per channel: the version the person chose ("" = none yet) and the one the frame shows.
   var chosen = {};
   var loaded = {};
+  var newest = {};
 
   function show(el, on, display) {
     el.classList.toggle("hidden", !on);
@@ -24,26 +25,25 @@
   }
   function card(key) { return channels.filter(function (c) { return c.key === key; })[0]; }
   function panelOf(key) { return root.querySelector('[data-video-channel="' + CSS.escape(key) + '"]'); }
-  function ready(c) { return c.versions.filter(function (v) { return v.status === "ready"; }); }
   function byId(c, id) { return c.versions.filter(function (v) { return v.id === id; })[0]; }
 
   function finalUrl(versionId) {
     return root.dataset.statusUrl.replace(/status\/$/, "versions/") + versionId + "/final/";
   }
 
-  // The version shown: the person's choice while it still exists and is ready; until they choose,
-  // always the newest ready version (so a version that has just been converted appears by itself).
   function selectedVersion(c) {
-    var wanted = chosen[c.key] && byId(c, chosen[c.key]);
-    if (wanted && wanted.status === "ready") return wanted;
-    return ready(c)[0] || null;
+    if (newest[c.key] !== (c.versions[0] && c.versions[0].id)) {
+      newest[c.key] = c.versions[0] && c.versions[0].id;
+      chosen[c.key] = newest[c.key];
+    }
+    return byId(c, chosen[c.key]);
   }
 
   function loadFrame(c, version) {
     var panel = panelOf(c.key);
     var frame = panel.querySelector("[data-video-frame]");
     var form = panel.querySelector("[data-video-sso]");
-    if (!playerReady || !c.player_path || !version) return;
+    if (!playerReady || !c.player_path || !version || version.status !== "ready") return;
     if (loaded[c.key] === version.id) return;
     loaded[c.key] = version.id;
     form.querySelector('input[name="next"]').value =
@@ -62,41 +62,141 @@
     show(frame, false);
   }
 
-  function option(version) {
-    var o = document.createElement("option");
-    o.value = version.id;
-    o.textContent = "v" + version.number + (version.is_final ? " · Final for publishing" : "");
-    return o;
+  function element(tag, text, classes, attr) {
+    var el = document.createElement(tag);
+    if (text) el.textContent = text;
+    el.className = classes || "";
+    if (attr) el.setAttribute(attr, "");
+    if (tag === "button") el.type = "button";
+    return el;
+  }
+  var actionClasses = "rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-700 hover:bg-stone-50 focus:ring-2 focus:ring-orange-300";
+
+  function transcriptUrl(id) {
+    return root.dataset.statusUrl.replace(/status\/$/, "versions/") + id + "/transcript/";
+  }
+
+  function renderRows(c, panel, selected) {
+    var list = panel.querySelector("[data-video-versions]");
+    // Park the shared player before removing a discarded row.
+    Array.from(list.children).forEach(function (row) {
+      if (!byId(c, row.dataset.version)) {
+        var player = row.querySelector("[data-video-player]");
+        if (player) panel.insertBefore(player, list);
+        row.remove();
+      }
+    });
+    if (!c.versions.length) list.appendChild(element("li", "No video yet.", "text-sm text-stone-500", "data-video-empty"));
+    c.versions.forEach(function (v, index) {
+      var row = list.querySelector('[data-version="' + CSS.escape(v.id) + '"]');
+      if (!row) {
+        row = element("li", "", "rounded-lg border border-stone-200 bg-stone-50");
+        row.dataset.version = v.id;
+        var details = element("details");
+        var summary = element("summary", "", "cursor-pointer rounded-lg px-3 py-3 text-sm text-stone-800 focus:outline-none focus:ring-2 focus:ring-orange-300");
+        summary.style.overflowWrap = "anywhere";
+        summary.appendChild(element("span", "", "font-semibold", "data-version-title"));
+        summary.appendChild(element("span", "", "ml-2 rounded-full bg-emerald-100 px-2 text-xs text-emerald-800", "data-video-final-mark"));
+        summary.appendChild(element("span", "", "ml-2 text-xs", "data-video-status"));
+        summary.appendChild(element("span", "", "mt-1 block text-xs text-stone-500", "data-version-meta"));
+        // P2-B15: the same stored file as a version of another output.
+        summary.appendChild(element("span", "", "mt-1 block text-xs text-stone-500", "data-video-copied"));
+        details.appendChild(summary);
+        var body = element("div", "", "space-y-3 border-t border-stone-200 p-3", "data-version-detail");
+        body.appendChild(element("p", "", "text-sm text-stone-600", "data-video-hint"));
+        var resume = element("div", "", "flex flex-wrap gap-2", "data-version-resume");
+        resume.appendChild(element("button", "Continue upload", actionClasses, "data-video-resume"));
+        resume.appendChild(element("button", "Discard", actionClasses, "data-video-discard-row"));
+        body.appendChild(resume);
+        body.appendChild(element("button", "Use for another output\u2026", actionClasses, "data-video-reuse"));
+        var srt = element("section", "", "space-y-3 rounded-lg border border-stone-200 bg-white p-3", "data-transcript");
+        srt.appendChild(element("h4", "SRT transcript", "text-sm font-semibold text-stone-900"));
+        srt.appendChild(element("p", "", "break-words text-sm text-stone-600", "data-transcript-name"));
+        var actions = element("div", "", "flex flex-wrap items-center gap-2");
+        var download = element("a", "Download SRT", actionClasses, "data-transcript-download");
+        download.href = transcriptUrl(v.id);
+        actions.appendChild(download);
+        actions.appendChild(element("button", "Preview text", actionClasses, "data-transcript-preview"));
+        if (c.can_upload) {
+          var label = element("label", "Upload or replace SRT (UTF-8, max 1 MB)", "block w-full text-sm text-stone-700");
+          var input = element("input", "", "mt-2 block w-full min-w-0 text-sm", "data-transcript-file");
+          input.type = "file"; input.accept = ".srt";
+          label.appendChild(input); actions.appendChild(label);
+          actions.appendChild(element("button", "Delete SRT", actionClasses, "data-transcript-delete"));
+        }
+        srt.appendChild(actions);
+        var error = element("p", "", "hidden text-sm text-red-800", "data-transcript-error");
+        error.setAttribute("role", "alert"); srt.appendChild(error);
+        var preview = element("pre", "", "hidden max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-stone-50 p-3 text-sm", "data-transcript-text");
+        preview.style.overflowWrap = "anywhere"; srt.appendChild(preview);
+        body.appendChild(srt); details.appendChild(body); row.appendChild(details);
+        details.addEventListener("toggle", function () {
+          if (details.open === (chosen[c.key] === v.id)) return;
+          if (details.open) chosen[c.key] = v.id;
+          else if (chosen[c.key] === v.id) chosen[c.key] = null;
+          render(card(c.key));
+        });
+      }
+      row.dataset.status = v.status; row.dataset.mine = v.mine ? "1" : "0";
+      row.dataset.name = v.filename; row.dataset.size = String(v.size_bytes);
+      row.querySelector("[data-version-title]").textContent = "v" + v.number + " · " + v.filename;
+      row.querySelector("[data-version-meta]").textContent = [v.uploaded_by, v.uploaded_at, v.duration, v.resolution].filter(Boolean).join(" · ");
+      var copied = row.querySelector("[data-video-copied]");
+      copied.textContent = v.copied_from
+        ? "Same file as " + v.copied_from + (v.comments_copied !== null && v.comments_copied !== undefined ? " \u00b7 comments kept" : "") : "";
+      show(copied, !!v.copied_from);
+      show(row.querySelector("[data-video-reuse]"), !!v.can_reuse);
+      var status = row.querySelector("[data-video-status]");
+      status.textContent = v.status_label;
+      status.className = "ml-2 rounded-full px-2 py-0.5 text-xs " + (v.status === "ready"
+        ? "bg-emerald-100 text-emerald-800" : v.status === "failed"
+          ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800");
+      var mark = row.querySelector("[data-video-final-mark]");
+      mark.textContent = v.is_final ? "Final for publishing" : ""; show(mark, v.is_final);
+      show(row.querySelector("[data-version-resume]"), v.mine && v.status === "uploading" && c.can_upload);
+      var hint = row.querySelector("[data-video-hint]");
+      hint.textContent = v.status === "processing" ? "Conversion runs on the server and can take several minutes. You can leave this page; the player updates when ready." : "";
+      show(hint, v.status === "processing");
+      var srt = row.querySelector("[data-transcript]");
+      if (srt.dataset.filename !== (v.transcript_filename || "")) show(srt.querySelector("[data-transcript-text]"), false);
+      srt.dataset.filename = v.transcript_filename || "";
+      srt.querySelector("[data-transcript-name]").textContent = v.transcript_filename || "No transcript yet.";
+      ["download", "preview", "delete"].forEach(function (action) {
+        var el = srt.querySelector("[data-transcript-" + action + "]");
+        if (el) show(el, !!v.transcript_filename);
+      });
+      row.querySelector("details").open = !!selected && selected.id === v.id;
+      if (list.children[index] !== row) list.insertBefore(row, list.children[index] || null);
+    });
   }
 
   function render(c) {
     var panel = panelOf(c.key);
     if (!panel) return;
     var toolbar = panel.querySelector("[data-video-toolbar]");
-    var select = panel.querySelector("[data-video-select]");
     var badge = panel.querySelector("[data-video-final-badge]");
     var toggle = panel.querySelector("[data-video-final-toggle]");
     var info = panel.querySelector("[data-video-final-info]");
     var note = panel.querySelector("[data-video-player-note]");
-    var versions = ready(c);
     var version = selectedVersion(c);
 
-    select.textContent = "";
-    versions.forEach(function (v) { select.appendChild(option(v)); });
-    if (version) select.value = version.id;
-    show(toolbar, versions.length > 0, "flex");
+    renderRows(c, panel, version);
+    var player = panel.querySelector("[data-video-player]");
+    var target = version && panel.querySelector('[data-version="' + CSS.escape(version.id) + '"] [data-version-detail]');
+    if (target && player.parentElement !== target) target.prepend(player);
+    show(player, !!version);
+    show(toolbar, !!(version && version.status === "ready"), "flex");
     var download = panel.querySelector("[data-video-download]");
     if (download) {
       if (version && version.download_url) download.href = version.download_url;
       else download.removeAttribute("href");
       show(download, !!(version && version.download_url));
     }
-    show(select.closest("label"), versions.length > 0);
 
     show(badge, !!(version && version.is_final), "inline-flex");
     if (c.can_mark_final && version) {
       toggle.textContent = version.is_final ? "Remove final mark" : "Mark as final for publishing";
-      toggle.dataset.version = version.id;
+      toggle.dataset.finalVersion = version.id;
       toggle.dataset.mark = version.is_final ? "0" : "1";
       show(toggle, true);
     } else {
@@ -113,7 +213,7 @@
     } else if (!c.versions.length) {
       note.textContent = c.can_upload ? "No video yet. Use “Upload version” to add one." : "No video has been uploaded yet.";
       show(note, true);
-    } else if (!versions.length) {
+    } else if (version && version.status !== "ready") {
       note.textContent = c.versions.every(function (v) { return v.status === "failed"; })
         ? "Video conversion failed. Please upload the video again, or ask your team to upload a new version."
         : "The video is being prepared. Interrupted conversions are retried automatically; the player appears when it is ready.";
@@ -121,7 +221,8 @@
     } else {
       show(note, false);
     }
-    if (c.key === activeKey) loadFrame(c, version);
+    if (c.key === activeKey && version && version.status === "ready") loadFrame(c, version);
+    else unloadFrame(c.key);
   }
 
   function showChannel(key) {
@@ -156,14 +257,6 @@
     show(box, !!text);
   }
 
-  root.addEventListener("change", function (event) {
-    var select = event.target.closest && event.target.closest("[data-video-select]");
-    if (!select) return;
-    var panel = select.closest("[data-video-channel]");
-    chosen[panel.dataset.videoChannel] = select.value;
-    render(card(panel.dataset.videoChannel));
-  });
-
   root.addEventListener("click", function (event) {
     var button = event.target.closest && event.target.closest("[data-video-final-toggle]");
     if (!button) return;
@@ -171,7 +264,7 @@
     finalError(panel, "");
     finalNotice(panel, "");
     button.disabled = true;
-    fetch(finalUrl(button.dataset.version), {
+    fetch(finalUrl(button.dataset.finalVersion), {
       method: "POST", credentials: "same-origin",
       headers: { "X-CSRFToken": csrf, "Content-Type": "application/json" },
       body: JSON.stringify({ final: button.dataset.mark === "1" }),
@@ -189,6 +282,46 @@
 
   tabs.forEach(function (tab) {
     tab.addEventListener("click", function () { showChannel(tab.dataset.videoTab); });
+  });
+
+  async function transcriptRequest(target, method, body) {
+    var row = target.closest("[data-version]");
+    var section = row.querySelector("[data-transcript]");
+    var error = section.querySelector("[data-transcript-error]");
+    show(error, false);
+    target.disabled = true;
+    try {
+      if (method === "DELETE") {
+        body = new FormData(); body.append("delete", "1");
+      }
+      var response = await fetch(transcriptUrl(row.dataset.version) + (method === "GET" ? "?preview=1" : ""), {
+        method: method === "DELETE" ? "POST" : method, body: body, credentials: "same-origin", headers: { "X-CSRFToken": csrf }
+      });
+      var data = await response.json();
+      if (!response.ok || response.redirected) throw new Error(data.error || "The request failed.");
+      var v = byId(card(row.closest("[data-video-channel]").dataset.videoChannel), row.dataset.version);
+      var preview = section.querySelector("[data-transcript-text]");
+      if (method === "GET") { preview.textContent = data.text; show(preview, true); }
+      else {
+        v.transcript_filename = data.filename;
+        show(preview, false);
+        render(card(row.closest("[data-video-channel]").dataset.videoChannel));
+        root.dispatchEvent(new CustomEvent("jrc-video:refresh"));
+      }
+    } catch (e) { error.textContent = e.message; show(error, true); }
+    finally { target.disabled = false; if (target.type === "file") target.value = ""; }
+  }
+  root.addEventListener("click", function (event) {
+    var target = event.target.closest("button");
+    if (!target) return;
+    if (target.hasAttribute("data-transcript-preview")) transcriptRequest(target, "GET");
+    if (target.hasAttribute("data-transcript-delete")) transcriptRequest(target, "DELETE");
+  });
+  root.addEventListener("change", function (event) {
+    var input = event.target;
+    if (!input.hasAttribute("data-transcript-file") || !input.files.length) return;
+    var body = new FormData(); body.append("file", input.files[0]);
+    transcriptRequest(input, "POST", body);
   });
 
   // Fresh state from the status feed (conversion finished, final mark changed, new version).

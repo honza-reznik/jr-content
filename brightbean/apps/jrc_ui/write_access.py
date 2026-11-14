@@ -110,7 +110,9 @@ _rules(
 )
 _rules("jrc_texts", "script concept concept_to_script version_name", domain="service")
 _rules(
-    "jrc_video", "upload_start upload_part upload_complete upload_abort video_final version_duplicate", domain="service"
+    "jrc_video",
+    "upload_start upload_part upload_complete upload_abort video_final transcript version_duplicate",
+    domain="service",
 )
 _rules("jrc_thumbnails", "upload", domain="service")
 
@@ -167,6 +169,8 @@ DELEGATED_WRITES = {
     "jrc_channels:profile": "workspace owner/manager; P1-B23",
     "jrc_channels:color": "workspace owner/manager; P1-B23",
     "jrc_channels:icon": "workspace owner/manager; P1-B23",
+    "jrc_channels:channel_color": "workspace owner/manager and manage_social_accounts; P2-B12",
+    "jrc_channels:favicon": "workspace owner/manager and manage_social_accounts; P2-B12",
     "jrc_channels:edit": "workspace owner/manager; P1-B23",
     "jrc_channels:toggle": "workspace owner/manager; P1-B23",
     "apps.jrc_video.views.video_logout": "CSRF protected logout",

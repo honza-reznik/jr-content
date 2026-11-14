@@ -3,7 +3,7 @@ P2-B14: each tag is an output (channel + format, e.g. YouTube · Shorts); one ch
 Without JavaScript the same forms post to the detail page (action add_channel / remove_channel).{% endcomment %}
 <ul class="channel-tags" aria-labelledby="content-channels-label">
     {% for platform_post in content_outputs %}
-    <li class="channel-tag" data-output-label="{{ platform_post.output_title }}">
+    <li class="channel-tag" style="background:{{ platform_post.social_account.jrc_accent_color }};color:{{ platform_post.social_account.jrc_accent_text_color }}" data-output-label="{{ platform_post.output_title }}">
         <span class="channel-tag-name">{% include "jrc_channels/icon.html" with account=platform_post.social_account %} {{ platform_post.social_account.jrc_channel.display_name|default:platform_post.social_account.account_name }} · <span class="channel-tag-format">{{ platform_post.format_name }}</span> <span class="channel-tag-status">· {{ platform_post.get_status_display }}</span></span>
         {% if can_manage_channels and not channels_locked %}
         <form method="post" action="?tab={{ active_tab }}" data-channel-remove class="channel-tag-remove">{% csrf_token %}<input type="hidden" name="action" value="remove_channel"><input type="hidden" name="platform_post" value="{{ platform_post.id }}"><button type="submit" aria-label="Remove output {{ platform_post.output_title }}" title="Remove output">×</button></form>

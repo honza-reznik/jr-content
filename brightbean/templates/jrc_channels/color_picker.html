@@ -1,0 +1,22 @@
+<div data-colour-control>
+    <p><span data-colour-preview style="display:inline-block;border-radius:6px;padding:4px 9px;background:{{ current_color }};color:{{ text_color }}">{{ preview_label }}</span> <span data-colour-value>{{ current_color }}</span></p>
+    <form method="post" action="{{ action }}">
+        {% csrf_token %}
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin:16px 0" role="group" aria-label="Colour palette">
+        {% for hex,name in color_palette %}<button type="submit" name="color" value="{{ hex }}" aria-label="Use {{ name }}" aria-pressed="{% if hex == current_color %}true{% else %}false{% endif %}" style="min-width:44px;min-height:44px;border-radius:8px;background:{{ hex }};color:white;padding:8px;border:2px solid {% if hex == current_color %}#1c1917{% else %}transparent{% endif %}">{{ name }}</button>{% endfor %}
+        </div>
+    </form>
+    <form method="post" action="{{ action }}">
+        {% csrf_token %}
+        <div class="profile-fields"><div class="profile-field">
+            {{ form.color.label_tag }}
+            <div style="display:flex;gap:10px;align-items:center">
+                <input type="color" value="{{ current_color }}" aria-label="Choose {{ preview_label }} colour" data-colour-picker style="width:56px;height:44px;padding:3px;border:1px solid #a8a29e;border-radius:8px;background:var(--surface-0)">
+                {{ form.color }}
+            </div>
+            <div role="alert">{{ form.color.errors }}</div>
+            <p class="profile-help">Choose any colour. Text automatically uses black or white for at least 4.5:1 contrast.</p>
+        </div></div>
+        <button class="profile-button primary" type="submit">Save colour</button>
+    </form>
+</div>

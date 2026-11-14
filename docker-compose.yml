@@ -365,7 +365,27 @@ services:
   jrc-bb-worker:
     <<: *bb
     command: ["python", "manage.py", "run_studio_worker"]
-  # The sole internet-connected service. It forwards SMTP bytes only to the
+  # Favicon-only egress; app and worker retain their internal-only network.
+  jrc-favicon-relay:
+    image: jrc-smtp-relay:${JRC_PROJECT:?Spusťte s JRC_PROJECT}
+    entrypoint: ["python", "/relay/channel-favicon-relay.py"]
+    restart: unless-stopped
+    init: true
+    user: "65534:65534"
+    read_only: true
+    mem_limit: 128m
+    cpus: 0.5
+    pids_limit: 16
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      <<: *offline
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ./scripts/channel-favicon-relay.py:/relay/channel-favicon-relay.py:ro
+      - ./brightbean/apps/jrc_channels/favicon_fetch.py:/favicon/favicon_fetch.py:ro
+    networks: [internal, favicon-egress]
+  # SMTP-only egress. It forwards SMTP bytes only to the
   # configured destination; Make enables this profile only for configured SMTP.
   jrc-smtp-relay:
     profiles: [smtp]
@@ -474,6 +494,8 @@ networks:
   internal:
     internal: true
   smtp-egress:
+    driver: bridge
+  favicon-egress:
     driver: bridge
   ingress:
     # Pouze místní vstupní porty. Brány před exec odstraní výchozí trasy;

@@ -49,68 +49,6 @@
 
   // ----- rendering of the version list from the server feed -----
 
-  function badge(status) {
-    var colors = status === "ready" ? "bg-emerald-100 text-emerald-800"
-      : status === "failed" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800";
-    return "rounded-full px-2.5 py-1 text-xs font-medium " + colors;
-  }
-
-  function renderRow(card, v) {
-    var li = document.createElement("li");
-    li.className = "flex flex-col gap-1 rounded-lg bg-stone-50 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between";
-    li.dataset.version = v.id; li.dataset.status = v.status; li.dataset.mine = v.mine ? "1" : "0";
-    li.dataset.name = v.filename; li.dataset.size = String(v.size_bytes);
-    var left = document.createElement("div"); left.className = "min-w-0";
-    var title = document.createElement("p"); title.className = "text-sm font-medium text-stone-800";
-    title.textContent = "v" + v.number + " ";
-    var name = document.createElement("span"); name.className = "font-normal text-stone-500";
-    name.style.overflowWrap = "anywhere";
-    name.textContent = "· " + v.filename; title.appendChild(name);
-    if (v.is_final) {
-      var mark = document.createElement("span"); mark.setAttribute("data-video-final-mark", "");
-      mark.className = "ml-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800";
-      mark.textContent = "Final for publishing"; title.appendChild(document.createTextNode(" ")); title.appendChild(mark);
-    }
-    var meta = document.createElement("p"); meta.className = "text-xs text-stone-500";
-    meta.textContent = [v.uploaded_by, v.uploaded_at, v.duration, v.resolution].filter(Boolean).join(" · ");
-    left.appendChild(title); left.appendChild(meta);
-    if (v.copied_from) {
-      // P2-B15: the same stored file as a version of another output.
-      var copied = document.createElement("p"); copied.setAttribute("data-video-copied", "");
-      copied.className = "text-xs text-stone-500"; copied.style.overflowWrap = "anywhere";
-      copied.textContent = "Same file as " + v.copied_from + (v.comments_copied !== null && v.comments_copied !== undefined ? " · comments kept" : "");
-      left.appendChild(copied);
-    }
-    if (v.status === "processing") {
-      // P1-B26: say that the wait is expected and needs nothing from the person.
-      var hint = document.createElement("p"); hint.setAttribute("data-video-hint", "");
-      hint.className = "text-xs text-stone-500";
-      hint.textContent = "Conversion runs on the server and can take several minutes for a large video. " +
-        "You can leave this page; this list and the player update by themselves.";
-      left.appendChild(hint);
-    }
-    var right = document.createElement("div"); right.className = "flex items-center gap-2";
-    if (v.can_reuse) {
-      right.appendChild(rowButton("Use for another output…", "data-video-reuse", "border-stone-300 text-stone-700 hover:bg-stone-50 font-medium"));
-    }
-    var canResume = v.mine && v.status === "uploading" && card.dataset.canUpload === "1";
-    if (canResume && !(active && active.version === v.id)) {
-      right.appendChild(rowButton("Continue upload", "data-video-resume", "border-orange-300 text-orange-700 hover:bg-orange-50 font-semibold"));
-      right.appendChild(rowButton("Discard", "data-video-discard-row", "border-stone-300 text-stone-700 hover:bg-stone-50 font-medium"));
-    }
-    var status = document.createElement("span"); status.setAttribute("data-video-status", "");
-    status.className = badge(v.status); status.textContent = v.status_label;
-    right.appendChild(status);
-    li.appendChild(left); li.appendChild(right);
-    return li;
-  }
-
-  function rowButton(label, attr, classes) {
-    var b = document.createElement("button"); b.type = "button"; b.setAttribute(attr, "");
-    b.className = "rounded-lg border bg-white px-3 py-1.5 text-xs " + classes; b.textContent = label;
-    return b;
-  }
-
   // Last status seen per version, to tell the person when a conversion ends (P1-B26).
   var seenStatus = null;
 
@@ -136,14 +74,7 @@
       data.versions.forEach(function (v) { nextSeen[v.id] = v.status; });
       if (!card) return;
       announce(card, data);
-      var list = card.querySelector("[data-video-versions]");
-      list.textContent = "";
-      if (!data.versions.length) {
-        var empty = document.createElement("li"); empty.setAttribute("data-video-empty", "");
-        empty.className = "rounded-lg border border-dashed border-stone-300 px-4 py-6 text-center text-sm text-stone-500";
-        empty.textContent = "No video yet."; list.appendChild(empty);
-      }
-      data.versions.forEach(function (v) { list.appendChild(renderRow(card, v)); });
+
     });
     seenStatus = nextSeen;
     // The player toolbar (video-tab.js) follows the same feed.
@@ -512,18 +443,18 @@
       zone.style.borderColor = on ? "#ea580c" : "";
       zone.dataset.dragging = on ? "1" : "0";
     }
-    card.addEventListener("dragenter", function (event) {
+    zone.addEventListener("dragenter", function (event) {
       if (!event.dataTransfer || Array.from(event.dataTransfer.types).indexOf("Files") === -1) return;
       event.preventDefault(); depth++; highlight(true);
     });
-    card.addEventListener("dragover", function (event) {
+    zone.addEventListener("dragover", function (event) {
       if (!event.dataTransfer || Array.from(event.dataTransfer.types).indexOf("Files") === -1) return;
       event.preventDefault(); event.dataTransfer.dropEffect = active ? "none" : "copy";
     });
-    card.addEventListener("dragleave", function () {
+    zone.addEventListener("dragleave", function () {
       depth = Math.max(0, depth - 1); if (!depth) highlight(false);
     });
-    card.addEventListener("drop", function (event) {
+    zone.addEventListener("drop", function (event) {
       event.preventDefault(); depth = 0; highlight(false); resumeTarget = null;
       var files = event.dataTransfer && event.dataTransfer.files;
       if (!files || !files.length) return;
