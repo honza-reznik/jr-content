@@ -154,8 +154,7 @@ class TestRfcVectors:
         user = User(email="ella+test@example.invalid")
         uri = twofactor.otpauth_uri(user, secret)
         assert uri == (
-            "otpauth://totp/JR%20Content%3Aella%2Btest%40example.invalid"
-            f"?secret={secret}&issuer=JR%20Content"
+            f"otpauth://totp/JR%20Content%3Aella%2Btest%40example.invalid?secret={secret}&issuer=JR%20Content"
         )
         assert twofactor.format_secret("ABCDEFGHIJKL") == "ABCD EFGH IJKL"
 
@@ -375,7 +374,9 @@ class TestLogin:
         assert twofactor.verify(user, code_at(secret, NOW, -1)) is twofactor.Result.REUSED
         # The next time step works.
         clock.now += 30
-        assert client.post(reverse("accounts:two_factor_login"), {"code": code_at(secret, clock.now)}).status_code == 302
+        assert (
+            client.post(reverse("accounts:two_factor_login"), {"code": code_at(secret, clock.now)}).status_code == 302
+        )
 
     def test_tolerance_at_login(self, client, user, clock):
         secret, _ = enable_2fa(user, clock)  # consumed step NOW-1
