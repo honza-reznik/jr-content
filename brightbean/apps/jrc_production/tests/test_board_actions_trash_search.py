@@ -353,10 +353,13 @@ def test_search_hides_internal_deleted_or_foreign_threads(content, workspace, or
 
 
 def test_search_reports_video_api_outage_without_hiding_local_matches(content, workspace, user, client):
+    # The video's own content does not match locally, so FreeFrame is asked; another content does match.
     VideoAsset.objects.create(platform_post=content.platform_posts.get(), ff_asset_id=uuid4())
+    channel = create_manual_channel(workspace, "custom", "Local match channel")
+    create_content(workspace, "Local outage needle", user, social_account_ids=[channel.pk])
     client.force_login(user)
     with patch("apps.jrc_production.search.FreeFrameUserClient.request", side_effect=FreeFrameError("unavailable")):
-        response = client.get(reverse("jrc_production:board"), {"q": "long content"})
+        response = client.get(reverse("jrc_production:board"), {"q": "outage needle"})
     assert response.context["total"] == 1
     assert "could not all be searched" in response.context["search_warning"]
 

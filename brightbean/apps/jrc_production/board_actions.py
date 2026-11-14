@@ -40,6 +40,7 @@ def board_move(post, stage, user, *, expected_stage, scheduled_at=None, comment=
     if stage == PipelineStage.APPROVED and not can_decide(post, membership):
         if not can_request_approval(post, membership):
             raise PermissionDenied("You cannot approve or request approval for this content at this stage.")
+        already_waiting = pipeline_stage(post) == PipelineStage.REVIEW
         if PipelineStage.REVIEW in available_moves(post, membership):
             if approval_only and not can_decide_at_step(membership, "pending_review"):
                 raise PermissionDenied("You cannot approve this content at this stage.")
@@ -47,6 +48,8 @@ def board_move(post, stage, user, *, expected_stage, scheduled_at=None, comment=
         if not can_decide(post, membership):
             if approval_only:
                 raise PermissionDenied("You cannot approve this content at this stage.")
+            if already_waiting:
+                return post, "Nothing changed. This content is already waiting for approval."
             return post, "Approval requested. It is waiting for the person who approves this step."
         expected_stage = pipeline_stage(post)
     moved = move_content(post, stage, user, expected_stage=expected_stage, scheduled_at=scheduled_at, comment=comment)

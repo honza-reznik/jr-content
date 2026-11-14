@@ -334,7 +334,9 @@ def test_http_approved_target_requests_or_decides_through_review(post, workspace
     assert ApprovalAction.objects.filter(post=post, action="submitted").count() == 1
     assert ApprovalAction.objects.filter(post=post, action="approved").count() == int(role == "owner")
     if role == "contributor":
-        assert b"Approval requested" in response.content
+        # Already waiting in Review: the drag changes nothing and says so (P2-B09 review N4).
+        assert b"Nothing changed" in response.content
+        assert b"Approval requested" not in response.content
 
 
 def test_client_can_move_only_own_production(post, workspace, user):

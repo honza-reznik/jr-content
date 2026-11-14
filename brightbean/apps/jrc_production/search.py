@@ -1,5 +1,7 @@
 """Search only data the actor can read; FreeFrame enforces its own comment visibility."""
 
+import re
+
 from django.db.models import Q
 
 from apps.approvals.comments import get_visible_comments
@@ -9,6 +11,8 @@ from apps.jrc_texts.services import can_edit_text
 from apps.jrc_video.client import FreeFrameError, FreeFrameUserClient
 from apps.jrc_video.models import VideoAsset
 from apps.members.models import WorkspaceMembership
+
+MAX_VIDEO_REQUESTS = 25
 
 
 def search_content(posts, user, query):
@@ -31,12 +35,20 @@ def search_content(posts, user, query):
     versions = TextVersion.objects.filter(document__post_id__in=ids).filter(
         Q(state="final") | Q(state="draft", draft_owner=user, document__post_id__in=editable_ids)
     )
+    # The database narrows the versions; the exact comparison of rich text stays in Python for the
+    # remaining candidates only (marks such as bold split the stored editor JSON, so rich text is
+    # prefiltered by its longest word, which formatting seldom cuts).
+    plain_hit = Q(document__format="plain", text__icontains=query)
+    words = re.findall(r"\w+", query)
+    rich_hit = ~Q(document__format="plain")
+    if words:
+        rich_hit &= Q(text__icontains=max(words, key=len))
+    versions = versions.filter(plain_hit | rich_hit).exclude(document__post_id__in=matches)
     for version in versions.values("document__post_id", "document__format", "content").iterator(chunk_size=100):
-        text = (
-            version["content"].get("text", "")
-            if version["document__format"] == "plain"
-            else content_to_plain_text(version["content"])
-        )
+        if version["document__format"] == "plain":
+            text = version["content"].get("text", "")
+        else:
+            text = content_to_plain_text(version["content"])
         if needle in text.casefold():
             matches.add(version["document__post_id"])
     from .models import ShotlistItem
@@ -54,17 +66,28 @@ def search_content(posts, user, query):
                 matches.add(comment.post_id)
             pending.extend(comment.visible_replies)
     warning = ""
-    videos = VideoAsset.objects.filter(platform_post__post_id__in=ids).values_list(
-        "ff_asset_id", "platform_post__post_id"
+    # FreeFrame has no search over many assets: one request per video. Videos of content that already
+    # matched are skipped and the number of requests is capped, newest videos first.
+    videos = list(
+        VideoAsset.objects.filter(platform_post__post_id__in=ids)
+        .exclude(platform_post__post_id__in=matches)
+        .order_by("-created_at")
+        .values_list("ff_asset_id", "platform_post__post_id")[: MAX_VIDEO_REQUESTS + 1]
     )
+    if len(videos) > MAX_VIDEO_REQUESTS:
+        videos = videos[:MAX_VIDEO_REQUESTS]
+        warning = f"Only comments on the {MAX_VIDEO_REQUESTS} newest videos were searched. Narrow the board first."
     api = FreeFrameUserClient(user)
     for asset_id, post_id in videos:
+        if post_id in matches:
+            continue
         try:
             pending = list(api.request("GET", f"/assets/{asset_id}/comments"))
             while pending:
                 comment = pending.pop()
                 if needle in comment.get("body", "").casefold():
                     matches.add(post_id)
+                    break
                 pending.extend(comment.get("replies", []))
         except FreeFrameError as exc:
             warning = "Video comments could not all be searched. Try again when FreeFrame is available."

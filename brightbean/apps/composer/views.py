@@ -2849,8 +2849,10 @@ def post_delete(request, workspace_id, post_id):
 
         try:
             trash_content(post, request.user)
-        except (ValidationError, PermissionDenied) as exc:
-            return JsonResponse({"error": str(exc)}, status=409)
+        except PermissionDenied as exc:
+            return JsonResponse({"error": str(exc)}, status=403)
+        except ValidationError as exc:
+            return JsonResponse({"error": " ".join(exc.messages)}, status=409)
         message = "Content moved to Trash. You can restore it from the content board."
 
     return deletion_response(request, workspace, message, leave_page=not account_id)

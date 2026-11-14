@@ -7,6 +7,14 @@ class ActivePostManager(WorkspaceScopedManager):
 
 
 class ActivePlatformPostManager(WorkspaceScopedManager):
+    """Copies of content that is not in the trash.
+
+    The filter is a subquery, not a join. A join would make
+    ``select_for_update()`` without ``of=`` lock the parent ``Post`` row too,
+    in copy -> content order, the opposite of the publisher and ``move_content``.
+    """
+
     def get_queryset(self):
-        # Calendar, publisher, REST and MCP also query copies directly.
-        return super().get_queryset().filter(post__trashed_at__isnull=True)
+        from apps.composer.models import Post
+
+        return super().get_queryset().filter(post_id__in=Post.all_objects.filter(trashed_at__isnull=True).values("pk"))
