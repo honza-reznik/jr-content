@@ -232,6 +232,16 @@ def add_content_channel(post, account_id, user, output_format=""):
     existing = post.platform_posts.filter(social_account_id=account_id, output_format=output_format).first()
     if existing:
         return existing
+    if post.platform_posts.filter(social_account_id=account_id).exists():
+        from apps.calendar.models import QueueEntry
+
+        # A queue entry names the content and the channel only; with a second output on the channel it
+        # could no longer tell which output it plans (P2-B14 review).
+        if QueueEntry.objects.filter(post_id=post.pk, queue__social_account_id=account_id).exists():
+            raise ValidationError(
+                "This content is in the channel's posting queue. Take it out of the queue before adding "
+                "another output of the channel."
+            )
     first_output = not post.platform_posts.exists()
     variant = add_platform_post(post, channel.social_account, output_format=output_format)
     if first_output:

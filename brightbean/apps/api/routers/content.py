@@ -647,7 +647,9 @@ class ChannelWrite(Schema):
     )
 
 
-@router.post("/{post_id}/channels", response=PostResponse, summary="Explicitly add an output (channel + format) to draft content")
+@router.post(
+    "/{post_id}/channels", response=PostResponse, summary="Explicitly add an output (channel + format) to draft content"
+)
 def channel_add(request, post_id: uuid.UUID, payload: ChannelWrite):
     enforce_http_rate_limits(request, is_write=True)
     _require_perm(request, "create_posts")

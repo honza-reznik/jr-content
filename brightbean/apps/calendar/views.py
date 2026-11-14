@@ -1363,9 +1363,10 @@ def reschedule_post(request, workspace_id):
         # Keep any queue entry's slot mirror in step with the manual reschedule
         # so the queue list shows the real time (the slot ops read scheduled_at,
         # but the detail page still orders by assigned_slot_datetime).
-        QueueEntry.objects.filter(post=post, queue__social_account=pp.social_account).update(
-            assigned_slot_datetime=new_dt
-        )
+        # JR Content (P2-B14): only an entry that is this output's own (``queue_entries_of``).
+        from .services import queue_entries_of
+
+        queue_entries_of(pp).update(assigned_slot_datetime=new_dt)
         sync_post_scheduled_at(post)
     except (ValueError, TypeError) as e:
         return JsonResponse({"error": f"Invalid datetime: {e}"}, status=400)
@@ -1423,20 +1424,15 @@ def _sync_queue_entries(touched):
     showing the old slot, and a deleted child on a multi-platform post strands
     an entry whose channel no longer has a row.
     """
-    drop, move = [], {}
+    # JR Content (P2-B14): an output touches only its own entry (``queue_entries_of``), never the one
+    # of a sibling output on the same channel.
+    from .services import queue_entries_of
+
     for pp, slot in touched:
         if slot is None:
-            drop.append((pp.post_id, pp.social_account_id))
+            queue_entries_of(pp).delete()
         else:
-            move.setdefault(slot, []).append((pp.post_id, pp.social_account_id))
-
-    for post_id, account_id in drop:
-        QueueEntry.objects.filter(post_id=post_id, queue__social_account_id=account_id).delete()
-    for slot, pairs in move.items():
-        for post_id, account_id in pairs:
-            QueueEntry.objects.filter(post_id=post_id, queue__social_account_id=account_id).update(
-                assigned_slot_datetime=slot
-            )
+            queue_entries_of(pp).update(assigned_slot_datetime=slot)
 
 
 @login_required
@@ -1929,9 +1925,12 @@ def queue_reorder(request, workspace_id, queue_id):
     entry_ids_str = request.POST.get("entry_ids", "")
     entry_ids = [s.strip() for s in entry_ids_str.split(",") if s.strip()]
 
-    from .services import reorder_queue
+    from .services import AmbiguousOutputError, reorder_queue
 
-    reorder_queue(queue, entry_ids)
+    try:
+        reorder_queue(queue, entry_ids)
+    except AmbiguousOutputError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
 
     if request.htmx:
         return HttpResponse(status=204, headers={"HX-Trigger": "queueReordered"})
@@ -1953,11 +1952,14 @@ def queue_entry_remove(request, workspace_id, queue_id, entry_id):
         .first()
     )
     if entry is not None:
-        from .services import remove_from_queue
+        from .services import AmbiguousOutputError, _platform_post_for, remove_from_queue
 
         # Removing an entry takes its post out of the plan (P1-B36): same rule as bulk Draft. An entry
         # whose channel copy is not planned (any more) takes nothing out of the plan (P1-B37).
-        copy = entry.post.platform_posts.filter(social_account=entry.queue.social_account).first()
+        try:
+            copy = _platform_post_for(entry.post, entry.queue.social_account)
+        except AmbiguousOutputError as exc:  # JR Content (P2-B14): which output it plans is unknown
+            return JsonResponse({"error": str(exc)}, status=400)
         if (
             copy is not None
             and is_planned(copy)
@@ -1983,12 +1985,14 @@ def queue_entry_reslot(request, workspace_id, queue_id, entry_id):
         queue__workspace=workspace,
     )
 
-    from .services import QueueFullError, reslot_to_next_available
+    from .services import AmbiguousOutputError, QueueFullError, reslot_to_next_available
 
     try:
         reslot_to_next_available(entry)
     except QueueFullError:
         return JsonResponse({"error": "No open slot within the scheduling horizon."}, status=409)
+    except AmbiguousOutputError as exc:  # JR Content (P2-B14)
+        return JsonResponse({"error": str(exc)}, status=400)
 
     if request.htmx:
         return HttpResponse(status=204, headers={"HX-Trigger": "queueReordered"})

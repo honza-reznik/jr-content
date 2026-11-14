@@ -413,12 +413,10 @@ def transition_platform_post(
             # A drafted child is no longer queued — drop its QueueEntry so the
             # slot frees as a gap. Covers cancel / unschedule paths that would
             # otherwise orphan the row with a stale assigned_slot_datetime.
-            from apps.calendar.models import QueueEntry
+            # JR Content (P2-B14): only this output's own entry, never a sibling output's.
+            from apps.calendar.services import queue_entries_of
 
-            QueueEntry.objects.filter(
-                post=platform_post.post,
-                queue__social_account=platform_post.social_account,
-            ).delete()
+            queue_entries_of(platform_post).delete()
         elif target_status == "published":
             update_fields.add("published_at")  # set by transition_to
         platform_post.save(update_fields=list(update_fields))

@@ -93,7 +93,7 @@ def return_edited_to_review(post, before):
     for ``review_return_notice``. Nothing happens when ``before`` is ``None`` (new content) or
     nothing changed.
     """
-    from apps.calendar.models import QueueEntry
+    from apps.calendar.services import queue_entries_of
     from apps.composer.models import PlatformPost
     from apps.composer.services import sync_post_scheduled_at
 
@@ -126,7 +126,7 @@ def return_edited_to_review(post, before):
             if pp.taken_out_of_plan and pp.scheduled_at is not None:
                 planned_times.append(pp.scheduled_at)
             pp.scheduled_at = None
-            QueueEntry.objects.filter(post_id=post.pk, queue__social_account_id=pp.social_account_id).delete()
+            queue_entries_of(pp).delete()  # P2-B14: never the entry of a sibling output
             times_dropped = True
         pp.status = PlatformPost.Status.PENDING_REVIEW
         returned.append(pp)

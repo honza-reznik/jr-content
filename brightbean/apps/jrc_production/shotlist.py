@@ -56,7 +56,9 @@ def shotlist_formats(post):
     from apps.composer.output_formats import format_sort_key
 
     formats = set(post.platform_posts.values_list("output_format", flat=True))
-    formats |= set(ShotlistItem.objects.filter(post_id=post.pk).exclude(output_format="").values_list("output_format", flat=True))
+    formats |= set(
+        ShotlistItem.objects.filter(post_id=post.pk).exclude(output_format="").values_list("output_format", flat=True)
+    )
     return sorted((value for value in formats if value), key=format_sort_key)
 
 

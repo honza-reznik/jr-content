@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import uuid
+from collections import defaultdict
 from datetime import UTC, datetime
 from urllib.parse import quote, urljoin
 
@@ -515,27 +516,37 @@ def _validate_approval_release(request, post, workspace, action, *, post_id):
     if not can_schedule(request.workspace_membership):
         raise PermissionDenied("You do not have permission to schedule or publish content.")
     scope = _get_account_scope(request)
-    existing = {str(pp.social_account_id): pp for pp in post.platform_posts.all()} if post_id else {}
-    for account_id in _parse_selected_account_ids(request.POST.get("selected_accounts", "")):
-        if scope and str(uuid.UUID(scope)) != str(uuid.UUID(account_id)):
+    # JR Content (P2-B14): a channel may carry several outputs (YouTube Video and Shorts), and the
+    # action moves every one of them (``_transition_post_children``), so each is weighed on its own
+    # status: one approved output must not let its unapproved sibling go out with it.
+    existing = defaultdict(list)
+    if post_id:
+        for pp in post.platform_posts.all():
+            existing[pp.social_account_id].append(pp)
+    for account_id in dict.fromkeys(
+        uuid.UUID(a) for a in _parse_selected_account_ids(request.POST.get("selected_accounts", ""))
+    ):
+        if scope and uuid.UUID(scope) != account_id:
             continue
-        pp = existing.get(str(uuid.UUID(account_id)))
-        if pp is None:
-            status = "draft"
-        elif pp.status == "scheduled":
-            status = None  # already went out; only its time changes
-        elif pp.can_transition_to("scheduled") or pp.can_transition_to("draft"):
-            # Its real status decides; on hold / sent back / rejected never go out from here.
-            status = pp.status
-        else:
-            status = None  # stays where it is (in review, published): nothing goes out
-        if status is None:
-            continue
-        try:
-            require_release_allowed(workspace, status)
-        except ValueError as exc:
-            return JsonResponse({"errors": {"schedule": str(exc)}}, status=400)
+        statuses = [_release_status(pp) for pp in existing.get(account_id, [])] or ["draft"]
+        for status in statuses:
+            if status is None:
+                continue
+            try:
+                require_release_allowed(workspace, status)
+            except ValueError as exc:
+                return JsonResponse({"errors": {"schedule": str(exc)}}, status=400)
     return None
+
+
+def _release_status(pp):
+    """The status a releasing composer action weighs for an existing copy, or ``None`` when it does not go out."""
+    if pp.status == "scheduled":
+        return None  # already went out; only its time changes
+    if pp.can_transition_to("scheduled") or pp.can_transition_to("draft"):
+        # Its real status decides; on hold / sent back / rejected never go out from here.
+        return pp.status
+    return None  # stays where it is (in review, published): nothing goes out
 
 
 def _validate_required_media(request, post, workspace, action):
@@ -620,6 +631,19 @@ def _save_version(post, user):
         snapshot=snapshot,
         created_by=user,
     )
+
+
+def _ambiguous_queue(post, post_id, queues):
+    """Whether a queue's channel carries several outputs of this content (JR Content, P2-B14).
+
+    A queue entry cannot tell YouTube · Video from YouTube · Shorts, so queueing such content is
+    refused before anything is saved, instead of slotting whichever output comes first.
+    """
+    if not post_id:
+        return False  # a new post has no outputs yet
+    from apps.calendar.services import has_several_outputs
+
+    return any(has_several_outputs(post, queue.social_account_id) for queue in queues)
 
 
 def _resolve_queues_for_post(queue_id, workspace, post_data):
@@ -1305,12 +1329,14 @@ def save_post(request, workspace_id, post_id=None):
     elif action == "add_to_queue":
         from django.db import transaction
 
-        from apps.calendar.services import QueueFullError, add_to_queue
+        from apps.calendar.services import AMBIGUOUS_QUEUE_MESSAGE, QueueFullError, add_to_queue
 
         queue_id = request.POST.get("queue_id")
         queues = _resolve_queues_for_post(queue_id, workspace, request.POST)
         if not queues:
             return JsonResponse({"errors": {"queue": "No active queue found for the selected channel."}}, status=400)
+        if _ambiguous_queue(post, post_id, queues):
+            return JsonResponse({"errors": {"queue": AMBIGUOUS_QUEUE_MESSAGE}}, status=400)
         # Queueing assigns real per-platform slots below — drop any proposal.
         post.proposed_publish_at = None
         post.save()
@@ -1345,12 +1371,14 @@ def save_post(request, workspace_id, post_id=None):
     elif action == "add_to_queue_priority":
         from django.db import transaction
 
-        from apps.calendar.services import QueueFullError, add_to_queue
+        from apps.calendar.services import AMBIGUOUS_QUEUE_MESSAGE, QueueFullError, add_to_queue
 
         queue_id = request.POST.get("queue_id")
         queues = _resolve_queues_for_post(queue_id, workspace, request.POST)
         if not queues:
             return JsonResponse({"errors": {"queue": "No active queue found for the selected channel."}}, status=400)
+        if _ambiguous_queue(post, post_id, queues):
+            return JsonResponse({"errors": {"queue": AMBIGUOUS_QUEUE_MESSAGE}}, status=400)
         # Queueing assigns real per-platform slots below — drop any proposal.
         post.proposed_publish_at = None
         post.save()
