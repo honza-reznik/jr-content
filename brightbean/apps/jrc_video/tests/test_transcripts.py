@@ -109,7 +109,11 @@ def test_invalid_srt_keeps_existing_file(client, workspace, setup, versions, dat
     assert client.get(path).content == SRT
 
 
-@pytest.mark.parametrize("data", [SRT, b"\xef\xbb\xbf" + SRT.replace(b"\n", b"\r\n")], ids=["utf8", "bom-crlf"])
+@pytest.mark.parametrize(
+    "data",
+    [SRT, b"\xef\xbb\xbf" + SRT.replace(b"\n", b"\r\n"), SRT.replace(b"\n\n", b"\n\n\n\n")],
+    ids=["utf8", "bom-crlf", "extra-blank-lines"],
+)
 def test_round_trip_preview_and_private_response(client, workspace, setup, versions, data):
     path = address(workspace, setup, versions[0])
     assert upload(client, path, data).status_code == 200

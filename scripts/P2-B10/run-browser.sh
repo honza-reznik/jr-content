@@ -5,7 +5,7 @@ set -eu
 cd "$(dirname "$0")/../.."
 # I když vyprší vnější limit, prohlížeč i jeho potomci zmizí.
 trap 'docker rm -f jrc-p2b10-browser >/dev/null 2>&1 || true' EXIT HUP INT TERM
-timeout --signal=TERM --kill-after=10s 600s docker run --rm --name jrc-p2b10-browser --pull never \
+timeout --signal=TERM --kill-after=5s 595s docker run --rm --name jrc-p2b10-browser --pull never \
   --network host --memory=3g --memory-swap=3g --cpus=2 --pids-limit=256 --shm-size=256m \
   --user "$(id -u):$(id -g)" --env JRC_PROJECT=jrc-p2b10 \
   --volume "$PWD:/workspace" --workdir /workspace jrc-dev:jrc-p2b10 \

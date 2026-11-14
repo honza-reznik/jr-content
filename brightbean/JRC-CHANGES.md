@@ -916,6 +916,7 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
 
 - Video verze tvoří jeden sloupec rozbalovacích řádků; poslední verze se otevře automaticky. Přehrávač se načte jen pro otevřenou verzi aktivního kanálu; zavření a změna kanálu zastaví přehrávání. Obnova stavů zachová otevřený řádek i přehrávač.
 - Každá `VideoVersion` má soukromý SRT přepis (migrace `jrc_video.0008`): nahrání/náhrada/smazání podle `can_upload`, čtení podle členství umožňujícího zobrazit verzi. Limit 1 MiB, UTF-8 a kontrola struktury/časů. Náhled je prostý text; titulky se do přehrávače nevkládají. Staré objekty se mažou po potvrzení transakce i při odstranění obsahu.
+- Parser přijímá i více prázdných řádků mezi titulky; prázdný blok nezpůsobí chybu serveru. Regresní ověření zachovává původní bajty souboru i text náhledu.
 - Ověření: `apps/jrc_video/tests/test_transcripts.py` a `scripts/P2-B10/`; při nasazení migrace a collectstatic, bez změn FreeFrame/editoru a jejich sestavení.
 
 ## 2026-11-13 — P2-B02

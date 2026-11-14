@@ -36,7 +36,16 @@ async function countReady(page, n) {
 }
 async function player(page) {
   const frame = await (await card(page).locator('iframe').elementHandle()).contentFrame();
-  await frame.waitForFunction(() => {const v=document.querySelector('video');return v && v.videoWidth>0 && v.readyState>=2;},null,{timeout:60000});
+  try {
+    await frame.waitForFunction(() => {const v=document.querySelector('video');return v && v.videoWidth>0 && v.readyState>=2;},null,{timeout:60000});
+  } catch (error) {
+    await page.screenshot({path:`${shots}/player-failure-${page.viewportSize().width}.png`,fullPage:true});
+    console.error('Player state:', await frame.evaluate(() => {
+      const v=document.querySelector('video');
+      return {text:document.body.innerText,video:v && {readyState:v.readyState,networkState:v.networkState,width:v.videoWidth,error:v.error && v.error.code}};
+    }));
+    throw error;
+  }
   await frame.waitForFunction(async () => {const v=document.querySelector('video');try {await v.play();return !v.paused;}catch{return false;}},null,{timeout:15000});
 
 }
@@ -125,7 +134,9 @@ async function uploadSrt(page, row, name='Přepis.srt',data=srt) {
       }
       console.log('OK long: filenames, author, focus, desktop/mobile no horizontal overflow');return;
     }
-    for(const width of [1440,390]) for(const role of ['owner','manager','editor','client','viewer']) {
+    const roles=process.argv[2]==='roles' ? process.argv.slice(3) : ['owner','manager','editor','client','viewer'];
+    assert(roles.length && roles.every(role=>['owner','manager','editor','client','viewer'].includes(role)));
+    for(const width of [1440,390]) for(const role of roles) {
       console.log('START',role,width);
       const {page,context}=await login(browser,role,width);
       const c=card(page), rows=c.locator('[data-version]');

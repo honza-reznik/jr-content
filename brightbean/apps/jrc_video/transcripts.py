@@ -39,10 +39,10 @@ def validate_srt(file):
         raise UploadError("The SRT file must use UTF-8 encoding.") from None
     if not text or any(ord(c) < 32 and c not in "\n\t" for c in text):
         raise UploadError("The file is not valid SRT.")
-    for block in re.split(r"\n[ \t]*\n", text):
+    for block in re.split(r"\n(?:[ \t]*\n)+", text):
         lines = block.splitlines()
         timing = TIMING.fullmatch(lines[1]) if len(lines) >= 3 else None
-        if not re.fullmatch(r"[0-9]{1,9}", lines[0]) or int(lines[0]) < 1 or not timing:
+        if not timing or not re.fullmatch(r"[0-9]{1,9}", lines[0]) or int(lines[0]) < 1:
             raise UploadError("The file is not valid SRT. Each cue needs a number, timestamps and text.")
         values = list(map(int, timing.groups()))
         start = ((values[0] * 60 + values[1]) * 60 + values[2]) * 1000 + values[3]
