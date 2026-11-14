@@ -23,6 +23,8 @@ from apps.organizations.models import Organization
 from apps.workspaces.models import Workspace
 
 PASSWORD = "testpass123"
+# Built at run time so that the test source lines shown in a debug page do not contain it.
+LEAK = "-".join(["qwqwq", "ertert"])
 NOW = 1_800_000_015.0  # fixed clock, 15 s into a 30 s step
 
 
@@ -35,7 +37,13 @@ class Clock:
 
 
 @pytest.fixture(autouse=True)
-def _clean_cache():
+def _clean_cache(settings):
+    # Private in-process cache: the test Redis is shared with other test runs, whose cache.clear()
+    # would wipe the failure counters in the middle of a test. LocMem is shared by all threads.
+    settings.CACHES = {
+        "default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "jrc-2fa-tests"},
+        **{k: v for k, v in settings.CACHES.items() if k != "default"},
+    }
     cache.clear()
     yield
     cache.clear()
@@ -507,6 +515,157 @@ class TestUnicodeAndSecrecy:
         assert response.status_code == 500
         assert "246801" not in response.content.decode()
         assert secret not in response.content.decode()
+
+    def test_recovery_codes_stay_hidden_when_rendering_the_codes_page_fails(
+        self, client, user, clock, settings, monkeypatch
+    ):
+        secret, _ = enable_2fa(user, clock)
+        monkeypatch.setattr(twofactor, "_generate_recovery_code", lambda: LEAK)
+        from django.template.backends.django import Template as BackendTemplate
+
+        def boom(self, context=None, request=None):
+            raise RuntimeError("render failed")
+
+        monkeypatch.setattr(BackendTemplate, "render", boom)
+        settings.DEBUG = True
+        client.raise_request_exception = False
+        client.force_login(user)
+        response = client.post(
+            reverse("accounts:security"), {"action": "regenerate", "code": code_at(secret, NOW), "password": PASSWORD}
+        )
+        assert response.status_code == 500
+        text = response.content.decode()
+        assert "render failed" in text
+        assert LEAK not in text
+
+    def test_recovery_codes_stay_hidden_when_setup_page_fails(self, client, user, clock, settings, monkeypatch):
+        secret = twofactor.pending_secret(user)
+        monkeypatch.setattr(twofactor, "_generate_recovery_code", lambda: LEAK)
+        from django.template.backends.django import Template as BackendTemplate
+
+        monkeypatch.setattr(BackendTemplate, "render", lambda self, context=None, request=None: 1 / 0)
+        settings.DEBUG = True
+        client.raise_request_exception = False
+        client.force_login(user)
+        response = client.post(
+            reverse("accounts:security"),
+            {"action": "confirm", "code": code_at(secret, NOW, -1), "password": PASSWORD},
+        )
+        assert response.status_code == 500
+        assert LEAK not in response.content.decode()
+
+    def test_wrong_password_counts_and_keeps_state(self, user, clock):
+        secret = twofactor.pending_secret(user)
+        good = code_at(secret, NOW)
+        assert twofactor.confirm_setup(user, good, password="nope", check_password=True)[0] is (
+            twofactor.Result.WRONG_PASSWORD
+        )
+        assert cache.get(f"jrc2fa:fail:{user.pk}:{15 * 60}") == 1
+        result, codes = twofactor.confirm_setup(user, good, password=PASSWORD, check_password=True)
+        assert result is twofactor.Result.TOTP and len(codes) == 10
+        assert user.totp_enabled
+        assert twofactor.disable_with_code(user, "nope", code_at(secret, NOW, 1)) is twofactor.Result.WRONG_PASSWORD
+        assert user.totp_enabled
+        assert twofactor.disable_with_code(user, PASSWORD, code_at(secret, NOW, 1)) is twofactor.Result.TOTP
+        assert not user.totp_enabled and user.totp_secret is None
+
+
+# -- parallel requests ------------------------------------------------------------------
+
+
+def _run_parallel(count, target):
+    import threading
+
+    barrier = threading.Barrier(count)
+    results = [None] * count
+    errors = []
+
+    def worker(index):
+        try:
+            barrier.wait(timeout=30)
+            results[index] = target(index)
+        except Exception as exc:  # noqa: BLE001 - surfaced below
+            errors.append(repr(exc))
+        finally:
+            connection.close()
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(count)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=120)
+    assert not errors, errors
+    assert all(r is not None for r in results)
+    return results
+
+
+@pytest.mark.django_db(transaction=True)
+class TestParallelBudget:
+    def test_parallel_wrong_codes_do_not_exceed_the_limit(self, user, clock):
+        enable_2fa(user, clock)
+        results = _run_parallel(12, lambda i: twofactor.verify(User.objects.get(pk=user.pk), "000000"))
+        assert results.count(twofactor.Result.INVALID) == 5
+        assert results.count(twofactor.Result.LOCKED) == 7
+        assert TwoFactorEvent.objects.filter(user=user, action="locked").count() == 1
+
+    def test_parallel_after_four_failures_only_one_more_guess(self, user, clock):
+        enable_2fa(user, clock)
+        for _ in range(4):
+            twofactor.verify(user, "000000")
+        results = _run_parallel(6, lambda i: twofactor.verify(User.objects.get(pk=user.pk), "000000"))
+        assert results.count(twofactor.Result.INVALID) == 1
+        assert results.count(twofactor.Result.LOCKED) == 5
+
+    def test_parallel_confirm_setup_respects_the_limit(self, user, clock):
+        twofactor.pending_secret(user)
+        results = _run_parallel(12, lambda i: twofactor.confirm_setup(User.objects.get(pk=user.pk), "000000")[0])
+        assert results.count(twofactor.Result.INVALID) == 5
+        assert results.count(twofactor.Result.LOCKED) == 7
+
+    def test_parallel_confirm_with_wrong_password_respects_the_limit(self, user, clock):
+        secret = twofactor.pending_secret(user)
+        good = code_at(secret, NOW)
+
+        def attempt(i):
+            u = User.objects.get(pk=user.pk)
+            return twofactor.confirm_setup(u, good, password="wrong", check_password=True)[0]
+
+        results = _run_parallel(12, attempt)
+        assert results.count(twofactor.Result.WRONG_PASSWORD) == 5
+        assert results.count(twofactor.Result.LOCKED) == 7
+        user.refresh_from_db()
+        assert not user.totp_enabled
+
+    def test_parallel_disable_with_wrong_password_respects_the_limit(self, user, clock):
+        secret, _ = enable_2fa(user, clock)
+        good = code_at(secret, NOW)
+        results = _run_parallel(12, lambda i: twofactor.disable_with_code(User.objects.get(pk=user.pk), "wrong", good))
+        assert results.count(twofactor.Result.WRONG_PASSWORD) == 5
+        assert results.count(twofactor.Result.LOCKED) == 7
+        user.refresh_from_db()
+        assert user.totp_enabled
+
+    def test_parallel_security_page_requests_respect_the_limit(self, user, clock):
+        from django.test import Client
+
+        twofactor.pending_secret(user)
+
+        def post(i):
+            c = Client()
+            c.force_login(User.objects.get(pk=user.pk))
+            r = c.post(reverse("accounts:security"), {"action": "confirm", "code": "000000", "password": "wrong"})
+            return r.status_code
+
+        statuses = _run_parallel(10, post)
+        assert sorted(statuses) == [200] * 5 + [429] * 5
+        assert cache.get(f"jrc2fa:fail:{user.pk}:{15 * 60}") == 5
+        assert TwoFactorEvent.objects.filter(user=user, action="locked").count() == 1
+
+    def test_same_valid_code_in_parallel_is_accepted_once(self, user, clock):
+        secret, _ = enable_2fa(user, clock)
+        good = code_at(secret, NOW)
+        results = _run_parallel(6, lambda i: twofactor.verify(User.objects.get(pk=user.pk), good))
+        assert results.count(twofactor.Result.TOTP) == 1
 
 
 # -- password reset --------------------------------------------------------------------

@@ -58,6 +58,7 @@ class Result(enum.Enum):
     INVALID = "invalid"
     REUSED = "reused"
     LOCKED = "locked"
+    WRONG_PASSWORD = "wrong_password"
 
     @property
     def ok(self) -> bool:
@@ -67,6 +68,7 @@ class Result(enum.Enum):
 ERROR_MESSAGES = {
     Result.INVALID: "That code is not valid. Check the code in your authenticator app and try again.",
     Result.REUSED: "That code was already used. Wait for the next code in your authenticator app.",
+    Result.WRONG_PASSWORD: "Your password is incorrect.",
     Result.LOCKED: "Too many incorrect attempts. Wait 15 minutes and try again, or reset your password by email.",
 }
 
@@ -249,40 +251,92 @@ def cancel_setup(user) -> None:
 
 
 @sensitive_variables()
-def confirm_setup(user, code: str, request=None) -> tuple[Result, list[str]]:
-    """Turn 2FA on if ``code`` matches the pending secret; returns the new recovery codes."""
+def _attempt(user, request, body):
+    """Run one guess at a secret (code or password) under the user's row lock.
+
+    The budget check, the guess and the counting of a failure all happen under the same lock, so
+    parallel requests cannot all pass the check before any of them is counted. ``body(row)``
+    returns ``(result, payload)`` or ``(result, payload, False)`` for a request that is not a
+    guess at all (wrong account state), which is not counted.
+    """
     with transaction.atomic():
         row = _locked_row(user)
-        # The budget check and the counting of a failed attempt both happen under the row lock,
-        # so parallel requests cannot all pass the check before any of them is counted.
         if is_locked(user):
-            return Result.LOCKED, []
-        if row.totp_enabled or not row.totp_secret:
-            return Result.INVALID, []
-        counter = matching_counter(row.totp_secret, code)
-        if counter is None:
-            result = Result.INVALID
-        else:
-            codes, hashes = _new_recovery_codes(row)
-            row.totp_enabled = True
-            row.totp_enabled_at = timezone.now()
-            row.totp_last_counter = counter
-            row.totp_recovery_codes = hashes
-            row.save(
-                update_fields=[
-                    "totp_enabled",
-                    "totp_enabled_at",
-                    "totp_last_counter",
-                    "totp_recovery_codes",
-                    "updated_at",
-                ]
-            )
-            log_event(row, Action.ENABLED, actor=row, request=request)
-            _refresh(user, row)
+            return Result.LOCKED, None
+        outcome = body(row)
+        result, payload = outcome[0], outcome[1]
+        counted = len(outcome) < 3 or outcome[2]
+        _refresh(user, row)
+        if result.ok:
             clear_failures(user)
-            return Result.TOTP, codes
-        register_failure(user, request)
-    return result, []
+        elif counted:
+            register_failure(user, request)
+    return result, payload
+
+
+def _password_matches(row, password) -> bool:
+    return (not row.has_usable_password()) or row.check_password(password or "")
+
+
+@sensitive_variables()
+def _confirm_body(row, code, request, password=None, check_password=False):
+    if row.totp_enabled or not row.totp_secret:
+        return Result.INVALID, [], False
+    if check_password and not _password_matches(row, password):
+        return Result.WRONG_PASSWORD, []
+    counter = matching_counter(row.totp_secret, code)
+    if counter is None:
+        return Result.INVALID, []
+    codes, hashes = _new_recovery_codes(row)
+    row.totp_enabled = True
+    row.totp_enabled_at = timezone.now()
+    row.totp_last_counter = counter
+    row.totp_recovery_codes = hashes
+    row.save(
+        update_fields=["totp_enabled", "totp_enabled_at", "totp_last_counter", "totp_recovery_codes", "updated_at"]
+    )
+    log_event(row, Action.ENABLED, actor=row, request=request)
+    return Result.TOTP, codes
+
+
+@sensitive_variables()
+def confirm_setup(user, code: str, request=None, *, password=None, check_password=False) -> tuple[Result, list[str]]:
+    """Turn 2FA on if ``code`` matches the pending secret; returns the new recovery codes.
+
+    With ``check_password`` the account password is checked in the same guarded attempt (a wrong
+    one counts against the budget like a wrong code).
+    """
+    result, codes = _attempt(user, request, lambda row: _confirm_body(row, code, request, password, check_password))
+    return result, codes or []
+
+
+@sensitive_variables()
+def _check_code(row, code, request, allow_recovery):
+    """Check ``code`` against the locked ``row``; consumes a matching app or recovery code."""
+    normalized = normalize_code(code)
+    if not row.totp_enabled or not row.totp_secret:
+        return Result.INVALID, None, False
+    result = Result.INVALID
+    if len(normalized) == DIGITS and normalized.isascii() and normalized.isdigit():
+        counter = matching_counter(row.totp_secret, normalized)
+        if counter is not None:
+            if row.totp_last_counter is not None and counter <= row.totp_last_counter:
+                result = Result.REUSED
+            else:
+                row.totp_last_counter = counter
+                row.save(update_fields=["totp_last_counter", "updated_at"])
+                result = Result.TOTP
+    elif allow_recovery and len(normalized) == RECOVERY_CODE_LENGTH:
+        digest = hash_recovery_code(row, normalized)
+        stored = list(row.totp_recovery_codes or [])
+        match = next((h for h in stored if hmac.compare_digest(h, digest)), None)
+        if match is not None:
+            stored.remove(match)
+            row.totp_recovery_codes = stored
+            row.save(update_fields=["totp_recovery_codes", "updated_at"])
+            log_event(row, Action.RECOVERY_CODE_USED, actor=row, request=request)
+            result = Result.RECOVERY_CODE
+    return result, None
 
 
 @sensitive_variables()
@@ -292,42 +346,28 @@ def verify(user, code: str, request=None, *, allow_recovery: bool = True) -> Res
     A matching app code is consumed (``totp_last_counter``); a matching
     recovery code is removed. Any failure counts against the budget.
     """
-    normalized = normalize_code(code)
-    result = Result.INVALID
-    with transaction.atomic():
-        row = _locked_row(user)
-        # Check and count under the row lock (see confirm_setup).
-        if is_locked(user):
-            return Result.LOCKED
-        if not row.totp_enabled or not row.totp_secret:
-            return Result.INVALID
-        if len(normalized) == DIGITS and normalized.isascii() and normalized.isdigit():
-            counter = matching_counter(row.totp_secret, normalized)
-            if counter is not None:
-                if row.totp_last_counter is not None and counter <= row.totp_last_counter:
-                    result = Result.REUSED
-                else:
-                    row.totp_last_counter = counter
-                    row.save(update_fields=["totp_last_counter", "updated_at"])
-                    result = Result.TOTP
-        elif allow_recovery and len(normalized) == RECOVERY_CODE_LENGTH:
-            digest = hash_recovery_code(row, normalized)
-            stored = list(row.totp_recovery_codes or [])
-            match = next((h for h in stored if hmac.compare_digest(h, digest)), None)
-            if match is not None:
-                stored.remove(match)
-                row.totp_recovery_codes = stored
-                row.save(update_fields=["totp_recovery_codes", "updated_at"])
-                log_event(row, Action.RECOVERY_CODE_USED, actor=row, request=request)
-                result = Result.RECOVERY_CODE
-        _refresh(user, row)
+    return _attempt(user, request, lambda row: _check_code(row, code, request, allow_recovery))[0]
+
+
+@sensitive_variables()
+def disable_with_code(user, password, code, request=None) -> Result:
+    """Turn 2FA off after checking password and code in one guarded attempt."""
+
+    def body(row):
+        if not row.totp_enabled:
+            return Result.INVALID, None, False
+        if not _password_matches(row, password):
+            return Result.WRONG_PASSWORD, None
+        result, payload = _check_code(row, code, request, True)[:2]
         if result.ok:
-            clear_failures(user)
-        else:
-            register_failure(user, request)
-    return result
+            _turn_off(row, Action.DISABLED, actor=row, request=request)
+            row.refresh_from_db()
+        return result, payload
+
+    return _attempt(user, request, body)[0]
 
 
+@sensitive_variables()
 def regenerate_recovery_codes(user, request=None) -> list[str]:
     with transaction.atomic():
         row = _locked_row(user)

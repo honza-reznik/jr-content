@@ -68,17 +68,6 @@ def two_factor_login(request):
 
 
 @sensitive_variables()
-def _password_ok(request, user):
-    """Re-check the account password for a security change; wrong ones count as failures."""
-    if not user.has_usable_password():
-        return True
-    if user.check_password(request.POST.get("password", "")):
-        return True
-    twofactor.register_failure(user, request)
-    return False
-
-
-@sensitive_variables()
 def _codes_page(request, codes, *, heading):
     text = "JR Content recovery codes\n" + request.user.email + "\n\n" + "\n".join(codes) + "\n"
     return _no_store(
@@ -113,15 +102,16 @@ def security_settings(request):
             twofactor.cancel_setup(user)
             return redirect(request.path)
         if action == "confirm" and not twofactor.is_enabled(user):
-            if twofactor.is_locked(user):
-                errors["confirm"] = twofactor.ERROR_MESSAGES[twofactor.Result.LOCKED]
-            elif not _password_ok(request, user):
-                errors["confirm"] = "Your password is incorrect."
-            else:
-                result, codes = twofactor.confirm_setup(user, request.POST.get("code", ""), request=request)
-                if result.ok:
-                    return _codes_page(request, codes, heading="Two-factor authentication is on")
-                errors["confirm"] = twofactor.ERROR_MESSAGES[result]
+            result, codes = twofactor.confirm_setup(
+                user,
+                request.POST.get("code", ""),
+                request=request,
+                password=request.POST.get("password", ""),
+                check_password=True,
+            )
+            if result.ok:
+                return _codes_page(request, codes, heading="Two-factor authentication is on")
+            errors["confirm"] = twofactor.ERROR_MESSAGES[result]
         elif action == "regenerate" and twofactor.is_enabled(user):
             result = twofactor.verify(user, request.POST.get("code", ""), request=request, allow_recovery=False)
             if result.ok:
@@ -129,17 +119,13 @@ def security_settings(request):
                 return _codes_page(request, codes, heading="New recovery codes")
             errors["regenerate"] = twofactor.ERROR_MESSAGES[result]
         elif action == "disable" and twofactor.is_enabled(user):
-            if twofactor.is_locked(user):
-                errors["disable"] = twofactor.ERROR_MESSAGES[twofactor.Result.LOCKED]
-            elif not _password_ok(request, user):
-                errors["disable"] = "Your password is incorrect."
-            else:
-                result = twofactor.verify(user, request.POST.get("code", ""), request=request)
-                if result.ok:
-                    twofactor.disable(user, request=request)
-                    messages.success(request, "Two-factor authentication is off.")
-                    return redirect(request.path)
-                errors["disable"] = twofactor.ERROR_MESSAGES[result]
+            result = twofactor.disable_with_code(
+                user, request.POST.get("password", ""), request.POST.get("code", ""), request=request
+            )
+            if result.ok:
+                messages.success(request, "Two-factor authentication is off.")
+                return redirect(request.path)
+            errors["disable"] = twofactor.ERROR_MESSAGES[result]
         elif not errors:
             return redirect(request.path)
 
