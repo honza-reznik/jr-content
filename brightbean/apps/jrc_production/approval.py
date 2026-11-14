@@ -5,8 +5,6 @@ Read-only helpers. Every decision goes through ``services.move_content`` (approv
 """
 
 from apps.approvals.models import ApprovalAction
-from apps.jrc_texts.content import content_to_plain_text
-from apps.jrc_texts.models import TextDocument, TextVersion
 from apps.jrc_texts.services import latest_saved_captions
 from apps.members.permissions import approval_required, client_approval_required
 
@@ -67,19 +65,6 @@ def status_text(post, membership):
     return ""
 
 
-def _script_summary(post):
-    document = TextDocument.objects.filter(post=post, kind=TextDocument.Kind.SCRIPT).first()
-    version = document.versions.filter(state=TextVersion.State.FINAL).order_by("-number").first() if document else None
-    if version is None:
-        return None
-    return {
-        "number": version.number,
-        # P1-B30: the editor content, never the Markdown in ``version.text`` (its entities would show).
-        "text": content_to_plain_text(version.content),
-        "saved_at": version.finalized_at or version.created_at,
-    }
-
-
 def _caption_summaries(post, accounts):
     variants = {v.social_account_id: v for v in post.platform_posts.all()}
     saved = latest_saved_captions([v.pk for v in variants.values()])
@@ -95,8 +80,6 @@ def _caption_summaries(post, accounts):
                 "label": f"{account.get_platform_display()} · {account.account_name}",
                 "text": text,
                 "number": version.number if version else None,
-                # P1-B10: the channel's thumbnail is shown next to its caption.
-                "variant": variant,
             }
         )
     return rows
@@ -172,7 +155,6 @@ def approval_context(post, membership, accounts, *, can_view_internal_notes):
     statuses = post_statuses(post)
     decide = can_decide(post, membership, statuses)
     return {
-        "approval_script": _script_summary(post),
         "approval_captions": _caption_summaries(post, accounts),
         "approval_videos": _video_summaries(post, accounts),
         "approval_status": status_text(post, membership),

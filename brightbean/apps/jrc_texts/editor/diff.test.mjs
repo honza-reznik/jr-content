@@ -26,6 +26,17 @@ test('new bold word, task check, and paragraph-to-heading are visible', () => {
   assert.match(heading.html, /Paragraph → Heading 2/)
 })
 
+test('text color changes are visible in version comparisons', () => {
+  const oldDoc = doc(para(text('Keep this')))
+  const newDoc = doc(para({
+    type: 'text', text: 'Keep this', marks: [{ type: 'textColor', attrs: { color: '#0369a1' } }],
+  }))
+  const result = compareDocs(oldDoc, newDoc)
+  assert.match(result.html, /style="color:#0369a1"/)
+  assert.match(result.html, /<del>Keep this<\/del>/)
+  assert.match(result.html, /<ins><span style="color:#0369a1">Keep this<\/span><\/ins>/)
+})
+
 test('adding and removing a blockquote are visibly labeled', () => {
   const quoted = (content) => doc({ type: 'blockquote', content: [para(text(content))] })
   const plain = doc(para(text('A quoted line')))

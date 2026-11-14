@@ -183,7 +183,7 @@ def statuses(post):
 # ---- AK1: the card -----------------------------------------------------------------------------
 
 
-def test_card_summarizes_script_caption_and_final_video(workspace, team, ella, content):
+def test_card_summarizes_only_caption_and_final_video(workspace, team, ella, content):
     variant = content.platform_posts.get()
     texts.save_caption(content.pk, variant.pk, team, "Roses at dawn #garden")
     video = VideoAsset.objects.create(platform_post=variant, ff_asset_id=uuid.uuid4())
@@ -197,7 +197,9 @@ def test_card_summarizes_script_caption_and_final_video(workspace, team, ella, c
 
     assert response.status_code == 200
     body = response.content.decode()
-    assert "Ella waters the roses at dawn." in body
+    assert "data-approval-summary" in body
+    assert "data-approval-script" not in body
+    assert "Ella waters the roses at dawn." not in body
     assert "Roses at dawn #garden" in body
     assert "Final for publishing" in body and "version 2" in body and "0:26" in body
     assert "Waiting for your decision." in body
@@ -216,7 +218,7 @@ def test_card_without_video_or_script_says_so(workspace, team, ella):
     )
     to_review(post, team)
     body = login(ella).get(detail_url(post)).content.decode()
-    assert "No script has been saved yet." in body
+    assert "data-approval-script" not in body
     assert "No video yet." in body
 
 
@@ -270,7 +272,9 @@ def test_changes_then_new_version_then_approval(workspace, team, ella, content):
     assert statuses(content) == {"pending_review"}
     decide(team, content, "approve")
     body = login(ella).get(detail_url(content)).content.decode()
-    assert "SCENE ONE: shorter." in body and "Waiting for your decision." in body
+    script = login(ella).get(reverse("jrc_texts:script", args=[workspace.pk, content.pk])).json()
+    assert "Waiting for your decision." in body
+    assert "SCENE ONE: shorter." in script["shown"]["content"]["content"][0]["content"][0]["text"]
 
     decide(ella, content, "approve")
     assert statuses(content) == {"approved"}
