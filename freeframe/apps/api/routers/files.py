@@ -36,38 +36,61 @@ def _member(db, project_id, user):
         raise HTTPException(404, "File not found")
 
 
-def authorize_file(db, user, key, *, share_context=False):
-    """Resolve an exact stored key, never a directory grant. Unknown uploads deny."""
-    attachment = db.query(CommentAttachment).filter(CommentAttachment.s3_key == key).first()
-    if attachment:
-        comment = db.query(Comment).filter(Comment.id == attachment.comment_id, Comment.deleted_at.is_(None)).first()
-        if not comment:
-            raise HTTPException(404, "File not found")
-        asset = db.query(Asset).filter(Asset.id == comment.asset_id, Asset.deleted_at.is_(None)).first()
-        if not asset:
-            raise HTTPException(404, "File not found")
-        _member(db, asset.project_id, user)
-        if hides_internal_comments(db, asset.project_id, user) and thread_is_internal(db, comment):
-            raise HTTPException(404, "File not found")
-        return asset, None, attachment.original_filename, comment.version_id
+def _authorize_attachment(db, user, attachment, accept):
+    comment = db.query(Comment).filter(Comment.id == attachment.comment_id, Comment.deleted_at.is_(None)).first()
+    if not comment:
+        raise HTTPException(404, "File not found")
+    asset = db.query(Asset).filter(Asset.id == comment.asset_id, Asset.deleted_at.is_(None)).first()
+    if not asset:
+        raise HTTPException(404, "File not found")
+    _member(db, asset.project_id, user)
+    if hides_internal_comments(db, asset.project_id, user) and thread_is_internal(db, comment):
+        raise HTTPException(404, "File not found")
+    if accept is not None:
+        accept(asset, comment.version_id)
+    return asset, None, attachment.original_filename, comment.version_id
 
-    row = db.query(MediaFile, Asset).join(AssetVersion, AssetVersion.id == MediaFile.version_id).join(
+
+def authorize_file(db, user, key, *, share_context=False, accept=None):
+    """Resolve an exact stored key, never a directory grant. Unknown uploads deny.
+
+    JR Content (P2-B15): one object may be named by several rows -- a video version used for
+    another output, or a copied comment's attachment. Access is granted through any row the caller
+    may use; ``accept(asset, version_id)`` adds the caller's own check (the share link) per row.
+    """
+    attachments = db.query(CommentAttachment).filter(CommentAttachment.s3_key == key).all()
+    denied = HTTPException(404, "File not found")
+    for attachment in attachments:
+        try:
+            return _authorize_attachment(db, user, attachment, accept)
+        except HTTPException as exc:
+            denied = exc
+    if attachments:
+        raise denied
+
+    rows = db.query(MediaFile, Asset).join(AssetVersion, AssetVersion.id == MediaFile.version_id).join(
         Asset, Asset.id == AssetVersion.asset_id,
     ).filter(
         or_(MediaFile.s3_key_raw == key, MediaFile.s3_key_processed == key,
             MediaFile.s3_key_download == key, MediaFile.s3_key_thumbnail == key),
         AssetVersion.deleted_at.is_(None), Asset.deleted_at.is_(None),
         AssetVersion.processing_status == ProcessingStatus.ready,
-    ).first()
-    if row:
-        media, asset = row
-        _member(db, asset.project_id, user)
-        # Exact keys are otherwise another way around /assets/.../stream.
-        # Playback uses HLS; thumbnails remain available to managed accounts.
-        if (not share_context and user.jrc_managed is True and asset.asset_type == AssetType.video
-                and key in (media.s3_key_raw, media.s3_key_processed, media.s3_key_download)):
-            raise HTTPException(403, "Download videos through JR Content")
-        return asset, media, None, media.version_id
+    ).all()
+    for media, asset in rows:
+        try:
+            _member(db, asset.project_id, user)
+            # Exact keys are otherwise another way around /assets/.../stream.
+            # Playback uses HLS; thumbnails remain available to managed accounts.
+            if (not share_context and user.jrc_managed is True and asset.asset_type == AssetType.video
+                    and key in (media.s3_key_raw, media.s3_key_processed, media.s3_key_download)):
+                raise HTTPException(403, "Download videos through JR Content")
+            if accept is not None:
+                accept(asset, media.version_id)
+            return asset, media, None, media.version_id
+        except HTTPException as exc:
+            denied = exc
+    if rows:
+        raise denied
 
     project = db.query(Project).filter(Project.poster_s3_key == key, Project.deleted_at.is_(None)).first()
     if project:
@@ -151,9 +174,10 @@ def file_bytes(
     # Old optional-share addresses cannot fall back to ordinary member access.
     if share:
         raise HTTPException(404, "Reopen the share link")
-    asset, media, attachment_name, version_id = authorize_file(db, user, key, share_context=binding is not None)
-    if binding:
-        authorize_share_file(db, user, binding, asset, version_id)
+    accept = (lambda asset, version_id: authorize_share_file(db, user, binding, asset, version_id)) if binding else None
+    asset, media, attachment_name, version_id = authorize_file(
+        db, user, key, share_context=binding is not None, accept=accept,
+    )
     return stream_file(key, request, attachment_name or filename, f"user:{user.id}")
 
 

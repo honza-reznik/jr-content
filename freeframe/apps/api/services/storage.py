@@ -1,5 +1,5 @@
-from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy import exists, func
+from sqlalchemy.orm import Session, aliased
 
 from ..models.asset import Asset, AssetVersion, MediaFile, ProcessingStatus
 from ..models.instance_settings import InstanceSettings
@@ -32,6 +32,28 @@ def choose_part_size(db: Session, file_size_bytes: int) -> tuple[int, str | None
     return part_size, part_count_error(file_size_bytes, part_size, fixed=bool(configured))
 
 
+_COMMITTED = (ProcessingStatus.processing, ProcessingStatus.ready)
+
+
+def counted_once():
+    """Predicate on MediaFile: count stored bytes once per object (JR Content P2-B15).
+
+    A version used for another output is a second MediaFile naming the same original; its bytes are
+    stored once, so only the lowest live committed row naming an original counts it. When that row
+    goes, the next one counts, so the figure never drops while any row still holds the file.
+    """
+    other, other_version, other_asset = aliased(MediaFile), aliased(AssetVersion), aliased(Asset)
+    return ~exists().where(
+        other.s3_key_raw == MediaFile.s3_key_raw,
+        other.id < MediaFile.id,
+        other_version.id == other.version_id,
+        other_asset.id == other_version.asset_id,
+        other_asset.deleted_at.is_(None),
+        other_version.deleted_at.is_(None),
+        other_version.processing_status.in_(_COMMITTED),
+    )
+
+
 def _committed_media_sum(db: Session):
     """Base query summing MediaFile.file_size_bytes over *committed* media only — the single
     definition of "used storage" shared by the instance-wide and per-project sums.
@@ -49,6 +71,7 @@ def _committed_media_sum(db: Session):
             AssetVersion.processing_status.in_(
                 [ProcessingStatus.processing, ProcessingStatus.ready]
             ),
+            counted_once(),
         )
 
 

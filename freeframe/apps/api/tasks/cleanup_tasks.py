@@ -82,6 +82,8 @@ def _purge_comment(db, comment_id, counts: PurgeCounts) -> None:
     for reply in db.query(Comment).filter(Comment.parent_id == comment_id).all():
         _purge_comment(db, reply.id, counts)
     for att in db.query(CommentAttachment).filter(CommentAttachment.comment_id == comment_id).all():
+        if attachment_still_referenced(db, att):
+            continue  # JRC P2-B15: a copied comment still shows this file
         _safe(delete_object, att.s3_key)
         counts.s3_deletes += 1
     db.query(CommentAttachment).filter(CommentAttachment.comment_id == comment_id).delete(synchronize_session=False)
@@ -94,22 +96,48 @@ def _purge_comment(db, comment_id, counts: PurgeCounts) -> None:
     db.flush()
 
 
-def _reclaim_media_s3(mf, counts: PurgeCounts) -> None:
-    """Best-effort delete of a MediaFile's S3 objects. processed is a prefix (HLS or single key)."""
-    _safe(delete_object, mf.s3_key_raw)
-    counts.s3_deletes += 1
-    if mf.s3_key_processed:
-        _safe(delete_prefix, mf.s3_key_processed)
-        counts.s3_deletes += 1
-    if mf.s3_key_download:
-        # Written under the processed prefix, so the sweep above reclaims it in
-        # practice. Named anyway: the download rung is a whole rendition, and
-        # its reclamation must not rest on the two keys happening to be related.
-        _safe(delete_object, mf.s3_key_download)
-        counts.s3_deletes += 1
-    if mf.s3_key_thumbnail:
-        _safe(delete_object, mf.s3_key_thumbnail)
-        counts.s3_deletes += 1
+# JR Content (P2-B15): a version used for another output is a second MediaFile row that names the
+# same objects (original, HLS prefix, download MP4, thumbnail); nothing is copied in storage. An
+# object therefore belongs to every row that names it and is deleted only with the last one.
+MEDIA_KEY_COLUMNS = ("s3_key_raw", "s3_key_processed", "s3_key_download", "s3_key_thumbnail")
+
+
+def media_key_still_referenced(db, mf, column: str) -> bool:
+    """Whether a media row other than `mf` (live, soft-deleted or not yet purged) names the same object."""
+    key = getattr(mf, column)
+    if not key:
+        return False
+    return db.query(MediaFile.id).filter(
+        MediaFile.id != mf.id, getattr(MediaFile, column) == key,
+    ).first() is not None
+
+
+def attachment_still_referenced(db, attachment) -> bool:
+    """Whether another attachment row (a copied comment, P2-B15) names the same object."""
+    return db.query(CommentAttachment.id).filter(
+        CommentAttachment.id != attachment.id, CommentAttachment.s3_key == attachment.s3_key,
+    ).first() is not None
+
+
+def _delete_media_objects(db, mf) -> int:
+    """Best-effort delete of the objects `mf` alone still names. processed is a prefix (HLS or a
+    single key). Returns how many deletes were attempted."""
+    attempted = 0
+    for column in MEDIA_KEY_COLUMNS:
+        key = getattr(mf, column)
+        if not key or media_key_still_referenced(db, mf, column):
+            continue
+        # The download MP4 is written under the processed prefix, so the prefix sweep reclaims it
+        # in practice. Named anyway: the download rung is a whole rendition, and its reclamation
+        # must not rest on the two keys happening to be related.
+        _safe(delete_prefix if column == "s3_key_processed" else delete_object, key)
+        attempted += 1
+    return attempted
+
+
+def _reclaim_media_s3(db, mf, counts: PurgeCounts) -> None:
+    """Best-effort delete of a MediaFile's S3 objects that no other row still names."""
+    counts.s3_deletes += _delete_media_objects(db, mf)
 
 
 def _purge_version(db, version_id, counts: PurgeCounts) -> None:
@@ -121,7 +149,7 @@ def _purge_version(db, version_id, counts: PurgeCounts) -> None:
     db.query(CarouselItem).filter(CarouselItem.version_id == version_id).delete(synchronize_session=False)
     media = db.query(MediaFile).filter(MediaFile.version_id == version_id).all()
     for mf in media:
-        _reclaim_media_s3(mf, counts)
+        _reclaim_media_s3(db, mf, counts)
     counts.media_files += len(media)
     db.query(MediaFile).filter(MediaFile.version_id == version_id).delete(synchronize_session=False)
     # comments on this version (recurse each; every comment has a version_id, NOT NULL)
@@ -285,13 +313,7 @@ def _dispose_version_files(db: Session, v: AssetVersion) -> None:
     for mf in db.query(MediaFile).filter(MediaFile.version_id == v.id).all():
         if v.upload_id:
             _safe(abort_multipart_upload, mf.s3_key_raw, v.upload_id)
-        _safe(delete_object, mf.s3_key_raw)
-        if mf.s3_key_processed:
-            _safe(delete_prefix, mf.s3_key_processed)
-        if mf.s3_key_download:
-            _safe(delete_object, mf.s3_key_download)
-        if mf.s3_key_thumbnail:
-            _safe(delete_object, mf.s3_key_thumbnail)
+        _delete_media_objects(db, mf)
     v.deleted_at = datetime.now(timezone.utc)
 
 

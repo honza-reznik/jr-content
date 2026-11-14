@@ -12,7 +12,7 @@ from ..schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse, Pro
 from ..tasks.email_tasks import send_project_added_email
 from ..tasks.celery_app import send_task_safe
 from ..services.s3_service import put_object, generate_presigned_get_url, delete_object, PREVIEW_URL_SECONDS
-from ..services.storage import project_storage_used_bytes
+from ..services.storage import counted_once, project_storage_used_bytes
 from ..config import settings
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -99,6 +99,7 @@ def list_projects(db: Session = Depends(get_db), current_user: User = Depends(ge
             Asset.project_id.in_(all_project_ids), Asset.deleted_at.is_(None),
             AssetVersion.deleted_at.is_(None),
             AssetVersion.processing_status.in_([ProcessingStatus.processing, ProcessingStatus.ready]),
+            counted_once(),
         )
         .group_by(Asset.project_id)
         .all()
