@@ -531,3 +531,16 @@ def test_channel_tags_follow_the_editing_rule_and_roles(client, workspace, post,
         assert "channel-tag-remove" not in client.get(url).content.decode()
     assert json.loads(refused.content)["html"]
     assert Post.objects.filter(pk=post.pk).exists()
+
+
+# --- P2-B19 (N-K20-p026rg1-03): the status line of the detail does not outlive its message -------------
+
+
+def test_detail_status_message_clears_itself_and_on_tab_change():
+    from pathlib import Path
+
+    script = (Path(__file__).resolve().parents[1] / "static/jrc_production/detail-edit.js").read_text()
+    assert "status.textContent" not in script  # every message goes through setStatus
+    assert 'document.addEventListener("jrc:panel-unload", () => setStatus(""))' in script
+    assert 'setTimeout(() => setStatus("")' in script
+    assert 'setStatus(data.proposed_publish_at ? "Proposed date saved."' in script

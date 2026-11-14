@@ -153,7 +153,7 @@ body {
   font-weight: 500;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all var(--dur-fast) ease;
+  transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease;
   text-decoration: none;
 }
 .sidebar-nav-item:hover {
@@ -420,7 +420,8 @@ img.sidebar-logo-mark {
   border-radius: var(--radius-full);
   border: none;
   cursor: pointer;
-  transition: all var(--dur-base) var(--ease-out);
+  /* never animate colour: a text colour fading in from white would be unreadable on a light accent */
+  transition: background-color var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
   letter-spacing: 0.005em;
   background: var(--primary);
   color: var(--accent-text);

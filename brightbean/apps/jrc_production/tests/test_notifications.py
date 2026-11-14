@@ -873,3 +873,14 @@ def test_decision_does_not_reach_an_author_who_left(workspace, everyone, content
     approvals.request_changes(mine, everyone["manager"], workspace, "Rework")
 
     assert Notification.objects.filter(user=ella).count() == 0
+
+
+# --- P2-B19 (N-K20-p026rg1-04): notification preferences page -------------------------------------------
+
+
+def test_preferences_page_has_its_own_title_and_no_collapse_directive(client, user, workspace):
+    client.force_login(user)
+    html = client.get(reverse("notifications:preferences")).content.decode()
+    assert "<title>Notification Preferences</title>" in html
+    # Alpine's Collapse plugin is not installed: the directive would only log a warning.
+    assert "x-collapse" not in html
