@@ -77,10 +77,18 @@ def notify_video_version(version):
             post = version.video.platform_post.post
             account = version.video.platform_post.social_account
             who = version.uploaded_by.display_name if version.uploaded_by else "Someone"
-            body = (  # P2-B14: the output ("YouTube · Shorts"), as one channel may carry several
-                f"{who} uploaded video version {version.number} for {version.video.platform_post.output_label} "
-                f'({account.account_name}); it is ready to watch in "{content_label(post)}".'
-            )
+            if version.copied_from_label:
+                # P2-B15: the same file used for another output; nothing was uploaded again.
+                body = (
+                    f"{who} used video {version.copied_from_label} as version {version.number} for "
+                    f"{version.video.platform_post.output_label} ({account.account_name}); "
+                    f'it is ready to watch in "{content_label(post)}".'
+                )
+            else:
+                body = (  # P2-B14: the output ("YouTube · Shorts"), as one channel may carry several
+                    f"{who} uploaded video version {version.number} for {version.video.platform_post.output_label} "
+                    f'({account.account_name}); it is ready to watch in "{content_label(post)}".'
+                )
             _send(
                 post,
                 version_audience(post, version.uploaded_by),

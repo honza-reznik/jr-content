@@ -109,7 +109,9 @@ _rules(
     comment=True,
 )
 _rules("jrc_texts", "script concept concept_to_script version_name", domain="service")
-_rules("jrc_video", "upload_start upload_part upload_complete upload_abort video_final", domain="service")
+_rules(
+    "jrc_video", "upload_start upload_part upload_complete upload_abort video_final version_duplicate", domain="service"
+)
 _rules("jrc_thumbnails", "upload", domain="service")
 
 # Organization-scoped writes on global URLs (no workspace in the path). The target

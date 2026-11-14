@@ -59,8 +59,9 @@
             <ol class="mt-4 space-y-2" data-video-versions>
                 {% for v in card.versions %}
                 <li class="flex flex-col gap-1 rounded-lg bg-stone-50 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between" data-version="{{ v.id }}" data-status="{{ v.status }}" data-mine="{{ v.mine|yesno:'1,0' }}" data-name="{{ v.filename }}" data-size="{{ v.size_bytes }}">
-                    <div class="min-w-0"><p class="text-sm font-medium text-stone-800">v{{ v.number }} <span class="break-words font-normal text-stone-500" style="overflow-wrap:anywhere">· {{ v.filename }}</span>{% if v.is_final %} <span data-video-final-mark class="ml-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">Final for publishing</span>{% endif %}</p><p class="text-xs text-stone-500">{{ v.uploaded_by }} · {{ v.uploaded_at }}{% if v.duration %} · {{ v.duration }}{% endif %}{% if v.resolution %} · {{ v.resolution }}{% endif %}</p>{% if v.status == 'processing' %}<p data-video-hint class="text-xs text-stone-500">Conversion runs on the server and can take several minutes for a large video. You can leave this page; this list and the player update by themselves.</p>{% endif %}</div>
+                    <div class="min-w-0"><p class="text-sm font-medium text-stone-800">v{{ v.number }} <span class="break-words font-normal text-stone-500" style="overflow-wrap:anywhere">· {{ v.filename }}</span>{% if v.is_final %} <span data-video-final-mark class="ml-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">Final for publishing</span>{% endif %}</p><p class="text-xs text-stone-500">{{ v.uploaded_by }} · {{ v.uploaded_at }}{% if v.duration %} · {{ v.duration }}{% endif %}{% if v.resolution %} · {{ v.resolution }}{% endif %}</p>{% if v.copied_from %}<p data-video-copied class="text-xs text-stone-500" style="overflow-wrap:anywhere">Same file as {{ v.copied_from }}{% if v.comments_copied is not None %} · comments kept{% endif %}</p>{% endif %}{% if v.status == 'processing' %}<p data-video-hint class="text-xs text-stone-500">Conversion runs on the server and can take several minutes for a large video. You can leave this page; this list and the player update by themselves.</p>{% endif %}</div>
                     <div class="flex items-center gap-2">
+                        {% if v.can_reuse %}<button type="button" data-video-reuse class="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50">Use for another output…</button>{% endif %}
                         {% if v.mine and v.status == 'uploading' and card.can_upload %}<button type="button" data-video-resume class="rounded-lg border border-orange-300 bg-white px-3 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-50">Continue upload</button>{% endif %}
                         <span data-video-status class="rounded-full px-2.5 py-1 text-xs font-medium {% if v.status == 'ready' %}bg-emerald-100 text-emerald-800{% elif v.status == 'failed' %}bg-red-100 text-red-800{% else %}bg-amber-100 text-amber-800{% endif %}">{{ v.status_label }}</span>
                     </div>
@@ -74,5 +75,63 @@
         <div class="rounded-xl border border-dashed border-stone-300 px-4 py-10 text-center text-sm text-stone-500">No channels yet. Add a channel before uploading a video.</div>
         {% endfor %}
     </div>
+    {% if video_cards|length > 1 and video_cards.0.can_upload %}
+    {# P2-B15: “Use for another output…” – the same file as a new version of another output. #}
+    <style>
+      .jrc-reuse-dialog { width:min(560px, calc(100vw - 24px)); max-height:calc(100dvh - 24px); margin:auto; padding:0; border:0; border-radius:14px; box-shadow:0 20px 50px #0003; color:#292524; overflow:auto; }
+      .jrc-reuse-dialog::backdrop { background:#1c191766; }
+      .jrc-reuse-dialog form { padding:18px 20px 20px; }
+      .jrc-reuse-dialog header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:10px; }
+      .jrc-reuse-dialog h2 { margin:0; font-size:18px; font-weight:700; letter-spacing:-.2px; }
+      .jrc-reuse-dialog .reuse-source { margin:3px 0 0; font-size:13px; color:#57534e; overflow-wrap:anywhere; }
+      .jrc-reuse-dialog .reuse-close { flex:none; width:40px; height:40px; border-radius:8px; color:#57534e; font-size:22px; line-height:1; }
+      .jrc-reuse-dialog .reuse-close:hover { background:#f5f5f4; }
+      .jrc-reuse-dialog .reuse-help { margin:0 0 14px; font-size:13px; line-height:1.5; color:#57534e; }
+      .jrc-reuse-dialog fieldset { margin:0 0 14px; padding:0; border:0; min-width:0; }
+      .jrc-reuse-dialog legend { display:block; padding:0; margin-bottom:6px; font-size:12px; font-weight:600; color:#57534e; }
+      .jrc-reuse-dialog .reuse-options { display:grid; gap:8px; }
+      .jrc-reuse-dialog .reuse-option { display:flex; align-items:flex-start; gap:10px; min-height:44px; padding:9px 12px; border:1px solid #e7e5e4; border-radius:8px; font-size:14px; cursor:pointer; overflow-wrap:anywhere; }
+      .jrc-reuse-dialog .reuse-option:hover { background:#fafaf9; }
+      .jrc-reuse-dialog .reuse-option:has(input:checked) { border-color:#f97316; background:#fff7ed; }
+      .jrc-reuse-dialog .reuse-option:has(input:focus-visible) { outline:2px solid #fdba74; outline-offset:1px; }
+      .jrc-reuse-dialog .reuse-option input { width:18px; height:18px; flex:none; margin-top:2px; accent-color:#ea580c; }
+      .jrc-reuse-dialog .reuse-option span { min-width:0; }
+      .jrc-reuse-dialog .reuse-option strong { display:block; font-weight:600; color:#292524; }
+      .jrc-reuse-dialog .reuse-option small { display:block; margin-top:2px; font-size:12px; line-height:1.45; color:#78716c; }
+      .jrc-reuse-dialog .reuse-error { margin:0 0 12px; padding:10px 12px; border:1px solid #fecaca; background:#fef2f2; color:#991b1b; border-radius:8px; font-size:13px; }
+      .jrc-reuse-dialog .reuse-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:10px; margin-top:6px; }
+      .jrc-reuse-dialog .reuse-actions button { min-height:42px; padding:8px 18px; border-radius:8px; font-size:14px; font-weight:600; }
+      .jrc-reuse-dialog .reuse-submit { background:#ea580c; color:white; }
+      .jrc-reuse-dialog .reuse-submit:hover { background:#c2410c; }
+      .jrc-reuse-dialog .reuse-submit:disabled { opacity:.6; cursor:wait; }
+      .jrc-reuse-dialog .reuse-cancel { border:1px solid #d6d3d1; color:#44403c; background:white; }
+      .jrc-reuse-dialog button:focus-visible { outline:2px solid #fdba74; outline-offset:2px; }
+      @media (max-width:639px) {
+        .jrc-reuse-dialog { width:100vw; max-width:100vw; max-height:100dvh; margin:auto 0 0; border-radius:14px 14px 0 0; }
+        .jrc-reuse-dialog .reuse-actions button { flex:1 1 0; }
+      }
+    </style>
+    <dialog class="jrc-reuse-dialog" data-video-reuse-dialog aria-labelledby="jrc-reuse-heading">
+        <form method="dialog" data-video-reuse-form novalidate>
+            <header>
+                <div class="min-w-0"><h2 id="jrc-reuse-heading">Use for another output</h2><p class="reuse-source" data-reuse-source></p></div>
+                <button type="button" class="reuse-close" data-reuse-cancel aria-label="Close">×</button>
+            </header>
+            <p class="reuse-help">The chosen output gets this video as a new version. The file is shared, so nothing is uploaded or converted again. After that each output has its own versions and its own final version.</p>
+            <fieldset><legend>Output</legend><div class="reuse-options" data-reuse-targets></div></fieldset>
+            <fieldset><legend>Keep comments?</legend>
+                <div class="reuse-options">
+                    <label class="reuse-option"><input type="radio" name="keep_comments" value="yes"><span><strong>Yes, copy the comments</strong><small>The comments of this version come along with their replies, visibility (Team only or Team and client), authors, times and resolved state.</small></span></label>
+                    <label class="reuse-option"><input type="radio" name="keep_comments" value="no"><span><strong>No, start without comments</strong><small>The new version starts clean. The comments stay on this version.</small></span></label>
+                </div>
+            </fieldset>
+            <p class="reuse-error" role="alert" data-reuse-error hidden></p>
+            <div class="reuse-actions">
+                <button type="button" class="reuse-cancel" data-reuse-cancel>Cancel</button>
+                <button type="submit" class="reuse-submit" data-reuse-submit>Use video</button>
+            </div>
+        </form>
+    </dialog>
+    {% endif %}
 </div>
 {{ video_cards|json_script:"jrc-video-data" }}

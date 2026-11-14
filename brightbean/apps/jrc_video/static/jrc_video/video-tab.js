@@ -197,5 +197,16 @@
     channels.forEach(render);
   });
 
+  // P2-B15: after “Use for another output…” the page shows the output that got the video.
+  root.addEventListener("jrc-video:show", function (event) {
+    var key = event.detail && event.detail.key;
+    if (key && panelOf(key)) {
+      chosen[key] = "";
+      showChannel(key);
+      var tab = tabs.filter(function (t) { return t.dataset.videoTab === key; })[0];
+      if (tab) tab.focus();
+    }
+  });
+
   if (activeKey) showChannel(activeKey);
 })();

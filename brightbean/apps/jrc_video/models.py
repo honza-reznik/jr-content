@@ -93,6 +93,13 @@ class VideoVersion(models.Model):
     # Added by F5-B05 for the "continue upload" prompt (not in the ADR table).
     original_filename = models.CharField(max_length=255, blank=True)
     size_bytes = models.PositiveBigIntegerField(default=0)
+    # P2-B15: a version used for another output shares the source's stored file in FreeFrame
+    # (no copy, no second conversion); ``uploaded_by``/``uploaded_at`` then mean who added it and when.
+    copied_from = models.ForeignKey("self", null=True, blank=True, on_delete=models.SET_NULL, related_name="copies")
+    # Name of the source at the time ("v2 · YouTube · Video · Ella"); stays when the source goes.
+    copied_from_label = models.CharField(max_length=300, blank=True)
+    # None: comments not kept; a number: how many FreeFrame comments were copied.
+    comments_copied = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["video", "number"], name="jrc_video_version_number_uniq")]

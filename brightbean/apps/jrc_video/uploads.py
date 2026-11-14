@@ -605,6 +605,9 @@ def _version_row(version, user, percent=None):
         "mine": version.uploaded_by_id == user.pk,
         "duration": f"{int(version.duration_s // 60)}:{int(version.duration_s % 60):02d}" if version.duration_s else "",
         "resolution": resolution,
+        # P2-B15: the same stored file as a version of another output (no upload, no conversion).
+        "copied_from": version.copied_from_label,
+        "comments_copied": version.comments_copied,
     }
 
 
@@ -624,13 +627,16 @@ def channel_cards(user, post, membership):
         .select_related("final_version", "final_by")
         .prefetch_related("versions__uploaded_by")
     }
+    outputs = enabled_outputs(post)
     cards = []
-    for variant in enabled_outputs(post):
+    for variant in outputs:
         video = videos.get(variant.pk)
         rows = list(video.versions.all()) if video else []
         percents = _progress(rows)
         versions = [_version_row(v, user, percents.get(v.pk)) for v in rows]
         for row, version in zip(rows, versions, strict=True):
+            # P2-B15: "Use for another output…" needs the upload right and a second output.
+            version["can_reuse"] = editor and len(outputs) > 1 and row.status == VideoVersion.Status.READY
             # The same rule as the endpoint: the link is shown only where the download is allowed.
             version["download_url"] = (
                 reverse(

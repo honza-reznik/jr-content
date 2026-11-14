@@ -931,7 +931,14 @@ def content_detail(request, workspace_id, post_id):
         {
             "kind": "video",
             "created_at": version.uploaded_at,
-            "label": f"Uploaded video v{version.number} · {version.video.platform_post.output_title}",
+            "label": (
+                # P2-B15: the same file used for another output names both outputs.
+                f"Used video {version.copied_from_label} for {version.video.platform_post.output_title}"
+                f" as v{version.number}"
+                + (" · comments kept" if version.comments_copied is not None else " · without comments")
+                if version.copied_from_label
+                else f"Uploaded video v{version.number} · {version.video.platform_post.output_title}"
+            ),
             "actor": version.uploaded_by,
             "note": "",
             "can_view_note": True,
