@@ -418,10 +418,13 @@ def _issuer_still_authorized(api_key: ApiKey) -> bool:
     key's workspace.
 
     Returns False when the issuer was deleted (FK set to NULL by
-    ``on_delete=SET_NULL``) or when their workspace membership has been
-    removed. Demotion within the workspace is handled separately by the
-    per-request permission intersection in the Ninja auth class — this
-    function only gates *any* access at all.
+    ``on_delete=SET_NULL``), when their workspace membership has been
+    removed, or when their account was deactivated (``is_active=False``,
+    JR Content P2-FABLE: such a person cannot sign in to the web and gets no
+    FreeFrame ticket, so a key they issued must stop at the same moment).
+    Demotion within the workspace is handled separately by the per-request
+    permission intersection in the Ninja auth class — this function only
+    gates *any* access at all.
     """
     from apps.members.models import WorkspaceMembership
 
@@ -429,6 +432,7 @@ def _issuer_still_authorized(api_key: ApiKey) -> bool:
         return False
     return WorkspaceMembership.objects.filter(
         user_id=api_key.issued_by_id,
+        user__is_active=True,
         workspace_id=api_key.workspace_id,
     ).exists()
 
