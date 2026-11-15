@@ -143,6 +143,18 @@ def test_stale_caption_form_conflicts_and_client_cannot_write(client, workspace,
     assert denied.status_code == 403
 
 
+def test_caption_save_with_malformed_copy_id_is_404_not_error(client, user, instagram_content):
+    """P2-FABLE: ``platform_post`` that is neither a UUID nor ``new:<account>`` used to raise a 500."""
+    post, variant = instagram_content
+    client.force_login(user)
+    response = client.post(
+        f"{_url(post.workspace, post)}?tab=caption",
+        {"action": "save_caption", "platform_post": "not-a-uuid", "base_version": "", "caption": "Hello"},
+    )
+    assert response.status_code == 404
+    assert not TextDocument.objects.filter(platform_post=variant).exists()
+
+
 def test_caption_tab_counter_is_static_script_without_inline_script(client, workspace, user, instagram_content):
     post, _ = instagram_content
     client.force_login(user)

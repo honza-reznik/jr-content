@@ -1,5 +1,16 @@
 # Úpravy JR Content
 
+## 2026-11-15 — P2-FABLE (celková kontrola kódu)
+
+- Deaktivovaný účet (`User.is_active=False`) ztrácí přístup i přes REST/MCP: klíč `bb_studio_…`, který vydal,
+  přestane platit (`api_keys.services._issuer_still_authorized`), a jeho OAuth token pro MCP je odmítnut
+  (`api.auth._resolve_oauth_actor`). Dosud oba fungovaly dál, dokud mu někdo neodebral členství; web i FreeFrame
+  takový účet odmítaly už dřív.
+- Detail obsahu: uložení popisku s `platform_post`, který není UUID ani `new:<kanál>`, odpoví 404 místo chyby 500.
+- `approvals.views.version_diff`: nečíselné `v1`/`v2` odpoví 400 místo chyby 500.
+- Náhledy kanálů: trvalé smazání obsahu (vyprázdnění koše) smaže po potvrzení transakce i soubory náhledů
+  z bucketu `jrc-app` (`jrc_thumbnails.signals`), stejně jako přepisy videa.
+
 ## 2026-11-14 — P2-B12
 
 - Kanály mají vlastní HEX barvu, výchozí podle platformy, u ostatních stabilně z palety. Sdílený výpočet s workspace volí černý/bílý text s kontrastem nejméně 4,5:1. Barvy se zobrazují v menu, na nástěnce, ve štítcích detailu, v Publish (včetně mobilního kalendáře a legendy) i v přehledu.
