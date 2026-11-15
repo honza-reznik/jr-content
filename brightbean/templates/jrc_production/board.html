@@ -63,7 +63,8 @@
   .board-channel { max-width:150px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; border-radius:4px; background:#f0efed; padding:0 5px; font-size:10px; color:#57534e; }
   .board-formats { font-weight:600; color:#44403c; }
   .board-channel-none { background:none; color:#a8a29e; padding:0 2px 0 0; font-style:italic; overflow:visible; max-width:none; }
-  .board-comments { display:inline-flex; align-items:center; gap:3px; }
+  .board-comments { display:inline-flex; align-items:center; gap:3px; min-width:0; max-width:100%; }
+  .board-comments > span:last-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .board-status { color:#a16207; }
   .board-move { margin-left:auto; position:relative; z-index:1; }
   .board-move summary { list-style:none; cursor:pointer; font-size:11px; color:#30584b; background:white; border:1px solid #e7e5e4; border-radius:5px; padding:0 7px; line-height:18px; }

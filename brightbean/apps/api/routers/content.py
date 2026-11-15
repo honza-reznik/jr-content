@@ -606,7 +606,7 @@ def _comment_info(comment) -> CommentInfo:
         if (comment.text_version_id or comment.shotlist_version_id)
         else None,
         version_url=reverse(
-            "jrc_production:comment_version", args=[comment.post.workspace_id, comment.post_id, comment.pk]
+            "agent_api_v1:comment_version_get", kwargs={"post_id": comment.post_id, "comment_id": comment.pk}
         )
         if (comment.text_version_id or comment.shotlist_version_id)
         else None,

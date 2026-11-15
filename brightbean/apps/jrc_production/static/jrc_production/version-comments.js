@@ -30,7 +30,8 @@
             data.set("revision", card.dataset.revision || "0");
           } else if (panel.dataset.kind === "shotlist") {
             var list = document.querySelector("[data-shotlist-current-format]");
-            data.set("shotlist_version", list?.dataset.commentVersion || panel.dataset.version);
+            data.set("shotlist_version", list ? list.dataset.commentVersion : panel.dataset.version);
+            data.set("shotlist_state", list ? list.dataset.commentState : panel.dataset.state);
             data.set("format", list?.dataset.shotlistCurrentFormat || panel.dataset.format);
           }
         }
@@ -42,6 +43,11 @@
         var html = await response.text();
         var next = new DOMParser().parseFromString(html, "text/html").querySelector("[data-version-comments]");
         if (!next) throw new Error("Reload and check your access. Your comment is kept here.");
+        if (panel.dataset.kind === "shotlist") {
+          var displayed = document.querySelector("[data-shotlist-current-format]");
+          // The first comment creates a snapshot. Adopt it only while this exact list is still displayed.
+          if (displayed && displayed.dataset.commentState === next.dataset.state) displayed.dataset.commentVersion = next.dataset.version;
+        }
         panel.replaceWith(next);
         // Same script is executed on tab switches; initialize only the newly returned panel.
         mount();

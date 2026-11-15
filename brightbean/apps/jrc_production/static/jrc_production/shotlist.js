@@ -59,6 +59,7 @@
     }
     const list = root.querySelector('[data-shotlist-current-format]');
     if (list && result.comment_version) list.dataset.commentVersion = result.comment_version;
+    if (list && result.comment_state) list.dataset.commentState = result.comment_state;
     const row = form.closest('.shotlist-row');
     const meta = row && row.querySelector('[data-shotlist-meta]');
     if (result.meta && row) {

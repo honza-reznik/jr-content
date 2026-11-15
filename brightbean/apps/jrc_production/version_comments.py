@@ -21,8 +21,9 @@ def panel_context(post, user, kind, *, platform_post="", output_format=""):
     membership = content_membership(post.workspace, user)
     version = None
     if kind == "shotlist":
-        version = shotlist.snapshot(post, output_format)
-        key = (kind, version.output_format)
+        output_format = shotlist.clean_format(post, output_format)
+        version = shotlist.current_version(post, output_format)
+        key = (kind, output_format)
     elif kind in ("concept", "script", "caption"):
         documents = TextDocument.objects.filter(post=post, kind=kind)
         if kind == "caption":
@@ -43,6 +44,7 @@ def panel_context(post, user, kind, *, platform_post="", output_format=""):
         "comment_output": platform_post,
         "comment_format": output_format,
         "comment_version": version,
+        "comment_state": shotlist.state_token(post, output_format) if kind == "shotlist" else "",
         "can_comment": can_comment(membership),
         "can_resolve_comments": can_moderate_comments(membership),
         "is_client": membership.workspace_role in ("client", "viewer"),
@@ -82,11 +84,13 @@ def panel(request, workspace_id, post_id):
                 )
             elif action == "add":
                 version = ctx["comment_version"]
-                if not version:
+                is_shotlist = ctx["comment_kind"] == "shotlist"
+                if not version and not is_shotlist:
                     raise ValueError("Save a text version before commenting.")
                 text_id = params.get("text_version") or None
                 shot_id = params.get("shotlist_version") or None
-                if not text_id and not shot_id:
+                state = params.get("shotlist_state") if is_shotlist and not shot_id else None
+                if not text_id and not shot_id and not state:
                     raise ValueError("Choose a saved version before commenting.")
                 # Service validates that replies stay in the same document. Root requests must match this panel too.
                 from apps.jrc_texts.models import TextVersion
@@ -97,10 +101,10 @@ def panel(request, workspace_id, post_id):
                     get_object_or_404(TextVersion, pk=text_id, document__post=post, state="final") if text_id else None
                 )
                 target_shot = get_object_or_404(ShotlistVersion, pk=shot_id, post=post) if shot_id else None
-                if service.version_section(target_text, target_shot) != service.version_section(
-                    version if ctx["comment_kind"] != "shotlist" else None,
-                    version if ctx["comment_kind"] == "shotlist" else None,
-                ):
+                expected = (
+                    ("shotlist", ctx["comment_format"]) if is_shotlist else service.version_section(version, None)
+                )
+                if (text_id or shot_id) and service.version_section(target_text, target_shot) != expected:
                     raise ValueError("Choose a version from this section.")
                 service.create_comment(
                     post,
@@ -111,6 +115,8 @@ def panel(request, workspace_id, post_id):
                     text_version_id=text_id,
                     shotlist_version_id=shot_id,
                     version_revision=params.get("revision") or None,
+                    shotlist_state=state,
+                    shotlist_format=ctx["comment_format"],
                 )
             else:
                 raise ValueError("Choose a valid comment action.")

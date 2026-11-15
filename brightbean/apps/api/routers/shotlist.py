@@ -32,7 +32,8 @@ class ShotlistItemInfo(Schema):
     is_done: bool
     position: int = Field(description="0-based place in the list.")
     output_format: str = Field(
-        "", description="Format whose shotlist the item is on (long_form, short_form, story, post); empty = the first list."
+        "",
+        description="Format whose shotlist the item is on (long_form, short_form, story, post); empty = the first list.",
     )
     updated_by: str | None = Field(description="Who changed the item last; null when nobody has yet.")
     updated_at: str | None
@@ -138,7 +139,12 @@ def shotlist_add(request, post_id: uuid.UUID, payload: ShotlistItemCreate):
         post, membership = _writer(request, post_id)
         with _http_errors():
             item = shotlist_services.add_item(
-                post, request.user, payload.text, payload.note, membership=membership, output_format=payload.output_format
+                post,
+                request.user,
+                payload.text,
+                payload.note,
+                membership=membership,
+                output_format=payload.output_format,
             )
         result = _response(post, membership, item.pk)
     log_audit_entry(request, action="shotlist.create", target_id=item.id, status_code=201)

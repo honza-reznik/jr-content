@@ -133,6 +133,14 @@ class PostComment(models.Model):
         return f"{prefix}Comment by {self.author} on {self.post_id}"
 
     @property
+    def version_label(self):
+        if self.text_version_id:
+            return f"{self.text_version.document.kind.title()} · V{self.text_version.number}"
+        if self.shotlist_version_id:
+            return f"Shotlist · V{self.shotlist_version.number}"
+        return ""
+
+    @property
     def is_deleted(self):
         return self.deleted_at is not None
 

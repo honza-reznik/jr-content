@@ -62,6 +62,8 @@ def create_comment(
     text_version_id=None,
     shotlist_version_id=None,
     version_revision=None,
+    shotlist_state=None,
+    shotlist_format="",
 ):
     """Create a comment on a post and notify @mentioned users.
 
@@ -122,6 +124,18 @@ def create_comment(
         raise ValueError("Choose a valid comment visibility.")
 
     text_version = shotlist_version = None
+    if version_revision is not None:
+        try:
+            version_revision = int(version_revision)
+        except (TypeError, ValueError):
+            raise ValueError("Choose a valid version revision.") from None
+    if shotlist_state and not shotlist_version_id:
+        from apps.jrc_production import shotlist
+
+        output_format = shotlist.clean_format(post, shotlist_format)
+        if shotlist.state_token(post, output_format) != shotlist_state:
+            raise ValueError("This shotlist changed. Reload the list before commenting.")
+        shotlist_version_id = shotlist.snapshot(post, output_format).pk
     try:
         if text_version_id:
             text_version = TextVersion.objects.select_related("document").get(
@@ -156,7 +170,7 @@ def create_comment(
     if membership.workspace_role == WorkspaceMembership.WorkspaceRole.CLIENT:
         from apps.jrc_production.notifications import notify_client_comment
 
-        notify_client_comment(post, author)
+        notify_client_comment(post, author, tab=section_key(comment)[0])
 
     # Parse @mentions and notify
     workspace = post.workspace
@@ -256,7 +270,7 @@ def get_visible_comments(posts, user, workspace):
             post__trashed_at__isnull=True,
             deleted_at__isnull=True,
         )
-        .select_related("author", "text_version__document", "shotlist_version")
+        .select_related("author", "post", "text_version__document", "shotlist_version")
         .order_by("created_at")
     )
 

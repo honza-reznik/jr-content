@@ -107,11 +107,16 @@ def _visible_comment_counts(posts, user):
         by_workspace.setdefault(post.workspace_id, []).append(post)
     counts = {}
     for group in by_workspace.values():
+        labels = {post.pk: set() for post in group}
         pending = list(comment_services.get_visible_comments(group, user, group[0].workspace))
         while pending:
             comment = pending.pop()
             counts[comment.post_id] = counts.get(comment.post_id, 0) + 1
+            if comment.version_label:
+                labels[comment.post_id].add(comment.version_label)
             pending.extend(comment.visible_replies)
+        for post in group:
+            post.comment_version_labels = sorted(labels[post.pk])
     return counts
 
 
@@ -1341,8 +1346,6 @@ _SHOTLIST_HISTORY_LABELS = {
 
 
 def _shotlist_context(post, membership, *, focus="", error="", new_text="", new_note="", output_format=""):
-    # The automatic item must exist even for content created before P1-B09 outside the migration.
-    shotlist_services.ensure_thumbnail_item(post)
     # P2-B14: one list per format of the content; an unknown format opens the first list.
     formats = shotlist_services.shotlist_formats(post)
     try:
@@ -1351,13 +1354,15 @@ def _shotlist_context(post, membership, *, focus="", error="", new_text="", new_
         current = formats[0] if formats else ""
     items = shotlist_services.items_for(post, current, formats=formats)
     done, total = shotlist_services.progress(items)
+    content = [{"id": str(item.pk), "text": item.text, "note": item.note, "done": item.is_done} for item in items]
     return {
         "shotlist_formats": [
             {"value": value, "label": OutputFormat(value).label if value in OutputFormat.values else value}
             for value in formats
         ],
         "shotlist_format": current,
-        "shotlist_comment_version": shotlist_services.snapshot(post, current),
+        "shotlist_comment_version": shotlist_services.current_version(post, current, content=content),
+        "shotlist_comment_state": shotlist_services.state_token(post, current, content),
         "shotlist_format_label": OutputFormat(current).label if current in OutputFormat.values else "",
         "shotlist_items": items,
         "shotlist_done": done,
@@ -1402,11 +1407,13 @@ def shotlist_action(request, workspace_id, post_id):
         except PermissionDenied as exc:
             return JsonResponse({"error": str(exc) or "You cannot edit this shotlist."}, status=403)
         who = item.updated_by.display_name or item.updated_by.email if item.updated_by else ""
+        version = shotlist_services.current_version(post, item.output_format)
         return JsonResponse(
             {
                 "text": item.text,
                 "note": item.note,
-                "comment_version": str(shotlist_services.snapshot(post, output_format).pk),
+                "comment_version": str(version.pk) if version else "",
+                "comment_state": shotlist_services.state_token(post, item.output_format),
                 "meta": f"{'Checked off' if item.is_done else 'Updated'} by {who} · "
                 f"{date_format(timezone.localtime(item.updated_at), 'M j, g:i A')}"
                 if who
