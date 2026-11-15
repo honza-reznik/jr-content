@@ -1,0 +1,42 @@
+{% extends "layouts/settings.html" %}
+{% comment %}JR Content: přidáno 2026-11-14 (blok P2-B17), AGPL-3.0. Záložní kódy – zobrazí se jen jednou.{% endcomment %}
+{% block title %}Recovery codes - Settings - JR Content{% endblock %}
+{% block content %}
+<style>
+  .tf-card { border: 1px solid var(--border); border-radius: 12px; background: var(--surface-0); }
+  .tf-codes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; padding: 16px; border-radius: 10px; background: var(--neutral-100); }
+  .tf-codes li { font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 15px; letter-spacing: 0.06em; color: var(--text-primary); white-space: nowrap; }
+  @media (max-width: 380px) { .tf-codes { grid-template-columns: minmax(0, 1fr); } }
+  .tf-note { background: #FFFBEB; color: #92400E; border: 1px solid #FDE68A; border-radius: 10px; padding: 10px 12px; }
+  .tf-btn-primary { background: var(--primary); color: var(--accent-text, #fff); }
+  .tf-btn-primary:hover { background: var(--primary-hover, var(--primary)); }
+  .tf-btn:focus-visible { outline: 3px solid color-mix(in srgb, var(--primary) 45%, transparent); outline-offset: 2px; }
+</style>
+<div class="max-w-2xl" x-data="{ copied: false }">
+    <h2 class="text-xl font-semibold mb-2" style="color: var(--text-primary);">{{ heading }}</h2>
+    <p class="text-sm mb-6" style="color: var(--text-secondary);">Security · Recovery codes</p>
+
+    <div class="tf-card px-6 py-5">
+        <p class="text-sm tf-note mb-4" role="note">
+            <strong>Save these recovery codes now.</strong> They are shown only once. Each code signs you in one time
+            if you lose access to your authenticator app. Keep them somewhere safe, for example in your password manager.
+        </p>
+        <ul class="tf-codes" data-testid="recovery-codes" x-ref="codes">
+            {% for code in codes %}<li>{{ code }}</li>{% endfor %}
+        </ul>
+        <div class="flex items-center gap-3 flex-wrap mt-5">
+            <button type="button" class="tf-btn btn-neutral px-5 py-2 text-sm font-medium rounded-full cursor-pointer transition-colors"
+                    style="background: var(--neutral-100); color: var(--text-primary);"
+                    @click="navigator.clipboard && navigator.clipboard.writeText([...$refs.codes.querySelectorAll('li')].map(li => li.textContent).join('\n')).then(() => { copied = true; setTimeout(() => copied = false, 2000) })">
+                <span x-show="!copied">Copy codes</span><span x-show="copied" x-cloak>Copied</span>
+            </button>
+            <a href="{{ download_href }}" download="jr-content-recovery-codes.txt"
+               class="tf-btn btn-neutral px-5 py-2 text-sm font-medium rounded-full transition-colors"
+               style="background: var(--neutral-100); color: var(--text-primary);">Download</a>
+            <a href="{% url 'accounts:security' %}" class="tf-btn tf-btn-primary px-5 py-2 text-sm font-semibold rounded-full transition-colors">
+                I have saved my codes
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}

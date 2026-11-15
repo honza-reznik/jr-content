@@ -123,6 +123,8 @@ _rules(
     domain="organization",
     org_role="admin",
 )
+# JR Content P2-B17: only the organization owner resets a member's two-factor authentication.
+_rules("members", "reset_two_factor", domain="organization", org_role="owner")
 _rules("workspaces", "create", domain="organization", org_role="admin")
 _rules(
     "media_library_org",
@@ -143,6 +145,8 @@ DELEGATED_WRITES = {
     "accounts:settings": "authenticated current user (including password recheck)",
     "accounts:logout": "CSRF protected logout",
     "accounts:dismiss_review_banner": "authenticated current user",
+    "accounts:security": "authenticated current user, password and 2FA code recheck; P2-B17",
+    "accounts:two_factor_login": "pending allauth login stage (password already checked); P2-B17",
     "organizations:switch": "authenticated organization member; P1-B23",
     "members:accept_invite": "invitation token and matching email; P1-B24",
     "workspaces:settings": "workspace owner/manager; P1-B23",

@@ -228,6 +228,7 @@ ORG_WRITE_ROUTES = {
     "members:update_role",
     "members:remove",
     "members:manage_workspaces",
+    "members:reset_two_factor",  # P2-B17
     "api_keys:list",
     "api_keys:issue",
     "api_keys:revoke",

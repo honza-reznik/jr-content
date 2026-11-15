@@ -216,6 +216,7 @@ ORG_WRITES = {
     "members:update_role": "admin",
     "members:remove": "admin",
     "members:manage_workspaces": "admin",
+    "members:reset_two_factor": "owner",  # P2-B17: only the owner resets a member's 2FA
     "workspaces:create": "admin",
     "media_library_org:shared_upload": "admin",
     "media_library_org:shared_asset_edit": "admin",

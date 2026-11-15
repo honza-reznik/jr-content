@@ -31,10 +31,15 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
 
-    # 2FA fields
+    # 2FA fields (JR Content P2-B17: used by apps.accounts.twofactor).
+    # totp_secret: base32 secret, encrypted; also holds the pending secret while setup is unconfirmed.
+    # totp_recovery_codes: keyed hashes of the unused recovery codes, never the codes themselves.
     totp_secret = EncryptedTextField(blank=True, null=True)
     totp_recovery_codes = EncryptedJSONField(blank=True, null=True)
     totp_enabled = models.BooleanField(default=False)
+    totp_enabled_at = models.DateTimeField(blank=True, null=True)
+    # Last accepted TOTP time step; codes for this step or earlier are refused (no replay).
+    totp_last_counter = models.BigIntegerField(blank=True, null=True)
 
     # Workspace persistence
     last_workspace_id = models.UUIDField(blank=True, null=True)
@@ -69,6 +74,37 @@ class User(AbstractBaseUser, PermissionsMixin):
         if self.email:
             return self.email.split("@")[0]
         return "User"
+
+
+class TwoFactorEvent(models.Model):
+    """Audit trail of two-factor changes (JR Content P2-B17)."""
+
+    class Action(models.TextChoices):
+        ENABLED = "enabled", "Two-factor authentication turned on"
+        DISABLED = "disabled", "Two-factor authentication turned off"
+        RESET_BY_ADMIN = "reset_by_admin", "Two-factor authentication reset by an organization owner"
+        RECOVERY_CODES_REGENERATED = "recovery_codes_regenerated", "New recovery codes created"
+        RECOVERY_CODE_USED = "recovery_code_used", "Recovery code used"
+        LOCKED = "locked", "Too many incorrect codes"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="two_factor_events")
+    action = models.CharField(max_length=40, choices=Action.choices)
+    actor = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="two_factor_actions")
+    # Kept when the actor's account is later deleted.
+    actor_email = models.CharField(max_length=254, blank=True, default="")
+    organization = models.ForeignKey(
+        "organizations.Organization", on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    ip_address = models.GenericIPAddressField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "accounts_two_factor_event"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.user} {self.action} {self.created_at:%Y-%m-%d %H:%M}"
 
 
 class OAuthConnection(models.Model):
