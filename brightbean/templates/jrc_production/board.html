@@ -132,7 +132,9 @@
   <label for="quick-search">Find a title on this board</label><input id="quick-search" type="search" placeholder="Filter titles instantly…" autocomplete="off">
   {% if search_warning %}<p role="alert">{{ search_warning }}</p>{% endif %}
   <section id="board-results" aria-live="polite" tabindex="-1" hidden></section>
-  <div class="board-bulk"><button type="button" id="select-visible" class="board-secondary">Select visible</button><span id="selection-count" aria-live="polite">0 selected</span><button type="button" id="clear-selection" class="board-secondary">Clear selection</button><button type="button" data-bulk-move class="board-secondary">Move selected…</button><button type="button" data-bulk-approve class="board-secondary">Approve selected…</button><button type="button" data-bulk-trash class="board-secondary">Move selected to Trash</button></div>
+  {% if can_bulk_move or can_bulk_approve or can_bulk_trash %}
+  <div class="board-bulk"><button type="button" id="select-visible" class="board-secondary">Select visible</button><span id="selection-count" aria-live="polite">0 selected</span><button type="button" id="clear-selection" class="board-secondary">Clear selection</button>{% if can_bulk_move %}<button type="button" data-bulk-move class="board-secondary">Move selected…</button>{% endif %}{% if can_bulk_approve %}<button type="button" data-bulk-approve class="board-secondary">Approve selected…</button>{% endif %}{% if can_bulk_trash %}<button type="button" data-bulk-trash class="board-secondary">Move selected to Trash</button>{% endif %}</div>
+  {% endif %}
   {% if waiting_for_you %}
   <section class="board-waiting" aria-label="Waiting for you" data-waiting-for-you>
     <h2>Waiting for you <span class="stage-count">({{ waiting_for_you|length }})</span></h2>

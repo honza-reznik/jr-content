@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - JR Content: časový štítek nad obrazem videa, synchronizovaný s vykresleným snímkem; FPS ze souboru a celá obrazovka se štítkem i na telefonu.
 
 ### Fixed
+- JR Content P2-B20: prázdný seznam komentářů nevybízí ke komentování uživatele bez tohoto oprávnění.
 - JR Content P2-B18: spravované účty nemohou stahovat přes členské API ani přímé adresy originálů a MP4; starší video bez HLS nevydá originál ani jako náhradu přehrávání; web skrývá jednotlivé a hromadné stažení. Brightbean stahuje vybranou verzi interní servisní cestou až po ověření vlastních oprávnění. Sdílené odkazy zachovávají vlastní pravidla.
 - JR Content P2-B01: servisní přihlášení po anonymizaci testovací kopie přijímá syntakticky platné adresy `.invalid`; validace v hlavním projektu zůstává původní.
 - JR Content P2-B02: přihlašovací stránky videa vedou na přihlášení aplikace s bezpečným návratem; místní přihlašovací API neprozrazuje existenci účtů a zachovává interní servisní přihlášení.

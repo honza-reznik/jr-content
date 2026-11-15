@@ -12,6 +12,7 @@ from django.utils.http import content_disposition_header
 from django.views.decorators.http import require_http_methods
 
 from . import uploads
+from .downloads import can_download_version
 from .models import VideoVersion
 from .upload_views import _context, _json, _secure
 from .uploads import UploadError
@@ -67,6 +68,8 @@ def transcript(request, workspace_id, post_id, version_id):
     versions = VideoVersion.objects.filter(video__platform_post__post=post)
     version = get_object_or_404(versions, pk=version_id)
     if request.method == "GET":
+        if not can_download_version(membership, version.video.platform_post, version):
+            raise UploadError("You cannot download this video version or its transcript.", 403)
         if not version.transcript:
             raise Http404
         with version.transcript.open("rb") as file:

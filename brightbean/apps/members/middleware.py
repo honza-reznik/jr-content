@@ -3,7 +3,6 @@
 from uuid import UUID
 
 from django.contrib.auth import get_user_model
-from django.core.exceptions import PermissionDenied
 from django.http import Http404
 
 from .models import OrgMembership, WorkspaceMembership
@@ -186,13 +185,10 @@ class RBACMiddleware:
             .select_related("workspace__organization", "custom_role")
             .first()
         )
-        # JR Content (P2-FABLE): every JR page and endpoint (``jrc_*`` namespaces) answers a stranger with
-        # 404, so a guessed workspace id never confirms that the client exists. Upstream pages keep 403.
-        hide_unavailable_workspace = (request.resolver_match.namespace or "").startswith("jrc_")
+        # A guessed workspace URL must not reveal whether the client exists, including upstream pages.
+        # Members with an insufficient role still get 403 from the view's permission check.
         if not ws_membership:
-            if hide_unavailable_workspace:
-                raise Http404
-            raise PermissionDenied("You do not have access to this workspace.")
+            raise Http404
 
         if ws_membership.workspace.is_archived and request.resolver_match.namespace in (
             "jrc_production",

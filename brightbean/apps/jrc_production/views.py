@@ -318,7 +318,16 @@ def _board_context(request):
         columns[card["stage"]]["cards"].append(card)
     for column in columns.values():
         column["cards"] = _sort_cards(column["cards"], newest_first=column["value"] == PipelineStage.PUBLISHED)
+    cards = [card for column in columns.values() for card in column["cards"]]
     return {
+        # Approval alone has its own button; keep Move for other transitions or approval requests.
+        "can_bulk_move": any(
+            value != PipelineStage.APPROVED or not card["can_approve"]
+            for card in cards
+            for value, _label in card["moves"]
+        ),
+        "can_bulk_approve": any(card["can_approve"] for card in cards),
+        "can_bulk_trash": any(card["can_trash"] for card in cards),
         "columns": list(columns.values()),
         "waiting_for_you": waiting,
         "workspace": membership.workspace if membership else None,

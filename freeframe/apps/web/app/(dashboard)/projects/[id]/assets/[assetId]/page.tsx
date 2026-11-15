@@ -504,6 +504,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
 
   const commentPanelNode = (
     <CommentPanel
+      canComment={canComment}
       comments={comments as any}
       currentUserId={user?.id}
       showInternalFilter={canPostInternal}

@@ -81,6 +81,8 @@ interface CommentPanelProps {
    * present and guaranteed to fail.
    */
   canExport?: boolean;
+  /** Match the permission that controls the comment composer. */
+  canComment?: boolean;
   className?: string;
 }
 
@@ -813,6 +815,7 @@ export function CommentPanel({
   exportVersionId,
   exportAsset,
   canExport = true,
+  canComment = true,
   className,
 }: CommentPanelProps) {
   const focusedCommentId = useReviewStore((s) => s.focusedCommentId);
@@ -1358,9 +1361,11 @@ export function CommentPanel({
             <p className="text-sm text-text-secondary font-medium">
               No comments yet
             </p>
-            <p className="text-xs text-text-tertiary mt-1">
-              Leave a comment below to start the review
-            </p>
+            {canComment && (
+              <p className="text-xs text-text-tertiary mt-1">
+                Leave a comment below to start the review
+              </p>
+            )}
           </div>
         )}
 

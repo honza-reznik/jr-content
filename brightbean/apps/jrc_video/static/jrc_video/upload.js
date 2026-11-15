@@ -387,7 +387,7 @@
         (copied === null || copied === undefined ? "" : copied === 1 ? " 1 comment copied." : " " + copied + " comments copied.") +
         (result.review_notice ? " " + result.review_notice : ""));
       await refresh();
-      root.dispatchEvent(new CustomEvent("jrc-video:show", { detail: { key: result.target } }));
+      root.dispatchEvent(new CustomEvent("jrc-video:show", { detail: { key: result.target, version: result.version } }));
     } catch (error) {
       reuseError(error.message);
       submit.disabled = false; submit.textContent = "Use video";

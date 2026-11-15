@@ -126,8 +126,8 @@ def test_role_matrix(role, access, client, name, method, ids, data):
                 expected = 422  # An admin cannot promote another member to admin.
             assert response.status_code == expected, (role, name, response.status_code)
     else:
-        # P2-FABLE: a workspace the person is not a member of is "not found" on every jrc_* URL.
-        expected = 404 if name.startswith("jrc_") and role == "nonmember" else 403
+        # P2-B20: every workspace URL hides existence from a nonmember; org URLs keep their rule.
+        expected = 404 if is_ws and role == "nonmember" else 403
         assert response.status_code == expected, (role, name, response.status_code)
         org.refresh_from_db()
         workspace.refresh_from_db()
@@ -488,8 +488,8 @@ def test_deleted_organization_cannot_be_selected_through_workspace_url(client):
     workspace = user.workspace_memberships.get().workspace
     Organization.objects.filter(pk=workspace.organization_id).update(deleted_at=timezone.now())
     client.force_login(user)
-    assert client.get(reverse("workspaces:settings", args=[workspace.pk])).status_code == 403
-    assert client.post(reverse("workspaces:settings", args=[workspace.pk]), {"name": "Forbidden"}).status_code == 403
+    assert client.get(reverse("workspaces:settings", args=[workspace.pk])).status_code == 404
+    assert client.post(reverse("workspaces:settings", args=[workspace.pk]), {"name": "Forbidden"}).status_code == 404
     assert client.get(reverse("accounts:settings")).wsgi_request.org is None
 
 
