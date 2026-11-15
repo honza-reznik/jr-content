@@ -482,3 +482,41 @@ def test_remote_cleanup_retry_is_durable_and_idempotent(outcome):
     assert delete_remote_video(asset, api=api) is (outcome != "unavailable")
     api.request.assert_called_once_with("DELETE", f"/assets/{asset}")
     assert VideoDeletionRequest.objects.filter(pk=asset).exists() is (outcome == "unavailable")
+
+
+@pytest.mark.parametrize("actor_role", ROLES)
+def test_board_only_offers_available_bulk_actions(content, workspace, user, client, actor_role):
+    role(workspace, user, actor_role)
+    client.force_login(user)
+    response = client.get(reverse("jrc_production:board"), {"client": workspace.pk})
+    assert response.status_code == 200
+    html = response.content.decode()
+    card = response.context["columns"][0]["cards"][0]
+    for name, allowed in [
+        ("move", response.context["can_bulk_move"]),
+        ("approve", card["can_approve"]),
+        ("trash", card["can_trash"]),
+    ]:
+        assert (f"data-bulk-{name}" in html) is allowed
+    assert ('class="board-select"' in html) is bool(card["moves"] or card["can_approve"] or card["can_trash"])
+
+
+def test_client_selects_only_content_they_can_act_on(content, workspace, user, client):
+    other = create_content(
+        workspace, "Client can approve this", user, social_account_ids=[content.platform_posts.get().social_account_id]
+    )
+    workspace.approval_workflow_mode = "required_internal_and_client"
+    workspace.save()
+    other.platform_posts.update(status="pending_client")
+    from apps.jrc_video.tests.test_upload import make_user
+
+    client.force_login(make_user(workspace, "board-client@example.invalid", "client"))
+    response = client.get(reverse("jrc_production:board"), {"client": workspace.pk})
+    html = response.content.decode()
+    inactive_card = html.split(f'data-post="{content.pk}"', 1)[1].split("</article>", 1)[0]
+    assert 'class="board-select"' not in inactive_card
+    active_card = html.split(f'data-post="{other.pk}"', 1)[1].split("</article>", 1)[0]
+    assert 'class="board-select"' in active_card
+    assert "data-bulk-approve" in html
+    assert "data-bulk-move" not in html
+    assert "data-bulk-trash" not in html

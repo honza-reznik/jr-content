@@ -116,7 +116,7 @@ def test_delete_and_channel_delete_cannot_mutate_foreign_content(client, workspa
     url = reverse("composer:post_delete", args=[workspace.pk, post.pk])
     if channel:
         url += f"?account={account.pk}"
-    assert client.post(url, HTTP_HX_REQUEST="true").status_code == 403
+    assert client.post(url, HTTP_HX_REQUEST="true").status_code == (404 if role == "nonmember" else 403)
     assert Post.objects.filter(pk=post.pk).exists()
     assert PlatformPost.objects.filter(pk=variant.pk).exists()
 

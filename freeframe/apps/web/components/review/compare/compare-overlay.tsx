@@ -409,6 +409,7 @@ export function CompareOverlay({ asset, versions, rightVersion, onClose, canComm
           {panelAOpen && (
             <div className="flex h-full flex-col">
               <CommentPanel
+                canComment={canComment}
                 comments={sideA.comments}
                 currentUserId={user?.id}
                 onResolve={async (id) => { await sideA.resolveComment(id) }}
@@ -625,6 +626,7 @@ export function CompareOverlay({ asset, versions, rightVersion, onClose, canComm
           {panelBOpen && (
             <div className="flex h-full flex-col">
               <CommentPanel
+                canComment={canComment}
                 comments={sideB.comments}
                 currentUserId={user?.id}
                 onResolve={async (id) => { await sideB.resolveComment(id) }}

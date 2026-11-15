@@ -70,16 +70,20 @@
   }
   const grid = root.querySelector('.board-grid');
   const cards = () => [...grid.querySelectorAll('.board-card')];
-  const visible = () => cards().filter(card => !card.hidden && card.getClientRects().length);
-  const selected = () => cards().filter(card => card.querySelector('.board-select').checked);
+  const visible = () => cards().filter(card => card.querySelector('.board-select') && !card.hidden && card.getClientRects().length);
+  const selected = () => cards().filter(card => card.querySelector('.board-select')?.checked);
   let lastSelected = null;
   function selection() {
-    for (const card of cards()) card.classList.toggle('is-selected', card.querySelector('.board-select').checked);
-    document.getElementById('selection-count').textContent = `${selected().length} selected`;
+    for (const card of cards()) card.classList.toggle('is-selected', card.querySelector('.board-select')?.checked);
+    const count = document.getElementById('selection-count');
+    if (count) count.textContent = `${selected().length} selected`;
     root.querySelectorAll('[data-bulk-move], [data-bulk-approve], [data-bulk-trash], #clear-selection').forEach(button => { button.disabled = !selected().length; });
-    root.querySelector('[data-bulk-move]').disabled = !selected().some(card => card.querySelector('[name=stage]'));
-    root.querySelector('[data-bulk-approve]').disabled = !selected().some(card => card.dataset.canApprove === '1');
-    root.querySelector('[data-bulk-trash]').disabled = !selected().some(card => card.dataset.canTrash === '1');
+    const moveButton = root.querySelector('[data-bulk-move]');
+    if (moveButton) moveButton.disabled = !selected().some(card => card.querySelector('[name=stage]'));
+    const approveButton = root.querySelector('[data-bulk-approve]');
+    if (approveButton) approveButton.disabled = !selected().some(card => card.dataset.canApprove === '1');
+    const trashButton = root.querySelector('[data-bulk-trash]');
+    if (trashButton) trashButton.disabled = !selected().some(card => card.dataset.canTrash === '1');
   }
   grid.addEventListener('click', event => {
     if (!event.target.matches('.board-select')) return;
@@ -92,13 +96,13 @@
     lastSelected = card;
     selection();
   });
-  document.getElementById('select-visible').addEventListener('click', () => { visible().forEach(card => { card.querySelector('.board-select').checked = true; }); selection(); });
-  document.getElementById('clear-selection').addEventListener('click', () => { selected().forEach(card => { card.querySelector('.board-select').checked = false; }); selection(); });
+  document.getElementById('select-visible')?.addEventListener('click', () => { visible().forEach(card => { card.querySelector('.board-select').checked = true; }); selection(); });
+  document.getElementById('clear-selection')?.addEventListener('click', () => { selected().forEach(card => { card.querySelector('.board-select').checked = false; }); selection(); });
   function filter() {
     const needle = document.getElementById('quick-search').value.trim().toLocaleLowerCase();
     for (const card of cards()) {
       card.hidden = !card.querySelector('h3').textContent.toLocaleLowerCase().includes(needle);
-      if (card.hidden) card.querySelector('.board-select').checked = false;
+      if (card.hidden && card.querySelector('.board-select')) card.querySelector('.board-select').checked = false;
     }
     for (const column of grid.querySelectorAll('.board-column')) {
       const count = [...column.querySelectorAll('.board-card')].filter(card => !card.hidden).length;
@@ -147,9 +151,9 @@
     dialog.close();
     send(actionItems, actionKind, { stage: stage.value, scheduled_at: document.getElementById('action-date').value, comment: document.getElementById('action-comment').value });
   });
-  root.querySelector('[data-bulk-move]').addEventListener('click', () => openAction(selected()));
-  root.querySelector('[data-bulk-approve]').addEventListener('click', () => openAction(selected(), 'approved', 'approve'));
-  root.querySelector('[data-bulk-trash]').addEventListener('click', () => { if (confirm(`Move ${selected().length} selected items to Trash?`)) send(selected(), 'trash'); });
+  root.querySelector('[data-bulk-move]')?.addEventListener('click', () => openAction(selected()));
+  root.querySelector('[data-bulk-approve]')?.addEventListener('click', () => openAction(selected(), 'approved', 'approve'));
+  root.querySelector('[data-bulk-trash]')?.addEventListener('click', () => { if (confirm(`Move ${selected().length} selected items to Trash?`)) send(selected(), 'trash'); });
   grid.addEventListener('submit', event => {
     if (!event.target.closest('.board-move')) return;
     event.preventDefault();

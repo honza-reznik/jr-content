@@ -1,7 +1,7 @@
 {% load tz %}{% with post=card.post title=card.post.title|default:"Untitled content" %}
 <article class="board-card" data-post="{{ post.id }}" data-client="{{ post.workspace_id }}" data-stage="{{ card.stage }}" data-can-approve="{{ card.can_approve|yesno:'1,0' }}" data-can-trash="{{ card.can_trash|yesno:'1,0' }}" draggable="{% if card.moves %}true{% else %}false{% endif %}" data-dated="{% if card.date %}1{% else %}0{% endif %}">
   <div class="board-card-tools">
-    <input class="board-select" type="checkbox" aria-label="Select {{ title }}">
+    {% if card.moves or card.can_approve or card.can_trash %}<input class="board-select" type="checkbox" aria-label="Select {{ title }}">{% endif %}
     {% if card.moves %}<button type="button" data-drag-handle aria-label="Drag {{ title }} to another stage" title="Drag to another stage">⠿</button>{% endif %}
     <button type="button" data-card-menu aria-label="Actions for {{ title }}" aria-haspopup="menu">⋯</button>
   </div>

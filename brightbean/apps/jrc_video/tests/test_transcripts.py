@@ -50,8 +50,9 @@ def test_roles_read_and_mutate(client, workspace, user, setup, versions, role, a
     assert upload(client, path).status_code == 200
     person = make_user(workspace, f"srt-{role}@example.invalid", role)
     client.force_login(person)
-    assert client.get(path).content == SRT
-    assert client.get(path + "?preview=1").json()["text"] == SRT.decode()
+    readable = role in {"owner", "manager"}
+    assert client.get(path).status_code == (200 if readable else 403)
+    assert client.get(path + "?preview=1").status_code == (200 if readable else 403)
     assert upload(client, path).status_code == (200 if allowed else 403)
     assert client.post(path, {"delete": "1"}).status_code == (200 if allowed else 403)
 
@@ -70,7 +71,7 @@ def test_contributor_may_upload_own_content_and_custom_role_may_not(client, work
     )
     WorkspaceMembership.objects.filter(user=person).update(custom_role=role)
     assert upload(client, path).status_code == 403
-    assert client.get(path).status_code == 200
+    assert client.get(path).status_code == 403
 
 
 @pytest.mark.parametrize(
@@ -184,3 +185,28 @@ def test_session_csrf_scope_archived_and_revoked_membership(client, workspace, u
     assert upload(client, path).status_code == 404
     client.logout()
     assert client.get(path).status_code == 302
+
+
+@pytest.mark.parametrize("role", ["client", "viewer"])
+@pytest.mark.parametrize("approved", [False, True])
+@pytest.mark.parametrize("is_final", [False, True])
+def test_transcript_uses_video_download_rule(client, workspace, setup, versions, role, approved, is_final):
+    version = versions[0]
+    path = address(workspace, setup, version)
+    assert upload(client, path).status_code == 200
+    variant = version.video.platform_post
+    variant.status = "approved" if approved else "draft"
+    variant.platform_specific_caption = "Caption ready for publication"
+    variant.save()
+    workspace.approval_workflow_mode = "required_internal"
+    workspace.save()
+    if is_final:
+        version.video.final_version = version
+        version.video.save()
+    client.force_login(make_user(workspace, f"srt-matrix-{role}@example.invalid", role))
+    status = 200 if role == "client" and approved and is_final else 403
+    assert client.get(path).status_code == status
+    assert client.get(path + "?preview=1").status_code == status
+    rows = client.get(url("upload_status", workspace, setup)).json()["channels"][0]["versions"]
+    row = next(row for row in rows if row["id"] == str(version.pk))
+    assert bool(row["download_url"]) is (status == 200)

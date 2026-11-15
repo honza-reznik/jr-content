@@ -1,15 +1,14 @@
 # JR Content: přidáno 2026-11-15 (blok P2-FABLE), AGPL-3.0.
-"""Every JR URL with a workspace in it answers a non-member with 404 (``RBACMiddleware``).
+"""Every workspace URL answers a non-member with 404 (RBACMiddleware).
 
-A 403 would confirm that the guessed client exists; the JR pages (``jrc_production``, ``jrc_texts``,
-``jrc_thumbnails``) already hid it, the video and channel endpoints answered 403. One rule for all
-``jrc_*`` namespaces, checked over every registered route so a new endpoint cannot fall out of it.
+The rule also covers upstream calendar/settings/analytics/composer URLs. Walk all registered
+workspace routes so a new endpoint cannot accidentally confirm that a client exists.
 """
 
 import uuid
 
 import pytest
-from django.urls import URLPattern, URLResolver, get_resolver
+from django.urls import URLPattern, URLResolver, get_resolver, reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
@@ -18,7 +17,7 @@ from apps.workspaces.models import Workspace
 
 
 def _workspace_routes():
-    """``(namespace:name, pattern)`` of every route of a ``jrc_*`` namespace that names a workspace."""
+    """``(namespace:name, pattern)`` of every route that names a workspace."""
     found = []
 
     def walk(patterns, namespaces, prefix):
@@ -32,7 +31,7 @@ def _workspace_routes():
             elif isinstance(entry, URLPattern):
                 route = prefix + str(entry.pattern)
                 namespace = ":".join(namespaces)
-                if namespace.startswith("jrc_") and "<uuid:workspace_id>" in route:
+                if "<uuid:workspace_id>" in route:
                     found.append((f"{namespace}:{entry.name}", route))
 
     walk(get_resolver().url_patterns, [], "")
@@ -42,11 +41,13 @@ def _workspace_routes():
 
 def _fill(route, workspace):
     def value(match):
-        return str(workspace.pk) if match.group(1) == "workspace_id" else str(uuid.uuid4())
+        if match.group(2) == "workspace_id":
+            return str(workspace.pk)
+        return str(uuid.uuid4()) if match.group(1) == "uuid" else "1"
 
     import re
 
-    path = re.sub(r"<uuid:([a-z_]+)>", value, route)
+    path = re.sub(r"<(uuid|int|str|slug|path):([a-z_]+)>", value, route)
     return "/" + path.lstrip("/")
 
 
@@ -65,7 +66,7 @@ def stranger(db):
 
 @pytest.mark.django_db
 @pytest.mark.parametrize("method", ["get", "post"])
-def test_every_jrc_workspace_url_is_not_found_for_a_stranger(client, other_workspace, stranger, method):
+def test_every_workspace_url_is_not_found_for_a_stranger(client, other_workspace, stranger, method):
     client.force_login(stranger)
     for name, route in _workspace_routes():
         response = getattr(client, method)(_fill(route, other_workspace))
@@ -78,3 +79,25 @@ def test_member_is_not_hidden_by_the_rule(client, other_workspace, user):
     client.force_login(user)
     response = client.get(f"/workspaces/{other_workspace.pk}/profile/")
     assert response.status_code == 200
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "route", ["calendar:calendar", "workspaces:settings", "workspaces:approvals_settings", "calendar:queue_list"]
+)
+@pytest.mark.parametrize("existing", [True, False])
+def test_upstream_workspace_pages_hide_strangers(client, other_workspace, user, route, existing):
+    workspace = other_workspace
+    WorkspaceMembership.objects.filter(user=user, workspace=workspace).delete()
+    client.force_login(user)
+    response = client.get(reverse(route, kwargs={"workspace_id": workspace.pk if existing else uuid.uuid4()}))
+    assert response.status_code == 404
+    assert workspace.name.encode() not in response.content
+
+
+@pytest.mark.django_db
+def test_member_with_insufficient_role_still_gets_403(client, other_workspace, user):
+    workspace = other_workspace
+    WorkspaceMembership.objects.filter(user=user, workspace=workspace).update(workspace_role="viewer")
+    client.force_login(user)
+    assert client.get(reverse("workspaces:settings", kwargs={"workspace_id": workspace.pk})).status_code == 403

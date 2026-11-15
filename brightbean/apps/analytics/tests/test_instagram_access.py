@@ -364,7 +364,7 @@ def test_status_endpoint_is_scoped_and_stops_polling_when_ready(client, user, ac
     other = Workspace.objects.create(organization=organization, name="Other")
     assert (
         client.get(reverse("analytics:status", kwargs={"workspace_id": other.pk, "account_id": account.pk})).status_code
-        == 403
+        == 404
     )
     WorkspaceMembership.objects.create(user=user, workspace=other, workspace_role="viewer")
     assert (

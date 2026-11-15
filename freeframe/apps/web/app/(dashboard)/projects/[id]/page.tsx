@@ -1017,6 +1017,7 @@ export default function ProjectDetailPage() {
                   <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
                     {comments.length > 0 ? (
                       <CommentPanel
+                        canComment={canComment}
                         comments={comments as any}
                         currentUserId={user?.id}
                         // Without these the panel reads the review store, which

@@ -123,10 +123,10 @@ class AssetTagEndpointTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertIn("/login", response.url)
 
-    def test_cross_workspace_user_gets_403(self):
+    def test_cross_workspace_user_gets_404(self):
         """User not a member of this workspace must not reach the view at all.
 
-        The RBAC middleware rejects with PermissionDenied (403) before the
+        The RBAC middleware rejects with Http404 before the
         view body executes, so the asset's existence is not leaked.
         """
         other_user = User.objects.create_user(
@@ -142,7 +142,7 @@ class AssetTagEndpointTests(TestCase):
         )
         self.client.force_login(other_user)
         response = self._post_json(["alpha"])
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 404)
         # Existing tags must not have changed
         self.asset.refresh_from_db()
         self.assertEqual(self.asset.tags, [])

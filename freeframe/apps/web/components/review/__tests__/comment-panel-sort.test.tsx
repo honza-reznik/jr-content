@@ -102,3 +102,25 @@ describe('CommentPanel sort modes', () => {
     ])
   })
 })
+
+
+describe('empty comment panel permissions', () => {
+  it.each([true, false])('offers a comment prompt only with permission (%s)', (canComment) => {
+    render(<CommentPanel comments={[]} canComment={canComment}
+      onResolve={noop} onDelete={noop} onAddReaction={noop}
+      onRemoveReaction={noop} onReply={() => {}} />)
+    expect(screen.getByText('No comments yet')).toBeInTheDocument()
+    expect(Boolean(screen.queryByText('Leave a comment below to start the review'))).toBe(canComment)
+  })
+})
+
+
+it('keeps the viewer prompt hidden when a filter empties a nonempty thread', () => {
+  render(<CommentPanel comments={[c26]} canComment={false}
+    onResolve={noop} onDelete={noop} onAddReaction={noop}
+    onRemoveReaction={noop} onReply={() => {}} />)
+  fireEvent.click(screen.getByTitle('Filter'))
+  fireEvent.click(screen.getByRole('button', { name: /^Completed$/ }))
+  expect(screen.getByText('No comments yet')).toBeInTheDocument()
+  expect(screen.queryByText('Leave a comment below to start the review')).toBeNull()
+})

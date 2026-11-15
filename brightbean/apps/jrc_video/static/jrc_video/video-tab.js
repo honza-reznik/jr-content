@@ -161,9 +161,15 @@
       if (srt.dataset.filename !== (v.transcript_filename || "")) show(srt.querySelector("[data-transcript-text]"), false);
       srt.dataset.filename = v.transcript_filename || "";
       srt.querySelector("[data-transcript-name]").textContent = v.transcript_filename || "No transcript yet.";
+      var transcriptDownload = srt.querySelector("[data-transcript-download]");
+      if (v.download_url && v.transcript_filename) transcriptDownload.href = transcriptUrl(v.id);
+      else {
+        transcriptDownload.removeAttribute("href");
+        show(srt.querySelector("[data-transcript-text]"), false);
+      }
       ["download", "preview", "delete"].forEach(function (action) {
         var el = srt.querySelector("[data-transcript-" + action + "]");
-        if (el) show(el, !!v.transcript_filename);
+        if (el) show(el, !!v.transcript_filename && (action === "delete" || !!v.download_url));
       });
       row.querySelector("details").open = !!selected && selected.id === v.id;
       if (list.children[index] !== row) list.insertBefore(row, list.children[index] || null);
@@ -334,7 +340,8 @@
   root.addEventListener("jrc-video:show", function (event) {
     var key = event.detail && event.detail.key;
     if (key && panelOf(key)) {
-      chosen[key] = "";
+      var c = card(key);
+      chosen[key] = event.detail.version || (c && c.versions[0] && c.versions[0].id);
       showChannel(key);
       var tab = tabs.filter(function (t) { return t.dataset.videoTab === key; })[0];
       if (tab) tab.focus();
