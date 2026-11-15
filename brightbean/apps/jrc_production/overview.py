@@ -79,7 +79,7 @@ def _member_workspace_ids(user, workspace_ids):
 @require_GET
 def overview_board(request):
     """All content of the organization by stage, with a client filter (read only)."""
-    from .views import _sort_cards
+    from .views import _card_channels, _sort_cards
 
     organization = overview_organization(request)
     workspaces = list(overview_workspaces(organization))
@@ -112,6 +112,8 @@ def overview_board(request):
                 "date": planned or post.proposed_publish_at,
                 "date_label": "Planned" if planned else "Proposed",
                 "client_review": any(pp.status == "pending_client" for pp in post.platform_posts.all()),
+                # P2-B14 outputs: each channel once with its outputs' formats, as on the board.
+                "channels": _card_channels(post.platform_posts.all()),
             }
         )
     for column in columns.values():
@@ -147,7 +149,10 @@ def _latest_text(post, kind, platform_post=None):
 @require_GET
 def overview_content(request, post_id):
     """A read-only summary of one content for the overview (any client of the organization)."""
+    from apps.composer.output_formats import OutputFormat
     from apps.jrc_video.models import VideoVersion
+
+    from . import shotlist as shotlist_services
 
     organization = overview_organization(request)
     post = get_object_or_404(
@@ -157,7 +162,9 @@ def overview_content(request, post_id):
         workspace__is_archived=False,
     )
     workspace = post.workspace
-    variants = list(post.platform_posts.select_related("social_account__jrc_channel").order_by("created_at", "id"))
+    variants = sorted(
+        post.platform_posts.select_related("social_account__jrc_channel"), key=lambda item: item.output_sort_key
+    )
     captions = []
     for variant in variants:
         latest = _latest_text(post, TextDocument.Kind.CAPTION, variant)
@@ -168,13 +175,25 @@ def overview_content(request, post_id):
     comment_qs = PostComment.objects.filter(post=post, deleted_at__isnull=True)
     if not can_see_internal_notes(request.user, request.org_membership, membership):
         comment_qs = comment_qs.filter(visibility=PostComment.Visibility.EXTERNAL)
-    comments = list(comment_qs.select_related("author").order_by("created_at"))
+    # Comments on a text version (P2-B16) are listed too, labelled with their section and version.
+    comments = list(
+        comment_qs.select_related("author", "text_version__document", "shotlist_version").order_by("created_at")
+    )
     replies = {}
     for comment in comments:
         if comment.parent_comment_id:
             replies.setdefault(comment.parent_comment_id, []).append(comment)
     threads = [{"comment": c, "replies": replies.get(c.pk, [])} for c in comments if not c.parent_comment_id]
     is_member = membership is not None
+    # P2-B14: one shotlist per format of the outputs (one list when the content has no output).
+    formats = shotlist_services.shotlist_formats(post)
+    shotlists = [
+        {
+            "label": OutputFormat(value).label if value in OutputFormat.values else value,
+            "items": shotlist_services.items_for(post, value, formats=formats),
+        }
+        for value in formats or [""]
+    ]
     return render(
         request,
         "jrc_production/overview_content.html",
@@ -187,12 +206,16 @@ def overview_content(request, post_id):
             "concept": _latest_text(post, TextDocument.Kind.CONCEPT),
             "script": _latest_text(post, TextDocument.Kind.SCRIPT),
             "captions": captions,
-            "shotlist": list(post.jrc_shotlist_items.order_by("position", "created_at")),
+            "shotlists": shotlists,
             "videos": list(
                 VideoVersion.objects.filter(video__platform_post__post=post)
                 .exclude(status=VideoVersion.Status.UPLOADING)
-                .select_related("video__platform_post__social_account")
-                .order_by("video__platform_post__social_account__account_name", "-number")
+                .select_related("video__platform_post__social_account__jrc_channel")
+                .order_by(
+                    "video__platform_post__social_account__account_name",
+                    "video__platform_post__output_format",
+                    "-number",
+                )
             ),
             "threads": threads,
             "stage_changes": list(post.jrc_stage_changes.select_related("user").order_by("-created_at")[:20]),

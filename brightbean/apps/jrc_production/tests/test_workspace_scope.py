@@ -681,3 +681,99 @@ def test_remembering_the_default_never_writes_a_deleted_account(org, ella):
     response = RBACMiddleware(view)(request)
     assert response.status_code == 302
     assert not get_user_model().objects.filter(pk=user.pk).exists()
+
+
+# ---- P2-INT3: the overview with outputs (P2-B14) and comments on versions (P2-B16) ----------------
+
+
+@pytest.fixture
+def two_outputs(posts, ella):
+    """Ella's content with two outputs of one YouTube channel: Video (long form) and Shorts (short form)."""
+    from apps.jrc_production.services import add_content_channel
+
+    post = posts["ella"]
+    channel = create_manual_channel(ella, "youtube", "Ella YT")
+    add_content_channel(post, channel.pk, post.author, "long_form")
+    add_content_channel(post, channel.pk, post.author, "short_form")
+    return post
+
+
+def test_overview_board_shows_a_channel_once_with_the_formats_of_its_outputs(org_owner, two_outputs, ella):
+    html = login(org_owner).get(OVERVIEW).content.decode()
+    card = html[html.index(f'data-client="{ella.id}"') :]
+    card = card[: card.index("</article>")]
+    assert card.count('class="ov-channel"') == 1
+    assert "Video, Shorts" in card and "Ella YT" in card
+
+
+def test_overview_summary_keeps_outputs_apart(org_owner, two_outputs):
+    import uuid
+
+    from apps.jrc_production import shotlist
+    from apps.jrc_texts.models import TextDocument, TextVersion
+    from apps.jrc_video.models import VideoAsset, VideoVersion
+
+    post = two_outputs
+    long_form = post.platform_posts.get(output_format="long_form")
+    short_form = post.platform_posts.get(output_format="short_form")
+    for output, text in ((long_form, "Long caption text"), (short_form, "Shorts caption text")):
+        document = TextDocument.objects.create(
+            post=post, kind="caption", platform_post=output, workspace=post.workspace, format="plain"
+        )
+        TextVersion.objects.create(
+            document=document,
+            number=1,
+            state="final",
+            content={"text": text},
+            text=text,
+            created_by=post.author,
+            finalized_at=timezone.now(),
+        )
+        asset = VideoAsset.objects.create(platform_post=output, ff_asset_id=uuid.uuid4())
+        VideoVersion.objects.create(video=asset, number=1, ff_version_id=uuid.uuid4(), status="ready")
+    shotlist.add_item(post, post.author, "Vertical hook shot", output_format="short_form")
+    shotlist.add_item(post, post.author, "Wide intro shot", output_format="long_form")
+
+    html = login(org_owner).get(overview_url(post)).content.decode()
+    assert "YouTube · Video · Ella YT" in html and "YouTube · Shorts · Ella YT" in html
+    captions = html.split('id="ovc-caption"', 1)[1].split("</section>", 1)[0]
+    assert captions.index("YouTube · Video") < captions.index("Long caption text")
+    assert captions.index("YouTube · Shorts") < captions.index("Shorts caption text")
+    videos = html.split('id="ovc-video"', 1)[1].split("</section>", 1)[0]
+    assert "YouTube · Video · Ella YT · v1" in videos and "YouTube · Shorts · Ella YT · v1" in videos
+    # One shotlist per format; the automatic thumbnail item is in the first list.
+    lists = html.split('id="ovc-shotlist"', 1)[1].split("</section>", 1)[0]
+    long_list, short_list = lists.split("<h3>Short form</h3>")
+    assert "<h3>Long form</h3>" in long_list and "Wide intro shot" in long_list and "Thumbnail photo" in long_list
+    assert "Vertical hook shot" in short_list and "Wide intro shot" not in short_list
+
+
+def test_overview_summary_labels_comments_on_versions_and_keeps_visibility(org_admin, org_owner, posts):
+    from apps.approvals import comments
+    from apps.jrc_production import shotlist
+
+    post = posts["secret"]
+    version = shotlist.snapshot(post)
+    comments.create_comment(post, post.author, "TEAM SHOTLIST NOTE", shotlist_version_id=version.pk)
+    shared = comments.create_comment(
+        post, post.author, "CLIENT SHOTLIST NOTE", visibility="external", shotlist_version_id=version.pk
+    )
+    comments.create_comment(post, post.author, "SHOTLIST REPLY", parent_id=shared.pk, shotlist_version_id=version.pk)
+    owner_html = login(org_owner).get(overview_url(post)).content.decode()
+    discussion = owner_html.split('id="ovc-discussion"', 1)[1].split("</section>", 1)[0]
+    assert "TEAM SHOTLIST NOTE" in discussion and "CLIENT SHOTLIST NOTE" in discussion
+    assert discussion.count("Shotlist · V1") == 3 and "SHOTLIST REPLY" in discussion
+    # An organization admin without membership still reads only what a client reads.
+    admin_html = login(org_admin).get(overview_url(post)).content.decode()
+    assert "CLIENT SHOTLIST NOTE" in admin_html and "TEAM SHOTLIST NOTE" not in admin_html
+
+
+def test_overview_calendar_names_the_format_of_each_output(org_owner, two_outputs):
+    post = two_outputs
+    when = timezone.now().replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    for output in post.platform_posts.all():
+        set_publication_date(post, output.pk, post.author, when)
+    html = login(org_owner).get(CALENDAR, {"date": when.date().isoformat()}).content.decode()
+    calendar = html.split('class="cross-calendar-main"', 1)[1].split("</main>", 1)[0]
+    assert ">Video</span>" in calendar and ">Shorts</span>" in calendar
+    assert "YouTube · Shorts · Ella YT" in calendar
