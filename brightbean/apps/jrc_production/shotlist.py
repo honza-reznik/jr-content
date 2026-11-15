@@ -12,7 +12,7 @@ without a format (content without outputs, the thumbnail item) show in the first
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
-from django.db.models import Max
+from django.db.models import F, Max
 
 from apps.composer.models import Post
 
@@ -151,6 +151,7 @@ def add_item(post, user, text, note="", *, membership=None, output_format=""):
         updated_by=user,
     )
     _log(post, item, ShotlistChange.Action.ADDED, user)
+    snapshot(post, output_format)
     return item
 
 
@@ -181,6 +182,8 @@ def update_item(post, item_id, user, *, text=None, note=None, is_done=None, memb
         item.save(update_fields=[*fields, "updated_by", "updated_at"])
     if action:
         _log(post, item, action, user)
+    if fields:
+        snapshot(post, item.output_format)
     return item
 
 
@@ -218,6 +221,8 @@ def move_item(post, item_id, user, *, index=None, offset=None, membership=None):
         item.updated_by = user
         item.save(update_fields=["updated_by", "updated_at"])
     item.refresh_from_db()
+    if changed:
+        snapshot(post, item.output_format)
     return item
 
 
@@ -228,4 +233,71 @@ def delete_item(post, item_id, user, *, membership=None):
     if item.kind == ShotlistItem.Kind.THUMBNAIL:
         raise ValidationError("The thumbnail photo item cannot be deleted. Check it off when the photo is taken.")
     _log(post, item, ShotlistChange.Action.DELETED, user)
+    output_format = item.output_format
     item.delete()
+    snapshot(post, output_format)
+
+
+def snapshot_content(post, output_format=""):
+    return [
+        {"id": str(item.pk), "text": item.text, "note": item.note, "done": item.is_done}
+        for item in items_for(post, output_format)
+    ]
+
+
+def state_token(post, output_format, content=None):
+    """Fingerprint the displayed list; first comments must not silently pin a newer list."""
+    import hashlib
+    import json
+
+    output_format = clean_format(post, output_format)
+    content = snapshot_content(post, output_format) if content is None else content
+    return hashlib.sha256(json.dumps([str(post.pk), output_format, content], sort_keys=True).encode()).hexdigest()
+
+
+def current_version(post, output_format="", *, content=None):
+    """Read only: a fresh/legacy list need not have a saved snapshot yet."""
+    from .models import ShotlistVersion
+
+    output_format = clean_format(post, output_format)
+    latest = ShotlistVersion.objects.filter(post=post, output_format=output_format).order_by("-number").first()
+    content = snapshot_content(post, output_format) if content is None else content
+    return latest if latest and latest.content == content else None
+
+
+def adopt_unformatted_versions(post, output_format):
+    """Caller holds the Post lock. Keep references/content when the first output adopts the list.
+
+    A re-added format may already have history. Append the unformatted history after it so its
+    version numbers cannot collide, while the original format's numbers stay unchanged.
+    """
+    from .models import ShotlistVersion
+
+    unformatted = ShotlistVersion.objects.filter(post=post, output_format="")
+    if output_format and unformatted.exists():
+        offset = (
+            ShotlistVersion.objects.filter(post=post, output_format=output_format).aggregate(last=Max("number"))["last"]
+            or 0
+        )
+        unformatted.update(output_format=output_format, number=F("number") + offset)
+
+
+@transaction.atomic
+def snapshot(post, output_format=""):
+    """Record the current list only when changed. Serializes with all shotlist writers."""
+    from .models import ShotlistVersion
+
+    post = Post.objects.select_for_update().get(pk=post.pk)
+    ensure_thumbnail_item(post)
+    output_format = clean_format(post, output_format)
+    # The first output adopts the list written before channels existed (P2-B14).
+    # Move its history with it, preserving snapshot text and comment references.
+    if output_format and output_format == shotlist_formats(post)[0]:
+        adopt_unformatted_versions(post, output_format)
+    content = snapshot_content(post, output_format)
+    latest = ShotlistVersion.objects.filter(post=post, output_format=output_format).order_by("-number").first()
+    if latest and latest.content == content:
+        return latest
+    return ShotlistVersion.objects.create(
+        post=post, output_format=output_format, number=latest.number + 1 if latest else 1, content=content
+    )

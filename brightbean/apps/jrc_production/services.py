@@ -248,7 +248,9 @@ def add_content_channel(post, account_id, user, output_format=""):
         # The shotlist written before the content had an output is the list of its first format, and
         # stays with that format when more formats are added later (P2-B14).
         from .models import ShotlistItem
+        from .shotlist import adopt_unformatted_versions
 
+        adopt_unformatted_versions(post, output_format)
         ShotlistItem.objects.filter(post=post, kind=ShotlistItem.Kind.ITEM, output_format="").update(
             output_format=output_format
         )

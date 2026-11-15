@@ -963,7 +963,7 @@ Editor v rozhraní, porovnání verzí, kopie popisku do Brightbean a HTTP/MCP r
   nabídne ostatní výstupy obsahu a povinnou otázku „Keep comments?“. `jrc_video/reuse.py` volá jménem uživatele
   FreeFrame `POST /jrc/versions/{id}/duplicate`; cílový výstup dostane hotovou verzi se stejným souborem (bez nahrání a
   převodu). Koncový bod `versions/<id>/duplicate/` je v bráně zápisů (`jrc_ui/write_access.py`).
-- `VideoVersion.copied_from`, `copied_from_label`, `comments_copied` (migrace `jrc_video.0008`); řádek verze ukazuje
+- `VideoVersion.copied_from`, `copied_from_label`, `comments_copied` (migrace `jrc_video.0009`); řádek verze ukazuje
   „Same file as v2 · YouTube · Video · … · comments kept“. History: „Used video v2 · … for YouTube · Shorts · … as v1 ·
   comments kept / without comments“; upozornění o nové verzi říká, odkud video je. Schvalování podle `approvals.edits`
   (rozhoduje finální verze). Testy `apps/jrc_video/tests/test_reuse.py`, živý průchod `scripts/P2-B15/`.

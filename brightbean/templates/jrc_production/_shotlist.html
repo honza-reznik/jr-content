@@ -6,7 +6,7 @@
     {% for item in shotlist_formats %}<a href="?tab=shotlist&amp;format={{ item.value }}" class="shotlist-format{% if item.value == shotlist_format %} is-active{% endif %}" data-shotlist-format="{{ item.value }}"{% if item.value == shotlist_format %} aria-current="page"{% endif %}>{{ item.label }}</a>{% endfor %}
 </nav>
 {% endif %}
-<div class="shotlist-head" data-shotlist-current-format="{{ shotlist_format }}">
+<div class="shotlist-head" data-shotlist-current-format="{{ shotlist_format }}" data-comment-state="{{ shotlist_comment_state }}" data-comment-version="{{ shotlist_comment_version.pk|default:"" }}">
     <div>
         <h2 class="shotlist-title">Shotlist{% if shotlist_formats|length > 1 %} · {{ shotlist_format_label }}{% endif %}</h2>
         <p class="shotlist-help">{% if can_edit_shotlist %}What needs to be shot or created. Click a text to change it; changes save automatically.{% else %}What the team needs to shoot or create for this content.{% endif %}</p>

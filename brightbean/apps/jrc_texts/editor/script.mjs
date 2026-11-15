@@ -177,6 +177,8 @@ function mount(panel) {
   // Version line, saved versions and comparison; never touches the text being typed.
   function renderMeta() {
     const shown = selected ? state.shown : state.versions.find(version => version.id === state.latest)
+    panel.dataset.commentVersion = shown?.id || ''
+    panel.dataset.commentRevision = String(shown?.revision || 0)
     $('version').textContent = shown
       ? `${versionLabel(shown)} · ${shown.id === state.latest ? 'Latest' : 'Older version, read only'} · ${date(shown.saved_at)} · ${shown.author}`
       : (state.can_edit ? `No ${noun} yet. Start typing below; it saves automatically.` : (panel.dataset.empty || `No ${noun} yet.`))

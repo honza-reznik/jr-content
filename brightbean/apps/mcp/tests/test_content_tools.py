@@ -513,3 +513,42 @@ def test_client_content_reads_hide_drafts_and_internal_comments(owner, owner_cli
     assert "Internal only sentinel" not in json.dumps(client_caption)
     assert client_comments == []
     assert client_user.pk != user.pk
+
+
+@pytest.mark.django_db
+def test_mcp_version_comments_metadata_snapshot_and_role_downgrade(owner, owner_client):
+    user, workspace, _, _, post, _ = owner
+    document = TextDocument.objects.create(post=post, workspace=workspace, kind="script")
+    version = TextVersion.objects.create(
+        document=document,
+        number=1,
+        state="final",
+        content={
+            "type": "doc",
+            "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Exact MCP version"}]}],
+        },
+        text="Exact MCP version",
+        created_by=user,
+        finalized_at=timezone.now(),
+    )
+    added = _result(
+        _call(
+            owner_client,
+            "jrc_add_comment",
+            {
+                "post_id": str(post.pk),
+                "body": "Version from MCP",
+                "text_version_id": str(version.pk),
+                "version_revision": 0,
+            },
+        )
+    )
+    assert added["section"] == "script" and added["version_number"] == 1
+    listed = _result(_call(owner_client, "jrc_list_comments", {"post_id": str(post.pk)}))
+    assert listed[0]["text_version_id"] == str(version.pk)
+    args = {"post_id": str(post.pk), "comment_id": added["id"]}
+    result = _result(_call(owner_client, "jrc_get_comment_version", args))
+    assert result == {"number": 1, "text": "Exact MCP version"}
+    WorkspaceMembership.objects.filter(user=user, workspace=workspace).update(workspace_role="client")
+    assert _result(_call(owner_client, "jrc_list_comments", {"post_id": str(post.pk)})) == []
+    assert "error" in _call(owner_client, "jrc_get_comment_version", args)
