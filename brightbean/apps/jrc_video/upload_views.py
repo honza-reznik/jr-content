@@ -27,7 +27,8 @@ def _context(request, workspace_id, post_id):
     workspace = get_object_or_404(Workspace, pk=workspace_id)
     membership = WorkspaceMembership.objects.filter(user=request.user, workspace=workspace).first()
     if membership is None:
-        raise PermissionDenied("You are not a member of this workspace.")
+        # The same answer RBACMiddleware gives a stranger on every jrc_* URL (P2-FABLE).
+        raise Http404
     post = get_object_or_404(Post.objects.select_related("workspace"), pk=post_id, workspace=workspace)
     return workspace, membership, post
 

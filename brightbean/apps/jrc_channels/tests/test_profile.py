@@ -168,8 +168,8 @@ def test_custom_permissions_are_respected(editor, workspace, user, allowed):
 def test_cannot_access_other_workspace_or_edit_other_channel(editor, workspace, organization):
     other = Workspace.objects.create(organization=organization, name="Private client")
     account = create_manual_channel(other, "custom", "Private channel")
-    assert editor.get(url(other)).status_code in {403, 404}
-    assert editor.post(url(other), {"platform": "custom", "name": "Intruder"}).status_code in {403, 404}
+    assert editor.get(url(other)).status_code == 404  # P2-FABLE: one answer for a stranger on every jrc_* URL
+    assert editor.post(url(other), {"platform": "custom", "name": "Intruder"}).status_code == 404
     assert editor.post(url(workspace, "edit", account), {"name": "Intruder"}).status_code == 404
     assert editor.post(url(workspace, "toggle", account), {"enabled": "false"}).status_code == 404
     assert b"Private channel" not in editor.get(url(workspace)).content

@@ -501,6 +501,19 @@ def test_channel_removal_preserves_thumbnail_history_and_parent_can_be_deleted(p
     assert not ChannelThumbnail.objects.exists()
 
 
+def test_deleting_content_removes_thumbnail_files_from_storage(post, variant, user, django_capture_on_commit_callbacks):
+    """P2-FABLE: emptying the Trash (``post.delete()``) must not leave the images in the bucket."""
+    from django.core.files.storage import default_storage
+
+    first, second = upload(post, variant, user), upload(post, variant, user)
+    names = [first.image.name, first.small_image.name, second.image.name, second.small_image.name]
+    assert all(names) and all(default_storage.exists(name) for name in names)
+    with django_capture_on_commit_callbacks(execute=True):
+        post.delete()
+    assert not ChannelThumbnail.objects.exists()
+    assert not any(default_storage.exists(name) for name in names)
+
+
 @pytest.mark.parametrize(
     "role,own,allowed",
     [

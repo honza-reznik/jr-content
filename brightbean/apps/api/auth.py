@@ -280,6 +280,11 @@ def _resolve_oauth_actor(token: str) -> OAuthMcpActor | None:
         # WARNING: a token row with no user is a data anomaly, not normal traffic.
         LOG.warning("Bearer auth rejected: OAuth access token %s is not bound to a user.", tok.pk)
         return None
+    if not tok.user.is_active:
+        # JR Content P2-FABLE: a deactivated account cannot sign in to the web and gets no FreeFrame
+        # ticket; a token it obtained earlier (and its refresh token) must not keep MCP working.
+        LOG.info("Bearer auth rejected: OAuth access token for user %s belongs to a deactivated account.", tok.user_id)
+        return None
     # is_valid([scope]) == (not is_expired()) and allow_scopes([scope]); split so the
     # log names whether expiry or scope was the cause.
     if tok.is_expired():

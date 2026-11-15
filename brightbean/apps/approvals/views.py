@@ -348,8 +348,13 @@ def version_diff(request, workspace_id, post_id):
     v2_num = request.GET.get("v2")
 
     if v1_num and v2_num:
-        version_old = versions.filter(version_number=int(v1_num)).first()
-        version_new = versions.filter(version_number=int(v2_num)).first()
+        # JR Content P2-FABLE: a version number that is not a number is a bad request, not an error page.
+        try:
+            v1_num, v2_num = int(v1_num), int(v2_num)
+        except ValueError:
+            return HttpResponse("Choose two version numbers.", status=400)
+        version_old = versions.filter(version_number=v1_num).first()
+        version_new = versions.filter(version_number=v2_num).first()
     elif versions.count() >= 2:
         version_new = versions[0]
         version_old = versions[1]

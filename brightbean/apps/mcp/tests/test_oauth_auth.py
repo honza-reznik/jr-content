@@ -175,6 +175,18 @@ class TestMcpOAuthChallenge:
         r = c.post(MCP_URL, data=json.dumps(_rpc("ping")), content_type="application/json")
         assert r.status_code == 401
 
+    def test_token_for_deactivated_user_returns_401(self):
+        """P2-FABLE: a deactivated account keeps its memberships but must not keep MCP access."""
+        from apps.accounts.models import User
+
+        user, _ws, _sa = _make_user_with_workspace("blocked-oauth@example.com", WorkspaceMembership.WorkspaceRole.OWNER)
+        raw = _mint_oauth_token(user)
+        c = _SecureClient(HTTP_AUTHORIZATION=f"Bearer {raw}")
+        assert c.post(MCP_URL, data=json.dumps(_rpc("ping")), content_type="application/json").status_code == 200
+        User.objects.filter(pk=user.pk).update(is_active=False)
+        r = c.post(MCP_URL, data=json.dumps(_rpc("ping")), content_type="application/json")
+        assert r.status_code == 401
+
 
 @pytest.mark.django_db
 class TestMcpOAuthSuccess:

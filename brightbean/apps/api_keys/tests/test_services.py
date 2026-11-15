@@ -278,6 +278,29 @@ class TestVerifyToken:
 
         assert services.verify_token(issued.plaintext_token) is None
 
+    def test_issuer_deactivated_returns_none(self, workspace, workspace_owner, social_account):
+        """P2-FABLE: a deactivated issuer (``is_active=False``) cannot sign in or get a FreeFrame
+        ticket; the key they issued must die with the account, not only with the membership."""
+        from django.core.cache import cache as _cache
+
+        issued = services.issue_api_key(
+            workspace=workspace,
+            social_accounts=[social_account],
+            issued_by=workspace_owner.user,
+            name="deactivated",
+            permissions=[],
+        )
+        assert services.verify_token(issued.plaintext_token) is not None
+
+        type(workspace_owner.user).objects.filter(pk=workspace_owner.user_id).update(is_active=False)
+        _cache.delete(services._active_cache_key(issued.api_key.lookup_prefix))
+        assert services.verify_token(issued.plaintext_token) is None
+
+        # Reactivating the account brings the key back: nothing about the key itself changed.
+        type(workspace_owner.user).objects.filter(pk=workspace_owner.user_id).update(is_active=True)
+        _cache.delete(services._active_cache_key(issued.api_key.lookup_prefix))
+        assert services.verify_token(issued.plaintext_token) is not None
+
     def test_issuer_deleted_returns_none(self, workspace, workspace_owner, social_account):
         """If the issuer is hard-deleted, ``issued_by`` is set to NULL by
         ``on_delete=SET_NULL``. verify_token must reject the now-orphaned key.

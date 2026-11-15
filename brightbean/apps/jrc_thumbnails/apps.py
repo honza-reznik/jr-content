@@ -6,3 +6,6 @@ class JrcThumbnailsConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.jrc_thumbnails"
     verbose_name = "JR Content channel thumbnails"
+
+    def ready(self):
+        from . import signals  # noqa: F401

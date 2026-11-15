@@ -895,11 +895,15 @@ def content_detail(request, workspace_id, post_id):
         target = request.POST.get("platform_post", "")
         variant = None
         if not target.startswith("new:"):
-            variant = get_object_or_404(
-                PlatformPost.objects.select_related("post", "social_account"),
-                pk=target,
-                post=post,
-            )
+            try:
+                variant = get_object_or_404(
+                    PlatformPost.objects.select_related("post", "social_account"),
+                    pk=target,
+                    post=post,
+                )
+            except ValidationError:
+                # Not a UUID at all: the same answer as an unknown copy, not an error page (P2-FABLE).
+                raise Http404 from None
         # Textareas can submit Windows-style line endings even though the browser
         # counter treats every newline as one character. Store and count one form.
         caption = request.POST.get("caption", "").replace("\r\n", "\n").replace("\r", "\n")
@@ -1568,7 +1572,8 @@ def _comment_post_for_member(request, workspace_id, post_id):
     workspace = get_object_or_404(Workspace, pk=workspace_id)
     membership = WorkspaceMembership.objects.filter(user=request.user, workspace=workspace).first()
     if membership is None:
-        raise PermissionDenied("You are not a member of this workspace.")
+        # The same answer RBACMiddleware gives a stranger on every jrc_* URL (P2-FABLE).
+        raise Http404
     post = get_object_or_404(Post, pk=post_id, workspace=workspace)
     return workspace, post
 

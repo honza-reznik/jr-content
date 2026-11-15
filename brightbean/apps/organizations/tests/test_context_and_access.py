@@ -126,7 +126,9 @@ def test_role_matrix(role, access, client, name, method, ids, data):
                 expected = 422  # An admin cannot promote another member to admin.
             assert response.status_code == expected, (role, name, response.status_code)
     else:
-        assert response.status_code == 403, (role, name, response.status_code)
+        # P2-FABLE: a workspace the person is not a member of is "not found" on every jrc_* URL.
+        expected = 404 if name.startswith("jrc_") and role == "nonmember" else 403
+        assert response.status_code == expected, (role, name, response.status_code)
         org.refresh_from_db()
         workspace.refresh_from_db()
         key.refresh_from_db()
@@ -422,7 +424,7 @@ def test_action_get_cannot_mutate(role, access, client, name, method, ids, data)
     # The method decorators on channel actions and workspace creation run first.
     expected = 405 if is_ws or name == "workspaces:create" or role in {"owner", "org_admin"} else 403
     if is_ws and role == "nonmember":
-        expected = 403
+        expected = 404  # P2-FABLE: a stranger never learns the client exists
     assert client.get(reverse(name, kwargs=kwargs), data).status_code == expected
     assert Organization.objects.filter(pk=org.pk, name="Team").exists()
     assert Workspace.objects.filter(pk=workspace.pk, name="Main", is_archived=False).exists()
