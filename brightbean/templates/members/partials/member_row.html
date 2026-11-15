@@ -18,6 +18,9 @@
                 {% if member.user.id == current_user.id %}
                 <span class="text-xs px-1.5 py-0.5 rounded" style="background: var(--neutral-100); color: var(--text-tertiary);">you</span>
                 {% endif %}
+                {% if member.user.totp_enabled %}
+                <span class="text-xs font-medium px-1.5 py-0.5 rounded whitespace-nowrap" style="background: #ECFDF3; color: #166534;" title="Two-factor authentication is on" data-testid="member-2fa">2FA</span>
+                {% endif %}
             </div>
             <div class="text-xs truncate" style="color: var(--text-tertiary);">{{ member.user.email }}</div>
         </div>
@@ -84,6 +87,21 @@
                         style="color: var(--text-primary);">
                     Manage Workspaces
                 </button>
+
+                {# JR Content P2-B17: only the organization owner resets a member's two-factor authentication. #}
+                {% if member.user.totp_enabled and request.org_membership.org_role == "owner" %}
+                <form hx-post="{% url 'members:reset_two_factor' membership_id=member.membership.id %}"
+                      hx-target="#member-{{ member.membership.id }}"
+                      hx-swap="outerHTML"
+                      hx-confirm="Reset two-factor authentication for {{ member.user.display_name }}? They will sign in with their password only until they set it up again. This is recorded in the audit log.">
+                    {% csrf_token %}
+                    <button type="submit"
+                            class="btn-neutral-surface w-full text-left px-3 py-2 text-sm cursor-pointer transition-colors"
+                            style="color: var(--text-primary);">
+                        Reset two-factor authentication
+                    </button>
+                </form>
+                {% endif %}
 
                 <!-- Remove Member -->
                 <form hx-post="{% url 'members:remove' membership_id=member.membership.id %}"

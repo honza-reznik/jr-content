@@ -319,18 +319,22 @@ def test_new_content_page_prefills_the_calendar_slot(http, workspace, channel):
     assert stages == ["idea", "script", "shooting", "editing", "review", "ready"]
 
 
-def test_new_content_page_offers_the_client_only_when_unclear(http, workspace, organization, user):
+def test_new_content_page_never_asks_for_the_client(http, workspace, organization, user):
+    # P2-B13 (4g): new content is created in the current client; the page names it, never asks.
     html = http.get(reverse(NEW)).content.decode()
     assert 'id="new-content-client"' not in html and f'name="workspace" value="{workspace.pk}"' in html
     other = Workspace.objects.create(organization=organization, name="Other")
     WorkspaceMembership.objects.create(workspace=other, user=user, workspace_role="owner")
+    user.last_workspace_id = workspace.pk
+    user.save(update_fields=["last_workspace_id"])
     html = http.get(reverse(NEW)).content.decode()
-    assert 'id="new-content-client"' in html
+    assert 'id="new-content-client"' not in html and f'name="workspace" value="{workspace.pk}"' in html
+    # A link naming another client of the user opens the page in that client.
     html = http.get(reverse(NEW), {"client": other.pk}).content.decode()
     assert 'id="new-content-client"' not in html and f'name="workspace" value="{other.pk}"' in html
-    # A client the user does not belong to is never preselected.
+    # A client the user does not belong to is missing.
     stranger = Workspace.objects.create(organization=organization, name="Stranger")
-    assert 'id="new-content-client"' in http.get(reverse(NEW), {"client": stranger.pk}).content.decode()
+    assert http.get(reverse(NEW), {"client": stranger.pk}).status_code == 404
 
 
 def test_viewer_gets_no_new_content_page(client, workspace):
@@ -454,11 +458,12 @@ def test_menu_new_creates_for_the_current_client(http, workspace, user, organiza
     assert f'href="{reverse(NEW)}?client={workspace.pk}" data-new-content-link' in html
     window = html[html.index('id="jrc-new-idea"') :]
     assert f'name="workspace" value="{workspace.pk}"' in window
-    # On the board for all clients the window asks which client.
+    # P2-B13: with another client too, the window never asks; it creates for the current client.
     other = Workspace.objects.create(organization=organization, name="Other")
     WorkspaceMembership.objects.create(workspace=other, user=user, workspace_role="owner")
     html = http.get(reverse(BOARD), {"client": ""}).content.decode()
-    assert 'id="new-idea-client"' in html
+    window = html[html.index('id="jrc-new-idea"') :]
+    assert 'id="new-idea-client"' not in html and f'name="workspace" value="{workspace.pk}"' in window
 
 
 def test_viewer_sees_no_new_menu_or_window(client, workspace):
@@ -482,9 +487,10 @@ def test_window_on_the_new_content_page_creates_for_the_client_the_page_shows(ht
     assert f'name="workspace" value="{other.pk}"' in window
     assert f'name="workspace" value="{workspace.pk}"' not in window
     assert f'href="{reverse(NEW)}?client={other.pk}" data-new-content-link' in html
-    # Without a clear client on the page the window asks too.
+    # P2-B13: the page made ``other`` current, so the plain page and its window stay on it.
     html = http.get(reverse(NEW)).content.decode()
-    assert 'id="new-idea-client"' in html[html.index('id="jrc-new-idea"') :]
+    window = html[html.index('id="jrc-new-idea"') :]
+    assert 'id="new-idea-client"' not in window and f'name="workspace" value="{other.pk}"' in window
 
 
 @pytest.mark.parametrize(
@@ -507,17 +513,16 @@ def test_new_content_ignores_an_invalid_slot(http, workspace, date, time):
     assert response.status_code == 200 and response.context["values"]["publish_at"] == ""
 
 
-@pytest.mark.parametrize("view", ["day", "week"])
-def test_organization_calendar_slots_send_a_two_digit_hour(http, workspace, organization, user, view):
+@pytest.mark.parametrize("view", ["month", "day", "week"])
+def test_organization_calendar_is_read_only(http, workspace, organization, user, view):
+    # P2-B13: the organization calendar is the admin overview; it creates nothing (no slot links).
     from apps.members.models import OrgMembership
 
     OrgMembership.objects.get_or_create(organization=organization, user=user, defaults={"org_role": "owner"})
-    html = http.get(
-        reverse("organizations:cross_workspace_calendar"), {"view": view, "date": "2030-01-02"}
-    ).content.decode()
-    times = re.findall(r"new/\?client=[^\"]*?&(?:amp;)?time=([0-9:]+)\"", html)
-    assert times and all(re.fullmatch(r"\d{2}:\d{2}", value) for value in times), times[:5]
-    assert "08:00" in times
+    response = http.get(reverse("organizations:cross_workspace_calendar"), {"view": view, "date": "2030-01-02"})
+    assert response.status_code == 200
+    calendar = response.content.decode().split('class="cross-calendar-main"', 1)[1].split("</main>", 1)[0]
+    assert "new/?client=" not in calendar and 'class="cal-add-btn"' not in calendar
 
 
 def test_composer_views_never_send_to_the_old_editor(http, workspace, user, channel):

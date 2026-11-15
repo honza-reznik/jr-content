@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% comment %}JR Content: přidáno 2026-11-14 (blok P2-B17), AGPL-3.0. Druhý krok přihlášení (2FA).{% endcomment %}
+{% load static %}
+
+{% block title %}Two-factor authentication · JR Content{% endblock %}
+
+{% block auth_content %}
+<style>
+  .auth-card .btn-brand {
+    background-color: #93a240;
+    box-shadow: 0 4px 14px rgba(147, 162, 64, 0.28);
+  }
+  .auth-card .btn-brand:hover {
+    background-color: #849139;
+    box-shadow: 0 6px 20px rgba(147, 162, 64, 0.35);
+  }
+  .auth-card .btn-brand:focus {
+    box-shadow: 0 0 0 3px rgba(147, 162, 64, 0.35);
+  }
+  .two-factor-code {
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    letter-spacing: 0.25em;
+    text-align: center;
+    font-size: 1.125rem;
+  }
+</style>
+<div class="w-full max-w-md px-4" x-data="{ mode: '{{ mode }}' }">
+    <div class="text-center mb-8">
+        <div class="inline-flex items-center justify-center w-12 h-12 mb-4">
+            <img src="{% static 'img/jrc-logo.svg' %}" alt="JR Content logo" class="w-12 h-12 object-contain">
+        </div>
+        <span class="block text-[11px] font-semibold uppercase tracking-widest mb-2" style="color: #93a240;">JR Content</span>
+        <h1 class="text-2xl font-bold tracking-tight" style="color: var(--text-primary);">Two-factor authentication</h1>
+        <p class="text-sm mt-1 break-words" style="color: var(--text-secondary);">
+            <span x-show="mode === 'app'">Enter the 6-digit code from your authenticator app for <strong>{{ login_email }}</strong>.</span>
+            <span x-show="mode === 'recovery'" x-cloak>Enter one of the recovery codes you saved when you turned on two-factor authentication.</span>
+        </p>
+    </div>
+
+    <div class="auth-card">
+        {% if error %}
+        <div class="mb-5 alert-error" role="alert">{{ error }}</div>
+        {% endif %}
+
+        <form method="post" novalidate>
+            {% csrf_token %}
+            <input type="hidden" name="mode" :value="mode" value="{{ mode }}">
+            <div class="mb-5">
+                <label for="two-factor-code" class="block text-sm font-semibold mb-1.5" style="color: var(--text-primary);">
+                    <span x-show="mode === 'app'">Authentication code</span>
+                    <span x-show="mode === 'recovery'" x-cloak>Recovery code</span>
+                </label>
+                <input type="text" name="code" id="two-factor-code" required autofocus
+                       autocomplete="one-time-code" maxlength="20" spellcheck="false" autocapitalize="off"
+                       :inputmode="mode === 'app' ? 'numeric' : 'text'"
+                       :placeholder="mode === 'app' ? '123456' : 'xxxxx-xxxxx'"
+                       inputmode="{% if mode == 'recovery' %}text{% else %}numeric{% endif %}"
+                       placeholder="{% if mode == 'recovery' %}xxxxx-xxxxx{% else %}123456{% endif %}"
+                       class="form-input-styled two-factor-code {% if error %}is-error{% endif %}">
+            </div>
+            <button type="submit" class="btn-brand">Verify</button>
+        </form>
+
+        <div class="mt-5 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <button type="button" class="font-medium hover:underline cursor-pointer" style="color: var(--primary-text);"
+                    x-show="mode === 'app'" @click="mode = 'recovery'; $nextTick(() => document.getElementById('two-factor-code').focus())">
+                Use a recovery code
+            </button>
+            <button type="button" class="font-medium hover:underline cursor-pointer" style="color: var(--primary-text);"
+                    x-show="mode === 'recovery'" x-cloak @click="mode = 'app'; $nextTick(() => document.getElementById('two-factor-code').focus())">
+                Use the authenticator app
+            </button>
+            <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="cancel">
+                <button type="submit" class="font-medium hover:underline cursor-pointer" style="color: var(--text-secondary);">Cancel and log in again</button>
+            </form>
+        </div>
+    </div>
+
+    <p class="text-center text-xs mt-6 leading-relaxed" style="color: var(--text-tertiary);">
+        Lost your phone and your recovery codes? Ask the owner of your organization to reset two-factor authentication.
+    </p>
+</div>
+{% endblock %}

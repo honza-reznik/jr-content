@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% comment %}JR Content: přidáno 2026-11-14 (blok P2-B13, oprava po review), AGPL-3.0. Stránka s hlášením, když formulář patřil
+jinému klientovi, než je aktuální (stav 409, nic se neuložilo).{% endcomment %}
+{% block title %}Nothing was saved · JR Content{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-xl p-6" role="alert">
+  <h1 class="text-lg font-semibold text-stone-900">Nothing was saved</h1>
+  <p class="mt-2 text-sm text-stone-700">{{ message }}</p>
+  <p class="mt-4"><a class="text-sm font-medium text-indigo-700 underline" href="{{ reload_url }}">Reload the page</a></p>
+</div>
+{% endblock %}

@@ -1,4 +1,4 @@
-from allauth.account.signals import user_signed_up
+from allauth.account.signals import password_reset, user_signed_up
 from django.dispatch import receiver
 from django.utils import timezone
 
@@ -116,3 +116,17 @@ def create_organization_on_signup(sender, request, user, **kwargs):
     if not kwargs.get("sociallogin"):
         user.tos_accepted_at = timezone.now()
         user.save(update_fields=["tos_accepted_at"])
+
+
+# JR Content: přidáno 2026-11-14 (blok P2-B17), AGPL-3.0.
+@receiver(password_reset)
+def clear_two_factor_failures_on_password_reset(sender, request, user, **kwargs):
+    """A completed email reset proves the mailbox; lift the 2FA lockout, keep 2FA itself on.
+
+    Without this, someone who knows the old password could keep the owner locked
+    out by typing wrong codes. The reset never turns two-factor off: the next
+    login still asks for the code.
+    """
+    from apps.accounts import twofactor
+
+    twofactor.clear_failures(user)

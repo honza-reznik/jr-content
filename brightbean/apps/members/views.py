@@ -386,6 +386,57 @@ def remove_member(request, membership_id):
 
 
 # ---------------------------------------------------------------------------
+# Reset Two-Factor Authentication (JR Content P2-B17)
+# ---------------------------------------------------------------------------
+
+
+@login_required
+@require_org_role("owner")
+@require_POST
+def reset_member_two_factor(request, membership_id):
+    """Owner turns off a member's two-factor authentication (lost phone and codes); audited."""
+    from django.contrib import messages
+
+    from apps.accounts import twofactor
+
+    membership = get_object_or_404(OrgMembership, id=membership_id, organization=request.org)
+    if membership.user_id == request.user.id:
+        return HttpResponse(
+            '<div class="text-red-600 text-sm">Change your own two-factor authentication in Settings → Security.</div>',
+            status=422,
+        )
+    was_on = twofactor.reset_by_admin(membership.user, actor=request.user, organization=request.org, request=request)
+
+    if request.headers.get("HX-Request"):
+        org_workspace_ids = Workspace.objects.filter(organization=request.org, is_archived=False).values_list(
+            "id", flat=True
+        )
+        ws_memberships = WorkspaceMembership.objects.filter(
+            user=membership.user,
+            workspace_id__in=org_workspace_ids,
+        ).select_related("workspace")
+        return render(
+            request,
+            "members/partials/member_row.html",
+            {
+                "member": {
+                    "membership": membership,
+                    "user": membership.user,
+                    "workspace_memberships": list(ws_memberships),
+                },
+                "is_admin": True,
+                "current_user": request.user,
+                "workspace_role_choices": WorkspaceMembership.WorkspaceRole.choices,
+                "org_role_choices": _org_role_choices_for(request.org_membership),
+            },
+        )
+    if was_on:
+        messages.success(request, f"Two-factor authentication was reset for {membership.user.email}.")
+    activate_organization(request, request.org)  # Non-htmx fallback after a successful change.
+    return redirect("members:list")
+
+
+# ---------------------------------------------------------------------------
 # Manage Workspace Assignments
 # ---------------------------------------------------------------------------
 

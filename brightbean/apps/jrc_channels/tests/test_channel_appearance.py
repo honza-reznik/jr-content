@@ -324,6 +324,15 @@ def test_colour_rendered_in_board_detail_publish_and_overview(owner, workspace, 
         response = owner.get(address)
         assert response.status_code == 200
         assert b"background:#00FF00;color:#000000" in response.content
+    # P2-B13: the admin overview board (organization owner and admins) colours channels the same way.
+    from apps.members.models import OrgMembership
+
+    OrgMembership.objects.update_or_create(
+        user=user, organization=workspace.organization, defaults={"org_role": OrgMembership.OrgRole.ADMIN}
+    )
+    response = owner.get(reverse("jrc_production:overview_board"))
+    assert response.status_code == 200
+    assert b"background:#00FF00;color:#000000" in response.content
 
 
 def test_refresh_failure_keeps_icon_and_known_platform_is_rejected(owner, workspace, local_storage):
@@ -457,10 +466,17 @@ def test_organization_overview_event_uses_channel_colour(owner, workspace, user,
     variant.status = "scheduled"
     variant.scheduled_at = timezone.now()
     variant.save()
+    # P2-B13: the organization calendar is the admin overview, for the organization owner and admins.
+    from apps.members.models import OrgMembership
+
+    OrgMembership.objects.update_or_create(
+        user=user, organization=workspace.organization, defaults={"org_role": OrgMembership.OrgRole.ADMIN}
+    )
     # Navigate through the workspace, as the UI does, to select its organization.
     assert owner.get(reverse("jrc_channels:profile", kwargs={"workspace_id": workspace.pk})).status_code == 200
     response = owner.get(reverse("organizations:cross_workspace_calendar"), {"view": view})
     assert response.status_code == 200
     events = Events()
     events.feed(response.content.decode())
-    assert events.styles == ["background:#FFFF00;color:#000000"]
+    # The channel colour fills the event; the client's colour stays on its edge (P2-B13).
+    assert events.styles == [f"background:#FFFF00;color:#000000;border-left:3px solid {workspace.accent_color}"]

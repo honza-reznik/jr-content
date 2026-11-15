@@ -245,19 +245,13 @@ def _resolve_active_membership(user: Any):
     Mirrors the dashboard's "current workspace" notion (see
     ``apps.members.middleware.RBACMiddleware``): the user's
     ``last_workspace_id`` when they still have a non-archived membership
-    there, else their earliest-joined non-archived membership. Returns None
+    there, else their earliest-joined non-archived membership (one shared rule,
+    ``default_workspace_membership``). Returns None
     when the user has no usable workspace — the caller refuses the auth.
     """
-    from apps.members.models import WorkspaceMembership
+    from apps.members.services import default_workspace_membership
 
-    base = WorkspaceMembership.objects.select_related("workspace", "custom_role").filter(
-        user=user, workspace__is_archived=False
-    )
-    if getattr(user, "last_workspace_id", None):
-        current = base.filter(workspace_id=user.last_workspace_id).first()
-        if current is not None:
-            return current
-    return base.order_by("added_at").first()
+    return default_workspace_membership(user)
 
 
 def _resolve_oauth_actor(token: str) -> OAuthMcpActor | None:

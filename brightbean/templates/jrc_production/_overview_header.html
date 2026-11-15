@@ -1,0 +1,22 @@
+{% comment %}JR Content: přidáno 2026-11-14 (blok P2-B13), AGPL-3.0. Hlavička admin přehledu (nástěnka | kalendář).
+Context: organization, overview_tab ("board" | "calendar").{% endcomment %}
+<style>
+  .overview-header { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; margin-bottom:14px; }
+  .overview-header h1 { margin:0; font-size:22px; font-weight:700; letter-spacing:-.5px; color:#1c1917; }
+  .overview-header .overview-org { font-size:13px; color:#78716c; }
+  .overview-tabs { display:inline-flex; gap:4px; padding:3px; border-radius:10px; background:#f5f5f4; }
+  .overview-tabs a { display:inline-flex; align-items:center; min-height:36px; padding:6px 14px; border-radius:8px; font-size:13px; font-weight:600; color:#57534e; text-decoration:none; }
+  .overview-tabs a:hover { color:#1c1917; background:#e7e5e4; }
+  .overview-tabs a:focus-visible { outline:2px solid #f97316; outline-offset:1px; }
+  .overview-tabs a[aria-current="page"] { background:white; color:#1c1917; box-shadow:0 1px 2px #0000001a; }
+  .overview-note { flex-basis:100%; margin:0; font-size:12px; color:#78716c; line-height:1.45; }
+</style>
+<header class="overview-header">
+  <h1>Admin overview</h1>
+  <span class="overview-org">{{ organization.name }} · all clients</span>
+  <nav class="overview-tabs" aria-label="Admin overview">
+    <a href="{% url 'jrc_production:overview_board' %}"{% if overview_tab == "board" %} aria-current="page"{% endif %}>Board</a>
+    <a href="{% url 'organizations:cross_workspace_calendar' %}"{% if overview_tab == "calendar" %} aria-current="page"{% endif %}>Calendar</a>
+  </nav>
+  <p class="overview-note">Read only. Only organization owners and admins see this overview. To work on content, open it in its client (you need to be a member there).</p>
+</header>
