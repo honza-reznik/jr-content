@@ -10,6 +10,9 @@
 - `approvals.views.version_diff`: nečíselné `v1`/`v2` odpoví 400 místo chyby 500.
 - Náhledy kanálů: trvalé smazání obsahu (vyprázdnění koše) smaže po potvrzení transakce i soubory náhledů
   z bucketu `jrc-app` (`jrc_thumbnails.signals`), stejně jako přepisy videa.
+- `RBACMiddleware`: nečlen dostane na každé adrese JR s workspace (všechny jmenné prostory `jrc_*`) 404, ne 403;
+  dosud video a kanály odpovídaly 403 a potvrzovaly tak existenci cizího klienta. Upstream stránky nechávají 403.
+  Test `members/tests/test_jrc_stranger_404.py` projde všechny registrované cesty `jrc_*` s `workspace_id`.
 
 ## 2026-11-14 — P2-B12
 

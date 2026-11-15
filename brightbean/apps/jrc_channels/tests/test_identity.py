@@ -184,9 +184,10 @@ def test_icon_cannot_override_known_platform(owner, workspace):
 def test_foreign_workspace_and_anonymous(client, owner, workspace, organization):
     other = Workspace.objects.create(organization=organization, name="Other")
     account = create_manual_channel(other, "custom", "Hidden")
-    assert owner.post(url(other), {"color": "#000000"}).status_code == 403
+    # P2-FABLE: a workspace the person is not a member of is "not found" on every jrc_* URL.
+    assert owner.post(url(other), {"color": "#000000"}).status_code == 404
     assert owner.post(url(workspace, "icon", account), {"icon": image()}).status_code == 404
-    assert owner.post(url(other, "icon", account), {"icon": image()}).status_code == 403
+    assert owner.post(url(other, "icon", account), {"icon": image()}).status_code == 404
     owner.logout()
     assert client.post(url(workspace), {"color": "#000000"}).status_code == 302
     assert client.post(url(other, "icon", account), {"icon": image()}).status_code == 302

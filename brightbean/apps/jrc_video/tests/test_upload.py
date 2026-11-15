@@ -263,7 +263,7 @@ def test_stranger_and_anonymous(client, ff, workspace, setup):
     assert start(client, workspace, setup).status_code == 302  # login required
     stranger = User.objects.create_user(email="s@example.com", password="x", tos_accepted_at=timezone.now())
     client.force_login(stranger)
-    assert start(client, workspace, setup).status_code == 403
+    assert start(client, workspace, setup).status_code == 404  # P2-FABLE: a stranger never learns the client exists
     assert ff.calls == []
 
 

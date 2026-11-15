@@ -201,7 +201,7 @@ def test_stranger_anonymous_and_archived_workspace(client, ff, workspace, user, 
     assert final(client, workspace, setup, versions[0]).status_code == 302
     stranger = User.objects.create_user(email="s@example.com", password="x", tos_accepted_at=timezone.now())
     client.force_login(stranger)
-    assert final(client, workspace, setup, versions[0]).status_code == 403
+    assert final(client, workspace, setup, versions[0]).status_code == 404  # P2-FABLE: 404 for a stranger
     client.force_login(user)
     workspace.is_archived = True
     workspace.save()

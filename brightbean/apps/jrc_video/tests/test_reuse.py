@@ -261,7 +261,7 @@ def test_contributor_only_on_own_content_like_uploading(client, ff, workspace, u
 def test_archived_workspace_and_non_member(client, ff, workspace, user, world, organization):
     stranger = User.objects.create_user(email="s@example.com", password="x", name="S", tos_accepted_at=timezone.now())
     client.force_login(stranger)
-    assert use(client, workspace, world).status_code == 403
+    assert use(client, workspace, world).status_code == 404  # P2-FABLE: a stranger never learns the client exists
     client.force_login(user)
     Workspace.objects.filter(pk=workspace.pk).update(is_archived=True)
     assert use(client, workspace, world).status_code == 403

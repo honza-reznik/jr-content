@@ -186,11 +186,9 @@ class RBACMiddleware:
             .select_related("workspace__organization", "custom_role")
             .first()
         )
-        hide_unavailable_workspace = request.resolver_match.namespace in (
-            "jrc_production",
-            "jrc_texts",
-            "jrc_thumbnails",
-        ) or (request.resolver_match.namespace == "jrc_video" and request.resolver_match.url_name == "final_download")
+        # JR Content (P2-FABLE): every JR page and endpoint (``jrc_*`` namespaces) answers a stranger with
+        # 404, so a guessed workspace id never confirms that the client exists. Upstream pages keep 403.
+        hide_unavailable_workspace = (request.resolver_match.namespace or "").startswith("jrc_")
         if not ws_membership:
             if hide_unavailable_workspace:
                 raise Http404
