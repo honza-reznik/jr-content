@@ -320,9 +320,8 @@ def test_untargeted_post_to_any_org_route_is_refused(two_orgs, client):
 # until it is shown to be safe here.
 SESSION_KEYS = {
     '"active_organization_id"': "display selection only; writes are bound to the organization the page names",
-    '"jrc_board_client"': "board filter (display)",
-    '"jrc_board_idea_client"': "preselected client in the idea form; the form posts its workspace, checked against membership",
-    '"jrc_board_query"': "board filter for the detail's link back to the board (display); the board validates it again",
+    '"jrc_board_query"': "channel filter for the detail's link back to the board (display); used only for the page's "
+    "own workspace and validated again by the board (P2-B13)",
     '"connection_link_error"': "flash message for the connection-link page",
     '"connection_link_token"': "stored only; the OAuth target comes from the signed state",
     '"connection_link_oauth"': "nonce/PKCE check; target from the signed state and link token",

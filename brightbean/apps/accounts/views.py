@@ -15,31 +15,12 @@ def health_check(request):
 @login_required
 def dashboard(request):
     """Main dashboard - redirects to last used workspace or shows org overview."""
-    from apps.members.models import WorkspaceMembership
-    from apps.members.services import member_workspaces
-
-    user = request.user
-
-    # Only trust last_workspace_id if the user still has an active membership
-    # in that workspace. Otherwise the org may have been deleted out from under
-    # them and we'd redirect into a 403.
-    if user.last_workspace_id:
-        if WorkspaceMembership.objects.filter(
-            user=user,
-            workspace_id=user.last_workspace_id,
-            workspace__is_archived=False,
-            workspace__organization=request.org,
-        ).exists():
-            return redirect("calendar:calendar", workspace_id=user.last_workspace_id)
-        user.last_workspace_id = None
-        user.save(update_fields=["last_workspace_id"])
-
-    # Fallback: try to find any workspace the user belongs to
-    first_workspace = member_workspaces(user, request.org).first()
-    if first_workspace:
-        user.last_workspace_id = first_workspace.id
-        user.save(update_fields=["last_workspace_id"])
-        return redirect("calendar:calendar", workspace_id=first_workspace.id)
+    # P2-B13 (R5): the current workspace is resolved once, by ``RBACMiddleware``
+    # (``default_workspace_membership``: usable last workspace, else the earliest
+    # membership), which also stores it; no alphabetical pick here.
+    membership = request.workspace_membership
+    if membership is not None:
+        return redirect("calendar:calendar", workspace_id=membership.workspace_id)
 
     return render(request, "accounts/dashboard.html")
 

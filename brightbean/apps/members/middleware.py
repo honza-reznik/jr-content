@@ -2,10 +2,12 @@
 
 from uuid import UUID
 
+from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied
 from django.http import Http404
 
 from .models import OrgMembership, WorkspaceMembership
+from .services import default_workspace_membership
 
 # A write on a URL without a workspace or organization in it must name its
 # target organization itself: the session's active organization is shared by
@@ -75,6 +77,8 @@ class RBACMiddleware:
         request.organization_memberships = []
         request.org_target_bound = False
         request.navigated_workspace_membership = None
+        default_membership = None
+        user = getattr(request, "user", None)  # the person who made the request (logout swaps request.user)
 
         if request.path_info.startswith(CONTEXT_FREE_PATH_PREFIXES):
             return self.get_response(request)
@@ -90,49 +94,64 @@ class RBACMiddleware:
                 .order_by("organization__created_at", "organization_id")
             )
             request.organization_memberships = memberships
-            last_membership = (
-                WorkspaceMembership.objects.filter(
-                    user=request.user,
-                    workspace_id=request.user.last_workspace_id,
-                    workspace__is_archived=False,
-                    workspace__organization__deleted_at__isnull=True,
-                )
-                .select_related("workspace__organization", "custom_role")
-                .first()
-                if request.user.last_workspace_id
-                else None
-            )
+            # P2-B13 (R4): one rule for every organization, the same one OAuth/MCP use
+            # (``default_workspace_membership``: usable ``last_workspace_id``, else the
+            # earliest-joined membership). An organization the person selected explicitly
+            # keeps its own default (the page stores it, so MCP follows); only when they
+            # have no usable workspace there does the rule run across all organizations
+            # and the selection follows the workspace, so the web never shows an empty
+            # page while OAuth/MCP work elsewhere. An organization owner/admin without a
+            # workspace in the selected organization administers it without one.
             selected_id = request.session.get("active_organization_id")
             selected = next((m for m in memberships if str(m.organization_id) == selected_id), None)
-            if selected is None and last_membership:
-                selected = next(
-                    (m for m in memberships if m.organization_id == last_membership.workspace.organization_id), None
-                )
-            if selected is None and last_membership:
-                # Legacy workspace-only members keep their workspace context,
-                # but receive no org administration rights. The repair command
-                # can explicitly backfill their MEMBER membership.
-                request.org = last_membership.workspace.organization
-                request.workspace = last_membership.workspace
-                request.workspace_membership = last_membership
+            first = None
+            if selected is not None:
+                first = default_workspace_membership(request.user, selected.organization)
+            if first is None and not (
+                selected is not None and selected.org_role in (OrgMembership.OrgRole.OWNER, OrgMembership.OrgRole.ADMIN)
+            ):
+                first = default_workspace_membership(request.user)
+            if first is not None:
+                first_org_id = first.workspace.organization_id
+                if selected is None or selected.organization_id != first_org_id:
+                    selected = next((m for m in memberships if m.organization_id == first_org_id), None)
+                    # Legacy workspace-only members keep their workspace context,
+                    # but receive no org administration rights. The repair command
+                    # can explicitly backfill their MEMBER membership.
+                    request.org = first.workspace.organization
+                request.workspace = first.workspace
+                request.workspace_membership = first
+                default_membership = first
             elif selected is None:
                 selected = memberships[0] if memberships else None
             if selected:
                 request.org = selected.organization
                 request.org_membership = selected
-                if last_membership and last_membership.workspace.organization_id == selected.organization_id:
-                    request.workspace = last_membership.workspace
-                    request.workspace_membership = last_membership
 
         response = self.get_response(request)
         navigated = request.navigated_workspace_membership
+        if (
+            navigated is None
+            and default_membership is not None
+            and request.workspace_membership is default_membership
+            and response.status_code < 400
+            and user.last_workspace_id != default_membership.workspace_id
+        ):
+            # The default workspace was used without being named: remember it (R2), also
+            # when the page redirects (entry to the app), but not after an error (R5).
+            # ``update`` instead of ``save``: the view may have deleted the account
+            # (account deletion logs out and redirects); then nothing is written.
+            get_user_model().objects.filter(pk=user.pk).update(last_workspace_id=default_membership.workspace_id)
+            user.last_workspace_id = default_membership.workspace_id
+            if request.org is not None and getattr(request.user, "is_authenticated", False):
+                request.session["active_organization_id"] = str(request.org.id)
         if navigated is not None and 200 <= response.status_code < 300:
             # The workspace page was actually shown: it becomes the current
             # workspace and its organization the active one. A refused or
             # failed request (403/404, error redirect) changes neither.
             if request.user.last_workspace_id != navigated.workspace_id:
+                get_user_model().objects.filter(pk=request.user.pk).update(last_workspace_id=navigated.workspace_id)
                 request.user.last_workspace_id = navigated.workspace_id
-                request.user.save(update_fields=["last_workspace_id"])
             request.session["active_organization_id"] = str(navigated.workspace.organization_id)
         return response
 

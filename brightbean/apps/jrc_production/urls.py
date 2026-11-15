@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import board_actions, views
+from . import board_actions, overview, views
 
 app_name = "jrc_production"
 urlpatterns = [
@@ -14,6 +14,9 @@ urlpatterns = [
     path("board/new/", views.new_content, name="new_content"),
     path("board/create/", views.create, name="create"),
     path("board/idea/", views.quick_idea, name="quick_idea"),
+    # P2-B13: admin overview (organization owner and admins), read only.
+    path("overview/", overview.overview_board, name="overview_board"),
+    path("overview/content/<uuid:post_id>/", overview.overview_content, name="overview_content"),
     path("workspace/<uuid:workspace_id>/board/<uuid:post_id>/move/", views.move, name="move"),
     path("workspace/<uuid:workspace_id>/content/<uuid:post_id>/", views.content_detail, name="content_detail"),
     path("workspace/<uuid:workspace_id>/content/<uuid:post_id>/rename/", views.rename, name="rename"),

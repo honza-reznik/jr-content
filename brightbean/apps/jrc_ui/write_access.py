@@ -109,7 +109,7 @@ _rules(
     comment=True,
 )
 _rules("jrc_texts", "script concept concept_to_script version_name", domain="service")
-_rules("jrc_video", "upload_start upload_part upload_complete upload_abort video_final", domain="service")
+_rules("jrc_video", "upload_start upload_part upload_complete upload_abort video_final transcript", domain="service")
 _rules("jrc_thumbnails", "upload", domain="service")
 
 # Organization-scoped writes on global URLs (no workspace in the path). The target
@@ -233,6 +233,8 @@ READ_VIEWS = {
     "jrc_production:board",
     "jrc_production:trash",
     "jrc_production:new_content",
+    "jrc_production:overview_board",
+    "jrc_production:overview_content",
     "jrc_video:final_download",
     "jrc_video:version_download",
     "jrc_thumbnails:download",
