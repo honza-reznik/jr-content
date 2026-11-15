@@ -24,6 +24,7 @@ function mount(panel) {
   let base = null, revision = 0
 
   const editable = () => !!state?.can_edit && !selected && !destroyed
+  const sections = panel.querySelector('#script-sections')
   // Created before the editor: TipTap may report its first transaction while being constructed.
   const saver = autosave.create({
     root: panel,
@@ -50,7 +51,7 @@ function mount(panel) {
     editable: false,
     editorProps: { attributes: { role: 'textbox', 'aria-label': `${Noun} text`, 'aria-multiline': 'true' } },
     onUpdate() { if (editable()) saver.changed() },
-    onTransaction() {
+    onTransaction({ editor: current }) {
       for (const button of $('toolbar').querySelectorAll('[data-command]')) {
         const command = button.dataset.command
         if (command === 'undo' || command === 'redo') continue
@@ -62,8 +63,28 @@ function mount(panel) {
       }
       const clearColor = $('toolbar').querySelector('[data-text-color-clear]')
       if (clearColor) clearColor.setAttribute('aria-pressed', String(!editor.isActive('textColor')))
+      renderSections(current)
     },
   })
+
+  // P2-B14: content with several formats keeps one script with a section (a heading) per format.
+  // "+ Short form" adds the heading at the end; a format whose heading is already there is marked done.
+  // ``current`` comes from TipTap's transaction while the editor is still being constructed.
+  function renderSections(current) {
+    if (!sections || !current) return
+    sections.hidden = !editable()
+    const headings = new Set()
+    current.state.doc.descendants(node => {
+      if (node.type.name === 'heading') headings.add(node.textContent.trim().toLowerCase())
+    })
+    for (const button of sections.querySelectorAll('[data-script-section]')) {
+      const label = button.dataset.scriptSection
+      const present = headings.has(label.toLowerCase())
+      button.disabled = present
+      button.textContent = `${present ? '✓' : '+'} ${label}`
+      button.setAttribute('aria-label', present ? `${label} section is in the script` : `Add a ${label} section at the end`)
+    }
+  }
 
   function message(text, error = false) {
     $('message').textContent = text
@@ -146,6 +167,7 @@ function mount(panel) {
     const on = editable()
     if (editor.isEditable !== on) editor.setEditable(on, false)
     $('toolbar').hidden = !on
+    renderSections(editor)
     $('latest').hidden = !selected
     $('reload').disabled = busy
     $('compare-old').disabled = $('compare-new').disabled = busy
@@ -155,6 +177,8 @@ function mount(panel) {
   // Version line, saved versions and comparison; never touches the text being typed.
   function renderMeta() {
     const shown = selected ? state.shown : state.versions.find(version => version.id === state.latest)
+    panel.dataset.commentVersion = shown?.id || ''
+    panel.dataset.commentRevision = String(shown?.revision || 0)
     $('version').textContent = shown
       ? `${versionLabel(shown)} · ${shown.id === state.latest ? 'Latest' : 'Older version, read only'} · ${date(shown.saved_at)} · ${shown.author}`
       : (state.can_edit ? `No ${noun} yet. Start typing below; it saves automatically.` : (panel.dataset.empty || `No ${noun} yet.`))
@@ -287,6 +311,19 @@ function mount(panel) {
     const color = event.target.closest('[data-text-color]')
     if (color && editable()) editor.chain().focus().setMark('textColor', { color: color.dataset.textColor }).run()
     if (event.target.closest('[data-text-color-clear]') && editable()) editor.chain().focus().unsetMark('textColor').run()
+  })
+  if (sections) on(sections, 'click', event => {
+    const button = event.target.closest('[data-script-section]')
+    if (!button || button.disabled || !editable()) return
+    // An empty script becomes the section itself, without an empty line above it.
+    const where = editor.isEmpty ? { from: 0, to: editor.state.doc.content.size } : editor.state.doc.content.size
+    editor.chain()
+      .insertContentAt(where, [
+        { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: button.dataset.scriptSection }] },
+        { type: 'paragraph' },
+      ])
+      .focus('end')
+      .run()
   })
   // "Use as script draft" leaves the page: the concept reaches the server first.
   const toScript = panel.querySelector('.script-to-script')

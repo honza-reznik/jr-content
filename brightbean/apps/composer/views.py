@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import uuid
+from collections import defaultdict
 from datetime import UTC, datetime
 from urllib.parse import quote, urljoin
 
@@ -68,6 +69,7 @@ from .models import (
 )
 from .services import (
     ChannelRemovalError,
+    account_copy,
     channel_removal_blocker,
     children_are_locked,
     lock_copies,
@@ -329,11 +331,8 @@ def _sync_platform_posts(request, post, workspace, initial_status=None):
         defaults = {}
         if initial_status:
             defaults["status"] = initial_status
-        pp, _created = PlatformPost.objects.get_or_create(
-            post=post,
-            social_account=account,
-            defaults=defaults,
-        )
+        # JR Content (P2-B14): a channel may carry several outputs; this form edits its first one.
+        pp, _created = account_copy(post, account, defaults)
         title_key = f"override_title_{acc_id}"
         override_caption = request.POST.get(f"override_caption_{acc_id}", "").strip()
         override_comment = request.POST.get(f"override_comment_{acc_id}", "").strip()
@@ -517,27 +516,37 @@ def _validate_approval_release(request, post, workspace, action, *, post_id):
     if not can_schedule(request.workspace_membership):
         raise PermissionDenied("You do not have permission to schedule or publish content.")
     scope = _get_account_scope(request)
-    existing = {str(pp.social_account_id): pp for pp in post.platform_posts.all()} if post_id else {}
-    for account_id in _parse_selected_account_ids(request.POST.get("selected_accounts", "")):
-        if scope and str(uuid.UUID(scope)) != str(uuid.UUID(account_id)):
+    # JR Content (P2-B14): a channel may carry several outputs (YouTube Video and Shorts), and the
+    # action moves every one of them (``_transition_post_children``), so each is weighed on its own
+    # status: one approved output must not let its unapproved sibling go out with it.
+    existing = defaultdict(list)
+    if post_id:
+        for pp in post.platform_posts.all():
+            existing[pp.social_account_id].append(pp)
+    for account_id in dict.fromkeys(
+        uuid.UUID(a) for a in _parse_selected_account_ids(request.POST.get("selected_accounts", ""))
+    ):
+        if scope and uuid.UUID(scope) != account_id:
             continue
-        pp = existing.get(str(uuid.UUID(account_id)))
-        if pp is None:
-            status = "draft"
-        elif pp.status == "scheduled":
-            status = None  # already went out; only its time changes
-        elif pp.can_transition_to("scheduled") or pp.can_transition_to("draft"):
-            # Its real status decides; on hold / sent back / rejected never go out from here.
-            status = pp.status
-        else:
-            status = None  # stays where it is (in review, published): nothing goes out
-        if status is None:
-            continue
-        try:
-            require_release_allowed(workspace, status)
-        except ValueError as exc:
-            return JsonResponse({"errors": {"schedule": str(exc)}}, status=400)
+        statuses = [_release_status(pp) for pp in existing.get(account_id, [])] or ["draft"]
+        for status in statuses:
+            if status is None:
+                continue
+            try:
+                require_release_allowed(workspace, status)
+            except ValueError as exc:
+                return JsonResponse({"errors": {"schedule": str(exc)}}, status=400)
     return None
+
+
+def _release_status(pp):
+    """The status a releasing composer action weighs for an existing copy, or ``None`` when it does not go out."""
+    if pp.status == "scheduled":
+        return None  # already went out; only its time changes
+    if pp.can_transition_to("scheduled") or pp.can_transition_to("draft"):
+        # Its real status decides; on hold / sent back / rejected never go out from here.
+        return pp.status
+    return None  # stays where it is (in review, published): nothing goes out
 
 
 def _validate_required_media(request, post, workspace, action):
@@ -622,6 +631,19 @@ def _save_version(post, user):
         snapshot=snapshot,
         created_by=user,
     )
+
+
+def _ambiguous_queue(post, post_id, queues):
+    """Whether a queue's channel carries several outputs of this content (JR Content, P2-B14).
+
+    A queue entry cannot tell YouTube · Video from YouTube · Shorts, so queueing such content is
+    refused before anything is saved, instead of slotting whichever output comes first.
+    """
+    if not post_id:
+        return False  # a new post has no outputs yet
+    from apps.calendar.services import has_several_outputs
+
+    return any(has_several_outputs(post, queue.social_account_id) for queue in queues)
 
 
 def _resolve_queues_for_post(queue_id, workspace, post_data):
@@ -1307,12 +1329,14 @@ def save_post(request, workspace_id, post_id=None):
     elif action == "add_to_queue":
         from django.db import transaction
 
-        from apps.calendar.services import QueueFullError, add_to_queue
+        from apps.calendar.services import AMBIGUOUS_QUEUE_MESSAGE, QueueFullError, add_to_queue
 
         queue_id = request.POST.get("queue_id")
         queues = _resolve_queues_for_post(queue_id, workspace, request.POST)
         if not queues:
             return JsonResponse({"errors": {"queue": "No active queue found for the selected channel."}}, status=400)
+        if _ambiguous_queue(post, post_id, queues):
+            return JsonResponse({"errors": {"queue": AMBIGUOUS_QUEUE_MESSAGE}}, status=400)
         # Queueing assigns real per-platform slots below — drop any proposal.
         post.proposed_publish_at = None
         post.save()
@@ -1347,12 +1371,14 @@ def save_post(request, workspace_id, post_id=None):
     elif action == "add_to_queue_priority":
         from django.db import transaction
 
-        from apps.calendar.services import QueueFullError, add_to_queue
+        from apps.calendar.services import AMBIGUOUS_QUEUE_MESSAGE, QueueFullError, add_to_queue
 
         queue_id = request.POST.get("queue_id")
         queues = _resolve_queues_for_post(queue_id, workspace, request.POST)
         if not queues:
             return JsonResponse({"errors": {"queue": "No active queue found for the selected channel."}}, status=400)
+        if _ambiguous_queue(post, post_id, queues):
+            return JsonResponse({"errors": {"queue": AMBIGUOUS_QUEUE_MESSAGE}}, status=400)
         # Queueing assigns real per-platform slots below — drop any proposal.
         post.proposed_publish_at = None
         post.save()
@@ -1657,10 +1683,7 @@ def autosave(request, workspace_id, post_id=None):
     selected_ids = _parse_selected_account_ids(request.POST.get("selected_accounts", ""))
     _remove_deselected_platform_posts(request, post, selected_ids)
     for account in SocialAccount.objects.filter(pk__in=selected_ids, workspace=workspace):
-        PlatformPost.objects.get_or_create(
-            post=post,
-            social_account=account,
-        )
+        account_copy(post, account)  # JR Content (P2-B14): not get_or_create, a channel may have several outputs
 
     # Option A: an autosave that changed reviewed content of a copy carrying an
     # approval sends it back to review (a planned one out of the plan) so edited
@@ -2812,20 +2835,20 @@ def post_delete(request, workspace_id, post_id):
     lock_copies([post.pk])
 
     account_id = request.GET.get("account") or request.POST.get("account")
-    copies = (
-        [get_object_or_404(PlatformPost, post=post, social_account_id=account_id)]
-        if account_id
-        else list(post.platform_posts.all())
-    )
+    # JR Content (P2-B14): a channel may carry several outputs; ``?account=`` removes all of them.
+    copies = list(post.platform_posts.filter(social_account_id=account_id)) if account_id else []
+    if account_id and not copies:
+        raise Http404
+    if not account_id:
+        copies = list(post.platform_posts.all())
     # P1-B37: one deletion rule; planned content only by someone who may take it out of the plan.
     blocker = content_delete_blocker(getattr(request, "workspace_membership", None), post, copies)
     if blocker:
         return JsonResponse({"error": blocker}, status=403)
     if account_id:
-        pp = copies[0]
         try:
             with transaction.atomic():
-                remove_platform_posts(PlatformPost.objects.filter(pk=pp.pk, post=post))
+                remove_platform_posts(PlatformPost.objects.filter(pk__in=[pp.pk for pp in copies], post=post))
         except (ChannelRemovalError, RestrictedError):
             from django.urls import reverse
 
@@ -4035,9 +4058,7 @@ def _import_csv_row(request, workspace, row, mapping, may_go_out):
             status = initial_pp_status
             if status == "scheduled" and publish_blocker(acc, media_types=set()):
                 status = "draft"
-            _pp, created = PlatformPost.objects.get_or_create(
-                post=post, social_account=acc, defaults={"status": status, "scheduled_at": post.scheduled_at}
-            )
+            _pp, created = account_copy(post, acc, {"status": status, "scheduled_at": post.scheduled_at})
             if created and status != initial_pp_status:
                 drafted.append(acc.get_platform_display())
     return drafted

@@ -61,7 +61,13 @@
     });
   }
 
+  var lastChannels = (function () {
+    var el = document.getElementById("jrc-video-data");
+    try { return el ? JSON.parse(el.textContent) : []; } catch (e) { return []; }
+  })();
+
   function render(channels) {
+    lastChannels = channels;
     var nextSeen = {};
     channels.forEach(function (data) {
       var card = root.querySelector('[data-video-channel="' + CSS.escape(data.key) + '"]');
@@ -313,6 +319,92 @@
     await refresh();
   }
 
+  // ----- P2-B15: use a version for another output -----
+
+  var reuseDialog = root.querySelector("[data-video-reuse-dialog]");
+  var reuseSource = null; // { card, version }
+
+  function reuseError(text) {
+    var box = reuseDialog.querySelector("[data-reuse-error]");
+    box.textContent = text || "";
+    box.hidden = !text;
+  }
+
+  function targetOption(c) {
+    var label = document.createElement("label"); label.className = "reuse-option";
+    var input = document.createElement("input"); input.type = "radio"; input.name = "target"; input.value = c.key;
+    var text = document.createElement("span");
+    var name = document.createElement("strong"); name.textContent = c.label;
+    var hint = document.createElement("small");
+    var numbers = c.versions.map(function (v) { return v.number; });
+    hint.textContent = numbers.length
+      ? "Has video up to v" + Math.max.apply(null, numbers) + " · gets it as a new version"
+      : "No video yet · gets it as its first version";
+    text.appendChild(name); text.appendChild(hint);
+    label.appendChild(input); label.appendChild(text);
+    return label;
+  }
+
+  function openReuse(card, versionId) {
+    if (!reuseDialog) return;
+    var source = lastChannels.filter(function (c) { return c.key === card.dataset.videoChannel; })[0];
+    var version = source && source.versions.filter(function (v) { return v.id === versionId; })[0];
+    if (!version) return;
+    reuseSource = { card: card, version: version };
+    reuseDialog.querySelector("[data-reuse-source]").textContent = "v" + version.number + " · " + source.label;
+    var list = reuseDialog.querySelector("[data-reuse-targets]");
+    list.textContent = "";
+    var targets = lastChannels.filter(function (c) { return c.key !== source.key; });
+    targets.forEach(function (c) { list.appendChild(targetOption(c)); });
+    if (targets.length === 1) list.querySelector("input").checked = true;
+    reuseDialog.querySelectorAll('input[name="keep_comments"]').forEach(function (input) { input.checked = false; });
+    reuseError("");
+    var submit = reuseDialog.querySelector("[data-reuse-submit]");
+    submit.disabled = false; submit.textContent = "Use video";
+    reuseDialog.showModal();
+  }
+
+  function closeReuse() {
+    if (reuseDialog && reuseDialog.open) reuseDialog.close();
+    reuseSource = null;
+  }
+
+  async function submitReuse() {
+    var form = reuseDialog.querySelector("[data-video-reuse-form]");
+    var target = form.querySelector('input[name="target"]:checked');
+    var keep = form.querySelector('input[name="keep_comments"]:checked');
+    if (!target) { reuseError("Choose an output."); return; }
+    if (!keep) { reuseError("Choose whether to keep the comments."); return; }
+    var source = reuseSource;
+    var submit = form.querySelector("[data-reuse-submit]");
+    submit.disabled = true; submit.textContent = "Adding…"; reuseError("");
+    try {
+      var result = await api("POST", versionUrl(source.version.id, "duplicate"),
+        { target: target.value, keep_comments: keep.value === "yes" });
+      closeReuse();
+      var copied = result.comments_copied;
+      setNotice("v" + source.version.number + " is now v" + result.number + " of " + result.target_label + "." +
+        (copied === null || copied === undefined ? "" : copied === 1 ? " 1 comment copied." : " " + copied + " comments copied.") +
+        (result.review_notice ? " " + result.review_notice : ""));
+      await refresh();
+      root.dispatchEvent(new CustomEvent("jrc-video:show", { detail: { key: result.target } }));
+    } catch (error) {
+      reuseError(error.message);
+      submit.disabled = false; submit.textContent = "Use video";
+    }
+  }
+
+  if (reuseDialog) {
+    reuseDialog.querySelector("[data-video-reuse-form]").addEventListener("submit", function (event) {
+      event.preventDefault();
+      submitReuse();
+    });
+    reuseDialog.addEventListener("click", function (event) {
+      if (event.target === reuseDialog || (event.target.closest && event.target.closest("[data-reuse-cancel]"))) closeReuse();
+    });
+    reuseDialog.addEventListener("close", function () { reuseSource = null; });
+  }
+
   // ----- events -----
 
   var resumeTarget = null;
@@ -325,6 +417,8 @@
     } else if (target.hasAttribute("data-video-resume")) {
       resumeTarget = target.closest("[data-version]").dataset.version;
       card.querySelector("[data-video-file]").click();
+    } else if (target.hasAttribute("data-video-reuse")) {
+      openReuse(card, target.closest("[data-version]").dataset.version);
     } else if (target.hasAttribute("data-video-discard-row")) {
       discard(card, target.closest("[data-version]").dataset.version);
     } else if (target.hasAttribute("data-video-discard") && active) {

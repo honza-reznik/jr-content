@@ -186,9 +186,9 @@ def _resolve_platform_post(post, key):
 
 
 def _channel_enabled(post, variant):
-    from apps.jrc_production.views import _enabled_caption_accounts
+    from apps.jrc_production.views import enabled_outputs
 
-    return any(account.pk == variant.social_account_id for account in _enabled_caption_accounts(post))
+    return any(output.pk == variant.pk for output in enabled_outputs(post))
 
 
 def start_upload(user, workspace, post, membership, *, channel, filename, size, browser_type=""):
@@ -204,7 +204,8 @@ def start_upload(user, workspace, post, membership, *, channel, filename, size, 
         raise UploadError("Choose a video file.")
     project = _accounts_ready(user, workspace)
     variant = _resolve_platform_post(post, channel)
-    asset_name = f"{post.title or 'Content'} · {variant.social_account.account_name}"[:200]
+    # P2-B14: each output has its own FreeFrame asset; the name tells two outputs of one channel apart.
+    asset_name = f"{post.title or 'Content'} · {variant.output_title}"[:200]
 
     with transaction.atomic():
         # One upload start per channel at a time; held across the FreeFrame calls on purpose.
@@ -605,12 +606,15 @@ def _version_row(version, user, percent=None):
         "mine": version.uploaded_by_id == user.pk,
         "duration": f"{int(version.duration_s // 60)}:{int(version.duration_s % 60):02d}" if version.duration_s else "",
         "resolution": resolution,
+        # P2-B15: the same stored file as a version of another output (no upload, no conversion).
+        "copied_from": version.copied_from_label,
+        "comments_copied": version.comments_copied,
     }
 
 
 def channel_cards(user, post, membership):
     """Channels of this content with their video versions, for the Video tab and the status feed."""
-    from apps.jrc_production.views import _enabled_caption_accounts
+    from apps.jrc_production.views import enabled_outputs
 
     from .downloads import can_download_version
     from .player import can_mark_final
@@ -618,21 +622,22 @@ def channel_cards(user, post, membership):
     editor = can_upload(post, membership)
     marker = can_mark_final(post, membership)
     project = VideoProject.objects.filter(workspace=post.workspace).first()
-    variants = {v.social_account_id: v for v in post.platform_posts.select_related("social_account")}
     videos = {
         video.platform_post_id: video
         for video in VideoAsset.objects.filter(platform_post__post=post)
         .select_related("final_version", "final_by")
         .prefetch_related("versions__uploaded_by")
     }
+    outputs = enabled_outputs(post)
     cards = []
-    for account in _enabled_caption_accounts(post):
-        variant = variants.get(account.pk)
-        video = videos.get(variant.pk) if variant else None
+    for variant in outputs:
+        video = videos.get(variant.pk)
         rows = list(video.versions.all()) if video else []
         percents = _progress(rows)
         versions = [_version_row(v, user, percents.get(v.pk)) for v in rows]
         for row, version in zip(rows, versions, strict=True):
+            # P2-B15: "Use for another output…" needs the upload right and a second output.
+            version["can_reuse"] = editor and len(outputs) > 1 and row.status == VideoVersion.Status.READY
             # The same rule as the endpoint: the link is shown only where the download is allowed.
             version["download_url"] = (
                 reverse(
@@ -649,8 +654,8 @@ def channel_cards(user, post, membership):
         final = video.final_version if video and video.final_version_id else None
         cards.append(
             {
-                "key": str(variant.pk) if variant else f"new:{account.pk}",
-                "label": f"{account.get_platform_display()} · {account.account_name}",
+                "key": str(variant.pk),
+                "label": variant.output_title,
                 "can_upload": editor,
                 "can_mark_final": marker,
                 # The viewer address inside FreeFrame; the version is added by the page (?version=).

@@ -713,12 +713,11 @@ class PublishEngine:
         must never propagate into a retry (which would double-post).
         """
         try:
-            from apps.calendar.models import QueueEntry
+            # JR Content (P2-B14): only this output's own entry; publishing YouTube · Shorts must not
+            # clear the queue entry of YouTube · Video on the same channel.
+            from apps.calendar.services import queue_entries_of
 
-            QueueEntry.objects.filter(
-                post_id=platform_post.post_id,
-                queue__social_account_id=platform_post.social_account_id,
-            ).delete()
+            queue_entries_of(platform_post).delete()
         except Exception:
             logger.warning(
                 "Failed to drop QueueEntry for published PlatformPost %s",
@@ -878,6 +877,8 @@ class PublishEngine:
                 # demote every Instagram/Threads carousel to a single post.
                 media_count=usable_attachments,
                 first_media_type=first_media_type,
+                output_format=platform_post.output_format,
+                supported_post_types=provider.supported_post_types,
             )
 
             content = PublishContent(
@@ -953,12 +954,18 @@ class PublishEngine:
         platform_extra: dict,
         media_count: int,
         first_media_type: str | None,
+        output_format: str = "",
+        supported_post_types=None,
     ) -> PostType:
         """Derive the correct PostType from context.
 
         Priority:
         1. Explicit hint in platform_extra (validated against PostType enum,
            and against the media actually attached right now)
+        1b. JR Content (P2-B14): the output's format (YouTube Shorts → SHORT,
+           Instagram Story → STORY…), validated against the media the same way
+           and used only when the provider publishes that type
+           (``supported_post_types``; Facebook has no Story path)
         2. Platform defaults (Pinterest → PIN)
         3. Multi-media on carousel-capable platforms → CAROUSEL
         4. Fallback: video → VIDEO (REEL on Instagram), image → IMAGE, else → TEXT
@@ -978,6 +985,21 @@ class PublishEngine:
                 )
             else:
                 return PostType(hint)
+
+        # 1b. JR Content: přidáno 2026-11-14 (blok P2-B14), AGPL-3.0. Two outputs of one channel (a
+        # YouTube video and its Shorts) differ by format, so the format says which publishing path to take.
+        from apps.composer.output_formats import post_type_hint
+
+        # A type the provider does not publish would land on its fallback path (Facebook sends an
+        # unknown type to its text-or-link post and drops the media), so such a format is left to the
+        # attached media like any upstream post.
+        format_hint = post_type_hint(platform, output_format)
+        if (
+            format_hint
+            and (supported_post_types is None or PostType(format_hint) in supported_post_types)
+            and PublishEngine._hint_matches_media(PostType(format_hint), media_count, first_media_type)
+        ):
+            return PostType(format_hint)
 
         # 2. Platform defaults
         if platform == "pinterest":

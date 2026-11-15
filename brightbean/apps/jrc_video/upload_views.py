@@ -16,7 +16,7 @@ from apps.members.models import WorkspaceMembership
 from apps.members.permissions import can_publish_directly
 from apps.workspaces.models import Workspace
 
-from . import player, uploads
+from . import player, reuse, uploads
 from .downloads import can_download_version, downloadable_final
 from .uploads import UploadError
 
@@ -144,6 +144,24 @@ def final(request, workspace_id, post_id, version_id):
     _workspace, membership, post = _context(request, workspace_id, post_id)
     data = _body(request)
     return player.set_final(request.user, post, membership, version_id, final=data.get("final", True) is not False)
+
+
+@_secure
+@require_POST
+@_json
+def duplicate(request, workspace_id, post_id, version_id):
+    """P2-B15: "Use for another output…" – the same file as a new version of another output."""
+    workspace, membership, post = _context(request, workspace_id, post_id)
+    data = _body(request)
+    return reuse.reuse_version(
+        request.user,
+        workspace,
+        post,
+        membership,
+        version_id,
+        target=data.get("target"),
+        keep_comments=data.get("keep_comments"),
+    )
 
 
 @_secure

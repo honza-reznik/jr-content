@@ -21,7 +21,9 @@ from django.utils import timezone
 from apps.common.managers import WorkspaceScopedManager
 from apps.common.validators import validate_hex_color
 
+from . import output_formats
 from .managers import ActivePlatformPostManager, ActivePostManager
+from .output_formats import OutputFormat, OutputFormatField
 
 
 class ContentCategory(models.Model):
@@ -461,6 +463,15 @@ class PlatformPost(models.Model):
         on_delete=models.CASCADE,
         related_name="platform_posts",
     )
+    # JR Content: přidáno 2026-11-14 (blok P2-B14), AGPL-3.0. The output's format: one channel may carry
+    # several outputs of a content (YouTube · Video and YouTube · Shorts), one per format. Empty takes
+    # the platform default on save (``apps.composer.output_formats``).
+    output_format = OutputFormatField(
+        max_length=20,
+        choices=OutputFormat.choices,
+        blank=True,
+        default="",
+    )
 
     # Per-platform overrides (null = use base post values)
     platform_specific_title = models.TextField(blank=True, null=True)
@@ -547,7 +558,13 @@ class PlatformPost(models.Model):
     class Meta:
         base_manager_name = "all_objects"
         db_table = "composer_platform_post"
-        unique_together = [("post", "social_account")]
+        # JR Content (P2-B14): one output per channel and format, no longer one copy per channel.
+        constraints = [
+            models.UniqueConstraint(
+                fields=["post", "social_account", "output_format"],
+                name="uniq_pp_post_account_format",
+            ),
+        ]
         indexes = [
             models.Index(
                 fields=["status", "scheduled_at"],
@@ -650,6 +667,39 @@ class PlatformPost(models.Model):
     @property
     def platform(self):
         return self.social_account.platform
+
+    # JR Content: přidáno 2026-11-14 (blok P2-B14), AGPL-3.0.
+    @property
+    def format_name(self):
+        """The platform's word for this output's format, e.g. "Shorts" or "Reel"."""
+        return output_formats.format_name(self.social_account.platform, self.output_format)
+
+    def _platform_name(self):
+        account = self.social_account
+        if account.platform == "custom":
+            # A custom channel (e.g. Forendors) is named by its channel, not "Custom channel".
+            profile = getattr(account, "jrc_channel", None)
+            return getattr(profile, "display_name", "") or account.account_name
+        return account.get_platform_display()
+
+    @property
+    def output_label(self):
+        """The output's name shown everywhere outputs are listed, e.g. "YouTube · Shorts"."""
+        return f"{self._platform_name()} · {self.format_name}"
+
+    @property
+    def output_title(self):
+        """The output's name with its channel, e.g. "YouTube · Shorts · Ella", where channels must be told apart."""
+        name = self.social_account.account_name
+        return self.output_label if not name or name == self._platform_name() else f"{self.output_label} · {name}"
+
+    @property
+    def output_sort_key(self):
+        return (
+            (self.social_account.account_name or "").lower(),
+            str(self.social_account_id),
+            output_formats.format_sort_key(self.output_format),
+        )
 
     @property
     def char_limit(self):

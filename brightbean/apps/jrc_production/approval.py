@@ -65,19 +65,15 @@ def status_text(post, membership):
     return ""
 
 
-def _caption_summaries(post, accounts):
-    variants = {v.social_account_id: v for v in post.platform_posts.all()}
-    saved = latest_saved_captions([v.pk for v in variants.values()])
+def _caption_summaries(post, outputs):
+    saved = latest_saved_captions([v.pk for v in outputs])
     rows = []
-    for account in accounts:
-        variant = variants.get(account.pk)
-        if variant is None:
-            continue
+    for variant in outputs:
         version = saved.get(variant.pk)
         text = version.text if version else variant.effective_caption
         rows.append(
             {
-                "label": f"{account.get_platform_display()} · {account.account_name}",
+                "label": variant.output_title,
                 "text": text,
                 "number": version.number if version else None,
             }
@@ -85,7 +81,7 @@ def _caption_summaries(post, accounts):
     return rows
 
 
-def _video_summaries(post, accounts):
+def _video_summaries(post, outputs):
     from apps.jrc_video.models import VideoAsset, VideoVersion
 
     videos = {
@@ -94,12 +90,10 @@ def _video_summaries(post, accounts):
         .select_related("final_version", "final_by")
         .prefetch_related("versions")
     }
-    variants = {v.social_account_id: v for v in post.platform_posts.all()}
     rows = []
-    for account in accounts:
-        variant = variants.get(account.pk)
-        video = videos.get(variant.pk) if variant else None
-        label = f"{account.get_platform_display()} · {account.account_name}"
+    for variant in outputs:
+        video = videos.get(variant.pk)
+        label = variant.output_title
         if video is None:
             rows.append({"label": label, "kind": "none"})
             continue
@@ -150,13 +144,13 @@ def _latest_decision(post, can_view_internal_notes):
     }
 
 
-def approval_context(post, membership, accounts, *, can_view_internal_notes):
+def approval_context(post, membership, outputs, *, can_view_internal_notes):
     """Everything the Approval tab shows: summary of what is approved and the allowed decisions."""
     statuses = post_statuses(post)
     decide = can_decide(post, membership, statuses)
     return {
-        "approval_captions": _caption_summaries(post, accounts),
-        "approval_videos": _video_summaries(post, accounts),
+        "approval_captions": _caption_summaries(post, outputs),
+        "approval_videos": _video_summaries(post, outputs),
         "approval_status": status_text(post, membership),
         "approval_can_decide": decide,
         "approval_latest": _latest_decision(post, can_view_internal_notes),

@@ -89,7 +89,7 @@ Shows all published/partially_published platform posts. Loaded via HTMX into #ta
                         <span class="w-5 h-5 rounded-[5px] flex items-center justify-center">
                             {% include "jrc_channels/icon.html" with account=pp.social_account %}
                         </span>
-                        <span class="text-xs text-stone-500">{{ pp.social_account.account_name|default:pp.social_account.account_handle }}</span>
+                        <span class="text-xs text-stone-500">{{ pp.output_title }}</span>
                     </div>
                 </td>
                 <td class="px-4 py-3 text-xs text-stone-500">

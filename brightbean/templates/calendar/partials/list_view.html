@@ -40,10 +40,10 @@ Context: posts, workspace.
                     </a>
                 </td>
                 <td class="px-4 py-3">
-                    <div class="flex gap-1">
+                    <div class="flex flex-wrap gap-x-3 gap-y-1">
                         {% for pp in post.platform_posts.all %}
-                        <span class="rounded-[5px] flex items-center gap-1 px-1 text-xs" style="background:{{ pp.social_account.jrc_accent_color }};color:{{ pp.social_account.jrc_accent_text_color }}">
-                            {% include "jrc_channels/icon.html" with account=pp.social_account %} {{ pp.social_account.jrc_channel.display_name|default:pp.social_account.account_name }}
+                        <span class="inline-flex items-center gap-1 rounded-[5px] px-1 text-xs" style="background:{{ pp.social_account.jrc_accent_color }};color:{{ pp.social_account.jrc_accent_text_color }}" title="{{ pp.output_title }}">
+                            {% include "jrc_channels/icon.html" with account=pp.social_account %}{{ pp.format_name }}
                         </span>
                         {% empty %}<span class="text-xs text-stone-500">No channel</span>{% endfor %}
                     </div>

@@ -27,6 +27,13 @@ The element ids stay script-* because the built editor (dist/script.js) looks th
         <p id="script-status" class="jrc-save-status" role="status" aria-live="polite" data-save-status></p>
         <button id="script-reload" type="button">Reload {% if text_kind == "concept" %}concept{% else %}script{% endif %}</button>
     </div>
+    {% if text_kind == "script" and script_sections|length > 1 %}
+    {# P2-B14: one script for the whole content, with a section (heading) per format; the editor adds them. #}
+    <div id="script-sections" class="script-sections" hidden>
+        <p class="script-sections-help">This content has several formats. Keep one script and give each format its own section:</p>
+        <div class="script-sections-actions">{% for label in script_sections %}<button type="button" data-script-section="{{ label }}">+ {{ label }}</button>{% endfor %}</div>
+    </div>
+    {% endif %}
     <noscript><p>Enable JavaScript to read and edit the {% if text_kind == "concept" %}concept{% else %}script{% endif %}.</p></noscript>
     <div class="script-layout">
         <div class="script-paper">

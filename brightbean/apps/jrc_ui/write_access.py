@@ -104,12 +104,16 @@ _rules(
 _rules("jrc_production", "board_actions", domain="content_batch")
 _rules(
     "jrc_production",
-    "add_content_comment reply_to_content_comment resolve_content_comment",
+    "add_content_comment reply_to_content_comment resolve_content_comment version_comments",
     domain="service",
     comment=True,
 )
 _rules("jrc_texts", "script concept concept_to_script version_name", domain="service")
-_rules("jrc_video", "upload_start upload_part upload_complete upload_abort video_final transcript", domain="service")
+_rules(
+    "jrc_video",
+    "upload_start upload_part upload_complete upload_abort video_final transcript version_duplicate",
+    domain="service",
+)
 _rules("jrc_thumbnails", "upload", domain="service")
 
 # Organization-scoped writes on global URLs (no workspace in the path). The target
@@ -209,6 +213,7 @@ READ_VIEWS = {
     "oauth-protected-resource-metadata",
     "oauth-protected-resource-metadata-mcp",
     "approvals:comment_attachment",
+    "jrc_production:comment_version",
     "approvals:version_diff",
     "client_portal_admin:client_list",
     "media_library:search",

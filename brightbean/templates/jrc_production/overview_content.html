@@ -48,7 +48,7 @@
     <h1>{{ post.title|default:"Untitled content" }}</h1>
     <dl class="ovc-facts">
       <div><dt>Stage:</dt> <dd><span class="ovc-stage">{{ stage_label }}</span></dd></div>
-      <div><dt>Channels:</dt> <dd>{% for variant in variants %}{% include "jrc_channels/icon.html" with account=variant.social_account %} {{ variant.social_account.jrc_channel.display_name|default:variant.social_account.account_name }} ({{ variant.get_status_display }}){% if not forloop.last %}, {% endif %}{% empty %}No channel{% endfor %}</dd></div>
+      <div><dt>Channels:</dt> <dd>{% for variant in variants %}{% include "jrc_channels/icon.html" with account=variant.social_account %} {{ variant.output_title }} ({{ variant.get_status_display }}){% if not forloop.last %}, {% endif %}{% empty %}No channel{% endfor %}</dd></div>
       {% if post.scheduled_at %}<div><dt>Planned:</dt> <dd>{{ post.scheduled_at|date:"M j, Y H:i T" }}</dd></div>{% elif post.proposed_publish_at %}<div><dt>Proposed:</dt> <dd>{{ post.proposed_publish_at|date:"M j, Y H:i T" }}</dd></div>{% endif %}
       {% if post.category %}<div><dt>Category:</dt> <dd>{{ post.category.name }}</dd></div>{% endif %}
       <div><dt>Created:</dt> <dd>{{ post.created_at|date:"M j, Y" }}{% if post.author %} by {{ post.author.name|default:post.author.email }}{% endif %}</dd></div>
@@ -66,22 +66,23 @@
     {% if script and script.text.strip %}<p class="ovc-sub">Version {{ script.number }} · {{ script.finalized_at|date:"M j, Y H:i" }}</p><p class="ovc-text">{{ script.text }}</p>{% else %}<p class="ovc-none">No script yet.</p>{% endif %}
   </section>
   <section aria-labelledby="ovc-shotlist"><h2 id="ovc-shotlist">Shotlist</h2>
-    {% if shotlist %}<ul class="ovc-list">{% for item in shotlist %}<li><span class="{% if item.is_done %}ovc-done{% else %}ovc-todo{% endif %}">{% if item.is_done %}✓ Done{% else %}○ To do{% endif %}</span> · {{ item.text }}{% if item.kind == "thumbnail" %} <span class="ovc-badge">Thumbnail photo</span>{% endif %}{% if item.note %}<br><span class="ovc-sub">{{ item.note }}</span>{% endif %}</li>{% endfor %}</ul>{% else %}<p class="ovc-none">No shotlist yet.</p>{% endif %}
+    {% for list in shotlists %}{% if list.label %}<h3>{{ list.label }}</h3>{% endif %}
+    {% if list.items %}<ul class="ovc-list">{% for item in list.items %}<li><span class="{% if item.is_done %}ovc-done{% else %}ovc-todo{% endif %}">{% if item.is_done %}✓ Done{% else %}○ To do{% endif %}</span> · {{ item.text }}{% if item.kind == "thumbnail" %} <span class="ovc-badge">Thumbnail photo</span>{% endif %}{% if item.note %}<br><span class="ovc-sub">{{ item.note }}</span>{% endif %}</li>{% endfor %}</ul>{% else %}<p class="ovc-none">No shotlist yet.</p>{% endif %}{% endfor %}
   </section>
   <section aria-labelledby="ovc-video"><h2 id="ovc-video">Video</h2>
-    {% if videos %}<ul class="ovc-list">{% for version in videos %}<li>{{ version.video.platform_post.social_account.account_name }} · v{{ version.number }} · {{ version.get_status_display }}{% if version.original_filename %} · <span class="ovc-sub">{{ version.original_filename }}</span>{% endif %}</li>{% endfor %}</ul>
+    {% if videos %}<ul class="ovc-list">{% for version in videos %}<li>{{ version.video.platform_post.output_title }} · v{{ version.number }} · {{ version.get_status_display }}{% if version.original_filename %} · <span class="ovc-sub">{{ version.original_filename }}</span>{% endif %}</li>{% endfor %}</ul>
     <p class="ovc-sub" style="margin-top:6px">The player is on the content page of members.</p>{% else %}<p class="ovc-none">No video yet.</p>{% endif %}
   </section>
   <section aria-labelledby="ovc-caption"><h2 id="ovc-caption">Captions</h2>
-    {% for entry in captions %}<h3>{% include "jrc_channels/icon.html" with account=entry.variant.social_account %} {{ entry.variant.social_account.jrc_channel.display_name|default:entry.variant.social_account.account_name }}{% if entry.latest %} <span class="ovc-sub">version {{ entry.latest.number }}</span>{% endif %}</h3>
+    {% for entry in captions %}<h3>{% include "jrc_channels/icon.html" with account=entry.variant.social_account %} {{ entry.variant.output_title }}{% if entry.latest %} <span class="ovc-sub">version {{ entry.latest.number }}</span>{% endif %}</h3>
     {% if entry.text.strip %}<p class="ovc-text">{{ entry.text }}</p>{% else %}<p class="ovc-none">No caption yet.</p>{% endif %}
     {% empty %}<p class="ovc-none">No channel, so no captions.</p>{% endfor %}
   </section>
   <section aria-labelledby="ovc-discussion"><h2 id="ovc-discussion">Discussion</h2>
     {% if threads %}<ul class="ovc-list">{% for thread in threads %}<li class="ovc-comment">
-      <span class="ovc-sub">{{ thread.comment.author.name|default:thread.comment.author.email|default:"Former member" }} · {{ thread.comment.created_at|date:"M j, Y H:i" }} <span class="ovc-badge{% if thread.comment.visibility == 'internal' %} is-internal{% endif %}">{% if thread.comment.visibility == 'internal' %}Team only{% else %}Visible to client{% endif %}</span>{% if thread.comment.is_resolved %} <span class="ovc-badge">Resolved</span>{% endif %}</span>
+      <span class="ovc-sub">{{ thread.comment.author.name|default:thread.comment.author.email|default:"Former member" }} · {{ thread.comment.created_at|date:"M j, Y H:i" }} <span class="ovc-badge{% if thread.comment.visibility == 'internal' %} is-internal{% endif %}">{% if thread.comment.visibility == 'internal' %}Team only{% else %}Visible to client{% endif %}</span>{% if thread.comment.is_resolved %} <span class="ovc-badge">Resolved</span>{% endif %}{% if thread.comment.version_label %} <span class="ovc-badge">{{ thread.comment.version_label }}</span>{% endif %}</span>
       <p class="ovc-text">{{ thread.comment.body }}</p>
-      {% if thread.replies %}<div class="ovc-replies">{% for reply in thread.replies %}<div><span class="ovc-sub">{{ reply.author.name|default:reply.author.email|default:"Former member" }} · {{ reply.created_at|date:"M j, Y H:i" }}</span><p class="ovc-text">{{ reply.body }}</p></div>{% endfor %}</div>{% endif %}
+      {% if thread.replies %}<div class="ovc-replies">{% for reply in thread.replies %}<div><span class="ovc-sub">{{ reply.author.name|default:reply.author.email|default:"Former member" }} · {{ reply.created_at|date:"M j, Y H:i" }}{% if reply.version_label %} · {{ reply.version_label }}{% endif %}</span><p class="ovc-text">{{ reply.body }}</p></div>{% endfor %}</div>{% endif %}
     </li>{% endfor %}</ul>{% else %}<p class="ovc-none">No comments yet.</p>{% endif %}
   </section>
   <section aria-labelledby="ovc-history"><h2 id="ovc-history">Stage history</h2>

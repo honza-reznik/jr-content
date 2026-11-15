@@ -72,7 +72,7 @@ Context: week_days, week_slots, workspace.
                 <video src="{{ first_media.media_asset.file.url }}#t=0.5" class="w-5 h-5 rounded object-cover flex-shrink-0" muted preload="metadata"></video>
                 {% endif %}
                 {% endwith %}
-                <span class="truncate">{{ pp.post.title|default:pp.post.caption_snippet|truncatechars:28 }}</span>
+                {# P2-B14: each output is its own chip; the format is part of its name ("Shorts · …"). #}<span class="calendar-format-label">{{ pp.format_name }}</span><span class="truncate">{{ pp.post.title|default:pp.post.caption_snippet|truncatechars:28 }}</span>
                 <span class="calendar-stage-label">{{ pp.pipeline_stage_label }}</span>
                 {% if pp.takes_calendar_slot %}
                 <span class="calendar-post-slot-check" title="Scheduled in a channel slot">

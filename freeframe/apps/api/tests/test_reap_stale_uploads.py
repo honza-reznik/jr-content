@@ -61,6 +61,8 @@ def test_reap_logic_soft_deletes_and_deletes_s3(mock_db, monkeypatch):
                       s3_key_download="processed/x/download.mp4", s3_key_thumbnail="thumb/x")
     # versions query returns [version]; media-files query (inside the loop) returns [media]
     mock_db.all.side_effect = [[version], [media]]
+    # Storage deletes normally wait for the commit; this mock session never commits.
+    monkeypatch.setattr(ct, "run_after_commit", lambda db, fn, *args: fn(*args))
 
     n = ct._reap_stale_uploads(mock_db)
 

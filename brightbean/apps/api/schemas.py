@@ -276,6 +276,9 @@ class PlatformPostSummary(Schema):
     id: uuid.UUID
     social_account_id: uuid.UUID
     platform: str
+    # JR Content (P2-B14): one channel may carry several outputs of a content, one per format.
+    output_format: str = ""
+    output_label: str = ""
     status: str
     scheduled_at: dt.datetime | None
     published_at: dt.datetime | None
@@ -292,6 +295,8 @@ class PlatformPostSummary(Schema):
             id=pp.id,
             social_account_id=pp.social_account_id,
             platform=pp.social_account.platform,
+            output_format=pp.output_format,
+            output_label=pp.output_label,
             status=pp.status,
             scheduled_at=pp.scheduled_at,
             published_at=pp.published_at,

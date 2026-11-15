@@ -189,7 +189,12 @@ def download_filename(thumbnail):
     account = thumbnail.platform_post.social_account
     parts = (
         slugify(thumbnail.post.title or "", allow_unicode=False)[:80] or "content",
-        slugify(f"{account.get_platform_display()}-{account.account_name}", allow_unicode=False)[:80] or "channel",
+        # P2-B14: the output's format too, as one channel may carry several outputs (…-youtube-shorts-…).
+        slugify(
+            f"{account.get_platform_display()}-{thumbnail.platform_post.format_name}-{account.account_name}",
+            allow_unicode=False,
+        )[:80]
+        or "channel",
         f"thumbnail-v{thumbnail.number}",
     )
     return "-".join(parts) + "." + thumbnail.image.name.rsplit(".", 1)[-1]

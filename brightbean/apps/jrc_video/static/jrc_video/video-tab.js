@@ -99,6 +99,8 @@
         summary.appendChild(element("span", "", "ml-2 rounded-full bg-emerald-100 px-2 text-xs text-emerald-800", "data-video-final-mark"));
         summary.appendChild(element("span", "", "ml-2 text-xs", "data-video-status"));
         summary.appendChild(element("span", "", "mt-1 block text-xs text-stone-500", "data-version-meta"));
+        // P2-B15: the same stored file as a version of another output.
+        summary.appendChild(element("span", "", "mt-1 block text-xs text-stone-500", "data-video-copied"));
         details.appendChild(summary);
         var body = element("div", "", "space-y-3 border-t border-stone-200 p-3", "data-version-detail");
         body.appendChild(element("p", "", "text-sm text-stone-600", "data-video-hint"));
@@ -106,6 +108,7 @@
         resume.appendChild(element("button", "Continue upload", actionClasses, "data-video-resume"));
         resume.appendChild(element("button", "Discard", actionClasses, "data-video-discard-row"));
         body.appendChild(resume);
+        body.appendChild(element("button", "Use for another output\u2026", actionClasses, "data-video-reuse"));
         var srt = element("section", "", "space-y-3 rounded-lg border border-stone-200 bg-white p-3", "data-transcript");
         srt.appendChild(element("h4", "SRT transcript", "text-sm font-semibold text-stone-900"));
         srt.appendChild(element("p", "", "break-words text-sm text-stone-600", "data-transcript-name"));
@@ -138,6 +141,11 @@
       row.dataset.name = v.filename; row.dataset.size = String(v.size_bytes);
       row.querySelector("[data-version-title]").textContent = "v" + v.number + " · " + v.filename;
       row.querySelector("[data-version-meta]").textContent = [v.uploaded_by, v.uploaded_at, v.duration, v.resolution].filter(Boolean).join(" · ");
+      var copied = row.querySelector("[data-video-copied]");
+      copied.textContent = v.copied_from
+        ? "Same file as " + v.copied_from + (v.comments_copied !== null && v.comments_copied !== undefined ? " \u00b7 comments kept" : "") : "";
+      show(copied, !!v.copied_from);
+      show(row.querySelector("[data-video-reuse]"), !!v.can_reuse);
       var status = row.querySelector("[data-video-status]");
       status.textContent = v.status_label;
       status.className = "ml-2 rounded-full px-2 py-0.5 text-xs " + (v.status === "ready"
@@ -320,6 +328,17 @@
   root.addEventListener("jrc-video:channels", function (event) {
     channels = event.detail;
     channels.forEach(render);
+  });
+
+  // P2-B15: after “Use for another output…” the page shows the output that got the video.
+  root.addEventListener("jrc-video:show", function (event) {
+    var key = event.detail && event.detail.key;
+    if (key && panelOf(key)) {
+      chosen[key] = "";
+      showChannel(key);
+      var tab = tabs.filter(function (t) { return t.dataset.videoTab === key; })[0];
+      if (tab) tab.focus();
+    }
   });
 
   if (activeKey) showChannel(activeKey);

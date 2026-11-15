@@ -60,3 +60,10 @@ span.shotlist-box[aria-checked="false"] { background: #fafaf9; }
 .is-done .shotlist-inline-text { color: #78716c; text-decoration: line-through; }
 .shotlist-save-status { margin: 2px 0 0; }
 .shotlist-danger-text { color: #b91c1c; border-color: #fecaca; }
+/* P2-B14: one shotlist per format; sub-tabs above the list. */
+.shotlist-formats { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 16px; padding-bottom: 12px; border-bottom: 1px solid #e7e5e4; }
+.shotlist-format { display: inline-flex; align-items: center; min-height: 36px; padding: 0 14px; border: 1px solid #d6d3d1; border-radius: 999px; background: #fff; color: #44403c; font-size: 14px; font-weight: 500; text-decoration: none; }
+.shotlist-format:hover { background: #fafaf9; border-color: #a8a29e; }
+.shotlist-format:focus-visible { outline: 3px solid #fdba74; outline-offset: 2px; }
+.shotlist-format.is-active { border-color: #ea580c; background: #fff7ed; color: #9a3412; font-weight: 600; }
+@media (max-width: 639px) { .shotlist-format { min-height: 44px; } }

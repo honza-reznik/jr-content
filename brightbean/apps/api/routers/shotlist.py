@@ -31,6 +31,10 @@ class ShotlistItemInfo(Schema):
     note: str
     is_done: bool
     position: int = Field(description="0-based place in the list.")
+    output_format: str = Field(
+        "",
+        description="Format whose shotlist the item is on (long_form, short_form, story, post); empty = the first list.",
+    )
     updated_by: str | None = Field(description="Who changed the item last; null when nobody has yet.")
     updated_at: str | None
 
@@ -47,6 +51,9 @@ class ShotlistResponse(Schema):
 class ShotlistItemCreate(Schema):
     text: str = Field(description="What needs to be shot or created.", min_length=1, max_length=300)
     note: str = Field("", description="Optional note.", max_length=1000)
+    output_format: str = Field(
+        "", description="Format of the content whose shotlist gets the item; empty = the first list.", max_length=20
+    )
 
 
 class ShotlistItemUpdate(Schema):
@@ -64,6 +71,7 @@ def _info(item: ShotlistItem) -> ShotlistItemInfo:
         note=item.note,
         is_done=item.is_done,
         position=item.position,
+        output_format=item.output_format,
         updated_by=(item.updated_by.display_name or item.updated_by.email) if item.updated_by else None,
         updated_at=_iso(item.updated_at) if item.updated_by else None,
     )
@@ -130,7 +138,14 @@ def shotlist_add(request, post_id: uuid.UUID, payload: ShotlistItemCreate):
     with transaction.atomic():
         post, membership = _writer(request, post_id)
         with _http_errors():
-            item = shotlist_services.add_item(post, request.user, payload.text, payload.note, membership=membership)
+            item = shotlist_services.add_item(
+                post,
+                request.user,
+                payload.text,
+                payload.note,
+                membership=membership,
+                output_format=payload.output_format,
+            )
         result = _response(post, membership, item.pk)
     log_audit_entry(request, action="shotlist.create", target_id=item.id, status_code=201)
     return 201, result

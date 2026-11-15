@@ -15,7 +15,7 @@
         <a class="post-chip pipeline-stage-{{ pp.pipeline_stage }}" style="{% if pp.social_account %}background:{{ pp.social_account.jrc_accent_color }};color:{{ pp.social_account.jrc_accent_text_color }}{% endif %}" href="{% url 'jrc_production:content_detail' workspace_id=workspace.id post_id=pp.post_id %}?tab=publish">
             {% if pp.social_account %}{% include "jrc_channels/icon.html" with account=pp.social_account %}{% endif %}
             <time>{{ pp.effective_at|timezone:display_timezone|date:"H:i" }}</time>
-            <span class="calendar-agenda-title">{{ pp.post.title|default:pp.post.caption_snippet|default:"Untitled content" }}</span>
+            <span class="calendar-agenda-title"><span class="calendar-format-label">{{ pp.format_name }}</span> · {{ pp.post.title|default:pp.post.caption_snippet|default:"Untitled content" }}</span>
             <span class="calendar-stage-label">{{ pp.pipeline_stage_label }}</span>
         </a>
         {% endfor %}

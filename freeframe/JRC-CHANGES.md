@@ -404,3 +404,19 @@ Provozní postup je v `docs-arch/F2-B02/freeframe-provoz.md` (doplněk pro PM do
 - API odmítá místní přihlášení, magic code, pozvánky a změny hesel před vyhledáváním účtů. Výjimka je jen heslové přihlášení nastaveného servisního účtu přes vnitřní síť; veřejný vstup vždy nastavuje `X-Real-IP` a tuto cestu odmítá. Obnova tokenů a jednorázové SSO vstupenky zůstávají funkční.
 - Cesty sdílených odkazů vynechávají přihlašovací bránu; původní pravidla členství a hesla stále ověřuje API. Kontrola zdraví webu přijímá přesměrování bez jeho následování. Produkční nasazení změny middleware potřebuje přestavbu webového obrazu PM.
 - Odhlášení Brightbeanu nejprve volá `/auth/jrc-logout` jménem řízeného uživatele a atomicky zvyšuje verzi jeho tokenů. Zneplatní i dříve vydané HttpOnly HLS cookies a relace v dalších prohlížečích; veřejné anonymní share relace a servisní účet se nemění. Při výpadku videa zůstane přihlášení zachované a stránka nabízí nový pokus.
+
+## 2026-11-14 — P2-B15
+
+- Nový koncový bod `POST /jrc/versions/{version_id}/duplicate` (`routers/jrc_versions.py`, `services/jrc_duplicate.py`):
+  hotová video verze se použije pro jiný výstup JR Content. Cílový asset (existující, nebo nový s `asset_name`) ve stejném
+  projektu dostane novou verzi, jejíž `MediaFile` ukazuje na **stejné objekty úložiště** (originál, HLS, MP4 ke stažení,
+  náhled); nic se nekopíruje ani nepřevádí, verze je hned `ready`. Právo: editor projektu (jako nahrání verze).
+  `copy_comments` zkopíruje viditelná vlákna komentářů zdrojové verze (viditelnost, autoři i hosté, časy, vyřešení,
+  kresby, reakce, přílohy jako druhý řádek na stejný objekt); kopie nikoho neupozorňují. Záznam `jrc_version_duplicated`
+  v `ActivityLog`.
+- Mazání podle odkazů: `cleanup_tasks.media_key_still_referenced` / `attachment_still_referenced`; trvalý úklid verze,
+  zahození nahrávky, úklid komentáře i smazání přílohy smažou objekt až s posledním řádkem, který ho jmenuje.
+- `routers/files.py` `authorize_file`: klíč jmenovaný více řádky se povolí přes kterýkoli řádek, ke kterému má volající
+  přístup (včetně kontroly sdíleného odkazu); dřív rozhodoval jen první nalezený řádek.
+- Využití úložiště (`services/storage.counted_once`, přehled projektů) počítá sdílený originál jednou.
+- Testy: `apps/api/tests/test_jrc_duplicate_version.py`.

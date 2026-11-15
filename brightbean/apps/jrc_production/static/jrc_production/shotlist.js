@@ -57,6 +57,9 @@
       failure.retry = response.status >= 500 || (!result && !response.redirected);
       throw failure;
     }
+    const list = root.querySelector('[data-shotlist-current-format]');
+    if (list && result.comment_version) list.dataset.commentVersion = result.comment_version;
+    if (list && result.comment_state) list.dataset.commentState = result.comment_state;
     const row = form.closest('.shotlist-row');
     const meta = row && row.querySelector('[data-shotlist-meta]');
     if (result.meta && row) {
@@ -102,7 +105,10 @@
   // add or a move that was saved would be applied twice. Load the current list instead (GET).
   async function reloadAfterUnsure(action, data) {
     try {
-      const response = await fetch(`${window.location.pathname}?tab=shotlist`, { credentials: 'same-origin' });
+      // P2-B14: the list of the format that is open.
+      const format = root.querySelector('[data-shotlist-current-format]')?.dataset.shotlistCurrentFormat || '';
+      const query = format ? `&format=${encodeURIComponent(format)}` : '';
+      const response = await fetch(`${window.location.pathname}?tab=shotlist${query}`, { credentials: 'same-origin' });
       const page = new DOMParser().parseFromString(await response.text(), 'text/html');
       const fresh = response.ok && !response.redirected && page.querySelector('[data-shotlist]');
       if (!fresh) throw new Error('No shotlist in the page');
@@ -121,6 +127,20 @@
     const field = root.querySelector('[data-shotlist-new]');
     if (field) field.focus();
   }
+
+  // P2-B14: the format sub-tabs open another format's list without a page load (content-tabs.js);
+  // the address changes in place so a reload or "Copy link" keeps the format.
+  root.addEventListener('click', async (event) => {
+    const link = event.target.closest('[data-shotlist-format]');
+    if (!link || !window.jrcTabs || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    if (link.getAttribute('aria-current') === 'page') return;
+    const url = new URL(link.getAttribute('href'), window.location.href).href;
+    if (await window.jrcTabs.show(url)) {
+      history.replaceState({ jrcTab: 'shotlist' }, '', url);
+      document.querySelector(`[data-shotlist-format="${link.dataset.shotlistFormat}"]`)?.focus();
+    }
+  });
 
   root.addEventListener('submit', async (event) => {
     const form = event.target;

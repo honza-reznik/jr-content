@@ -89,6 +89,7 @@ def test_purge_comment_removes_subtree_and_attachment_s3(real_db, monkeypatch):
     assert real_db.query(CommentReaction).filter_by(comment_id=parent.id).count() == 0
     assert real_db.query(Mention).filter_by(comment_id=parent.id).count() == 0
     assert real_db.query(Notification).filter_by(comment_id=parent.id).count() == 0
+    real_db.commit()  # storage deletes run after the commit
     assert "att/x" in deleted
     assert counts.comments == 2  # parent + reply
 
@@ -130,7 +131,9 @@ def test_purge_version_removes_media_carousel_and_s3(real_db, monkeypatch):
     assert real_db.query(Asset).filter_by(id=asset.id).count() == 1  # asset untouched
     # The download MP4 is named on its own rather than left to the processed
     # prefix sweep -- it is a whole rendition, and the largest object here.
-    assert set(deleted) == {f"raw/{version.id}", "processed/x/",
+    raw_key = f"raw/{version.id}"
+    real_db.commit()  # storage deletes run after the commit
+    assert set(deleted) == {raw_key, "processed/x/",
                             "processed/x/download.mp4", "thumb/x"}
     assert counts.versions == 1 and counts.media_files == 1
 
@@ -310,7 +313,9 @@ def test_purge_project_removes_everything(real_db, monkeypatch):
     assert real_db.query(MetadataField).filter_by(project_id=project.id).count() == 0
     assert real_db.query(ShareLink).filter_by(project_id=project.id).count() == 0
     assert real_db.query(ActivityLog).filter_by(project_id=project.id).count() == 0
-    assert f"branding/{project.id}/logo/l.webp" in deleted and "posters/p.webp" in deleted
+    logo_key = f"branding/{project.id}/logo/l.webp"
+    real_db.commit()  # storage deletes run after the commit
+    assert logo_key in deleted and "posters/p.webp" in deleted
     assert counts.projects == 1 and counts.assets == 2 and counts.folders == 1
 
 

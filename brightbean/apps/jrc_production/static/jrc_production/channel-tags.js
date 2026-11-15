@@ -26,8 +26,9 @@
         const data = new FormData(form);
         const removing = data.get("action") === "remove_channel";
         if (removing) {
-            const name = form.closest(".channel-tag")?.querySelector(".channel-tag-name")?.textContent.replace(/\s+/g, " ").split("·")[0].trim();
-            if (!window.confirm(`Remove ${name || "this channel"} from this content?`)) return;
+            // P2-B14: the output's name ("YouTube · Shorts · Ella"), as one channel may carry several outputs.
+            const name = form.closest(".channel-tag")?.dataset.outputLabel;
+            if (!window.confirm(`Remove ${name || "this output"} from this content?`)) return;
         }
         const panel = document.querySelector("[data-content-panel] [data-tab]");
         data.set("tab", panel ? panel.dataset.tab : "");

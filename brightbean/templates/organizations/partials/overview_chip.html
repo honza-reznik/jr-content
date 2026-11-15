@@ -2,11 +2,12 @@
 kanál a název obsahu; otevře souhrn obsahu jen ke čtení. Context: pp (PlatformPost).{% endcomment %}
 <a href="{% url 'jrc_production:overview_content' post_id=pp.post_id %}"
    class="cross-post-chip status-{{ pp.status }}" style="background:{{ pp.social_account.jrc_accent_color }};color:{{ pp.social_account.jrc_accent_text_color }};border-left:3px solid {{ pp.post.workspace.accent_color }}"
-   title="{{ pp.post.workspace.name }}: {{ pp.post.title|default:pp.post.caption_snippet }} ({{ pp.get_status_display }})">
+   title="{{ pp.post.workspace.name }}: {{ pp.post.title|default:pp.post.caption_snippet }} · {{ pp.output_title }} ({{ pp.get_status_display }})">
     <span class="ws-dot" style="background: {{ pp.post.workspace.accent_color }};"></span>
     <span class="sr-only">{{ pp.post.workspace.name }}:</span>
     <span class="w-4 h-4 rounded flex items-center justify-center pi-{{ pp.social_account.platform }} flex-shrink-0 text-white">
         {% include "jrc_channels/icon.html" with account=pp.social_account calendar_icon=True %}
     </span>
+    {# P2-B14: each output is its own chip; the format is part of its name. #}<span class="font-semibold flex-shrink-0">{{ pp.format_name }}</span>
     <span class="truncate">{{ pp.post.title|default:pp.post.caption_snippet|truncatechars:40 }}</span>
 </a>

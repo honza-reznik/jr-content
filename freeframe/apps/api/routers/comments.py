@@ -878,11 +878,11 @@ def delete_attachment(
         if not pm or pm.role not in (ProjectRole.owner, ProjectRole.editor):
             raise HTTPException(status_code=403, detail="Not authorized to delete this attachment")
 
-    # Delete from S3
-    try:
-        s3_service.delete_object(attachment.s3_key)
-    except Exception:
-        pass  # Best-effort S3 deletion
+    # Delete from S3, unless a copied comment (JR Content P2-B15) still shows the same file.
+    from ..tasks.cleanup_tasks import attachment_still_referenced, run_after_commit
+    if not attachment_still_referenced(db, attachment):
+        # Best-effort, and only once the row is really gone (a rival copy may be committing).
+        run_after_commit(db, s3_service.delete_object, attachment.s3_key)
 
     db.delete(attachment)
     db.commit()

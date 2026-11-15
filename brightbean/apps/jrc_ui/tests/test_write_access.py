@@ -472,6 +472,7 @@ def test_all_agent_writers_have_audited_policies(settings):
         "jrc_get_concept",
         "jrc_get_caption",
         "jrc_list_comments",
+        "jrc_get_comment_version",
         "jrc_get_stage",
         "list_accounts",
         "get_post",
