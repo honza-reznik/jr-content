@@ -178,8 +178,9 @@ def test_session_csrf_scope_archived_and_revoked_membership(client, workspace, u
     workspace.is_archived = False
     workspace.save(update_fields=["is_archived"])
     WorkspaceMembership.objects.filter(user=user, workspace=workspace).delete()
-    assert client.get(path).status_code == 403
-    assert client.post(path, {"delete": "1"}).status_code == 403
-    assert upload(client, path).status_code == 403
+    # P2-FABLE: a revoked member is a stranger and gets 404 on every jrc_* URL.
+    assert client.get(path).status_code == 404
+    assert client.post(path, {"delete": "1"}).status_code == 404
+    assert upload(client, path).status_code == 404
     client.logout()
     assert client.get(path).status_code == 302
